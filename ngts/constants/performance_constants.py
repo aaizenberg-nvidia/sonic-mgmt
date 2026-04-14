@@ -1193,6 +1193,49 @@ class MRCConsts:
     }
 
 
+class NoSrhPerfConsts:
+    """Constants for SRv6 no-SRH shift-left performance tests (Feature #4894969)."""
+
+    # Full supported packet-size sweep. Default parametrization in
+    # test_srv6_no_srh_perf.py runs only the per-chip minimum for the
+    # all-ports scenario (see ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE);
+    # override CHOSEN_PACKET_SIZES_ENTROPY_COMPARISON in that file to sweep
+    # this full list (or any custom subset).
+    PACKET_SIZE_SWEEP_LIST = [370, 512, 1024, 2048, 4096]
+
+    # Per-chip minimum packet size for the all-ports bisection scenario.
+    # SPC4/SPC5 (100G/lane) sustain line rate down to 370B; SPC6 (200G/lane)
+    # needs 1024B to sustain line rate on all-ports.
+    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 1024}
+
+    ENTROPY_HIGH = "high_entropy"
+    ENTROPY_LOW = "low_entropy"
+
+    TRAFFIC_TYPE_SRV6_NO_SRH = "SRv6_no_SRH"
+
+    PORT_SPLITS_BY_CHIP_TYPE = {
+        "SPC4": [(2, 2), (4, 4)],
+        "SPC5": [(1, 1), (2, 2), (4, 4)],
+        "SPC6": [(1, 1), (4, 4)],
+    }
+
+    BW_EQUIVALENCE_TOLERANCE = 0.02
+
+    SUPPORTED_CHIP_TYPES = ["SPC4", "SPC5", "SPC6"]
+
+    NO_SRH_DATA_DSCP = 0
+
+    NO_SRH_NUM_DATA_PACKETS = 10
+
+    NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT = 0.55
+
+    SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT = {
+        "SPC4": {1: "4x100G", 2: "2x200G[100G]", 4: "1x400G"},
+        "SPC5": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x400G"},
+        "SPC6": {1: "8x200G[100G]", 2: "4x400G[200G]", 4: "2x800G[400G]", 8: "1x800G"},
+    }
+
+
 class PowerConsts:
     CONTROLLER_REGEX = r'\w*\d*-i2c-\d*-\d*\w*'
     POWER_SUPPLY = "powerSupply"

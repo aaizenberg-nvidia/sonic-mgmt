@@ -19,7 +19,7 @@
     <info> SRv6 leaf tests </info>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals  --ignore-conditional-mark --disable_loganalyzer \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/ --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals  --ignore-conditional-mark --disable_loganalyzer --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf_calibration.py \'"</static_args>
       </params>
     </cmd>
   </case>

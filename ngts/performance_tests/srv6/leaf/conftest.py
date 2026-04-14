@@ -60,32 +60,76 @@ def sort_bisection_pairs_by_tg_alias(players, upstream_ports, downstream_ports):
     return tg_src_dst_port_bisection_pairs_dict
 
 
-@pytest.fixture(scope='class', autouse=True)
-def conf_args(chip_type, players):
+def build_conf_args_base(chip_type, players):
+    """Return the shared ``conf_args`` keys common to the base fixture and any per-test override.
+
+    Callers add the derived keys -- ``split_left``, ``split_right`` and
+    ``speed`` -- which are the only ones that legitimately vary between the
+    base fixture and the no-SRH override, plus any OS-specific extras
+    (e.g. ``link_phy_speed`` / ``dut_left_ports_num`` on Cumulus).
+
+    Populates the following keys:
+        * ``is_ipv6``: ``True``.
+        * ``packet_size``: ``4096``.
+        * ``scenario``: ``"srv6"``.
+        * ``hwsku``: ``MRCConsts.HWSKU_BY_CHIP_TYPE[chip_type]["leaf"]``.
+        * ``dut_mac``: ``players['dut']['cli'].performance.mac``.
+        * ``dut``: ``"leaf"``.
+        * ``chip_type``: passthrough of ``chip_type``.
+        * ``downlinks_tg``: ``PerfConsts.RIGHT_TG_ALIAS``.
+        * ``template_path``: absolute path to the SRv6 SONiC template dir
+          under ``BugHandlerConst.NGTS_PATH/performance_tests/<default templates dir>/srv6/sonic``.
+
+    Args:
+        chip_type: Chip family key (e.g. ``"SPC4"``, ``"SPC5"``), used to
+            look up the leaf HWSKU from ``MRCConsts.HWSKU_BY_CHIP_TYPE``.
+        players: Mapping of alias -> player dict; must contain a ``'dut'``
+            entry exposing ``cli.performance.mac``.
+
+    Returns:
+        dict: The base ``conf_args`` mapping described above (no
+            ``split_left`` / ``split_right`` / ``speed`` keys).
+
+    Raises:
+        KeyError: If ``chip_type`` is not a key of
+            ``MRCConsts.HWSKU_BY_CHIP_TYPE`` or its entry lacks a
+            ``"leaf"`` key, or if ``players['dut']`` is missing.
+    """
     sku = MRCConsts.HWSKU_BY_CHIP_TYPE[chip_type]["leaf"]
-    is_cumulus = players["dut"].get("is_cumulus", False)
-    conf_args = {
+    return {
         "is_ipv6": True,
         "packet_size": 4096,
         "scenario": "srv6",
-        "split_left": Cl_Consts.SRV6_SPLIT_LEFT_BY_CHIP_TYPE[chip_type],
-        "split_right": Cl_Consts.SRV6_SPLIT_RIGHT_BY_CHIP_TYPE[chip_type],
-        "speed": Cl_Consts.SRV6_SPEED_BY_CHIP_TYPE[chip_type] if is_cumulus else SonicConst.HWSKU_DOWNSTREAM_PORTS_SPEED[sku],
         "hwsku": sku,
         "dut_mac": players['dut']['cli'].performance.mac,
         "dut": "leaf",
         "chip_type": chip_type,
         "downlinks_tg": PerfConsts.RIGHT_TG_ALIAS,
         "template_path": os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
-                                      PerfConsts.DEFAULT_PERF_TEMPLATES_DIR, "srv6", "sonic")
+                                      PerfConsts.DEFAULT_PERF_TEMPLATES_DIR, "srv6", "sonic"),
+    }
 
+
+@pytest.fixture(scope='class', autouse=True)
+def conf_args(chip_type, players):
+    is_cumulus = players["dut"].get("is_cumulus", False)
+    base = build_conf_args_base(chip_type, players)
+    split_left = Cl_Consts.SRV6_SPLIT_LEFT_BY_CHIP_TYPE[chip_type]
+    split_right = Cl_Consts.SRV6_SPLIT_RIGHT_BY_CHIP_TYPE[chip_type]
+    speed = (Cl_Consts.SRV6_SPEED_BY_CHIP_TYPE[chip_type] if is_cumulus
+             else SonicConst.HWSKU_DOWNSTREAM_PORTS_SPEED[base["hwsku"]])
+    conf_args = {
+        **base,
+        "split_left": split_left,
+        "split_right": split_right,
+        "speed": speed,
     }
     if (is_cumulus and chip_type == "SPC6" and
-            conf_args["split_left"] == 8 and conf_args["split_right"] == 8):
+            split_left == 8 and split_right == 8):
         conf_args["link_phy_speed"] = "200G"
     if is_cumulus:
         conf_args["dut_left_ports_num"] = get_srv6_dut_left_ports_num(
-            players['dut']['cli'].performance, conf_args["split_left"])
+            players['dut']['cli'].performance, split_left)
     return conf_args
 
 
