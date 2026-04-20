@@ -32,6 +32,7 @@ from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_constants.constants_nvos import ImageConsts
 from ngts.scripts.sonic_deploy.nvos_only_methods import NvosInstallationSteps
+from ngts.tests_nvos.system import helpers as system_helpers
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_config_utils import clear_conf
@@ -53,11 +54,13 @@ def test_system_issu_positive_basic_flow(engines, devices, issu_version, target_
     3. Show ISSU time
     4. Verify show ISSU status
     5. Verify image version
+    6. Verify default ACL JSON and control-plane / loopback ACL bindings preserved after ISSU
     """
     dut_engine = engines.dut
     dut_device = devices.dut
     player = engines.sonic_mgmt
     system = System()
+    acl_persist_mangle_state = None
     # In case of manual run add the following lines with the relevant paths
     # issu_version = '/auto/sw_system_release/nos/nvos/25.02.4014/amd64/prod/nvos-amd64-25.02.4014.bin'
     # target_version = '/auto/sw_system_release/nos/nvos/25.02.5014/amd64/prod/nvos-amd64-25.02.5014.bin'
@@ -82,6 +85,18 @@ def test_system_issu_positive_basic_flow(engines, devices, issu_version, target_
     with allure.step("Prepare system target image for install"):
         target_filename, recovery_engine, scp_host_creds = prepare_image_for_install(
             player, dut_engine, dut_device, target_version)
+
+    with allure.step("Add ACL/control-plane configs for persistence checks (before baseline capture)"):
+        acl_persist_mangle_state = system_helpers.add_acl_new_configs_for_persistence_checks(
+            dut_engine=dut_engine)
+
+    with allure.step("Save default ACL rules baseline (before ISSU)"):
+        json_acl_rules = system_helpers.extract_acl_rules(dut_engine=dut_engine)
+        logger.info("ACL baseline captured for %d default ACL object(s)", len(json_acl_rules))
+
+    with allure.step("Save control-plane ACL bindings baseline (nv show system control-plane acl)"):
+        cp_acl_bindings = system_helpers.extract_control_plane_acl_bindings(dut_engine=dut_engine)
+        logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
 
     issu_start = time.time()
     logger.info(f"ISSU start time: {issu_start}")
@@ -117,6 +132,17 @@ def test_system_issu_positive_basic_flow(engines, devices, issu_version, target_
                 Platform().firmware.show(dut_engine=dut_engine)).get_returned_value()['ASIC']['actual-firmware']
             assert fw_version == target_fw, f'FW version is: {fw_version}, instead of {target_fw}'
 
+    with allure.step('Verify default ACL and control-plane ACL preserved after ISSU'):
+        with allure.independent_step('Verify default ACL JSON preserved after ISSU (nv show acl)'):
+            system_helpers.verify_acl_rules_preserved(json_acl_rules, dut_engine=dut_engine)
+        with allure.independent_step(
+            'Verify control-plane ACL bindings + loopback defaults on interface lo after ISSU'
+        ):
+            system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=dut_engine)
+
+    with allure.step('Clear ACL persistence mangle state (if any)'):
+        system_helpers.clear_acl_configs(acl_persist_mangle_state, dut_engine=dut_engine)
+
 
 @pytest.mark.system
 @pytest.mark.issu
@@ -129,10 +155,11 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
 
     Test flow:
     1. Fetch and install issu image (without ISSU)
-    2. Fetch and install target image with ISSU skip-sm flag
+    2. Fetch and install target image with ISSU flag
     3. Show ISSU time
     4. Verify show ISSU status
     5. Verify image version
+    6. Post-ISSU: verify default ACL JSON and control-plane / loopback ACL bindings (baseline from pre-ISSU)
     """
     dut_engine = engines.dut
     dut_device = devices.dut
@@ -173,7 +200,8 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
             player, dut_engine, dut_device, target_version)
 
     with allure.step('Pre issu installation steps'):
-        traffic_start_time, interface_dict, ip_list, mtu_info = pre_issu_installation_steps(
+        (traffic_start_time, interface_dict, ip_list, mtu_info, ssd_should_auto_update,
+         json_acl_rules, cp_acl_bindings, acl_persist_mangle_state) = pre_issu_installation_steps(
             engines, devices, target_version, scp_host_creds)
 
     issu_start = time.time()
@@ -193,7 +221,9 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
     with allure.step('Post issu installation steps'):
         post_issu_installation_steps(engines, devices, target_version, fw_version,
                                      interface_dict, traffic_start_time, ip_list, test_name,
-                                     mtu_info=mtu_info)
+                                     mtu_info=mtu_info, ssd_should_auto_update=ssd_should_auto_update,
+                                     json_acl_rules=json_acl_rules, cp_acl_bindings=cp_acl_bindings,
+                                     acl_persist_mangle_state=acl_persist_mangle_state)
 
 
 # @pytest.mark.system
@@ -755,12 +785,14 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
     - Show system ISSU
     - Start Ping mgmt. port 0 and mgmt. port 1
     - Start sending data packets from Host A to Host B
+    - Save default ACL + control-plane ACL baselines for post-ISSU verification
 
     :param engines:
     :param devices:
     :param target_version:
     :param scp_host_creds:
-    :return:
+    :return: ``traffic_start_time``, ``interface_output``, ``ip_list``, ``mtu_info``,
+        ``ssd_should_auto_update``, ``json_acl_rules``, ``cp_acl_bindings``, ``acl_persist_mangle_state``.
     """
     system = System()
     interface = Interface(parent_obj=None)
@@ -812,6 +844,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         assert issu_status == IssuConsts.IssuStatus.NO_ISSU.value, \
             f"ISSU status is {issu_status}, instead of: {IssuConsts.IssuStatus.NO_ISSU.value}"
 
+    ssd_should_auto_update = False
     with allure.step('Downgrade SSD firmware to test auto-upgrade during ISSU'):
         _, _, latest_version_name = FWComponentsTool.get_fw_component_version_latest(FW_COMPONENT_SSD)
         if latest_version_name is not None:
@@ -822,6 +855,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
             # Downgrade SSD firmware to previous version
             _, previous_filename, previous_version_name = FWComponentsTool.get_fw_component_version_previous(FW_COMPONENT_SSD)
             SSDTool.downgrade_ssd_firmware(engines, ssd_component, previous_filename, previous_version_name)
+            ssd_should_auto_update = True
         else:
             logger.info('SSD downgrade skipped: non supported SSD model')
 
@@ -846,12 +880,26 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
 
     # TODO: add ipoib test (random)
 
-    return traffic_start_time, interface_output, ip_list, mtu_info
+    with allure.step("Add ACL/control-plane configs for persistence checks (before baseline capture)"):
+        acl_persist_mangle_state = system_helpers.add_acl_new_configs_for_persistence_checks(dut_engine=dut_engine)
+
+    with allure.step("Save default ACL rules baseline (before ISSU)"):
+        json_acl_rules = system_helpers.extract_acl_rules(dut_engine=dut_engine)
+        logger.info("ACL baseline captured for %d default ACL object(s)", len(json_acl_rules))
+
+    with allure.step("Save control-plane ACL bindings baseline (nv show system control-plane acl)"):
+        cp_acl_bindings = system_helpers.extract_control_plane_acl_bindings(dut_engine=dut_engine)
+        logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
+
+    return (traffic_start_time, interface_output, ip_list, mtu_info, ssd_should_auto_update,
+            json_acl_rules, cp_acl_bindings, acl_persist_mangle_state)
 
 
 def post_issu_installation_steps(engines, devices, target_version, fw_expected,
                                  interface_dict, traffic_start_time, ip_list, test_name='',
-                                 mtu_info=None):
+                                 mtu_info=None, ssd_should_auto_update=False,
+                                 json_acl_rules=None, cp_acl_bindings=None,
+                                 acl_persist_mangle_state=None):
     """
     - Stop Ping mgmt. port 0 and mgmt. port 1 and analyze both logs
     - Stop sending data packets from Host A to Host B and analyze log
@@ -859,6 +907,7 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
     - Validate versions
     - Check port 1 and port 2 counters
     - Validate configuration
+    - Optionally verify default ACL JSON and control-plane / loopback ACL bindings (when baselines passed)
     - Validate management services
     - Validate system log
     - Validate event table
@@ -870,6 +919,9 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
     :param interface_dict:
     :param traffic_start_time:
     :param ip_list:
+    :param json_acl_rules: baseline from ``extract_acl_rules`` before ISSU (optional)
+    :param cp_acl_bindings: baseline from ``extract_control_plane_acl_bindings`` before ISSU (optional)
+    :param acl_persist_mangle_state: state from ``add_acl_new_configs_for_persistence_checks`` (optional)
     :return:
     """
     system = System()
@@ -956,6 +1008,15 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
             with allure.independent_step('Verify MTU preserved after ISSU and cleanup'):
                 InterfaceConfigurationTool.verify_and_cleanup_mtu(mtu_info)
 
+            if json_acl_rules is not None:
+                with allure.independent_step('Verify default ACL JSON preserved after ISSU (nv show acl)'):
+                    system_helpers.verify_acl_rules_preserved(json_acl_rules, dut_engine=dut_engine)
+            if cp_acl_bindings is not None:
+                with allure.independent_step(
+                    'Verify control-plane ACL bindings + loopback defaults on interface lo after ISSU'
+                ):
+                    system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=dut_engine)
+
             # with allure.step('Validate management services'):
             #     with allure.step("Verify ntp state"):
             #         ntp_show = OutputParsingTool.parse_json_str_to_dictionary(system.ntp.show()).get_returned_value()
@@ -986,6 +1047,9 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
         finally:
             # with allure.step('Clear tested configuration for the tests'):
             #     clear_conf(dut_engine)
+
+            with allure.independent_step('Clear ACL persistence mangle state (if any)'):
+                system_helpers.clear_acl_configs(acl_persist_mangle_state, dut_engine=dut_engine)
 
             with allure.independent_step('Clear fetched files for the tests'):
                 # system = System()

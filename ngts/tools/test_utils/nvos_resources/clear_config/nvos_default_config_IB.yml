@@ -4,6 +4,16 @@
     rev-id: 1.0
     version: 25.01.3932-014
 - set:
+    interface:
+      lo:
+        acl:
+          acl-default-loopback:
+            inbound:
+              control-plane: {}
+          acl-default-loopback-ipv6:
+            inbound:
+              control-plane: {}
+        type: loopback
     system:
       aaa:
         authentication:
@@ -16,3 +26,18 @@
 
       date-time:
         timezone: Asia/Jerusalem
+
+      control-plane:
+        acl:
+          acl-default-dos:
+            inbound: {}
+          acl-default-dos-ipv6:
+            inbound: {}
+          acl-default-outbound:
+            outbound: {}
+          acl-default-outbound-ipv6:
+            outbound: {}
+          acl-default-whitelist:
+            inbound: {}
+          acl-default-whitelist-ipv6:
+            inbound: {}
