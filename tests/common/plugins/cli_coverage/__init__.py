@@ -146,6 +146,7 @@ if os.environ.get("REGRESSION_TYPE") == "regression":
         session_metadata = SessionName()
         setup_name = request.config.option.ansible_host_pattern
         full_json['end time'] = time.time()
+        commands_list.sort(key=lambda x: x["command executed"])
         full_json["commands hit"] = commands_list
         full_json["test result"] = shared_data["status"]
         session_name = session_metadata.get_session_name()

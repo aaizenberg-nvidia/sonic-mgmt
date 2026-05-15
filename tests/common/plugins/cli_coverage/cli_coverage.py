@@ -46,22 +46,24 @@ class CliCoverage:
         :param json_format: dict of json format
         """
         for section, value in table.items():
-            if type(value) is dict:
-                for subsection, data in value.items():
-                    for attribute, content in data.items():
-                        key_list = subsection.split('|')
-                        if len(key_list) > 1:
-                            keys = ['<key' + str(x) + '>' for x in range(1, (len(key_list)+1))]
-                        else:
-                            keys = ['<key>']
-                        command = f'{section} {":".join(keys)} {attribute} <attribute>'
-                        section_json = {
-                            "command executed": f'{section} {subsection} {attribute} {content}',
-                            "command": f'{section} {":".join(keys)} {attribute} <attribute>'}
-                        if command not in commands_set:
-                            commands_set.add(command)
-                            commands_list.append(section_json)
-                            commands_list.sort(key=lambda x: x["command executed"])
+            if not isinstance(value, dict):
+                continue
+            for subsection, data in value.items():
+                if not isinstance(data, dict):
+                    continue
+                for attribute, content in data.items():
+                    key_list = subsection.split('|')
+                    if len(key_list) > 1:
+                        keys = ['<key' + str(x) + '>' for x in range(1, (len(key_list) + 1))]
+                    else:
+                        keys = ['<key>']
+                    command = f'{section} {":".join(keys)} {attribute} <attribute>'
+                    section_json = {
+                        "command executed": f'{section} {subsection} {attribute} {content}',
+                        "command": f'{section} {":".join(keys)} {attribute} <attribute>'}
+                    if command not in commands_set:
+                        commands_set.add(command)
+                        commands_list.append(section_json)
 
     def save_hit_list(self, table_parse, commands_set, commands_list):
         """
