@@ -60,6 +60,9 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_tpm_attestation.cases </cases>
         <ignore><condition> <key>dut_type</key> <op> in </op> <value>[gorilla]</value> </condition></ignore>
 	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_ima.cases </cases>
+	</test>
     <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_bmc.cases </cases>
         <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[juliet, rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>

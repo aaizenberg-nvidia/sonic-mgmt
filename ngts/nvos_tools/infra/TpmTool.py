@@ -11,6 +11,10 @@ CMD_NOT_FOUND_ERR = 'command not found'
 PRIMARY_SED_TPM_BANK = '0x81010001'
 SECONDARY_SED_TPM_BANK = '0x81010002'
 
+# Canonical security filesystem path of the firmware/TCG event log (the binary IML the
+# ``event_log.bin`` upload action exports). Parsed with ``tpm2_eventlog``.
+TPM_EVENT_LOG_SECURITYFS_PATH = '/sys/kernel/security/tpm0/binary_bios_measurements'
+
 
 class TpmTool:
     def __init__(self, engine: LinuxSshEngine):
@@ -74,6 +78,26 @@ class TpmTool:
 
     def get_quote_file_content(self):
         return self.engine.run_cmd(f'sudo cat {tpmconst.QUOTE_FILE_PATH}')
+
+    def get_event_log(self, event_log_path: str = TPM_EVENT_LOG_SECURITYFS_PATH) -> str:
+        """
+        Return the human-readable TPM (TCG) event log, parsed with ``tpm2_eventlog``.
+
+        :param event_log_path: Path to the binary event log on the DUT. Defaults to
+            the security filesystem IML exported by the ``event_log.bin`` upload action.
+        """
+        with allure.step(f'parse the TPM event log at {event_log_path}'):
+            return self.engine.run_cmd(f'sudo tpm2_eventlog {event_log_path}')
+
+    def event_log_contains(self, marker: str,
+                           event_log_path: str = TPM_EVENT_LOG_SECURITYFS_PATH) -> bool:
+        """
+        Return True if the parsed TPM event log contains ``marker`` (case-insensitive).
+
+        Used to assert boot measurements are present, e.g. the ``INITRD`` event.
+        """
+        with allure.step(f'check TPM event log contains "{marker}"'):
+            return marker.lower() in self.get_event_log(event_log_path).lower()
 
     def is_tpm_lockout_counter_cleared(self) -> Tuple[bool, str]:
         expected_counter_hex = '0x0'

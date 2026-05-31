@@ -101,6 +101,9 @@ class BaseDevice(ABC):
         self.supports_ssd_upgrade = False
         self.supported_commands = []
         self.supports_tpm_testing = True
+        # IMA needs a TPM plus an IMA-enabled kernel build; the conftest does the final
+        # runtime check (security filesystem path), this flag is the coarse per-platform gate.
+        self.supports_ima_testing = True
         self.unset_all_command = "nv unset acl; nv unset interface; nv unset platform; nv unset system"
         self.allow_cpld_update = False
         self.sys_rst_n_bit_command = None

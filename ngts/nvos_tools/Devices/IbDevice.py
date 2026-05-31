@@ -930,6 +930,7 @@ class GorillaSwitch(IbSwitch):
         self.transceivers_tables_name = "TRANSCEIVER_FIRMWARE_INFO"
         self.transceiver_list = [f'sw{a + 1}' for a in range(32)]
         self.supports_tpm_testing = False
+        self.supports_ima_testing = False
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
