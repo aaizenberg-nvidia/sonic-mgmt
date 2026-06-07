@@ -170,6 +170,7 @@ def get_setup_session_info(session):
             "Version": ", ".join(version_list),
             "Platform": ", ".join(platform_list),
             "HwSKU": ", ".join(hwsku_list),
+            "Sonic_mgmt_branch": get_sonic_mgmt_branch(session),
             "Executor_IP": host_executor_ip,
             "Mars_Session": mars_session_id,
             "PyTest_args": pytest_run_cmd_args,
@@ -187,6 +188,33 @@ def get_setup_session_info(session):
             if len(segs) > 2:
                 result.update({"Build_ID": segs[-3]})
     return result
+
+
+def _run_git(repo_dir, *git_args):
+    repo_dir = os.path.realpath(str(repo_dir))
+    for safe_dir in (repo_dir, "*"):
+        cmd = ["git", "-c", "safe.directory={}".format(safe_dir), "-C", repo_dir, *git_args]
+        try:
+            return subprocess.check_output(cmd, stderr=subprocess.PIPE).decode("utf-8").strip()
+        except subprocess.CalledProcessError as err:
+            stderr = err.stderr.decode("utf-8", errors="replace") if err.stderr else ""
+            if safe_dir == "*" or "dubious ownership" not in stderr:
+                raise
+            logger.debug('git rejected the ownership of "{}", retrying with safe.directory=*'.format(repo_dir))
+
+
+def get_sonic_mgmt_branch(session):
+    env_branch = os.environ.get("SONIC_MGMT_BRANCH", "").strip()
+    if env_branch:
+        return env_branch.splitlines()[0].strip()
+
+    repo_dir = session.fspath.dirname
+    try:
+        branch = _run_git(repo_dir, "rev-parse", "--abbrev-ref", "HEAD")
+        return branch if branch != "HEAD" else _run_git(repo_dir, "rev-parse", "--short", "HEAD")
+    except Exception as err:
+        logger.warning('Can not get sonic-mgmt branch. Error: {}'.format(err))
+        return "unknown"
 
 
 def get_test_executor_host_ip_address():
