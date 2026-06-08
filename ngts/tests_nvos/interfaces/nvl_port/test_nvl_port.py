@@ -227,7 +227,7 @@ def test_show_nvl_interface_commands(engines, devices, random_api, has_loopbox, 
 
     with allure_step("Verify access ports speed"):
         if has_loopbox or not standalone_system:
-            selected_port = Tools.RandomizationTool.select_random_port(requested_ports_logical_state=NvosConsts.LINK_LOG_STATE_INITIALIZE, interface_type='acp').get_returned_value()
+            selected_port = Tools.RandomizationTool.select_random_port(interface_type='acp').get_returned_value()
             output_dictionary = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
                 selected_port.interface.link.show()).get_returned_value()
             assert output_dictionary[IbInterfaceConsts.LINK_SPEED] == dut_device.access_port_speed, \
