@@ -11,7 +11,7 @@ from infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
 
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tools.test_utils import allure_utils as allure
-from ..constants import AaaConsts, AuthMedium, UserRole
+from ..constants import AaaConsts, AddressingType, AaaServerLocation, AuthMedium, UserRole
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.system.Server import ServerId
 from ...test_aaa_ldap.constants import LdapConsts
@@ -185,6 +185,48 @@ class RemoteAaaServerInfo(abc.ABC):
     def make_reachable(self, engines, apply=False, dut_engine=None):
         ...
 
+    def _retarget_to_dut_lab(self) -> None:
+        """
+        Re-target this server's address (in place) to the instance located in the DUT's lab.
+
+        The VM AAA servers are mirrored across labs (Yokneam / Mevo Carmel). Server definitions
+        reference the Yokneam addresses by default, but a DUT can only reach the instance in its
+        own lab. The lab is resolved from the Noga 'Common.Site' attribute already loaded in the
+        topology (no extra Noga call / DNS lookup), and the address is swapped to the same
+        addressing type (ipv4/ipv6/dn) in that lab.
+
+        This is a no-op for physical / non-VM servers (their hostname is not a known VM address)
+        and on the default Yokneam lab (the address is unchanged). It is idempotent, so it is safe
+        to call from both verify_availability() and configure().
+        """
+        addressing_type = AaaServerLocation.addressing_type_from_address(self.hostname)
+        if addressing_type is None:
+            return  # not a VM AAA server - leave its address as is
+
+        site = ''
+        try:
+            dut_attributes = TestToolkit.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
+            site = dut_attributes.get('Common', {}).get('Site', '') or ''
+        except Exception as ex:
+            logger.warning(f'Could not read DUT "Common.Site" from Noga topology data: {ex}')
+
+        location = AaaServerLocation.location_from_site(site)
+        addresses_for_location = AaaServerLocation.VM_SERVER_ADDR_BY_LOCATION[location]
+        new_hostname = addresses_for_location[addressing_type]
+        if new_hostname != self.hostname:
+            logger.info(f'Re-targeting VM AAA server "{self.hostname}" -> "{new_hostname}" '
+                        f'(lab: "{location}", Noga site: "{site}")')
+            self.hostname = new_hostname
+        # keep ipv4_addr (used for mgmt/availability fallbacks) aligned with the chosen location
+        if self.ipv4_addr:
+            self.ipv4_addr = addresses_for_location[AddressingType.IPV4]
+        # some containers are published on a different host port per lab - align it too
+        port_override = AaaServerLocation.port_override_for(location, self.docker_name)
+        if port_override is not None and port_override != self.port:
+            logger.info(f'Re-targeting VM AAA server "{self.hostname}" ({self.docker_name}) '
+                        f'port {self.port} -> {port_override} (lab: "{location}")')
+            self.port = port_override
+
     def get_ping_address(self) -> str:
         """
         Get the address to use for pinging/checking availability.
@@ -211,6 +253,7 @@ class RemoteAaaServerInfo(abc.ABC):
         """
         if dut_engine is None:
             dut_engine = TestToolkit.engines.dut
+        self._retarget_to_dut_lab()
         address = self.get_ping_address()
         with allure.step(f"Verify AAA server availability from DUT: {address}:{self.port}"):
             is_available = ping_server(address, dut_engine=dut_engine)
@@ -275,6 +318,7 @@ class TacacsServerInfo(RemoteAaaServerInfo):
         self.users_per_auth_mode = users_per_auth_mode
 
     def configure(self, engines, set_explicit_priority=False, apply=False, dut_engine=None):
+        self._retarget_to_dut_lab()
         conf_to_set = {
             AaaConsts.SECRET: self.secret,
             AaaConsts.PORT: self.port,
@@ -344,6 +388,7 @@ class LdapServerInfo(RemoteAaaServerInfo):
         self.ssl_port = ssl_port
 
     def configure(self, engines, set_explicit_priority=False, apply=False, dut_engine=None):
+        self._retarget_to_dut_lab()
         ldap_obj: Ldap = System().aaa.ldap
         server_resource_obj = ldap_obj.server.server_id[self.hostname]
         server_resource_obj.set(dut_engine=dut_engine).verify_result()
@@ -395,11 +440,13 @@ class RadiusServerInfo(RemoteAaaServerInfo):
         self.statistics = statistics
 
     def configure(self, engines, set_explicit_priority=False, apply=False, dut_engine=None):
+        self._retarget_to_dut_lab()
         conf_to_set = {
             AaaConsts.SECRET: self.secret,
             AaaConsts.PORT: self.port,
             AaaConsts.TIMEOUT: self.timeout,
             AaaConsts.AUTH_TYPE: self.auth_type,
+            AaaConsts.RETRANSMIT: self.retransmit,
         }
         hostname_resource_obj = System().aaa.radius.server.server_id[self.hostname]
         self._configure(engines, hostname_resource_obj, conf_to_set, set_explicit_priority, apply, dut_engine)

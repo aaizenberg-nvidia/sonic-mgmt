@@ -6,6 +6,8 @@ from typing import List
 
 from infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
+from ngts.tests_nvos.general.security.security_test_tools.constants import AaaServerLocation
+
 DEFAULT_ACCOUNTING_FILE_PATH = '/var/log/tac.acct'
 
 
@@ -55,7 +57,10 @@ class AaaServerManager:
     def __init__(self, ip: str, server_docker_name: str = '') -> None:
         self.ip = ip
         self.server_docker_name: str = server_docker_name
-        self.server_engine = LinuxSshEngine(ip, os.getenv('TEST_SERVER_USER'), os.getenv('TEST_SERVER_PASSWORD'))
+        # The host running the AAA docker containers differs per lab, so the SSH
+        # login differs too (Yokneam -> TEST_SERVER_*, Mevo Carmel -> VM_*).
+        user_env, password_env = AaaServerLocation.host_ssh_creds_env_for_address(ip)
+        self.server_engine = LinuxSshEngine(ip, os.getenv(user_env), os.getenv(password_env))
 
     def __assert_ip(self):
         assert self.ip, 'Tried to make operation with manager of empty ip!'
