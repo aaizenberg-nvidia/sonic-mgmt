@@ -119,11 +119,29 @@ def generate_tpm_attestation(
     if not mail_recipient:
         mail_recipient = DEFAULT_MAIL_RECIPIENT
 
+    def get_job_type_from_setup(setup_name: str) -> str:
+        """
+        Returns the job type based on the setup name.
+
+        Args:
+            setup_name: Name of the setup.
+
+        Returns:
+            str: "JULIET" if 'juliet' is in the setup name (case-insensitive), else "ROSALIND".
+        """
+        if "juliet" in setup_name.lower():
+            return "JULIET"
+        return "ROSALIND"
+
+    job_type = get_job_type_from_setup(setup_name)
+
     switch_address = get_switch_address_from_setup(setup_name)
     jenkins_client = client or JenkinsTool(project_job_path=TPM_PROJECT_JOB_PATH)
     params = {
         "SWITCH_ADDRESS": switch_address,
         "MAIL_RECIPIENT": mail_recipient,
+        "JOB_TYPE": job_type,
+
     }
 
     logger.info("Triggering Jenkins job '%s' for setup '%s' switch '%s'", TPM_JOB_NAME, setup_name, switch_address)
