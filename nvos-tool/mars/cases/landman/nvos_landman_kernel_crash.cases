@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> NVOS </group>
+      <name> Landman Kernel Crash </name>
+      <info> Landman row 27 — repeated kernel crash / kdump retention </info>
+      <owner> Tahera Banu </owner>
+    </Test>
+    <Case>
+      <tags> landman Checklist bios firmware </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> test_repeated_kernel_crash_core_dump_retention </name>
+    <info> Landman row 27 — repeated sysrq kernel panics, kdump capture, SSD bounds, tech-support </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/test_kernel_crash.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_repeated_kernel_crash_core_dump_retention --log-level=INFO --fw_versions_json_file=[[conf:extra_info.fw_versions_json_file]] --clean-alluredir  --disable_loganalyzer --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 5400   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

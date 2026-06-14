@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> NVOS </group>
+      <name> Landman Fatal FW Dumps </name>
+      <info> Landman — repeated FW fatal sai-dfw dump rotation and cleanup </info>
+      <owner> Tahera Banu </owner>
+    </Test>
+    <Case>
+      <tags> landman system </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> test_repeated_fatal_fw_dumps_rotation_and_cleanup </name>
+    <info> Repeated FW fatal cycles: sai-dfw dump rotation, retention, tech-support, recovery </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/multi_asic/test_fatal_mode.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_repeated_fatal_fw_dumps_rotation_and_cleanup --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --disable_loganalyzer --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 2700   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>
