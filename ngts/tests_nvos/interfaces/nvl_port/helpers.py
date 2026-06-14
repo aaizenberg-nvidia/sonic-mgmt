@@ -13,9 +13,9 @@ from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 from ngts.tools.test_utils.allure_utils import step as allure_step
-from ngts.nvos_tools.ib.InterfaceConfiguration import nvos_consts as ib_consts
+from ngts.nvos_tools.ib.InterfaceConfiguration import nvos_consts as nv_consts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
-from ngts.ngts_types import DevicesT, EnginesT
+from ngts.ngts_types import DevicesT, EnginesT, LinkDiagnosticT
 from ngts.nvos_constants.constants_nvos import NvosConst
 from ngts.nvos_tools.infra.IbnetdiscoverTool import IbnetdiscoverTool
 from ngts.tools.test_utils import allure_utils as allure
@@ -35,11 +35,11 @@ def toggle_port_state(selected_port, port_state, test_name, devices):
     selected_port.interface.link.state.set(
         op_param_name=port_state, apply=True, ask_for_confirmation=True,
     ).verify_result()
-    is_acp_up = selected_port.name.startswith('acp') and port_state == ib_consts.NvosConsts.LINK_STATE_UP
-    operation = ib_consts.InternalNvosConsts.ACP_PORT_GOES_UP if is_acp_up else f'port goes {port_state}'
+    is_acp_up = selected_port.name.startswith('acp') and port_state == nv_consts.NvosConsts.LINK_STATE_UP
+    operation = nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP if is_acp_up else f'port goes {port_state}'
     timeout_kwargs = {}
     if is_acp_up:
-        acp_timeout = devices.dut.expected_operation_durations.get(ib_consts.InternalNvosConsts.ACP_PORT_GOES_UP)
+        acp_timeout = devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP)
         if acp_timeout:
             timeout_kwargs = {'timeout': acp_timeout}
     with allure_step(f"Wait till port {selected_port} is {port_state}"):
@@ -52,7 +52,7 @@ def toggle_port_state(selected_port, port_state, test_name, devices):
         OperationTime.verify_operation_time(duration, operation, devices).verify_result()
 
 
-def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, state=ib_consts.NvosConsts.LINK_STATE_UP):
+def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP):
     port_requirements = PortRequirements()
     port_requirements.set_port_speed(speed)
     port_requirements.set_port_state(state)
@@ -61,7 +61,7 @@ def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, sta
     ValidationTool.validate_subset_in_superset(expected_ports, actual_ports).verify_result()
 
 
-def validate_ports_state(expected_ports: list, prefix: str, state=ib_consts.NvosConsts.LINK_STATE_UP):
+def validate_ports_state(expected_ports: list, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP):
     port_requirements = PortRequirements()
     port_requirements.set_port_state(state)
     actual_ports = [port.name for port in Port.get_list_of_ports(port_requirements_object=port_requirements) if port.name.startswith(prefix)]
@@ -117,15 +117,26 @@ def skip_if_fec_measure_not_supported(devices: DevicesT) -> None:
     pytest.skip("fec-measure-mode is not supported on this device (requires QTM4/NVL6 Rosalind)")
 
 
-EXPECTED_LINK_DIAGNOSTIC_STATUS = {'0': {'status': 'No issue was observed'}}
+def verify_link_diagnostic(
+    ports: list[Port],
+    expected_link_diagnostic_status: LinkDiagnosticT = nv_consts.IbInterfaceConsts.LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT,
+    additional_link_diagnostic_status: LinkDiagnosticT | list[LinkDiagnosticT] | None = None,
+) -> None:
+    expected_link_diagnostic_status: LinkDiagnosticT = expected_link_diagnostic_status.copy()
+    if additional_link_diagnostic_status:
+        if isinstance(additional_link_diagnostic_status, dict):
+            additional_link_diagnostic_status = [additional_link_diagnostic_status]
+        for additional in additional_link_diagnostic_status:
+            expected_link_diagnostic_status.update(additional)
 
-
-def verify_link_diagnostic(ports: list[Port]) -> None:
     for port in ports:
         port_diagnostics = port.interface.link.diagnostics.parse_show()
-        assert port_diagnostics == EXPECTED_LINK_DIAGNOSTIC_STATUS, (
+        assert all(
+            expected_link_diagnostic_status.get(code) == status
+            for code, status in port_diagnostics.items()
+        ), (
             f"Port {port.name} diagnostics value is {port_diagnostics} "
-            f"- expected {EXPECTED_LINK_DIAGNOSTIC_STATUS}"
+            f"- expected one of {expected_link_diagnostic_status}"
         )
 
 

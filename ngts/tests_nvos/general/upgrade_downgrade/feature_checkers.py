@@ -66,7 +66,7 @@ from ngts.nvos_tools.Devices import IbDevice
 from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CrlValidator import ClientConfig, RevokeConfig
 from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurationTool
-from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as ib_consts
+from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as nv_consts
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.infra.FWComponentsTool import FWComponentsTool
@@ -1379,7 +1379,7 @@ def _check_link_training(engines: EnginesT, devices: DevicesT, **kwargs) -> Gene
                 ).verify_result()
             interface_helpers.wait_and_verify_link(
                 [Port.Port(fae.port.name) for fae in fae_objs_tuple],
-                timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+                timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
             )
 
         random_fail_action = random.choice(consts_nv.LinkTrainingConsts.FecMeasureFailAction.operational())
@@ -1393,7 +1393,7 @@ def _check_link_training(engines: EnginesT, devices: DevicesT, **kwargs) -> Gene
                 ).verify_result()
             interface_helpers.wait_and_verify_link(
                 [Port.Port(fae.port.name) for fae in fae_objs_tuple],
-                timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+                timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
             )
 
         expected_after_set: OperationalAppliedT = {

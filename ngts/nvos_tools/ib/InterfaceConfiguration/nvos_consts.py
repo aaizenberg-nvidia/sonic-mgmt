@@ -1,5 +1,7 @@
 from enum import Enum
 
+from ngts.ngts_types import LinkDiagnosticT
+
 
 class InternalNvosConsts:
     # Output dictionary
@@ -74,11 +76,12 @@ class IbInterfaceConsts:
     LINK_AUTO_NEG_ON = 'enabled'
     LINK_AUTO_NEG_OFF = 'disabled'
     LINK_DIAGNOSTICS = "diagnostics"
-    LINK_DIAGNOSTICS_UNPLUGGED_PORT = {'1024': {'status': 'Cable is unplugged'}}
-    LINK_DIAGNOSTICS_CLOSED_BY_COMMAND_PORT = {'1': {'status': 'Closed by command'}}
-    LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT = {'0': {'status': 'No issue was observed'}}
-    LINK_DIAGNOSTICS_NEGOTIATION_FAILURE_PORT = {'2': {'status': 'Negotiation failure'}}
-    LINK_DIAGNOSTICS_SIGNAL_NOT_DETECTED = {'57': {'status': 'signal not detected'}}
+    LINK_DIAGNOSTICS_UNPLUGGED_PORT: LinkDiagnosticT = {'1024': {'status': 'Cable is unplugged'}}
+    LINK_DIAGNOSTICS_CLOSED_BY_COMMAND_PORT: LinkDiagnosticT = {'1': {'status': 'Closed by command'}}
+    LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT: LinkDiagnosticT = {'0': {'status': 'No issue was observed'}}
+    LINK_DIAGNOSTICS_NEGOTIATION_FAILURE_PORT: LinkDiagnosticT = {'2': {'status': 'Negotiation failure'}}
+    LINK_DIAGNOSTICS_SIGNAL_NOT_DETECTED: LinkDiagnosticT = {'57': {'status': 'signal not detected'}}
+    LINK_DIAGNOSTICS_LOW_BER: LinkDiagnosticT = {'70': {'status': 'Other issues'}}
     LINK_BREAKOUT = "breakout"
     LINK_STATS_LINK_DOWNED = "carrier-down-count"
     LINK_IB_SPEED = "ib-speed"

@@ -8,6 +8,7 @@ import logging
 from retry.api import retry_call
 
 from ngts.constants.constants import GnmiConsts
+from ngts.ngts_types import LinkDiagnosticT
 from ngts.nvos_constants.constants_nvos import (
     ApiType,
     LinkTrainingConsts,
@@ -360,8 +361,16 @@ def _extract_link_up_ms(raw_value):
     return int(digits)
 
 
-def _verify_time_to_link_up(port, expected_max_seconds):
-    interface_helpers.wait_and_verify_link([port], timeout=expected_max_seconds)
+def _verify_time_to_link_up(
+    port,
+    expected_max_seconds,
+    additional_expected_link_diagnostic_status: LinkDiagnosticT | list[LinkDiagnosticT] | None = None,
+):
+    interface_helpers.wait_and_verify_link(
+        [port],
+        timeout=expected_max_seconds,
+        additional_expected_link_diagnostic_status=additional_expected_link_diagnostic_status,
+    )
     output_dictionary = Tools.OutputParsingTool.parse_show_interface_link_output_to_dictionary(
         port.interface.link.show()).get_returned_value()
     actual_ms = _extract_link_up_ms(output_dictionary[IbInterfaceConsts.LINK_TO_LINK_UP])
@@ -432,7 +441,11 @@ def test_time_to_link_up(devices, test_api, register_cleanup):
             op_param_name=LinkTrainingConsts.FORCE_MAX_ITERATIONS,
             op_param_value=LinkTrainingConsts.ForceMaxIterations.ENABLED.value,
             apply=True, ask_for_confirmation=True).verify_result()
-        _verify_time_to_link_up(selected_port, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
+        _verify_time_to_link_up(
+            selected_port,
+            InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+            additional_expected_link_diagnostic_status=IbInterfaceConsts.LINK_DIAGNOSTICS_LOW_BER,
+        )
 
 
 @pytest.mark.interface
