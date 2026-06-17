@@ -120,6 +120,24 @@
     </ignore>
   </case>
 
+  <case>
+    <name> BMC factory default </name>
+    <info> </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_factory_default.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -m \"bmc and not cumulus_only\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+    <ignore>
+      <condition>
+        <key>dut_type</key>
+        <op> not in </op>
+        <value>[juliet, rosalind, rosalind-surrogate, rosalind-chipless, portia]</value>
+      </condition>
+    </ignore>
+  </case>
+
     <case>
         <name> bmc serial output </name>
         <info></info>

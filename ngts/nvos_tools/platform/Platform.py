@@ -12,6 +12,7 @@ from ngts.nvos_tools.platform.PowerCapping import PowerCapping
 from ngts.nvos_tools.system.Firmware import Firmware
 from ngts.nvos_tools.system.Transceiver import Transceiver
 from ngts.nvos_tools.platform.PSRedundancy import PSRedundancy
+from ngts.nvos_tools.platform.BmcFactoryDefault import BmcFactoryDefault
 from ngts.nvos_tools.platform.Bmc_password import Bmc_password
 
 logger = logging.getLogger()
@@ -30,6 +31,7 @@ class Platform(BaseComponent):
         self.transceiver = Transceiver(self)
         self.chassis_location = BaseComponent(self, path='/chassis-location')
         self.bmc_password = Bmc_password(self)
+        self.bmc_factory_default = BmcFactoryDefault(self)
         self.cable_cartridge = CableCartridge(self)
         self.power_capping = PowerCapping(self)
         self.boot_policy = BaseComponent(self, path='/boot-policy')
