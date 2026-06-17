@@ -17,7 +17,7 @@ sys.path.append(str(sonic_mgmt_path))
 from ngts.constants.constants import CliType, DbConstants, InfraConst  # noqa: E402
 from ngts.nvos_constants.constants_nvos import TopologyConsts  # noqa: E402
 from ngts.scripts.pbi import la_helpers, parser_helpers, database_helpers  # noqa: E402
-from ngts.scripts.pbi.models import Args, LABug, Summary, TestResult  # noqa: E402
+from ngts.scripts.pbi.models import Args, TestRuntime, Summary, TestResult  # noqa: E402
 from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL  # noqa: E402
 
 logger = logging.getLogger(Path(__file__).stem if __name__ == "__main__" else __name__)
@@ -49,7 +49,7 @@ def _parse_args() -> Args:
 
 
 @retry.retry(Exception, tries=3, delay=3)
-def insert_data_to_pbi_db(args: Args, parsed_results: list[TestResult], summary: Summary, loganalyzer_bugs_summary: list[LABug]) -> None:
+def insert_data_to_pbi_db(args: Args, parsed_results: list[TestResult], summary: Summary, test_runtimes: list[TestRuntime]) -> None:
     if not args.target_version:
         return
 
@@ -66,8 +66,11 @@ def insert_data_to_pbi_db(args: Args, parsed_results: list[TestResult], summary:
         logger.info("Insert results to regression_matrix DB")
         database_helpers.insert_regression_matrix_data_to_pbi_db(args, mssql_connection_obj, summary)
 
-        logger.info("Insert results to loganalyzer_bug DB")
-        database_helpers.insert_loganalyzer_bugs_data_to_pbi_db(args, mssql_connection_obj, loganalyzer_bugs_summary)
+        logger.info("Insert results to tests_runtime DB")
+        database_helpers.insert_test_runtime_data_to_pbi_db(args, mssql_connection_obj, test_runtimes)
+
+        logger.info("Insert results to loganalyzer_bugs DB")
+        database_helpers.insert_loganalyzer_bugs_data_to_pbi_db(args, mssql_connection_obj, test_runtimes)
 
     finally:
         if mssql_connection_obj:
@@ -92,10 +95,10 @@ def summarize_results_and_upload(report_url: str, args: Args) -> None:
         logger.info("Summarize run's results:")
         summary = Summary.summarize_test_run(parsed_results, report_url)
 
-        logger.info("Parse loganalyzer bugs:")
-        loganalyzer_bugs_summary = la_helpers.parse_loganalyzer_bugs(parsed_results, base_url)
+        logger.info("Parse tests runtime:")
+        test_runtimes = la_helpers.parse_test_runtimes(parsed_results, base_url)
 
-        insert_data_to_pbi_db(args, parsed_results, summary, loganalyzer_bugs_summary)
+        insert_data_to_pbi_db(args, parsed_results, summary, test_runtimes)
     except Exception as e:
         logger.error(f"Failed with the following issue: {e}")
         logger.exception(e)
