@@ -515,6 +515,19 @@ class ValidationTool:
         )
 
     @staticmethod
+    def validate_set_disjoint(forbidden: Iterable, actual: Iterable, should_be_disjoint=True) -> ResultObj:
+        """Checks that none of `forbidden` appears in `actual` (the two sets are disjoint)."""
+        forbidden = set(forbidden)
+        actual = set(actual)
+        present = forbidden & actual
+        is_disjoint = not present
+        return ResultObj(
+            (is_disjoint == should_be_disjoint),
+            f"Unexpectedly present elements:\n{sorted(present)}\n\nIn set:\n{sorted(actual)}"
+            if present else "None of the forbidden elements are present."
+        )
+
+    @staticmethod
     def validate_output_of_show(actual: Dict, expected: Dict, should_be_valid=True, allow_extra_fields=False) -> ResultObj:
         with allure.step(f"Verify output is {'valid' if should_be_valid else 'invalid'}"):
             with allure.step(f"Testing keys: {expected.keys()}"):

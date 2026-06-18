@@ -125,6 +125,14 @@ class MultiPlanarTool:
         return result
 
     @staticmethod
+    def enumerate_plane_ports(aport_name: str, num_planes: int) -> List[Port]:
+        """Return the plane-port ``Port`` objects for ``aport_name`` (planes 1..num_planes)."""
+        if num_planes < 1:
+            raise ValueError(f"num_planes must be >= 1; got {num_planes}")
+        aport = Port(aport_name)
+        return [aport.get_plane_port(plane_index) for plane_index in range(1, num_planes + 1)]
+
+    @staticmethod
     def select_random_port_and_plane(device, setup_name) -> Tuple[Port, Port, Port]:
         with allure.step("Select a random aggregated port (connected in loop back to another port)"):
             selected_fae_aggregated_port = MultiPlanarTool.select_random_aggregated_port(device, setup_name)

@@ -222,10 +222,12 @@ class OutputParsingTool:
             return ResultObj(True, "", output_dictionary)
 
     @staticmethod
-    def parse_show_all_interfaces_output_to_dictionary(output_json):
+    def parse_show_all_interfaces_output_to_dictionary(output_json, require_non_empty=False):
         """
          Creates a dictionary according to provided JSON output of "show interface"
          :param output_json: json output
+         :param require_non_empty: when True, fail on empty stdout or an empty
+             parsed interface map (avoids masking a failed `nv show interface`).
          :return: a dictionary
 
          Example:
@@ -245,6 +247,13 @@ class OutputParsingTool:
 
          """
         with allure.step('Create a dictionary according to provided JSON output of "show interface" command'):
+            if require_non_empty and (not output_json or not str(output_json).strip()):
+                return ResultObj(
+                    False,
+                    "NVUE 'show interface' returned empty output - treating as a failure "
+                    "rather than 'no interfaces' (would mask a failed query).",
+                    {},
+                )
             output_dictionary = json.loads(output_json)
             dictionary_to_return = {}
 
@@ -287,6 +296,13 @@ class OutputParsingTool:
                         IbInterfaceConsts.DESCRIPTION in output_dictionary[port_name].keys():
                     dictionary_to_return[port_name][IbInterfaceConsts.DESCRIPTION] = \
                         output_dictionary[port_name][IbInterfaceConsts.DESCRIPTION]
+
+            if require_non_empty and not dictionary_to_return:
+                return ResultObj(
+                    False,
+                    f"NVUE 'show interface' parsed to an empty interface map from: {output_json!r}",
+                    dictionary_to_return,
+                )
 
             return ResultObj(True, "", dictionary_to_return)
 

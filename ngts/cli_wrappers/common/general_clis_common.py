@@ -109,6 +109,29 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
             logger.error(f"✗ Container {container_name} is NOT running - Error: {e}")
             raise Exception(f"Container {container_name} is not running")
 
+    def get_container_restart_counts(self, container_names):
+        """Return {container: RestartCount} for each named container."""
+        # RestartCount catches a crash-and-recover bounce that the `docker ps`
+        # Status string ("Up <short time>" again) hides.
+        counts = {}
+        for name in container_names:
+            out = self.engine.run_cmd(
+                f"docker inspect {name} --format '{{{{.RestartCount}}}}'",
+                validate=True,
+            )
+            text = (out or "").strip()
+            if not text.lstrip("-").isdigit():
+                raise ValueError(
+                    f"docker inspect {name} returned non-numeric RestartCount: {out!r}"
+                )
+            counts[name] = int(text)
+        missing = set(container_names) - set(counts)
+        if missing:
+            raise ValueError(
+                f"docker inspect omitted monitored containers: {sorted(missing)!r}"
+            )
+        return counts
+
     def hostname(self, flags=''):
         return self.engine.run_cmd(f'hostname {flags}')
 

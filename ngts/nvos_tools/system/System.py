@@ -87,6 +87,7 @@ class System(BaseComponent):
         self.web_server_api = WebServerAPI(self)
         self.api = Api(self)
         self.ptp = BaseComponent(self, path='/ptp')
+        self.plane_port = BaseComponent(self, path='/plane-port')
         self.lldp = Lldp(self)
         self.disk = Disk(self)
         self.memory = BaseComponent(self, path='/memory')
