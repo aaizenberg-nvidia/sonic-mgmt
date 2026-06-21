@@ -91,6 +91,30 @@ class GnmiClient:
         return self._run_gnmic_op(subscribe_op, skip_cert_verify, cacert, debug_mode, cmd_time, username, password,
                                   keep_session_alive, wait_till_done)
 
+    def gnmic_subscribe_multi_path(self, prefix, paths, mode: str = GnmiMode.STREAM, flat: bool = False,
+                                   sample_interval=None, username='', password='', skip_cert_verify: bool = False,
+                                   cacert='', debug_mode: bool = True, cmd_time=None,
+                                   keep_session_alive: bool = False, wait_till_done: bool = False) -> Tuple[
+            str, str, int, subprocess.Popen]:
+        """
+        Subscribe to several `--path` entries under one `--prefix` in a single gnmic invocation.
+
+        When `sample_interval` is set (e.g. '1s'), a STREAM subscription is requested in SAMPLE
+        stream-mode so the server emits a fresh result-set every interval rather than one snapshot.
+        Defaults to `--format json` (set `flat=True` for `--format flat`).
+        """
+        assert paths, 'paths list cannot be empty'
+        allowed_modes = GnmiMode.ALL_MODES if not keep_session_alive else [GnmiMode.STREAM, GnmiMode.POLL]
+        assert mode in allowed_modes, f'unsupported gnmi subscribe mode: "{mode}"'
+        mode_flag = f"--mode {mode}" if mode != GnmiMode.STREAM else GnmiMode.STREAM
+        sample_flags = f" --stream-mode sample --sample-interval {sample_interval}" if sample_interval else ''
+        path_flags = " ".join(f"--path '{path}'" for path in paths)
+        format_flag = ' --format flat' if flat else ' --format json'
+        subscribe_op = (f"subscribe --prefix '{prefix}' {path_flags} --target nvos {mode_flag}" +
+                        sample_flags + format_flag)
+        return self._run_gnmic_op(subscribe_op, skip_cert_verify, cacert, debug_mode, cmd_time, username, password,
+                                  keep_session_alive, wait_till_done)
+
     def gnmic_subscribe_interface(self, mode: str, interface_name: str, username: str = '', password: str = '',
                                   skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
                                   cmd_time=None, wait_till_done: bool = False, interface_path: str = None) -> Tuple[str, str]:

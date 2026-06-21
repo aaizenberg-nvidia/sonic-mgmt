@@ -25,6 +25,7 @@ from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode
+from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable
 from ngts.constants.constants import GnmiConsts
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.SerialConsoleTool import SerialConsoleTool
@@ -582,14 +583,6 @@ def open_gnmi_sessions(dut, username, password, num_sessions, verify_tools_first
     Returns:
         list[subprocess.Popen]: List of live gnmic processes representing open sessions.
     """
-    def _is_gnmi_unavailable(err: str) -> bool:
-        e = (err or "").lower()
-        return (
-            "connection refused" in e or
-            "transport: error while dialing" in e or
-            ("rpc error" in e and "unavailable" in e)
-        )
-
     processes = []
     gnmi_client = GnmiClient(
         dut.ip,

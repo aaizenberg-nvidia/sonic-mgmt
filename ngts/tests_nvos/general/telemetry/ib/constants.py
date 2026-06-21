@@ -40,6 +40,8 @@ class GnmiYangPaths:
     INFINIBAND_STATE = f"{INTERFACE_BY_NAME}/infiniband/state"
     INFINIBAND_COUNTERS_PORT = f"{INFINIBAND_STATE}/counters/port"
 
+    PHY_LINK_DOWN_INFO = f"{INTERFACE_BY_NAME}/phy/link-down-information/state"
+
 
 class NvuePaths:
     """NVUE CLI / OpenAPI surface for the plane-port feature knob (HLD section 6.4)."""
@@ -67,6 +69,12 @@ PLANE_PORT_TOGGLE_CYCLES = 5
 # Settle time (seconds) after toggling the plane-port knob before reading gNMI
 # state; the gNMI server takes a moment to pick up the new config.
 PLANE_PORT_TOGGLE_SETTLE_SEC = 8
+
+# Post-reboot gNMI readiness: nv-gnmi can still be starting (~5s) right after a
+# reboot, so the reboot-persistence test waits (bounded, ~120s) for the server to
+# accept a Capabilities request before running the optional gNMI cross-check.
+GNMI_REBOOT_READY_TRIES = 24
+GNMI_REBOOT_READY_DELAY_SEC = 5
 
 
 class BerFields:
@@ -113,8 +121,6 @@ class SystemDbCli:
     COUNTERS_PORT_NAME_MAP = "COUNTERS_PORT_NAME_MAP"
     COUNTERS_KEY_PREFIX = "COUNTERS:"
     COUNTERS_OID_KEY_FMT = f"{COUNTERS_KEY_PREFIX}{{oid}}"
-    # grep token for plane-port COUNTERS keys when listing via keys \\* | grep.
-    COUNTERS_PLANE_PORT_KEY_GREP = "pl"
 
 
 # Default fields whose presence we check in every per-plane Redis row (section 6.1).
@@ -202,6 +208,23 @@ class CounterMgrdRule:
 
 # Concatenation delimiter mirrors countermgrd VALUE_DELIMITER ("/").
 CONCAT_DELIMITER = "/"
+
+
+# ---------------------------------------------------------------------------
+# Plane-port lifecycle / link-down (test plan section 9.1, 10.1, 10.2, 10.4)
+# ---------------------------------------------------------------------------
+
+# Link / physical state leaves read from the flat gNMI interface subtree during
+# admin-down / peer-loss recovery checks (test plan section 10.1 / section 10.2).
+LINK_STATE_RECOVERY_LEAVES = ("oper-status", "physical-port-state", "physical-state")
+# Physical-state leaf with its build-dependent fallback name (preferred first).
+PHYSICAL_STATE_LEAVES = ("physical-port-state", "physical-state")
+
+# Link-down reason codes (PRM PUDE table). The reason STRINGS are reused from
+# CODE_TO_DESCRIPTION in test_ib_interface_phy_detail.py (Rowaida R7) rather than
+# duplicated here, so this stays a thin code -> shared-lookup indirection.
+LINK_DOWN_CODE_ADMIN_DISABLE = 22   # CODE_TO_DESCRIPTION: "Down_by_management_command"
+LINK_DOWN_CODE_CABLE_UNPLUGGED = 23  # CODE_TO_DESCRIPTION: "Cable_was_unplugged"
 
 
 # Baseline directory + files for the section 7.1 backward-compat snapshot.

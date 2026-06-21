@@ -15,11 +15,11 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.tests_nvos.platform.constants import TransceiversConsts
 from ngts.tests_nvos.platform.test_platform_transceiver import (
-    _is_gnmi_unavailable,
     validate_gnmi_transceiver_physical_channel_fields,
 )
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
+from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()

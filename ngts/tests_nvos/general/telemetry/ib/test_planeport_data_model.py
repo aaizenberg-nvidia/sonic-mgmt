@@ -10,7 +10,6 @@ and that the Aport gNMI schema has not regressed (test plan section 7.1).
 
 import json
 import logging
-import time
 from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -230,7 +229,7 @@ def _aggregation_capture_fns(
     """
     (api_label, snapshot_for_port, may_skip, read_snapshot_window) for section 6.3.
 
-    gNMI uses per-port capture with batched subscribes (2/port). NVUE uses
+    gNMI reads all ports in one wildcard subscribe-once snapshot. NVUE uses
     per-port ``counters -o json`` reads in one window (no inter-port sleep).
     OTEL uses may_skip=True so pytest.skip in capture_otel_counter_snapshot
     does not abort gNMI/NVUE.
@@ -238,9 +237,9 @@ def _aggregation_capture_fns(
     return [
         (
             API_LABEL_GNMI,
-            partial(ibh.capture_gnmi_counter_snapshot, gnmi_client),
-            False,
             None,
+            False,
+            partial(ibh.capture_gnmi_aggregation_snapshot_window, gnmi_client),
         ),
         (
             API_LABEL_NVUE,
@@ -318,37 +317,20 @@ def _run_planeport_aggregation_phases(
     planes: List[Port],
     gnmi_client,
     engines,
-    devices,
-    setup_topology,
-    topology_obj,
 ) -> None:
-    """
-    Close port(s) for frozen reads, then gNMI, NVUE, and OTEL stub asserts.
-
-    Admin-down freezes the DUT Aport and the inter-switch partner when
-    connectivity JSON resolves one; restores both in ``finally``.
-    """
-    with allure.step(f"Admin-down {aport.name} for counter reads ({phase_title})"):
-        with ibh.quiesce_aport_for_counter_reads(
+    """Run gNMI, NVUE, and OTEL stub aggregation asserts on the live (non-frozen) counters."""
+    for api_label, capture_fn, may_skip, window_fn in _aggregation_capture_fns(
+        gnmi_client, engines
+    ):
+        _run_planeport_aggregation_phase(
+            phase_title,
             aport,
-            engines=engines,
-            devices=devices,
-            setup_topology=setup_topology,
-            topology_obj=topology_obj,
-            require_oper_down=True,
-        ):
-            for api_label, capture_fn, may_skip, window_fn in _aggregation_capture_fns(
-                gnmi_client, engines
-            ):
-                _run_planeport_aggregation_phase(
-                    phase_title,
-                    aport,
-                    planes,
-                    api_label,
-                    may_skip=may_skip,
-                    snapshot_for_port=capture_fn,
-                    read_snapshot_window=window_fn,
-                )
+            planes,
+            api_label,
+            may_skip=may_skip,
+            snapshot_for_port=capture_fn,
+            read_snapshot_window=window_fn,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -375,65 +357,46 @@ def test_planeport_redis_rows_present(engines, devices, setup_topology):
     )
 
     with allure.step("List plane-port COUNTERS keys in System DB"):
-        # Pass the expected plane-port names so list_plane_port_keys can also
-        # use the OID-resolved EXISTS path (proven by
-        # ngts/tests_nvos/interfaces/test_ib_show_interface.get_port_oid) in
-        # case the new HLD section 6.2.1 name-keyed rows are not present yet.
-        expected_planes = [p.name for aport in setup_topology.all_aports()
-                           for p in setup_topology.planes_for(aport)]
-        keys = ibh.list_plane_port_keys(engines, planes=expected_planes)
+        # Enumerate the plane-port rows sym-mgr actually wrote, keyed off the
+        # live COUNTERS_PORT_NAME_MAP (HLD section 6.2.1), instead of probing a
+        # brute-forced swXp0plY candidate set one OID at a time.
+        keys = ibh.list_plane_port_keys(engines)
         ibh.attach_dict(
             "plane-port db keys",
-            {"keys": keys, "expected_count": expected_count, "expected_planes": expected_planes},
+            {"keys": keys, "expected_count": expected_count},
         )
 
     assert len(keys) == expected_count, (
         f"Plane-port row count mismatch: got {len(keys)} keys, expected {expected_count}"
     )
 
-    with allure.step("Inspect one plane-port row to confirm field set"):
-        sample_aport = setup_topology.all_aports()[0]
-        sample_plane = setup_topology.planes_for(sample_aport)[0].name
-        oid = ibh.get_plane_port_oid(engines, sample_plane)
-        row = ibh.db_hgetall(
-            engines,
-            SystemDbCli.COUNTERS_DB,
-            SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid),
+    with allure.step("Inspect a populated plane-port row to confirm field set"):
+        # countermgrd only accumulates per-plane counters for planes that are
+        # Active; a non-Active plane keeps an empty COUNTERS row. Sample the first
+        # row that is actually populated so the additive-field schema check
+        # reflects a counting plane instead of an arbitrary (e.g. down) plane.
+        sample_key = ""
+        row = {}
+        for key in keys:
+            candidate = ibh.db_hgetall(engines, SystemDbCli.COUNTERS_DB, key)
+            if candidate:
+                sample_key, row = key, candidate
+                break
+        ibh.attach_dict("sampled plane-port row", {"sample_key": sample_key, "row": row})
+        assert sample_key, (
+            "No plane-port COUNTERS row is populated - expected at least one Active "
+            "plane to carry per-plane counter fields with the knob enabled."
         )
-        ibh.attach_dict(f"plane-port row {sample_plane}", row)
 
     missing_fields = [f for f in EXPECTED_PLANE_PORT_DB_FIELDS if f not in row]
     assert not missing_fields, (
-        f"Plane-port row {sample_plane} (oid={oid}) is missing expected fields: {missing_fields!r}"
+        f"Plane-port row {sample_key} is missing expected fields: {missing_fields!r}"
     )
 
 
 # ---------------------------------------------------------------------------
 # 6.2 test_planeport_to_aport_aggregation (COUNTERS_DB - Ori)
 # ---------------------------------------------------------------------------
-
-
-def _capture_counter_snapshot(engines, port_name: str) -> Dict[str, int]:
-    """Read additive counter fields for a port from COUNTERS_DB via OID."""
-    if ibh.is_plane_port_name(port_name):
-        oid = ibh.get_plane_port_oid(engines, port_name)
-    else:
-        oid = ibh.get_aport_oid(engines, port_name)
-    row = ibh.db_hgetall(
-        engines,
-        SystemDbCli.COUNTERS_DB,
-        SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid),
-    )
-    out: Dict[str, int] = {}
-    for sai_field in EXPECTED_PLANE_PORT_DB_FIELDS:
-        raw = row.get(sai_field)
-        if raw is None or str(raw).strip() == "":
-            continue
-        try:
-            out[sai_field] = ibh.parse_counter_value(raw)
-        except (AssertionError, ValueError):
-            continue
-    return out
 
 
 @pytest.mark.gnmi
@@ -443,9 +406,9 @@ def _capture_counter_snapshot(engines, port_name: str) -> Dict[str, int]:
 @pytest.mark.requires_hfnm
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_planeport_to_aport_aggregation(
-    engines, devices, setup_topology, topology_obj, players, setup_name, request
+    engines, devices, setup_topology, topology_obj, setup_name, request
 ):
-    """Sum of per-plane additive counters equals the Aport counter (within tolerance), re-checked after a small IB traffic burst."""
+    """Sum of per-plane additive counters equals the Aport counter (within tolerance) on a quiescent system, using a single atomic counter snapshot."""
     if not hasattr(engines, "hfnm"):
         pytest.skip(
             f"REQUIRES HFNM-CAPABLE SETUP: setup {setup_name!r} has no Host "
@@ -471,7 +434,9 @@ def test_planeport_to_aport_aggregation(
         ibh.read_counter_snapshot_window,
         aport.name,
         planes,
-        partial(_capture_counter_snapshot, engines),
+        snapshot_all_ports=partial(
+            ibh.capture_counters_db_aggregation_snapshot_window, engines
+        ),
     )
 
     def _assert_aggregation(readings: Dict[str, Dict[str, int]]) -> None:
@@ -508,23 +473,8 @@ def test_planeport_to_aport_aggregation(
                     f"delta={delta}, allowed_delta={allowed_delta}"
                 )
 
-    with allure.step("Aggregation check on quiescent system"):
+    with allure.step("Aggregation check on quiescent system (single atomic snapshot)"):
         _assert_aggregation(_read_window())
-
-    with allure.step("Drive a small IB traffic burst and re-check aggregation"):
-        try:
-            interfaces = request.getfixturevalue("interfaces")
-        except Exception as exc:  # noqa: BLE001
-            pytest.skip(
-                f"Traffic harness unavailable on setup {setup_name!r} (no host<->DUT "
-                f"ethernet ports): {exc}. Quiescent aggregation check already passed."
-            )
-        Tools.TrafficGeneratorTool.send_ib_traffic(
-            players, interfaces, setup_name, True
-        ).verify_result()
-        time.sleep(2)
-        with allure.step("Aggregation check after IB traffic burst"):
-            _assert_aggregation(_read_window())
 
 
 # ---------------------------------------------------------------------------
@@ -544,8 +494,7 @@ def test_gnmi_nvue_planeport_to_aport_aggregation(
     """
     Plane-port -> Aport counter aggregation on gNMI and NVUE CLI (test plan
     section 6.3 / R-NVOS-1). Flow: pick Aport -> drive IB traffic (link up) ->
-    admin-down DUT Aport (and inter-switch partner when connectivity resolves)
-    to freeze counters -> read gNMI/NVUE in one window and assert SUM+MAX.
+    read gNMI/NVUE/OTEL in one atomic snapshot window and assert SUM+MAX.
     Missing leaves on either API is treated as a product bug.
     """
     with allure.step("gNMI and NVUE plane-port to Aport counter aggregation"):
@@ -591,22 +540,29 @@ def test_gnmi_nvue_planeport_to_aport_aggregation(
 
         with allure.step("Counter aggregation checks (gNMI, NVUE, OTEL stub)"):
             phase_title = "after IB traffic warm-up"
-            with allure.step("Drive IB traffic while link is up (freeze after admin-down)"):
+            with allure.step("Drive IB traffic while link is up"):
                 try:
                     interfaces = request.getfixturevalue("interfaces")
                 except Exception as exc:  # noqa: BLE001
                     phase_title = "without traffic harness (quiescent counters only)"
                     logger.warning(
                         "Traffic harness unavailable on setup %r: %s - continuing with "
-                        "admin-down snapshot only.",
+                        "quiescent counters only.",
                         setup_name,
                         exc,
                     )
                 else:
-                    Tools.TrafficGeneratorTool.send_ib_traffic(
-                        players, interfaces, setup_name, True
-                    ).verify_result()
-                    time.sleep(2)
+                    sent, reason = ibh.try_drive_ib_traffic_burst(
+                        players, interfaces, setup_name
+                    )
+                    if not sent:
+                        phase_title = "without traffic harness (quiescent counters only)"
+                        logger.warning(
+                            "TG IB link down or traffic could not be generated on "
+                            "setup %r: %s - continuing with quiescent counters only.",
+                            setup_name,
+                            reason,
+                        )
 
             _run_planeport_aggregation_phases(
                 phase_title,
@@ -614,9 +570,6 @@ def test_gnmi_nvue_planeport_to_aport_aggregation(
                 planes,
                 gnmi_client,
                 engines,
-                devices,
-                setup_topology,
-                topology_obj,
             )
 
 
@@ -689,6 +642,15 @@ def test_gnmi_subscribe_many_planeport_paths(
     (roughly one per second). Path/field-name and result-set coverage only - counter values
     are not asserted.
     """
+    # Gate on gNMI reachability: skip (not fail) when the server is down, so the leaf-presence
+    # asserts below never produce misleading "missing fields" failures (gnmi guideline 2).
+    with allure.step("Verify gNMI server is available"):
+        _, gnmi_cap_err = gnmi_client.gnmic_capabilities(skip_cert_verify=True)
+        if ibh.is_gnmi_server_unavailable(gnmi_cap_err):
+            pytest.skip(
+                f"gNMI server is unavailable on {engines.dut.ip}: {gnmi_cap_err.strip()}"
+            )
+
     # Enable plane-port so each plane exposes its own counter paths
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
 

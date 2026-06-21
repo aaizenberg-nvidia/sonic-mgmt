@@ -15,6 +15,7 @@ This conftest grows one fixture at a time as each plane-port test passes review.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -58,9 +59,17 @@ class Topology:
         """All IB Aport names present in the connectivity JSON."""
         return ibh.filter_aport_names(list(self._connectivity.keys()))
 
+    def all_planarized_ports(self) -> List[str]:
+        """Ports that get per-plane COUNTERS rows: IB Aports + the FNM fabric port."""
+        names = list(self._connectivity.keys())
+        return ibh.filter_aport_names(names) + ibh.filter_fabric_port_names(names)
+
     def expected_plane_count(self) -> int:
-        """Total number of plane-ports across all Aports on the DUT."""
-        return len(self.all_aports()) * self.num_of_plane_ports
+        """Total number of plane-port rows across all planarized ports on the DUT."""
+        # sym-mgr writes a COUNTERS row per plane of every planarized port,
+        # including the FNM fabric port (fnm1pl1..N), so the FNM port is counted
+        # alongside the IB Aports rather than dropped as a non-Aport name.
+        return len(self.all_planarized_ports()) * self.num_of_plane_ports
 
     def inter_switch_partner(
         self, dut_aport_name: str, dut_hostname: str
@@ -69,6 +78,44 @@ class Topology:
         return PlanePortConnectivity.find_inter_switch_partner(
             self._connectivity, self.fabric_description, dut_aport_name, dut_hostname
         )
+
+    def loopback_partner(self, aport_name: str) -> Optional[str]:
+        """Same-switch loopback peer port (live NVUE name) for `aport_name`, or None.
+
+        `aport_name` may be either the live NVUE name (``sw122p1``) or the
+        ibdiagnet aggregated label (``sw122p0``); both resolve to the same entry.
+        """
+        body = self._connectivity.get(aport_name)
+        if body is None:
+            # Accept a live NVUE name by mapping back to the ibdiagnet label.
+            body = self._connectivity.get(re.sub(r"p1$", "p0", aport_name))
+        if not isinstance(body, dict) or not body.get("loopback"):
+            return None
+        peer = str(body.get("connected_to") or "").strip()
+        return ibh.connectivity_label_to_nvue(peer) if peer else None
+
+    def link_up_loopback_aports(self) -> List[Tuple[str, str]]:
+        """`(aport, loopback_peer)` pairs (live NVUE names) for loopback links that
+        are physically up and expose the full plane set (both ends live on this DUT).
+
+        Connectivity keys are ibdiagnet aggregated labels (``sw122p0``); they are
+        mapped to NVUE interface names (``sw122p1``) before being returned.
+        """
+        pairs: List[Tuple[str, str]] = []
+        for name, body in self._connectivity.items():
+            if not isinstance(body, dict) or not body.get("loopback"):
+                continue
+            peer = str(body.get("connected_to") or "").strip()
+            if not peer:
+                continue
+            if "LINK UP" not in str(body.get("physical_state") or "").upper():
+                continue
+            if len(body.get("planes") or {}) < self.num_of_plane_ports:
+                continue
+            pairs.append(
+                (ibh.connectivity_label_to_nvue(name), ibh.connectivity_label_to_nvue(peer))
+            )
+        return pairs
 
 
 # ============================================================================

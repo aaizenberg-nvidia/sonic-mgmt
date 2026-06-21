@@ -68,6 +68,12 @@ def _assert_some_plane_ports(api: str, iface_types: Dict[str, str]) -> None:
     ).verify_result()
 
 
+def _present_plane_port_names(api: str, iface_types: Dict[str, str]) -> List[str]:
+    """Names from the listing whose type is the plane-port type for `api`."""
+    plane_type = ibh.expected_type_leaf(api, is_plane=True).lower()
+    return [name for name, t in iface_types.items() if str(t).strip().lower() == plane_type]
+
+
 def _select_link_up_aport(devices, setup_topology) -> Port:
     """Pick a link-up aggregated port (Aport) that has plane-ports."""
     # Fail (not skip) with an explicit message when no Active Aport exists - the IB
@@ -105,7 +111,23 @@ def test_planeport_state_default_disabled(engines, gnmi_client, api):
     On a fresh DUT the plane-port knob must be disabled and the API must not
     expose any interface with `type` = plane-port.
     """
-    with allure.step("Show plane-port knob state"):
+    with allure.step("Read the observed plane-port knob state before normalizing"):
+        # Capture (and attach) the raw state on entry so a genuine default
+        # regression is still visible in the log/allure report even though we
+        # normalize below to stay robust against state leaked from prior tests.
+        observed_state = ibh.get_plane_port_state(engines)
+        ibh.attach_dict("plane-port show (observed on entry)", {"state": observed_state})
+        if observed_state != PlanePortState.DISABLED:
+            logger.warning(
+                "plane-port knob was %r (not the default 'disabled') on entry - likely "
+                "leaked from a prior test; normalizing to default before assertion",
+                observed_state,
+            )
+
+    with allure.step("Normalize to default by unsetting the plane-port knob"):
+        ibh.unset_plane_port_state(engines, apply=True)
+
+    with allure.step("Default plane-port knob state must be 'disabled'"):
         state = ibh.get_plane_port_state(engines)
         ibh.attach_dict("plane-port show", {"state": state})
         assert state == PlanePortState.DISABLED, (
@@ -124,12 +146,13 @@ def test_planeport_state_default_disabled(engines, gnmi_client, api):
 # ---------------------------------------------------------------------------
 
 
-def _enable_and_assert_visible(api: str, engines, gnmi_client) -> None:
+def _enable_and_assert_visible(api: str, engines, gnmi_client) -> Dict[str, str]:
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
     state = ibh.get_plane_port_state(engines)
     assert state == PlanePortState.ENABLED, f"state after enable should be 'enabled'; got {state!r}"
     iface_types = ibh.list_interfaces_via_api(api, engines, gnmi_client)
     _assert_some_plane_ports(api, iface_types)
+    return iface_types
 
 
 def _disable_and_assert_hidden(api: str, engines, gnmi_client) -> None:
@@ -157,13 +180,24 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
     restart_before = general_cli.get_container_restart_counts(_RESTART_MONITORED_CONTAINERS)
 
     with allure.step(f"Enable plane-port and verify visibility via {api}"):
-        _enable_and_assert_visible(api, engines, gnmi_client)
+        iface_types = _enable_and_assert_visible(api, engines, gnmi_client)
 
     with allure.step("Show one plane-port to confirm the instance is addressable"):
         aport = _select_link_up_aport(devices, setup_topology)
         plane_ports = setup_topology.planes_for(aport.name)
         assert plane_ports, f"No plane-ports enumerated for {aport.name} (num_of_plane_ports=0?)"
-        first_plane = plane_ports[0]
+        # The enumerated plane names are synthesized (`f"{aport}pl{i}"`); only
+        # those that are actually addressable in the enabled listing can be
+        # shown, so pick the first enumerated plane that is present rather than
+        # blindly trusting plane_ports[0].
+        present_planes = set(_present_plane_port_names(api, iface_types))
+        first_plane = next((p for p in plane_ports if p.name in present_planes), None)
+        assert first_plane is not None, (
+            f"None of the planes enumerated for {aport.name} are present in the "
+            f"enabled {api} listing.\n"
+            f"  enumerated: {[p.name for p in plane_ports]!r}\n"
+            f"  available plane-ports (first 20): {sorted(present_planes)[:20]!r}"
+        )
         if api == API_GNMIC:
             payload = ibh.gnmi_get_interface_subtree(gnmi_client, first_plane.name)
             assert payload, f"gnmic returned no leaves for plane-port {first_plane.name}"

@@ -331,35 +331,35 @@ def run_concurrent_multi_path_stream_subscribers(
     username = username or devices.dut.default_username
     password = password or devices.dut.default_password
 
-    base_cmd = _compose_multi_path_subscribe_cmd(
-        target_ip, prefix, paths, target_port, GnmiMode.STREAM, username, password,
-        sample_interval=sample_interval)
+    # Drive gnmic through GnmiClient (default CmdRunner runs gnmic locally on the test runner,
+    # where it is installed) instead of hand-rolled gnmic strings on engines.sonic_mgmt. One
+    # client is built once and reused for every subscriber (rule 1: verify_tools_installed=False).
+    client = GnmiClient(target_ip, target_port, username, password,
+                        cmd_time=window_sec, verify_tools_installed=False)
 
-    out_files = [f"/tmp/gnmi_multipath_sub_{i}.out" for i in range(num_subscribers)]
-    cleanup = "rm -f /tmp/gnmi_multipath_sub_*.out"
+    # Start all subscribers first (keep_session_alive=True returns immediately without blocking),
+    # so the N STREAM subscriptions are alive simultaneously for the whole window - true concurrency.
+    sessions = []
+    with allure.step(f"start {num_subscribers} concurrent multi-path STREAM subscribers"):
+        for _ in range(num_subscribers):
+            _, _, _, proc = client.gnmic_subscribe_multi_path(
+                prefix=prefix, paths=paths, mode=GnmiMode.STREAM, sample_interval=sample_interval,
+                skip_cert_verify=True, keep_session_alive=True, wait_till_done=False)
+            sessions.append(proc)
 
-    # Launch all subscribers as concurrent background jobs, each writing to its own file.
-    # Each self-terminates after window_sec via `timeout -s INT`; `wait` blocks until all
-    # have flushed their output files.
-    launch_parts = [f"{cleanup} ;"]
-    for out_file in out_files:
-        launch_parts.append(f"timeout -s INT {window_sec}s {base_cmd} > {out_file} 2>&1 &")
-    launch_parts.append("wait")
-    launch_script = " ".join(launch_parts)
+    with allure.step(f"let {num_subscribers} subscribers stream for {window_sec}s"):
+        time.sleep(window_sec)
 
-    sonic_mgmt_engine = engines.sonic_mgmt
-    with allure.step(f"run {num_subscribers} concurrent multi-path STREAM subscribers for {window_sec}s"):
-        sonic_mgmt_engine.run_cmd(launch_script)
-
-    # Read each subscriber's output file on its own so the per-subscriber outputs are never
-    # merged, then check for any gnmic failure and parse its notifications.
+    # Stop each subscriber explicitly (rule 6) and parse its own output, so the per-subscriber
+    # notifications are never merged. is_gnmi_failure scans both streams (rule 3).
     per_subscriber = []
-    for out_file in out_files:
-        chunk = Tools.FilesTool.read_file_content(sonic_mgmt_engine, out_file, use_sudo=False).verify_result()
-        assert not is_gnmi_failure(chunk), f"gnmic subscriber output {out_file} reported a failure:\n{chunk}"
-        per_subscriber.append(_extract_json_objects_from_gnmic_output(chunk))
+    with allure.step("stop subscribers and parse each one's notifications"):
+        for idx, proc in enumerate(sessions):
+            out, err = client.close_session_and_get_out_and_err(proc)
+            assert not is_gnmi_failure(err) and not is_gnmi_failure(out), (
+                f"gnmic subscriber {idx} reported a failure:\n  stderr: {err}\n  stdout: {out}")
+            per_subscriber.append(_extract_json_objects_from_gnmic_output(out))
 
-    sonic_mgmt_engine.run_cmd(cleanup)
     return per_subscriber
 
 
@@ -995,6 +995,16 @@ def get_gnmic_engine(engines):
     when no sonic-mgmt engine is available, so tests still run in topologies without one.
     """
     return getattr(engines, 'sonic_mgmt', None)
+
+
+def _is_gnmi_unavailable(err: str) -> bool:
+    """True when the DUT gNMI server is down/unreachable (skip the test, do not false-pass)."""
+    e = (err or "").lower()
+    return (
+        "connection refused" in e or
+        "transport: error while dialing" in e or
+        ("rpc error" in e and "unavailable" in e)
+    )
 
 
 def is_gnmi_failure(err):

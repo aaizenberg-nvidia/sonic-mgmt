@@ -21,20 +21,11 @@ from ngts.tests_nvos.interfaces.test_ib_interface_configuration import wait_for_
 from ngts.tests_nvos.platform.helpers import _pre_port_config, _post_port_config
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiConstants, GnmicErr
-from ngts.tests_nvos.system.gnmi.helpers import is_gnmi_failure, verify_msg_not_in_out_or_err
+from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable, is_gnmi_failure, verify_msg_not_in_out_or_err
 from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_path
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
-
-
-def _is_gnmi_unavailable(err: str) -> bool:
-    e = (err or "").lower()
-    return (
-        "connection refused" in e or
-        "transport: error while dialing" in e or
-        ("rpc error" in e and "unavailable" in e)
-    )
 
 
 MODULE_STATUS_DICT = {"Inserted": {"N/A", "Power budget exceeded", "Long range for non - Mellanox cable or module",

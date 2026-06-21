@@ -26,6 +26,13 @@ class DatabaseTool:
         return engine.run_cmd(cmd)
 
     @staticmethod
+    def redis_cli_eval(engine, db_num, script, keys):
+        keys_str = " ".join(f'"{key}"' for key in keys)
+        cmd = f'redis-cli -n {db_num} EVAL "{script}" {len(keys)} {keys_str}'
+        logging.info(f'Running {cmd}')
+        return engine.run_cmd(cmd)
+
+    @staticmethod
     def sonic_db_cli_hset(engine, asic, db_name, db_config, param, value, force=False):
         asic = f"-n {asic} " if asic else ""
         if not force:

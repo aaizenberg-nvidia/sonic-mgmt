@@ -26,10 +26,12 @@ import pytest
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.constants.constants import GnmiConsts
 from ngts.helpers.object_filters import filter_objects
-from ngts.nvos_constants.constants_nvos import DatabaseConst
+from ngts.nvos_constants.constants_nvos import DatabaseConst, UfmMadConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
+from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.RegisterTool import RegisterTool
 from ngts.nvos_tools.infra.RegressionConfigurations import PlanePortConnectivity
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
@@ -37,6 +39,7 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import (
+    _is_gnmi_unavailable,
     get_infiniband_name_from_port_name,
     get_port_oid_from_infiniband_port,
     is_gnmi_failure,
@@ -55,6 +58,9 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     COUNTERMGRD_SUM_COUNTERS,
     CONCAT_DELIMITER,
     CounterMgrdRule,
+    EXPECTED_PLANE_PORT_DB_FIELDS,
+    GNMI_REBOOT_READY_DELAY_SEC,
+    GNMI_REBOOT_READY_TRIES,
     GnmiYangPaths,
     IfaceType,
     NvuePaths,
@@ -238,6 +244,14 @@ def parse_counter_value(raw: str) -> int:
 def nvue_show_interface_json(engines, name: str) -> Dict:
     """Return `nv show interface <name>` as a dict via the framework wrapper."""
     raw = Port.show_interface(dut_engine=engines.dut, port_names=name)
+    # Empty output means the command produced nothing (e.g. the interface is not
+    # currently shown); surface that with the interface name instead of letting
+    # the JSON parser raise a context-free "Expecting value" error.
+    if not raw or not raw.strip():
+        raise AssertionError(
+            f"NVUE 'nv show interface {name}' returned empty output - the interface "
+            "is not currently shown (hidden/absent), not a parseable JSON payload."
+        )
     return OutputParsingTool.parse_json_str_to_dictionary(raw).get_returned_value()
 
 
@@ -326,6 +340,19 @@ def is_plane_port_name(name: str) -> bool:
     return bool(re.search(r"pl\d+$", name))
 
 
+def connectivity_label_to_nvue(label: str) -> str:
+    """Map an ibdiagnet aggregated label to its live NVUE interface name.
+
+    ibdiagnet enumerates a switch cage's IB port from 0 (e.g. ``sw122p0``)
+    while NVUE labels the same port as port 1 (``sw122p1``); the aport number
+    is identical. Convert a trailing ``p0`` to ``p1`` for switch labels; HCA
+    labels (``ibB...``) and already-``p1`` labels are returned unchanged.
+    """
+    if not label or not label.startswith("sw"):
+        return label
+    return re.sub(r"p0$", "p1", label)
+
+
 def filter_aport_names(names: List[str]) -> List[str]:
     """Return only IB Aport names (sw...p..., excluding plane-ports and mgmt)."""
     out = []
@@ -335,6 +362,25 @@ def filter_aport_names(names: List[str]) -> List[str]:
         if is_plane_port_name(n):
             continue
         if not re.match(r"^sw[A-Za-z]?\d+p\d+$", n):
+            continue
+        out.append(n)
+    return out
+
+
+def filter_fabric_port_names(names: List[str]) -> List[str]:
+    """Return planarized FNM fabric-manager port names (e.g. ``fnm1``).
+
+    Only the primary fabric-node-manager port (``fnm<N>``) is split into
+    ``fnm<N>plK`` plane-port rows in COUNTERS_DB; per-ASIC fabric ports
+    (``fnmaXpY``) and plane-ports themselves are excluded.
+    """
+    out = []
+    for n in names:
+        if not n:
+            continue
+        if is_plane_port_name(n):
+            continue
+        if not re.match(r"^fnm\d+$", n, re.IGNORECASE):
             continue
         out.append(n)
     return out
@@ -375,12 +421,37 @@ def resolve_engine_for_hostname(topology_obj, engines, hostname_hint: str) -> Op
 
 def is_gnmi_server_unavailable(err: Optional[str]) -> bool:
     """True when the DUT gNMI server is down/unreachable (skip, do not false-pass)."""
-    e = (err or "").lower()
-    return (
-        "connection refused" in e or
-        "transport: error while dialing" in e or
-        ("rpc error" in e and "unavailable" in e)
-    )
+    return _is_gnmi_unavailable(err)
+
+
+def wait_for_gnmi_reachable(
+    gnmi_client: GnmiClient,
+    tries: int = GNMI_REBOOT_READY_TRIES,
+    delay: int = GNMI_REBOOT_READY_DELAY_SEC,
+) -> bool:
+    """Wait (bounded) for the DUT gNMI server to accept a Capabilities request.
+
+    nv-gnmi can still be starting right after a reboot, so this polls gnmic
+    Capabilities via the shared ``ValidationTool.retry_until_valid`` retry loop.
+    Returns True once the server is reachable (Capabilities succeeded, or failed
+    with a non-"server down" error that the caller's own gNMI check will surface),
+    or False if it stayed unavailable for the whole window.
+    """
+    def _probe() -> None:
+        _, err = gnmi_client.gnmic_capabilities(skip_cert_verify=True)
+        if is_gnmi_server_unavailable(err):
+            raise AssertionError(f"gNMI server still unavailable: {(err or '').strip()}")
+
+    try:
+        Tools.ValidationTool.retry_until_valid(
+            _probe,
+            tries=tries,
+            delay=delay,
+            description=f"Wait up to ~{tries * delay}s for gNMI to be reachable",
+        )
+        return True
+    except Exception:  # noqa: BLE001 - exhausted wait means still unavailable
+        return False
 
 
 # ============================================================================
@@ -443,6 +514,69 @@ def capture_gnmi_counter_snapshot(
     max_payload = gnmi_get_flat(client, prefix=max_prefix, path="")
     out.update(_sai_snapshot_from_gnmi_max_payload(max_payload))
     return out
+
+
+_GNMI_IFACE_NAME_RE = re.compile(r"interface\[name=([^\]]+)\]")
+
+
+def _parse_gnmi_flat_per_interface(out: str, path_contains: str) -> Dict[str, Dict[str, str]]:
+    """Parse a wildcard flat subscribe into {interface_name: {leaf: value}}."""
+    per_port: Dict[str, Dict[str, str]] = {}
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line or ": " not in line:
+            continue
+        path, _, value = line.partition(": ")
+        if path_contains not in path:
+            continue
+        match = _GNMI_IFACE_NAME_RE.search(path)
+        if not match:
+            continue
+        name = match.group(1)
+        leaf = path.split("/")[-1]
+        per_port.setdefault(name, {})[leaf] = value
+    return per_port
+
+
+def capture_gnmi_aggregation_snapshot_window(
+    client: GnmiClient,
+    aport_name: str,
+    plane_ports: List[Port],
+    sai_fields: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, int]]:
+    """
+    Read Aport + plane-port counters in one wildcard ``subscribe --mode once``.
+
+    A single snapshot over ``interface[name=*]`` keeps every port on the same
+    sampling instant, then the Aport + plane names are filtered out (section 6.3).
+    """
+    fields = sai_fields if sai_fields is not None else COUNTERMGRD_SUM_COUNTERS
+    port_names = [aport_name] + [p.name for p in plane_ports]
+    wildcard = GnmiYangPaths.INTERFACE_BY_NAME.format(name="*")
+    sum_path = f"{wildcard}/state/counters"
+    max_path = f"{wildcard}/infiniband/state/counters/port"
+    with allure.step(
+        f"Read gNMI counters for {aport_name} + {len(plane_ports)} plane-port(s) "
+        "in one subscribe-once snapshot"
+    ):
+        out, err, _, _ = client.gnmic_subscribe_multi_path(
+            prefix="",
+            paths=[sum_path, max_path],
+            mode=GnmiMode.ONCE,
+            flat=True,
+            skip_cert_verify=True,
+            wait_till_done=True,
+        )
+        verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, out, err)
+        _assert_gnmi_ok(out, err, f"wildcard counter subscribe for {aport_name!r}")
+        sum_per_port = _parse_gnmi_flat_per_interface(out, "]/state/counters/")
+        max_per_port = _parse_gnmi_flat_per_interface(out, "/infiniband/state/counters/port/")
+        readings: Dict[str, Dict[str, int]] = {}
+        for name in port_names:
+            snap = _sai_snapshot_from_gnmi_sum_payload(sum_per_port.get(name, {}), fields)
+            snap.update(_sai_snapshot_from_gnmi_max_payload(max_per_port.get(name, {})))
+            readings[name] = snap
+        return readings
 
 
 def _nvue_fetch_interface_counters_json(engines, name: str) -> Dict:
@@ -528,14 +662,25 @@ def capture_otel_counter_snapshot(
 def read_counter_snapshot_window(
     aport_name: str,
     plane_ports: List[Port],
-    snapshot_for_port: Callable[[str], Dict[str, int]],
+    snapshot_for_port: Optional[Callable[[str], Dict[str, int]]] = None,
     inter_plane_sleep_sec: float = 0.1,
+    snapshot_all_ports: Optional[
+        Callable[[str, List[Port]], Dict[str, Dict[str, int]]]
+    ] = None,
 ) -> Dict[str, Dict[str, int]]:
     """
     Read Aport and each plane-port within one sampling window.
 
-    ``snapshot_for_port`` is typically ``functools.partial(capture_*_snapshot, ...)``.
+    ``snapshot_all_ports`` captures every port in one consistent snapshot
+    (Redis EVAL / wildcard gNMI subscribe-once) so all counters share the same
+    sampling instant. When omitted, ``snapshot_for_port`` is read per port -
+    typically ``functools.partial(capture_*_snapshot, ...)``.
     """
+    if snapshot_all_ports is not None:
+        return snapshot_all_ports(aport_name, plane_ports)
+    assert snapshot_for_port is not None, (
+        "read_counter_snapshot_window requires snapshot_for_port or snapshot_all_ports"
+    )
     readings: Dict[str, Dict[str, int]] = {
         aport_name: snapshot_for_port(aport_name),
     }
@@ -735,6 +880,81 @@ def quiesce_aport_for_counter_reads(
                 logger.warning("admin-up restore failed for %s: %s", aport.name, exc)
 
 
+@contextmanager
+def quiesce_aport_via_loopback_partner(
+    aport: Port,
+    peer_port_name: str,
+    engines,
+    require_oper_down: bool = True,
+) -> Generator[None, None, None]:
+    """Admin-down a loopback Aport *and* its same-switch peer so the IB link
+    truly goes operationally down, then restore both ends in ``finally``.
+
+    An IB link only drops operationally when *both* ends are admin-disabled.
+    On a single-switch loopback bench there is no inter-switch dut2/dut3
+    partner, so the "other end" of `aport` is `peer_port_name` on the same
+    DUT. Both ends are driven through ``engines.dut``.
+    """
+    with allure.step(f"Admin-down loopback Aport {aport.name} + peer {peer_port_name}"):
+        aport.interface.link.state.set(
+            op_param_name=NvosConsts.LINK_STATE_DOWN, apply=True, ask_for_confirmation=True
+        ).verify_result()
+        _set_link_state_on_engine(engines.dut, peer_port_name, NvosConsts.LINK_STATE_DOWN)
+        _wait_for_admin_down_quiesce(
+            aport,
+            require_oper_down=require_oper_down,
+            tries=_QUIESCE_PARTNER_DOWN_OPER_TRIES,
+            partner_port=peer_port_name,
+            partner_quiesce_attempted=True,
+        )
+    with allure.step(f"Wait {COUNTER_SNAPSHOT_SETTLE_SEC}s for state to settle on {aport.name}"):
+        time.sleep(COUNTER_SNAPSHOT_SETTLE_SEC)
+    try:
+        yield
+    finally:
+        with allure.step(f"Admin-up loopback peer {peer_port_name} (restore)"):
+            try:
+                _set_link_state_on_engine(engines.dut, peer_port_name, NvosConsts.LINK_STATE_UP)
+                _wait_for_link_oper_on_engine(
+                    engines.dut, peer_port_name, NvosConsts.LINK_STATE_UP,
+                    tries=_QUIESCE_PARTNER_DOWN_OPER_TRIES,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("loopback peer admin-up restore failed for %s: %s", peer_port_name, exc)
+        with allure.step(f"Admin-up Aport {aport.name} (restore)"):
+            try:
+                aport.interface.link.state.set(
+                    op_param_name=NvosConsts.LINK_STATE_UP, apply=True, ask_for_confirmation=True
+                ).verify_result()
+                Port.wait_for_port_state(aport, NvosConsts.LINK_STATE_UP)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("loopback Aport admin-up restore failed for %s: %s", aport.name, exc)
+
+
+def try_drive_ib_traffic_burst(
+    players,
+    interfaces,
+    setup_name,
+    settle_sec: int = 2,
+) -> Tuple[bool, str]:
+    """
+    Drive a small IB traffic burst, returning ``(True, "")`` on success or
+    ``(False, reason)`` when the TG IB link is down / traffic could not be
+    generated. The failed ResultObj is consumed so it does not surface as a
+    teardown failure, letting callers fall back to quiescent counters.
+    """
+    result = Tools.TrafficGeneratorTool.send_ib_traffic(
+        players, interfaces, setup_name, True
+    )
+    if not result.result:
+        reason = result.info
+        result.ignore_result()
+        return False, reason
+    result.ignore_result()
+    time.sleep(settle_sec)
+    return True, ""
+
+
 # ============================================================================
 # DB lookups (Aport / plane-port OID resolution, row hgetall)
 # ============================================================================
@@ -744,6 +964,41 @@ def get_aport_oid(engines, port_name: str) -> str:
     """Resolve an Aport's COUNTERS_DB OID via the existing system/gnmi helpers."""
     ib_name = get_infiniband_name_from_port_name(engines.dut, port_name)
     return get_port_oid_from_infiniband_port(engines.dut, ib_name)
+
+
+# Memoized ``plan-ports`` map of an Aport, keyed by (engine, Aport). The no-arg
+# bulk ``nv show fae interface`` only exposes link+type, so plan-ports/key detail
+# must come from the per-Aport ``nv show fae interface <aport>`` form. Caching per
+# Aport keeps it at one show per active Aport, never one per plane.
+_FAE_APORT_PLAN_PORTS_CACHE: Dict[Tuple[int, str], Dict[str, dict]] = {}
+
+
+def _fae_aport_plan_ports(engine, aport_name: str) -> Dict[str, dict]:
+    """
+    Return one Aport's ``plan-ports`` map from ``nv show fae interface <aport>``,
+    memoized per (engine, Aport).
+
+    ``Port.show_interface`` returns the raw JSON string (no error-keyword
+    ResultObj), and the single parser ResultObj is consumed here, so a missing
+    Aport yields an empty map without leaking a failed ResultObj into the
+    teardown verifier.
+    """
+    cache_key = (id(engine), aport_name)
+    cached = _FAE_APORT_PLAN_PORTS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    raw = Port.show_interface(fae_param="fae", port_names=aport_name, dut_engine=engine)
+    res = OutputParsingTool.parse_show_interface_output_to_dictionary(raw)
+    if not res.result:
+        res.ignore_result()
+        plan_ports: Dict[str, dict] = {}
+    else:
+        parsed = res.get_returned_value()
+        plan_ports = parsed.get("plan-ports", {}) if isinstance(parsed, dict) else {}
+        if not isinstance(plan_ports, dict):
+            plan_ports = {}
+    _FAE_APORT_PLAN_PORTS_CACHE[cache_key] = plan_ports
+    return plan_ports
 
 
 def get_plane_port_oid(engines, plane_port_name: str) -> str:
@@ -789,17 +1044,18 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # Fallback: FAE-based path used today by test_ib_show_interface.get_port_oid.
-    fae = Fae(port_name=aport_name)
-    output_dict = OutputParsingTool.parse_show_interface_output_to_dictionary(
-        fae.interface.show()
-    ).get_returned_value()
-    plane_entry = output_dict.get("plan-ports", {}).get(aport_name + plane_suffix, {})
-    port_key_with_suffix = plane_entry.get("key", "")
+    # Fallback: resolve via the FAE plan-ports "key" from the per-Aport
+    # `nv show fae interface <aport>` form (the no-arg bulk lacks plan-ports),
+    # cached per Aport so a multi-plane caller hits one show per Aport, not per
+    # plane. A miss is just "not in the map" - no failed ResultObj leaking to
+    # teardown.
+    plan_ports = _fae_aport_plan_ports(engines.dut, aport_name)
+    plane_entry = plan_ports.get(plane_port_name, {})
+    port_key_with_suffix = plane_entry.get("key", "") if isinstance(plane_entry, dict) else ""
     if not port_key_with_suffix:
         raise AssertionError(
             f"No FAE plan-ports key for {plane_port_name}; "
-            f"got keys={list(output_dict.get('plan-ports', {}).keys())}"
+            f"Aport {aport_name!r} plan-ports keys={list(plan_ports.keys())}"
         )
     # FAE's 'key' carries a 3-char tail we strip; the trimmed value is the
     # IB-internal port name fed into COUNTERS_PORT_NAME_MAP.
@@ -815,44 +1071,29 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     return (output or "").replace('"', "").strip()
 
 
-def list_plane_port_keys(engines, planes: Optional[List[str]] = None) -> List[str]:
+def list_plane_port_keys(engines) -> List[str]:
     """
-    Return COUNTERS_DB keys for plane-ports, deduplicated.
+    Return the COUNTERS_DB keys of the plane-port rows, deduplicated.
 
-    Two paths are unioned: the name-keyed ``keys "COUNTERS:*pl*"`` grep, and (when
-    ``planes`` is supplied) an OID-resolved EXISTS check per known plane-port.
+    Plane-port rows are enumerated from the live ``COUNTERS_PORT_NAME_MAP`` (every
+    entry whose port name carries a ``plN`` suffix), so the count reflects the
+    rows sym-mgr actually wrote rather than a brute-forced ``swXp0plY`` candidate
+    set probed one OID at a time.
     """
-    keys: List[str] = []
-
-    out = Tools.DatabaseTool.sonic_db_cli_get_keys(
-        engine=engines.dut, asic="",
-        db_name=SystemDbCli.COUNTERS_DB,
-        grep_str=SystemDbCli.COUNTERS_PLANE_PORT_KEY_GREP,
+    name_map = db_hgetall(
+        engines, SystemDbCli.COUNTERS_DB, SystemDbCli.COUNTERS_PORT_NAME_MAP
     )
-    keys.extend(line.strip() for line in (out or "").splitlines() if line.strip())
-
-    if planes:
-        for plane_name in planes:
-            try:
-                oid = get_plane_port_oid(engines, plane_name)
-            except AssertionError:
-                continue
-            if not oid:
-                continue
-            full_key = SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid)
-            exists = engines.dut.run_cmd(
-                f'sonic-db-cli {SystemDbCli.COUNTERS_DB} exists "{full_key}"'
-            )
-            if (exists or "").strip() == "1":
-                keys.append(full_key)
-
-    seen = set()
-    uniq: List[str] = []
-    for k in keys:
-        if k not in seen:
-            seen.add(k)
-            uniq.append(k)
-    return uniq
+    keys: List[str] = []
+    for port_name, oid in name_map.items():
+        if not is_plane_port_name(port_name):
+            continue
+        oid = (oid or "").replace('"', "").strip()
+        if not oid.startswith("oid:"):
+            continue
+        full_key = SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid)
+        if full_key not in keys:
+            keys.append(full_key)
+    return keys
 
 
 def db_hgetall(engines, db_name: str, key: str) -> Dict[str, str]:
@@ -889,6 +1130,92 @@ def db_hgetall(engines, db_name: str, key: str) -> Dict[str, str]:
     for i in range(0, len(lines) - 1, 2):
         out[lines[i].strip().strip('"')] = lines[i + 1].strip().strip('"')
     return out
+
+
+def _sai_snapshot_from_db_row(
+    row: Dict[str, str],
+    sai_fields: Optional[List[str]] = None,
+) -> Dict[str, int]:
+    """Map a COUNTERS_DB hash row to {SAI_PORT_STAT_*: int}."""
+    fields = sai_fields if sai_fields is not None else EXPECTED_PLANE_PORT_DB_FIELDS
+    out: Dict[str, int] = {}
+    for sai_field in fields:
+        raw = row.get(sai_field)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            out[sai_field] = parse_counter_value(raw)
+        except (AssertionError, ValueError):
+            continue
+    return out
+
+
+def _resolve_counter_oid(engines, port_name: str) -> str:
+    """Resolve a port's ``oid:0x...`` COUNTERS_DB key suffix from the name maps."""
+    if is_plane_port_name(port_name):
+        oid = get_plane_port_oid(engines, port_name)
+    else:
+        oid = get_aport_oid(engines, port_name)
+    oid = (oid or "").replace('"', "").strip()
+    assert oid.startswith("oid:"), (
+        f"Could not resolve COUNTERS_DB OID for {port_name!r}: got {oid!r}"
+    )
+    return oid
+
+
+# Atomic multi-hash read: one EVAL returns every COUNTERS row at a single
+# instant as tab-joined "key\tfield\tvalue..." records, one per line.
+_DB_SNAPSHOT_LUA = (
+    "local r={} for i=1,#KEYS do "
+    "local h=redis.call('HGETALL',KEYS[i]) r[i]=KEYS[i] "
+    "for j=1,#h do r[i]=r[i]..'\\t'..h[j] end end "
+    "return table.concat(r,'\\n')"
+)
+
+
+def capture_counters_db_aggregation_snapshot_window(
+    engines,
+    aport_name: str,
+    plane_ports: List[Port],
+    sai_fields: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, int]]:
+    """
+    Read Aport + plane-port COUNTERS_DB rows in one atomic Redis EVAL snapshot.
+
+    OIDs resolve first from the static name maps (no counter skew), then every
+    ``COUNTERS:oid:*`` row is read in a single round-trip so all counters share
+    the same sampling instant (section 6.2).
+    """
+    port_names = [aport_name] + [p.name for p in plane_ports]
+    with allure.step(
+        f"Read COUNTERS_DB rows for {aport_name} + {len(plane_ports)} plane-port(s) "
+        "in one Redis snapshot"
+    ):
+        key_to_port: Dict[str, str] = {}
+        for port_name in port_names:
+            oid = _resolve_counter_oid(engines, port_name)
+            key_to_port[SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid)] = port_name
+        raw = Tools.DatabaseTool.redis_cli_eval(
+            engine=engines.dut,
+            db_num=DatabaseConst.COUNTERS_DB_ID,
+            script=_DB_SNAPSHOT_LUA,
+            keys=list(key_to_port.keys()),
+        )
+        readings: Dict[str, Dict[str, int]] = {name: {} for name in port_names}
+        for line in (raw or "").splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            key = parts[0].strip().strip('"')
+            port_name = key_to_port.get(key)
+            if port_name is None:
+                continue
+            row: Dict[str, str] = {}
+            fields = parts[1:]
+            for i in range(0, len(fields) - 1, 2):
+                row[fields[i]] = fields[i + 1]
+            readings[port_name] = _sai_snapshot_from_db_row(row, sai_fields)
+        return readings
 
 
 # ============================================================================
@@ -1058,3 +1385,139 @@ def aggregation_allowed_delta(expected: float) -> float:
 def values_within_aggregation_tolerance(measured: float, expected: float) -> bool:
     """Tight SUM aggregation check: Aport vs sum(plane-ports)."""
     return abs(measured - expected) <= aggregation_allowed_delta(expected)
+
+
+# ============================================================================
+# Peer link-loss simulation (test plan section 10.2 / section 10.4)
+# ============================================================================
+
+
+def resolve_module_handle(engines, devices, port: Port) -> Tuple[str, str]:
+    """Resolve (mst_dev_name, module_index) for a Port for simulate_*_module_event.
+
+    ``module_index`` follows the rule used by test_platform_transceiver: the
+    front-panel label number (1-based) minus 1, taken modulo the per-ASIC
+    ``module_offset`` when the device defines one. The label number comes from
+    ``Port.parse_port_name`` (robust for ``swA13p2`` / ``sw1p1pl3`` naming).
+    """
+    mst_dev_name = IbInterfaceTool.get_mst_dev_name(engine=engines.dut, port_name=port.name)
+    try:
+        _, label_number, _, _, _ = Port.parse_port_name(port.name)
+    except ValueError as exc:
+        raise AssertionError(f"Cannot resolve module index for {port.name}: {exc}") from exc
+    module_index = int(label_number) - 1
+    offset = getattr(devices.dut, "module_offset", None)
+    if offset:
+        module_index %= offset
+    return mst_dev_name, str(module_index)
+
+
+# Firmware rejects PMAOS module-register access on a secondary ASIC device:
+#   -E- Failed to send access register: Register Access not supported by secondary
+# On planarized multi-ASIC Aports the resolved primary-asic-device can be a
+# secondary for module-register access, so the PMAOS unplug/plug simulation
+# cannot run on that port; gate on it instead of hard-failing the test.
+PMAOS_SECONDARY_REJECTION = "not supported by secondary"
+
+# A PMAOS read (-g) succeeds even on devices/modules whose firmware rejects the
+# unplug/plug write (-s). The rejection only surfaces on the write, as one of
+# these markers, so the probe-by-read cannot predict it and the simulation must
+# gate on the failed write instead.
+PMAOS_WRITE_REJECTION_MARKERS = (
+    PMAOS_SECONDARY_REJECTION,
+    "configuration is rejected",
+    # Some HW firmware rejects the PMAOS module-register write with:
+    #   -E- Failed to send access register: ... Register access bad parameter
+    "register access bad parameter",
+    "failed to send access register",
+)
+
+
+def _pmaos_write_rejected(text: str) -> bool:
+    """True when a PMAOS write failure carries a known firmware-rejection marker."""
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in PMAOS_WRITE_REJECTION_MARKERS)
+
+
+def pmaos_simulation_available(engines, mst_dev_name: str, module_index: str) -> bool:
+    """Return True when the MST device accepts PMAOS module-register access.
+
+    Reads PMAOS with validation disabled (a firmware rejection must not raise) and
+    reports whether the secondary-ASIC rejection marker is absent from the output.
+    """
+    out = RegisterTool.get_mst_register_value(
+        engines.dut,
+        mst_dev_name,
+        UfmMadConsts.PMAOS_REGISTER,
+        additional_params=f"-i slot_index=0,module={module_index}",
+        validate=False,
+    )
+    available = PMAOS_SECONDARY_REJECTION not in (out or "")
+    if not available:
+        logger.info(
+            "PMAOS module simulation unavailable on %s (module=%s): device is a "
+            "secondary ASIC for module-register access", mst_dev_name, module_index
+        )
+    return available
+
+
+def simulate_peer_unplug(engines, devices, port: Port, settle_sec: int = 8) -> None:
+    """Use PMAOS register simulation to mark the module as unplugged.
+
+    Skips cleanly when the resolved MST device is a secondary ASIC that rejects
+    PMAOS module-register access (planarized multi-ASIC Aport), so the suite
+    reports a skip rather than a firmware-rejection failure.
+    """
+    mst_dev_name, module_index = resolve_module_handle(engines, devices, port)
+    if not pmaos_simulation_available(engines, mst_dev_name, module_index):
+        pytest.skip(
+            f"PMAOS unplug simulation unavailable for {port.name}: MST device "
+            f"{mst_dev_name!r} rejects module-register access on a secondary ASIC "
+            "(planarized multi-ASIC Aport)."
+        )
+    try:
+        IbInterfaceTool.simulate_unplug_module_event(
+            engine=engines.dut,
+            device=devices.dut,
+            module_index=module_index,
+            mst_dev_name=mst_dev_name,
+            sleep=settle_sec,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if _pmaos_write_rejected(str(exc)):
+            pytest.skip(
+                f"PMAOS unplug simulation rejected by firmware for {port.name} "
+                f"(MST device {mst_dev_name!r}, module {module_index}): {exc}"
+            )
+        raise
+
+
+def simulate_peer_plug_in(engines, devices, port: Port, settle_sec: int = 50) -> None:
+    """Reverse of ``simulate_peer_unplug``.
+
+    No-op when PMAOS module-register access is unavailable on the resolved device,
+    so cleanup after a skipped unplug never raises.
+    """
+    mst_dev_name, module_index = resolve_module_handle(engines, devices, port)
+    if not pmaos_simulation_available(engines, mst_dev_name, module_index):
+        logger.warning(
+            "Skipping PMAOS plug-in for %s: MST device %r rejects module-register "
+            "access on a secondary ASIC", port.name, mst_dev_name
+        )
+        return
+    try:
+        IbInterfaceTool.simulate_plugin_module_event(
+            engine=engines.dut,
+            device=devices.dut,
+            module_index=module_index,
+            mst_dev_name=mst_dev_name,
+            sleep=settle_sec,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if _pmaos_write_rejected(str(exc)):
+            logger.warning(
+                "PMAOS plug-in for %s rejected by firmware (module %s): %s",
+                port.name, module_index, exc
+            )
+            return
+        raise
