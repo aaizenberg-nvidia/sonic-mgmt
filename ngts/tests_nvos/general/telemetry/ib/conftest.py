@@ -15,13 +15,14 @@ This conftest grows one fixture at a time as each plane-port test passes review.
 """
 
 import logging
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.MultiPlanarTool import MultiPlanarTool
+from ngts.nvos_tools.infra.RegressionConfigurations import PlanePortConnectivity
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.reboot_telemetry_helpers import gnmi_client_for_dut
 from ngts.tests_nvos.general.security.security_test_tools import security_test_utils
@@ -43,13 +44,31 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Topology:
-    """Lightweight view of the DUT's plane-port layout exposed to tests."""
+    """Lightweight view of the DUT's plane-port layout + lab connectivity."""
     setup_name: str
     num_of_plane_ports: int
+    _connectivity: Dict[str, dict] = field(default_factory=dict)
+    fabric_description: str = ""
 
     def planes_for(self, aport_name: str) -> List[Port]:
         """Return Port objects for every plane belonging to `aport_name`."""
         return MultiPlanarTool.enumerate_plane_ports(aport_name, self.num_of_plane_ports)
+
+    def all_aports(self) -> List[str]:
+        """All IB Aport names present in the connectivity JSON."""
+        return ibh.filter_aport_names(list(self._connectivity.keys()))
+
+    def expected_plane_count(self) -> int:
+        """Total number of plane-ports across all Aports on the DUT."""
+        return len(self.all_aports()) * self.num_of_plane_ports
+
+    def inter_switch_partner(
+        self, dut_aport_name: str, dut_hostname: str
+    ) -> Optional[Tuple[str, str]]:
+        """Return ``(partner_hostname, partner_port)`` for an inter-switch link, or None."""
+        return PlanePortConnectivity.find_inter_switch_partner(
+            self._connectivity, self.fabric_description, dut_aport_name, dut_hostname
+        )
 
 
 # ============================================================================
@@ -94,11 +113,14 @@ def gnmi_client(engines, _gnmi_client_session, _gnmi_local_admin) -> GnmiClient:
 
 
 @pytest.fixture(scope="session")
-def setup_topology(setup_name, devices) -> Topology:
-    """Lightweight plane-port topology view; plane count comes from the DUT."""
+def setup_topology(setup_name, devices, engines) -> Topology:
+    """Plane-port topology view; plane count from the DUT, connectivity from the lab JSON."""
+    connectivity, fabric_description = PlanePortConnectivity.load(setup_name, engines)
     return Topology(
         setup_name=setup_name,
         num_of_plane_ports=getattr(devices.dut, "num_of_plane_ports", 1),
+        _connectivity=connectivity,
+        fabric_description=fabric_description,
     )
 
 

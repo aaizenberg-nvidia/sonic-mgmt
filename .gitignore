@@ -12,6 +12,7 @@ tests/logs
 tests/_cache
 tests/metadata
 ansible/plugins/*/*.pyc
+*.*log*
 # Temporary trimmed inventory file
 ansible/*_tmp
 
@@ -23,6 +24,8 @@ ansible/*_tmp
 .devcontainer/
 **/.venv/
 .claude/worktrees/
+/venv/
+.docx-venv/
 
 # Credentials for custom_skipif plugin
 tests/common/plugins/custom_skipif/credentials.yaml
@@ -36,4 +39,5 @@ sonic-dump/
 tests/pfc_headroom_test_params/*.json
 tests/priority/*.json
 ansible/group_vars/vm_host/creds.yml
-/venv/
+
+

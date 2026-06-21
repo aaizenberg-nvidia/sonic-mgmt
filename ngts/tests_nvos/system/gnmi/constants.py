@@ -22,6 +22,12 @@ MAX_GNMI_SUBSCRIBERS = 10
 MAX_GNMI_CONNECTIVITY_TIME = 6
 MAX_GNMI_BAD_SUBSCRIBERS = 100
 
+# Seconds a STREAM subscription flows before SIGINT.
+STREAM_SUBSCRIBE_WINDOW_SEC = 8
+
+# gnmic SAMPLE stream-mode interval (one result-set per interval).
+STREAM_SUBSCRIBE_SAMPLE_INTERVAL = '1s'
+
 
 # PAM / load tests: wrong credentials for background ``gnmic`` clients (must not match a real user)
 GNMI_INVALID_AUTH_CLIENT_USERNAME = 'abc'

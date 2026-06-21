@@ -36,7 +36,8 @@ from ngts.tests_nvos.system.gnmi.constants import DUT_GNMI_CERTS_DIR, DOCKER_CER
 from ngts.tests_nvos.system.gnmi.constants import (
     FLOOD_COLLECT_GRACE_SEC, FLOOD_PROCESS_INIT_DELAY_SEC,
     PER_REQUEST_TIMEOUT_SEC, RECONNECT_CAPABILITIES_MAX_WAIT_SEC,
-    RECONNECT_CAPABILITIES_RETRY_INTERVAL_SEC, SAMPLE_ERROR_MAX_LEN)
+    RECONNECT_CAPABILITIES_RETRY_INTERVAL_SEC, SAMPLE_ERROR_MAX_LEN,
+    STREAM_SUBSCRIBE_WINDOW_SEC)
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -257,6 +258,25 @@ def _extract_json_objects_from_gnmic_output(gnmi_output):
     return parsed_objects
 
 
+def _compose_multi_path_subscribe_cmd(target_ip, prefix, paths, target_port, mode, username, password,
+                                      sample_interval=None):
+    """
+    Build the gnmic multi-path subscribe command string (no timeout wrapper).
+
+    When `sample_interval` is set (e.g. '1s'), a STREAM subscription is requested in SAMPLE
+    stream-mode so the server emits a fresh result-set every interval rather than a single
+    snapshot.
+    """
+    mode_flag = f"--mode {mode}" if mode else ''
+    sample_flags = f"--stream-mode sample --sample-interval {sample_interval}" if sample_interval else ''
+    path_flags = " ".join([f"--path '{path}'" for path in paths])
+    return (
+        f"gnmic -a {target_ip} --port {target_port} --skip-verify subscribe "
+        f"--prefix '{prefix}' {path_flags} --target nvos -u {username} -p {password} "
+        f"{mode_flag} {sample_flags} --format json"
+    )
+
+
 def run_gnmi_client_and_parse_multi_path_json_output(
         engines, devices, target_ip, prefix, paths, target_port=GnmiConsts.GNMI_DEFAULT_PORT,
         mode=GnmiMode.POLL, username='', password=''):
@@ -271,14 +291,8 @@ def run_gnmi_client_and_parse_multi_path_json_output(
 
     with allure.step("run gnmi-client (multi-path json) and parse output"):
         sonic_mgmt_engine = engines.sonic_mgmt
-        mode_flag = f"--mode {mode}" if mode else ''
-        path_flags = " ".join([f"--path '{path}'" for path in paths])
-        cmd = (
-            f"gnmic -a {target_ip} --port {target_port} --skip-verify subscribe "
-            f"--prefix '{prefix}' {path_flags} --target nvos -u {username} -p {password} "
-            f"{mode_flag} --format json"
-        )
-        cmd = "timeout -s INT 8s " + cmd
+        cmd = _compose_multi_path_subscribe_cmd(target_ip, prefix, paths, target_port, mode, username, password)
+        cmd = f"timeout -s INT {STREAM_SUBSCRIBE_WINDOW_SEC}s " + cmd
         logger.info(f"run on the sonic mgmt docker {sonic_mgmt_engine.ip}: {cmd}")
 
         if mode == GnmiMode.POLL:
@@ -296,6 +310,68 @@ def run_gnmi_client_and_parse_multi_path_json_output(
         verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, gnmi_client_output)
 
         return _extract_json_objects_from_gnmic_output(gnmi_client_output)
+
+
+def run_concurrent_multi_path_stream_subscribers(
+        engines, devices, target_ip, prefix, paths, num_subscribers,
+        window_sec=STREAM_SUBSCRIBE_WINDOW_SEC, target_port=GnmiConsts.GNMI_DEFAULT_PORT,
+        username='', password='', sample_interval=None):
+    """
+    Open `num_subscribers` concurrent gnmic STREAM subscriptions on the same multi-path
+    set, stream for `window_sec` seconds, and return a list of length `num_subscribers`
+    where element i is the parsed JSON notifications observed by subscriber i.
+
+    When `sample_interval` is set (e.g. '1s'), each subscriber streams in SAMPLE mode and
+    receives a fresh result-set every interval, so a `window_sec` window yields multiple
+    result-sets per subscriber instead of a single snapshot.
+    """
+    assert paths, "paths list cannot be empty"
+    assert num_subscribers >= 1, f"num_subscribers must be >= 1; got {num_subscribers}"
+
+    username = username or devices.dut.default_username
+    password = password or devices.dut.default_password
+
+    base_cmd = _compose_multi_path_subscribe_cmd(
+        target_ip, prefix, paths, target_port, GnmiMode.STREAM, username, password,
+        sample_interval=sample_interval)
+
+    out_files = [f"/tmp/gnmi_multipath_sub_{i}.out" for i in range(num_subscribers)]
+    cleanup = "rm -f /tmp/gnmi_multipath_sub_*.out"
+
+    # Launch all subscribers as concurrent background jobs, each writing to its own file.
+    # Each self-terminates after window_sec via `timeout -s INT`; `wait` blocks until all
+    # have flushed their output files.
+    launch_parts = [f"{cleanup} ;"]
+    for out_file in out_files:
+        launch_parts.append(f"timeout -s INT {window_sec}s {base_cmd} > {out_file} 2>&1 &")
+    launch_parts.append("wait")
+    launch_script = " ".join(launch_parts)
+
+    sonic_mgmt_engine = engines.sonic_mgmt
+    with allure.step(f"run {num_subscribers} concurrent multi-path STREAM subscribers for {window_sec}s"):
+        sonic_mgmt_engine.run_cmd(launch_script)
+
+    # Read each subscriber's output file on its own so the per-subscriber outputs are never
+    # merged, then check for any gnmic failure and parse its notifications.
+    per_subscriber = []
+    for out_file in out_files:
+        chunk = Tools.FilesTool.read_file_content(sonic_mgmt_engine, out_file, use_sudo=False).verify_result()
+        assert not is_gnmi_failure(chunk), f"gnmic subscriber output {out_file} reported a failure:\n{chunk}"
+        per_subscriber.append(_extract_json_objects_from_gnmic_output(chunk))
+
+    sonic_mgmt_engine.run_cmd(cleanup)
+    return per_subscriber
+
+
+def _is_data_notification(obj):
+    """Return True for a real gNMI data Notification (not a sync-response / timestamp-less control frame)."""
+    return bool(obj.get("timestamp") is not None and not obj.get("sync-response"))
+
+
+def count_result_sets(notifications):
+    """Return the number of distinct streamed result-sets (one per gNMI Notification timestamp)."""
+    timestamps = {obj.get("timestamp") for obj in notifications if _is_data_notification(obj)}
+    return len(timestamps)
 
 
 def _extract_leaves_from_update(update):
@@ -351,7 +427,7 @@ def validate_notification_has_prefix_and_leaves(notifications, expected_prefix, 
 
     for obj in notifications:
         # Skip control frames (sync-response) and any malformed notification missing a timestamp.
-        if obj.get("sync-response") or obj.get("timestamp") is None:
+        if not _is_data_notification(obj):
             continue
 
         prefix = obj.get("prefix", "")

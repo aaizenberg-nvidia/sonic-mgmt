@@ -1,0 +1,82 @@
+{
+  "_meta": {
+    "source": "nv show interface <aport> -o json (pre-feature build)",
+    "applies_to": "QTM3 IB switches (Crocodile / BlackMamba / Taipan). The NVUE Aport leaf-path schema is product-independent; only leaf VALUES differ per product, and the schema test ignores values.",
+    "captured_on": "Crocodile (representative QTM3 capture)",
+    "captured_at": "2026-05-28",
+    "plane_port_state": "disabled (pre-feature baseline)",
+    "purpose": "Default/generic baseline for ngts/tests_nvos/general/telemetry/ib/test_planeport_data_model.py::test_aport_backward_compat_schema_unchanged (Test Plan §7.1).",
+    "platform_override": "To pin a product-specific schema, drop a file named 'aport_schema_baseline.<product>.nvue.json' (e.g. 'aport_schema_baseline.blackmamba.nvue.json') next to this one; the loader prefers it over this generic file. <product> = device class name minus 'Switch', lowercased (also tries asic_type, e.g. 'qtm3').",
+    "key_note": "The top-level interface key below is illustrative; the test compares only the flattened leaf-path SET, so the Aport name is irrelevant to the comparison."
+  },
+  "swA1p1": {
+    "acl": {},
+    "counters": {
+      "buffer-overrun-errors": 0,
+      "ib": {
+        "drops": {
+          "qp1-drops": {
+            "receive": 0,
+            "transmit": 0
+          }
+        },
+        "errors": {
+          "icrc-errors": {
+            "receive": 0,
+            "transmit": "n/a"
+          },
+          "symbol-errors": {
+            "receive": 0,
+            "transmit": "n/a"
+          },
+          "tx-parity-errors": {
+            "receive": 0,
+            "transmit": 0
+          }
+        }
+      },
+      "in-bytes": 0,
+      "in-drops": 0,
+      "in-errors": 0,
+      "in-multicast-pkts": 0,
+      "in-pkts": 0,
+      "in-unicast-pkts": 0,
+      "link": {
+        "carrier-down-count": 0,
+        "error-recovery": 0,
+        "local-integrity-errors": 0,
+        "port-rcv-constraint-errors": 0,
+        "port-rcv-remote-physical-errors": 0,
+        "port-rcv-switch-relay-errors": 0
+      },
+      "out-bytes": 0,
+      "out-drops": 0,
+      "out-errors": 0,
+      "out-multicast-pkts": 0,
+      "out-pkts": 0,
+      "out-unicast-pkts": 0,
+      "out-wait": 0
+    },
+    "link": {
+      "auto-negotiate": "enabled",
+      "connection-mode": "xdr",
+      "diagnostics": {},
+      "ib-subnet": "infiniband-default",
+      "lanes": "4X",
+      "logical-state": "Initialize",
+      "max-supported-mtu": 4096,
+      "mtu": 256,
+      "op-vls": "VL0-VL7",
+      "phy": {},
+      "physical-state": "LinkUp",
+      "round-trip-latency": "1312 ns",
+      "state": {
+        "up": {}
+      },
+      "supported-ib-speed": "sdr,hdr,ndr,xdr",
+      "supported-lanes": "4X",
+      "vl-capabilities": "VL0-VL7"
+    },
+    "type": "ib"
+  }
+}

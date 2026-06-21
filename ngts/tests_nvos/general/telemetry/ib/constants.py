@@ -35,6 +35,10 @@ class GnmiYangPaths:
     INTERFACE_BY_NAME = f"{INTERFACES}[name={{name}}]"
     STATE = f"{INTERFACE_BY_NAME}/state"
     STATE_COUNTERS = f"{STATE}/counters"
+    STATE_COUNTER_FIELD = f"{STATE_COUNTERS}/{{field}}"
+
+    INFINIBAND_STATE = f"{INTERFACE_BY_NAME}/infiniband/state"
+    INFINIBAND_COUNTERS_PORT = f"{INFINIBAND_STATE}/counters/port"
 
 
 class NvuePaths:
@@ -96,3 +100,111 @@ GNMI_PACKET_OCTET_LEAVES = (
     GnmiConstants.IN_PKTS,
     GnmiConstants.OUT_PKTS,
 )
+
+
+# ---------------------------------------------------------------------------
+# Plane-port data-model / aggregation (test plan section 6.1, 6.2, 6.3, 6.9, 7.1)
+# ---------------------------------------------------------------------------
+
+
+class SystemDbCli:
+    """sonic-db-cli helpers consumed by the plane-port DB lookups."""
+    COUNTERS_DB = "COUNTERS_DB"
+    COUNTERS_PORT_NAME_MAP = "COUNTERS_PORT_NAME_MAP"
+    COUNTERS_KEY_PREFIX = "COUNTERS:"
+    COUNTERS_OID_KEY_FMT = f"{COUNTERS_KEY_PREFIX}{{oid}}"
+    # grep token for plane-port COUNTERS keys when listing via keys \\* | grep.
+    COUNTERS_PLANE_PORT_KEY_GREP = "pl"
+
+
+# Default fields whose presence we check in every per-plane Redis row (section 6.1).
+EXPECTED_PLANE_PORT_DB_FIELDS = [
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_PKTS_EXT",
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT",
+]
+
+# Phase-1 IB port-error counters in the countermgrd default-SUM bucket (in/out errors).
+SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F = "SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F"
+SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F = "SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F"
+
+# countermgrd default-SUM counters (HLD R-NVOS-1): the 4 packet/octet IF_*_EXT
+# leaves plus the Phase-1 IB port-error SUM leaves.
+COUNTERMGRD_SUM_COUNTERS = tuple(EXPECTED_PLANE_PORT_DB_FIELDS) + (
+    SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F,
+    SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F,
+)
+
+# countermgrd MAX aggregation on the Aport (HLD section 6.7). v1: xmit-wait only.
+COUNTERMGRD_MAX_COUNTERS = (
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_WAIT",
+)
+
+# SAI COUNTERS_DB key -> gNMI state/counters leaf (create_gnmi_counter_list / supported-paths).
+SAI_TO_GNMI_STATE_COUNTER_LEAF = {
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT": "in-pkts",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_PKTS_EXT": "out-pkts",
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT": "in-octets",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT": "out-octets",
+    SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F: "in-errors",
+    SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F: "out-errors",
+}
+
+# SAI COUNTERS_DB key -> NVUE `counters` JSON leaf. Octet SAI stats are exposed
+# as in-bytes/out-bytes in NVUE.
+SAI_TO_NVUE_COUNTER_LEAF = {
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT": "in-pkts",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_PKTS_EXT": "out-pkts",
+    "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT": "in-bytes",
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT": "out-bytes",
+    SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F: "in-errors",
+    SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F: "out-errors",
+}
+
+# MAX counters: gNMI uses the infiniband/port subtree; NVUE uses counters.out-wait.
+SAI_TO_GNMI_MAX_COUNTER_LEAF = {
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_WAIT": "xmit-wait",
+}
+SAI_TO_NVUE_MAX_COUNTER_LEAF = {
+    "SAI_PORT_STAT_INFINIBAND_IF_OUT_WAIT": "out-wait",
+}
+
+# Tight SUM aggregation tolerance for plane-port -> Aport checks (section 6.2, 6.3).
+# countermgrd default-SUM should match exactly; allow only a small absolute read
+# jitter across sequential Aport + plane-port samples (gNMI, NVUE, Redis alike).
+PLANEPORT_SUM_AGGREGATION_TOLERANCE_PCT = 0.001  # retained for Allure attach only
+PLANEPORT_SUM_AGGREGATION_MIN_DELTA = 10
+
+# Loose tolerance reused by the float-MAX aggregation branch (BER/time-since-clear).
+SAMPLING_JITTER_TOLERANCE_PCT = 0.10
+
+# Display labels for section 6.3 aggregation Allure steps (shared assert path).
+API_LABEL_GNMI = "gNMI"
+API_LABEL_NVUE = "NVUE"
+API_LABEL_OTEL = "OTEL"
+
+# Pause after admin-down freeze (oper-down confirmed) before reading counters.
+# gNMI Aport aggregation can lag plane-port sums briefly.
+COUNTER_SNAPSHOT_SETTLE_SEC = 2
+
+
+class CounterMgrdRule:
+    """countermgrd plane-port -> Aport aggregation rule identifiers."""
+    SUM = "sum"
+    MIN = "min"
+    MAX = "max"
+    CONCAT = "concat"
+    SPECIAL_DIAG = "special_diag"
+    SKIP = "skip"
+    ZERO = "zero"
+
+
+# Concatenation delimiter mirrors countermgrd VALUE_DELIMITER ("/").
+CONCAT_DELIMITER = "/"
+
+
+# Baseline directory + files for the section 7.1 backward-compat snapshot.
+BASELINE_DIR_NAME = "baselines"
+APORT_SCHEMA_BASELINE_FILE = "aport_schema_baseline.json"
+APORT_SCHEMA_BASELINE_NVUE_FILE = "aport_schema_baseline.nvue.json"

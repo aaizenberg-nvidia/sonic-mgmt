@@ -1,6 +1,7 @@
 import logging
 import json
-from typing import Dict, Tuple, List
+import re
+from typing import Dict, Optional, Tuple, List
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
@@ -247,6 +248,7 @@ class RegressionLinksConsts:
     KEY_LOOPBACK = "loopback"
     KEY_CONNECTED_TO = "connected_to"
     KEY_NEIGHBOR_DESCRIPTION = "neighbor_description"
+    DESCRIPTION = "description"
     KEY_LOGICAL_STATE = "state"
     KEY_PHYSICAL_STATE = "physical_state"
     TRANSCEIVER_TYPE = "transceiver_type"
@@ -382,3 +384,109 @@ class RegressionLinks:
         host_port = transceiver.get(RegressionLinksConsts.KEY_CONNECTED_TO, "")
         logger.info(f"Port {port_name} is connected to {host} port {host_port}")
         return host, host_port
+
+
+class PlanePortConnectivity:
+    """
+    Connectivity-JSON helpers for the plane-port telemetry suite.
+
+    Loads the lab connectivity map (ports + fabric description) and resolves a
+    DUT Aport to its inter-switch partner. Lives next to RegressionLinks so the
+    connectivity-file logic stays reusable infra rather than test-conftest code.
+    """
+
+    DUT_CONNECTIVITY_JSON_PATH = "/home/admin/{setup_name}.json"
+
+    @staticmethod
+    def normalize_hostname(name: str) -> str:
+        """Lower-case and drop non-alphanumeric characters so host names compare reliably."""
+        return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+    @staticmethod
+    def _parse_root(connectivity_root: dict) -> Tuple[Dict[str, dict], str]:
+        ports = connectivity_root.get(RegressionLinksConsts.PORTS_ROOT, {})
+        description = str(connectivity_root.get(RegressionLinksConsts.DESCRIPTION, "") or "")
+        return ports, description
+
+    @staticmethod
+    def _load_root_from_dut(engines, setup_name: str) -> Optional[dict]:
+        # Lazy import avoids a circular import (Tools pulls in many infra tools).
+        from ngts.nvos_tools.infra.Tools import Tools
+        remote_path = PlanePortConnectivity.DUT_CONNECTIVITY_JSON_PATH.format(setup_name=setup_name)
+        exists_res = Tools.FilesTool.file_exists_sudo(engines.dut, remote_path)
+        if not exists_res.result:
+            exists_res.ignore_result()
+            return None
+        raw = Tools.FilesTool.read_file_content(engines.dut, remote_path).get_returned_value()
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Invalid connectivity JSON at %s on DUT: %s", remote_path, exc)
+            return None
+
+    @staticmethod
+    def load(setup_name: str, engines=None) -> Tuple[Dict[str, dict], str]:
+        """
+        Return (ports_map, fabric_description) for `setup_name`.
+
+        Reads the shared verification-files connectivity JSON first, then falls
+        back to the DUT-local copy written by test_connectivity_update_json_file
+        when the shared file is missing. Returns ({}, "") if no source resolves.
+        """
+        links_path = RegressionLinksConsts.SYSTEM_LINKS_PATH + setup_name + ".json"
+        try:
+            with open(links_path, "r", encoding="utf-8") as file:
+                return PlanePortConnectivity._parse_root(json.load(file))
+        except FileNotFoundError:
+            logger.warning("Connectivity JSON missing on server for %s; trying DUT fallback", setup_name)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load server connectivity JSON for %s: %s; trying DUT fallback",
+                           setup_name, exc)
+
+        if engines is not None:
+            root = PlanePortConnectivity._load_root_from_dut(engines, setup_name)
+            if root is not None:
+                logger.info("Loaded connectivity JSON from DUT for %s", setup_name)
+                return PlanePortConnectivity._parse_root(root)
+
+        logger.warning("No connectivity JSON for %s; using empty map", setup_name)
+        return {}, ""
+
+    @staticmethod
+    def find_inter_switch_partner(
+        connectivity: Dict[str, dict],
+        fabric_description: str,
+        dut_aport_name: str,
+        dut_hostname: str,
+    ) -> Optional[Tuple[str, str]]:
+        """
+        Map a DUT Aport to (partner_hostname, partner_port) using connectivity JSON.
+
+        Returns None for loopback / internal links or when no inter-switch
+        neighbor can be resolved. The JSON is produced by one ibdiagnet system
+        (its 'description'), and 'connected_to' names the remote port label.
+        """
+        dut_host = PlanePortConnectivity.normalize_hostname(dut_hostname)
+        fabric_host = PlanePortConnectivity.normalize_hostname(fabric_description)
+
+        dut_body = connectivity.get(dut_aport_name)
+        if isinstance(dut_body, dict):
+            connected_to = dut_body.get(RegressionLinksConsts.KEY_CONNECTED_TO) or ""
+            neighbor = str(dut_body.get(RegressionLinksConsts.KEY_NEIGHBOR_DESCRIPTION) or "")
+            if connected_to and not dut_body.get(RegressionLinksConsts.KEY_LOOPBACK):
+                if neighbor and PlanePortConnectivity.normalize_hostname(neighbor) != dut_host:
+                    return neighbor, connected_to
+
+        for port_name, body in connectivity.items():
+            if not isinstance(body, dict):
+                continue
+            if (body.get(RegressionLinksConsts.KEY_CONNECTED_TO) != dut_aport_name or
+                    body.get(RegressionLinksConsts.KEY_LOOPBACK)):
+                continue
+            neighbor = str(body.get(RegressionLinksConsts.KEY_NEIGHBOR_DESCRIPTION) or "")
+            # ``port_name`` belongs to the switch that produced the JSON (``description``).
+            if fabric_host and fabric_host != dut_host:
+                return fabric_description, port_name
+            if neighbor and PlanePortConnectivity.normalize_hostname(neighbor) != dut_host:
+                return neighbor, port_name
+        return None
