@@ -10,6 +10,7 @@ import re
 from ngts.constants.constants import GnmiConsts
 from ngts.nvos_constants.constants_nvos import ApiType, NvosConst
 from ngts.nvos_tools.infra.Fae import Fae
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
@@ -515,8 +516,12 @@ def _verify_link_state(selected_port, expected_link_state):
 
 def _set_phy_recovery_attribute(phy_recovery, path_list, attribute, value, **kwargs):
     """Set a phy-recovery leaf via NVUE (``nv set ... step-N <attr> <value>``)."""
+    if TestToolkit.tested_api == ApiType.OPENAPI and isinstance(value, str) and value.isdigit():
+        value = int(value)
     if len(path_list) == 1 and path_list[0] == attribute:
         return phy_recovery.set(attribute, value, **kwargs)
+    if TestToolkit.tested_api == ApiType.OPENAPI:
+        return phy_recovery.set(path_list[0], {attribute: value}, **kwargs)
     return phy_recovery.set(path_list[0], [attribute, str(value)], **kwargs)
 
 
