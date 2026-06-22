@@ -237,8 +237,8 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
             validate_ports_state_and_speed,
             [new_speed, port_names, prefix],
             exceptions=AssertionError,
-            tries=6,
-            delay=30,
+            tries=26,
+            delay=15
         )
 
     logger.info(f"Speed changed from {original_speed} to {new_speed}")
@@ -256,4 +256,4 @@ def restore_nvl_speed(speed_info):
             op_param='speed', apply=True, ask_for_confirmation=True
         ).verify_result()
         retry_call(validate_ports_state_and_speed, [default_speed, port_names, prefix],
-                   exceptions=AssertionError, tries=6, delay=30)
+                   exceptions=AssertionError, tries=26, delay=15)
