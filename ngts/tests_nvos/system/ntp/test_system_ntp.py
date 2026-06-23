@@ -562,12 +562,24 @@ def test_configure_ntp_multiple_servers(random_api):
                     system.ntp.servers.show('brief')).get_returned_value()
                 server_detail_list = OutputParsingTool.parse_json_str_to_dictionary(
                     system.ntp.servers.show('detail')).get_returned_value()
-                ValidationTool.compare_dictionary_content(server_brief_list, NtpConsts.MULTIPLE_SERVERS_CONFIG_DICT).\
+                # The hostname server's resolve-as reflects live DNS, which may return a different
+                # (or rotating) A record than SERVER2_IPV4. Don't pin the exact address: verify it
+                # resolved to a valid IP, then relax only that field while still strictly checking
+                # every other server field (see the OPENAPI branch above, which is similarly lenient).
+                resolved = server_list[NtpConsts.SERVER2_HOSTNAME][NtpConsts.RESOLVE_AS]
+                assert resolved != NtpConsts.SERVER_FAILED, \
+                    f"{NtpConsts.SERVER2_HOSTNAME} failed DNS resolution: {resolved}"
+                socket.inet_aton(resolved)  # raises OSError if not a valid IPv4 address
+                expected_servers = dict(NtpConsts.MULTIPLE_SERVERS_CONFIG_DICT)
+                expected_server2 = dict(NtpConsts.SERVER2_DEFAULT_VALUES_DICT)
+                expected_server2[NtpConsts.RESOLVE_AS] = resolved
+                expected_servers[NtpConsts.SERVER2_HOSTNAME] = expected_server2
+                ValidationTool.compare_dictionary_content(server_brief_list, expected_servers).\
                     verify_result()
                 listed_servers = len(server_detail_list)
                 assert listed_servers == 2, "Listed {listed} servers, expected {expected} servers". \
                     format(listed=listed_servers, expected=2)
-                ValidationTool.compare_dictionary_content(server_list, NtpConsts.MULTIPLE_SERVERS_CONFIG_DICT). \
+                ValidationTool.compare_dictionary_content(server_list, expected_servers). \
                     verify_result()
 
         with allure.step("Validate server configured with default values"):
