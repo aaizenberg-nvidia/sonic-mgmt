@@ -2164,6 +2164,11 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/system/test_system_ztp.py::test_ztp_provisioning_script_negative
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json
+        - tests_nvos/system/test_system_ztp.py::test_ztp_connectivity_check
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json_complex
+        - tests_nvos/system/test_system_ztp.py::test_ztp_startup_file_commands_list
+        - tests_nvos/system/test_system_ztp.py::test_ztp_nmx_negative
 
 # NVOS: Expected logs
 - Errors_list:
