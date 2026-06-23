@@ -1,11 +1,12 @@
-import random
-import re
-import time
-from weakref import finalize
+from __future__ import annotations
 
-import pytest
-import logging
 from retry.api import retry_call
+from typing import Any
+import logging
+import random
+import pytest
+import time
+import re
 
 from ngts.constants.constants import GnmiConsts
 from ngts.ngts_types import LinkDiagnosticT
@@ -16,18 +17,10 @@ from ngts.nvos_constants.constants_nvos import (
     NvosConst,
     OutputFormat,
 )
-from ngts.tests_nvos.interfaces.nvl_port.helpers import (
-    validate_ports_state_and_speed,
-    toggle_port_state,
-    show_interface_and_validate,
-    skip_if_no_trunk_links,
-    skip_if_no_access_links,
-    skip_if_fec_measure_not_supported,
-)
 from ngts.tests_nvos.helpers.interfaces import interface_helpers
 from ngts.tests_nvos.helpers.interfaces.nvl_port.nvl6 import link_training_helpers
 from ngts.nvos_tools.Devices.IbDevice import JulietNonScaleoutSwitch
-from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port, PortRequirements
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -35,22 +28,26 @@ from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
-from ngts.tests_nvos.interfaces.nvl_port.helpers import skip_if_no_trunk_links, skip_if_no_access_links
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import verify_msg_not_in_out_or_err, verify_msg_in_out_or_err
 from ngts.tools.test_utils.allure_utils import step as allure_step
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, InternalNvosConsts, NvlInterfaceConsts, NvosConsts
 from ngts.nvos_tools.infra.Tools import Tools
-from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports, summarize_switch_ports
-from ngts.tests_nvos.constants import MINUTE
-from ngts.nvos_tools.nmx.Cluster import Cluster
-from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
+from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.ngts_types import DevicesT
 
-
-logger = logging.getLogger()
+from .helpers import (
+    skip_if_fec_measure_not_supported,
+    validate_ports_state_and_speed,
+    show_interface_and_validate,
+    skip_if_no_access_links,
+    skip_if_no_trunk_links,
+    toggle_port_state,
+)
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.interface
@@ -802,7 +799,7 @@ def test_nvl_supported_speeds_validation(test_name, engines, devices, random_api
 @pytest.mark.multiplanar
 @pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_nvl_invalid_speed_configuration_negative(engines, devices, test_api, has_loopbox, standalone_system):
+def test_nvl_invalid_speed_configuration_negative(devices: DevicesT, test_api: str, has_loopbox: bool, standalone_system: bool):
     """
     Validate that configuring unsupported speeds fails with proper error message
 
@@ -820,11 +817,11 @@ def test_nvl_invalid_speed_configuration_negative(engines, devices, test_api, ha
         if not available_ports:
             pytest.skip("No nvl ports with proper connections available")
 
-        selected_port = RandomizationTool.select_random_value(available_ports).get_returned_value()
+        selected_port: Port = RandomizationTool.select_random_value(available_ports).get_returned_value()
         logger.info(f"Selected port for invalid speed test: {selected_port.name}")
 
         # Get original speed before attempting invalid configuration
-        original_output = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+        original_output: dict[str, Any] = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
             selected_port.interface.link.show()).get_returned_value()
         original_speed = original_output.get(IbInterfaceConsts.LINK_SPEED)
         logger.info(f"Original speed: {original_speed}")
@@ -857,7 +854,7 @@ def test_nvl_invalid_speed_configuration_negative(engines, devices, test_api, ha
 
     with allure_step("Verify speed did not change and check error message"):
         # Get current speed to make sure it didn't change
-        current_output = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+        current_output: dict[str, Any] = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
             selected_port.interface.link.show()).get_returned_value()
         current_speed = current_output.get(IbInterfaceConsts.LINK_SPEED)
         logger.info(f"Current speed after failed command: {current_speed}")
@@ -871,16 +868,20 @@ def test_nvl_invalid_speed_configuration_negative(engines, devices, test_api, ha
         logger.info(f"Error message: {error_message}")
 
         # Validate error message contains key components (order-independent)
-        # Expected pattern example: "Error: 9999G not in ['200G', '400G', '360G', '328G']" (device-dependent)
-        assert f"Error: {invalid_speed}" in error_message, f"Error message should start with 'Error: {invalid_speed}'"
-        assert "not in" in error_message, "Error message should indicate value is 'not in' supported list"
+        # Expected pattern: Error: '9999G' is not one of ['328G', '200G', ...]
+        assert (g := re.search(
+            r"^Error:\s+'(?P<value>[^']+)'\s+is not one of\s+(?P<choices>\[.*\]|.*)$",
+            error_message,
+            flags=re.MULTILINE,
+        )), f"No match found: {g!r}"
 
-        # Verify all supported speeds are mentioned in the error (order doesn't matter)
-        for speed in supported_speeds:
-            assert speed in error_message, f"Supported speed '{speed}' should be mentioned in error message"
+        value, choices = g.group("value"), g.group("choices")
+        choices: set[str] = set(re.findall(r"\d+G", choices))
 
+        assert value == invalid_speed, f"Invalid speed mismatch: {value} != {invalid_speed}"
+        assert supported_speeds, f"No supported speeds available"
+        assert choices.issubset(supported_speeds), f"Supported speeds mismatch: {choices} are not a subset of {supported_speeds}"
         logger.info(f"Confirmed error message contains invalid speed and all supported speeds")
-
         logger.info(f"Successfully validated invalid speed configuration for {selected_port.name}")
 
 
