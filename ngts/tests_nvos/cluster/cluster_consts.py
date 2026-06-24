@@ -51,6 +51,12 @@ class ClusterConsts:
     WAIT_FOR_APPS_RUNNING = 50  # Reduce to 15 once bug is fixed [NVOS - Design] Bug SW #4099507: [Non-Functional ] [NVL5 - JULIET - NMX] | nmxc-conn takes too long to be in "up" state | Assignee: Or Farfara | Status: Opened on other team
     UNDEFINED_STATE_ERR_MSG = 'Error: At state: \'undefined\' is not one of [\'enabled\', \'disabled\']'
     DEFAULT_LOG_LEVEL = 'notice'
+    NMX_USER_CONFIG_JSON_PATH = '/etc/cluster_infra/conf/user_config.json'
+    DEFAULT_NMX_USER_CONFIG = {
+        'nmx-telemetry-log-level': DEFAULT_LOG_LEVEL,
+        'nmx-controller-dscp-nvbridge-value': '46',
+        'nmx-controller-log-level': DEFAULT_LOG_LEVEL,
+    }
     UNDEFINED_LOG_LEVEL = "'undefined' is not one of ['critical', 'error', 'warn', 'notice', 'info', 'debug']"
     SLEEP_AFTER_LOG_ROTATE = 20
     PARTITIONS_NAMES = ['test_partition1', 'test_partition2', 'test_partition3']

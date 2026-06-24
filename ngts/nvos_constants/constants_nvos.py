@@ -2044,6 +2044,16 @@ class ClusterConsts:
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
 
 
+class OtlpConsts:
+    ENDPOINT = "endpoint"
+    CRL = "crl"
+    ENCRYPTION = "encryption"
+    CERT_ID = "cert-id"
+    CA_CERT_ID = "cacert-id"
+    CRL_ID = "crl-id"
+    MODE = "mode"
+
+
 class SyslogSeverityLevels:
     CRIT = 'crit'
     CRITICAL = 'critical'
