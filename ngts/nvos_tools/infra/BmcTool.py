@@ -101,8 +101,10 @@ class BmcTool:
 
     @staticmethod
     def _get_fw_component_version_info(component_name, version):
-        device = TestToolkit.get_device()
-        fw_path = BmcTool.FW_VERSIONS_JSON_FILE or device.fw_versions_json_file_path
+        fw_path = BmcTool.FW_VERSIONS_JSON_FILE
+        if not fw_path:
+            logger.info("FW_VERSIONS_JSON_FILE is not set")
+            return None, None, None
         with allure.step(f'Read platform components info from json {fw_path}'):
             if not BmcTool.PLATFORM_COMPONENTS_DICT:
                 with open(fw_path, 'r') as file:
