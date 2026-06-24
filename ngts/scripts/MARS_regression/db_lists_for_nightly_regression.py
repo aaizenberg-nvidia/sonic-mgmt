@@ -100,12 +100,16 @@ SETUPS_GROUPS_MAP = {
         ('t1', 'spc1'): {'arc-switch1025_setup': SETUPS_GROUP_1, 'r-panther-01_setup': SETUPS_GROUP_2},
         ('t0', 'spc3'): {'r-tigon-04_setup': SETUPS_GROUP_1, 'mtvr-leopard-01_setup': SETUPS_GROUP_2},
         ('t1', 'spc3'): {'r-leopard-01_setup': SETUPS_GROUP_1, 'r-tigon-11_setup': SETUPS_GROUP_2},
+        ('t0', 'spc5'): {'r-bison-06_setup': SETUPS_GROUP_1, 'r-bison-08_setup': SETUPS_GROUP_2},
+        ('t1', 'spc5'): {'r-bison-04_setup': SETUPS_GROUP_1},
     },
     'community_set2': {
         ('t0', 'spc1'): {'r-panther-42_setup': SETUPS_GROUP_1, 'r-panther-23_setup': SETUPS_GROUP_2},
         ('t1', 'spc1'): {'r-panther-40_setup': SETUPS_GROUP_1, 'r-panther-45_setup': SETUPS_GROUP_2},
         ('t0', 'spc3'): {'mtvr-leopard-09_setup': SETUPS_GROUP_1, 'r-tigon-21_setup': SETUPS_GROUP_2},
-        ('t1', 'spc3'): {'r-leopard-58_setup': SETUPS_GROUP_1, 'r-tigon-20_setup': SETUPS_GROUP_2}
+        ('t1', 'spc3'): {'r-leopard-58_setup': SETUPS_GROUP_1, 'r-tigon-20_setup': SETUPS_GROUP_2},
+        ('t0', 'spc5'): {'r-bison-18_setup': SETUPS_GROUP_1, 'r-bison-16_setup': SETUPS_GROUP_2},
+        ('t1', 'spc5'): {'r-bison-20_setup': SETUPS_GROUP_1, 'r-bison-22_setup': SETUPS_GROUP_2},
     },
     'canonical': {
         ('ptf_any', 'spc1'): {'sonic_panther_r-panther-03': SETUPS_GROUP_1, 'sonic_panther_r-panther-13': SETUPS_GROUP_2},
