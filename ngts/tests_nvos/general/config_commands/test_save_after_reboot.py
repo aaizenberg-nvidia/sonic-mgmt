@@ -131,8 +131,7 @@ def test_save_reboot(engines, devices):
 
             with allure.step("Set NMX-C log stream configuration"):
                 player = engines.sonic_mgmt
-                url = f'{player.username}:{player.password}@{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
-                url_show = f'{player.username}:********@{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
+                url = f'{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
                 stream = f'{ClusterConsts.PROTOCOL_RSYSLOG} {url}'
                 cluster.apps.app_name[ClusterConsts.NMX_CONTROLLER].logstream.action_update_cluster_log_stream(stream=stream)
 
@@ -290,8 +289,8 @@ def test_save_reboot(engines, devices):
                     output_dict = OutputParsingTool.parse_json_str_to_dictionary(output).get_returned_value()
                     assert output_dict["protocol"] == ClusterConsts.PROTOCOL_RSYSLOG, \
                         "Protocol is {} instead of {}".format(output_dict["protocol"], ClusterConsts.PROTOCOL_RSYSLOG)
-                    assert output_dict["remote-url"] == url_show, \
-                        "Remote-url is {} instead of {}".format(output_dict["remote-url"], url_show)
+                    assert output_dict["remote-url"] == url, \
+                        "Remote-url is {} instead of {}".format(output_dict["remote-url"], url)
 
             if fec_capable:
                 # Platform is FEC capable
