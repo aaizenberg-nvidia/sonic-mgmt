@@ -22,6 +22,8 @@ from ngts.tests_nvos.system.factory_reset.helpers import add_verification_data, 
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
+from ngts.tests_nvos.cluster.tray_admin_state.helpers import is_rtf_compute_tray_scenario, delete_sdn_partitions_before_compute_tray_test
+from ngts.tests_nvos.cluster.tray_admin_state.conftest import *
 
 logger = logging.getLogger()
 
@@ -30,7 +32,7 @@ logger = logging.getLogger()
 @pytest.mark.timeout(35 * MINUTE, func_only=True)
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, has_loopbox, standalone_system, setup_name):
+def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, has_loopbox, standalone_system, setup_name, chassis_info, tray_topology_config):
 
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -70,6 +72,10 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
                 tray_ids = list(trays_output.keys())
                 if tray_ids:
                     selected_tray = tray_ids[0]
+                    local_switch_slot = str(chassis_info.get('slot-number'))
+                    partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
+                    if partition_deletion_flag:
+                        delete_sdn_partitions_before_compute_tray_test(sdn)
                     tray_non_default = random.choice(['down', 'diag'])
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()

@@ -1078,6 +1078,33 @@ class ClusterTools:
                 app_status = output[app]['status']
                 assert app_status == 'ok', f"App {app} status is {app_status} instead of 'ok'"
 
+    @staticmethod
+    def update_nmx_c_manager_state(cluster, state):
+        manager = cluster.apps.app_name[ClusterConsts.NMX_CONTROLLER].manager
+
+        def get_state():
+            output = OutputParsingTool.parse_show_output_to_dict(manager.show()).get_returned_value()
+            return output.get("state")
+
+        with allure.step(f"Update NMX-C manager state to {state}"):
+            if get_state() == state:
+                logger.info(f"NMX-C manager is already {state}. Skipping update")
+                return
+
+            manager.action_update(state=state)
+
+            max_retries, retry_delay = 5, 5
+            for attempt in range(max_retries):
+                if get_state() == state:
+                    logger.info(f"NMX-C manager state changed to {state}")
+                    return
+                if attempt < max_retries - 1:
+                    logger.info(f"NMX-C manager not yet {state} "
+                                f"(attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+
+            assert get_state() == state, f"NMX-C manager was not updated to {state}"
+
 
 def summarize_switch_ports(ports_list):
     # Dictionary to store ranges for each prefix

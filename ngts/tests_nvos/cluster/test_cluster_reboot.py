@@ -2,27 +2,21 @@ import pytest
 import logging
 import pexpect
 import random
-import time
 
-from infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
-from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.system.System import System
-from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tools.test_utils import allure_utils as allure
-from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
+from ngts.tests_nvos.cluster.cluster_tools import disabled_access_ports
 from ngts.tests_nvos.cluster.dscp_marking_tools import DscpValueSelector
 from ngts.tests_nvos.cluster.test_cluster_dscp_marking import _get_random_dscp_not_default
-from ngts.nvos_constants.constants_nvos import OutputFormat, ApiType
+from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.constants import MINUTE
-from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
-from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from retry.api import retry_call
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
+from ngts.tests_nvos.cluster.tray_admin_state.helpers import is_rtf_compute_tray_scenario, delete_sdn_partitions_before_compute_tray_test
+from ngts.tests_nvos.cluster.tray_admin_state.conftest import *
 
 logger = logging.getLogger()
 
@@ -33,7 +27,7 @@ logger = logging.getLogger()
 @pytest.mark.nmx
 @pytest.mark.timeout(35 * MINUTE, func_only=True)
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, standalone_system, setup_name):
+def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, standalone_system, setup_name, chassis_info, tray_topology_config):
     """
     Test flow:
         1. Enable cluster
@@ -83,6 +77,10 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 tray_ids = list(trays_output.keys())
                 if tray_ids:
                     selected_tray = tray_ids[0]
+                    local_switch_slot = str(chassis_info.get('slot-number'))
+                    partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
+                    if partition_deletion_flag:
+                        delete_sdn_partitions_before_compute_tray_test(sdn, excluded_partitions=[ClusterConsts.EMPTY_PARTITION_ID])
                     tray_non_default = random.choice(['down', 'diag'])
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
@@ -139,6 +137,7 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
                                                                  output_format=output_format).get_returned_value()
             assert ClusterConsts.EMPTY_PARTITION_ID in output.keys(), f'Partition {ClusterConsts.EMPTY_PARTITION_ID} was deleted, while its expected to be kept'
+            assert ClusterConsts.DEFAULT_PARTITION_ID not in output.keys(), f'Partition {ClusterConsts.DEFAULT_PARTITION_ID} was not deleted, while its expected to be deleted'
             output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.partition_id[ClusterConsts.EMPTY_PARTITION_ID].show(output_format=output_format),
                                                                  output_format=output_format).get_returned_value()
             uuids, locations = ClusterTools.uuid_location_in_partition(sdn, partition_to_remove_from)

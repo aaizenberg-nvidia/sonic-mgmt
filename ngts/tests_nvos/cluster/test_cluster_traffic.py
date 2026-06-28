@@ -6,7 +6,7 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tests_nvos.cluster.ansible_playbooks_tool import AnsiblePlaybooksTool
-from ngts.tests_nvos.cluster.cluster_consts import AnsiblePlaybooksConsts as Ansible
+from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts, AnsiblePlaybooksConsts as Ansible
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
@@ -173,7 +173,7 @@ def test_cluster_traffic_basic_test(engines, devices, test_api, has_loopbox, sta
         _assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
 
     finally:
-        pass
+        ClusterTools.update_nmx_c_manager_state(cluster, state="disabled")
 
 
 @disabled_access_ports
@@ -223,4 +223,4 @@ def test_cluster_traffic_all_test(engines, devices, test_api, has_loopbox, stand
         _assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
 
     finally:
-        pass
+        ClusterTools.update_nmx_c_manager_state(cluster, state="disabled")

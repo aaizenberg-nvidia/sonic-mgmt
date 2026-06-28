@@ -88,6 +88,7 @@ class ClusterConsts:
     }
     NMX_CONTROLLER_CONFIG_CHASSIS_MAPPING = 'chassis_mapping'
     PARTITION_TYPES = ['location_based', 'gpuuid_based']
+    DEFAULT_PARTITION_ID = '32766'
     EMPTY_PARTITION_ID = '10'
     EMPTY_PARTITION_NAME = "empty_partition"
     CREATED_PARTITION_NAME = "user_partition"
