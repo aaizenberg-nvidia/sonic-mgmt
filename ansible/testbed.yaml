@@ -10741,7 +10741,7 @@
   inv_name: lab
   comment: Mellanox MTR testbed
 
-- conf-name: rosalind-eb2-2102-ptf-any
+- conf-name: rosalind-mec-2102-ptf-any
   group-name: vm-t1
   topo: ptf-any
   ptf_image_name: docker-ptf-mlnx
@@ -10751,7 +10751,7 @@
   server: server_54
   vm_base: VM0000
   dut:
-    - rosalind-eb2-2102
+    - rosalind-mec-2102
   inv_name: lab
   comment: Mellanox MTR testbed
 
