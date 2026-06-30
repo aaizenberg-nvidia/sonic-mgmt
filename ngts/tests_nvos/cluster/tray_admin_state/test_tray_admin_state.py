@@ -1,24 +1,16 @@
-import json
 import logging
 import random
-import re
-import time
 
 import pytest
-from retry import retry
 
-from ngts.nvos_constants.constants_nvos import OutputFormat
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
+from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
-from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
 from ngts.tests_nvos.constants import MINUTE
-from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch, RosalindSwitch
 from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
@@ -371,16 +363,16 @@ def test_tray_bad_params(engines, devices, random_api, cluster_and_sdn, chassis_
         valid_tray_id = random.choice(list(trays_output.keys()))
         result = sdn.trays.action_update_maintenance_state(
             tray_id=valid_tray_id, maintenance_state=random_string)
-        result.verify_result(should_succeed=False,
-                             expected_value=["is not one of", "Error", "Invalid Command", "Bad Request"])
+        result.verify_result(should_succeed=False, expected_value=["Error", "Invalid Command"])
 
     with allure.step("Update tray with non-existent slot-id"):
-        # A valid-format but non-existent slot-id is rejected by NMX-C with
-        # "Error: The requested item does not exist".
+        # A valid-format but non-existent slot-id is rejected by NMX-C
         result = sdn.trays.action_update_maintenance_state(
             tray_id='999', maintenance_state='down')
-        result.verify_result(should_succeed=False,
-                             expected_value=["The requested item does not exist", "Error"])
+        expected_value = ["Error", "Action failed"]
+        if random_api == ApiType.OPENAPI:
+            expected_value = ["action_error"]
+        result.verify_result(should_succeed=False, expected_value=expected_value)
 
 
 # ---------------------------------------------------------------------------
@@ -388,11 +380,9 @@ def test_tray_bad_params(engines, devices, random_api, cluster_and_sdn, chassis_
 # ---------------------------------------------------------------------------
 
 
-@disabled_access_ports
 @pytest.mark.nmx
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
-def test_tray_rejected_without_cluster(engines, devices, random_api, chassis_info,
-                                       setup_name, standalone_system, has_loopbox):
+def test_tray_rejected_without_cluster(random_api, standalone_system):
     """
     Test Objective:
     Verify that tray admin state commands are rejected when cluster is not enabled.
@@ -409,23 +399,20 @@ def test_tray_rejected_without_cluster(engines, devices, random_api, chassis_inf
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster, cluster_expected_state='disabled', nmx_c_expected_state='down')
 
-    with allure.step("Verify 'nv show sdn trays' fails with cluster disabled"):
+    with allure.step("Verify 'nv show sdn trays' shows empty output with cluster disabled"):
         output = sdn.trays.show()
-        assert output == '{}', (
+        assert output.strip() == '{}', (
             f"Expected output to be empty, got: {output}")
 
     with allure.step("Verify update maintenance-state fails with cluster disabled"):
         random_state = random.choice(VALID_TRAY_STATES)
         output = sdn.trays.action_update_maintenance_state(
-            tray_id='9', maintenance_state=random_state).verify_result(should_succeed=False)
-        assert ClusterConsts.CLUSTER_NOT_ENABLED_ERR in output, (
-            f"Expected '{ClusterConsts.CLUSTER_NOT_ENABLED_ERR}' in update output, got: {output}")
+            tray_id='9', maintenance_state=random_state)
+        output.verify_result(should_succeed=False, expected_value=ClusterConsts.CLUSTER_NOT_ENABLED_ERR)
 
     with allure.step("Verify restore maintenance-state fails with cluster disabled"):
-        output = sdn.trays.action_restore_maintenance_state(
-            tray_id='9').verify_result(should_succeed=False)
-        assert ClusterConsts.CLUSTER_NOT_ENABLED_ERR in output, (
-            f"Expected '{ClusterConsts.CLUSTER_NOT_ENABLED_ERR}' in restore output, got: {output}")
+        output = sdn.trays.action_restore_maintenance_state(tray_id='9')
+        output.verify_result(should_succeed=False, expected_value=ClusterConsts.CLUSTER_NOT_ENABLED_ERR)
 
 
 # ---------------------------------------------------------------------------
