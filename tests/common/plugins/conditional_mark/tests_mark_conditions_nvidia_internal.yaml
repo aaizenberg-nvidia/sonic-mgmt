@@ -155,11 +155,12 @@ tests/nightly/rocev2_acl_counter/test_rocev2_acl_counter.py::TestRocev2AclCounte
 
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_fw_stuck_dump:
   skip:
-    reason: "Ignored on simx. The leaks reported by ASAN during test are not real leaks, test should not run on ASAN image."
+    reason: "Ignored on simx. The leaks reported by ASAN during test are not real leaks, test should not run on ASAN image. Also skipped on sn6810_ld due to RM issue: https://redmine.mellanox.com/issues/5113093"
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
     - "'ASAN' in build_version"
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/4967073"
     conditions:
@@ -175,10 +176,11 @@ tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_mellanox_sd
 
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_mellanox_sdk_dump:
   skip:
-    reason: "Testcase ignored due to platform SIMX."
+    reason: "Testcase ignored due to platform SIMX. Also skipped on sn6810_ld due to RM issue: https://redmine.mellanox.com/issues/5113093"
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/4967073"
     conditions:
@@ -186,15 +188,21 @@ tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_mellanox_sd
 
 tests/nightly/show_techsupport/test_health_event.py::test_health_event_collect:
   skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5002125"
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5002125 and https://redmine.mellanox.com/issues/5113093"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5002125 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/4967073"
     conditions:
     - "https://redmine.mellanox.com/issues/4967073"
 
 tests/nightly/show_techsupport/test_health_event.py::test_health_event_suppression:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5113093"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/4967073"
     conditions:
