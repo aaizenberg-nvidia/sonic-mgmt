@@ -5,6 +5,9 @@ import os
 import json
 import re
 import shutil
+import socket
+import subprocess
+import tarfile
 import time
 import yaml
 
@@ -878,6 +881,9 @@ class DeployOrchestrator:
             ansible_path = ctx.setup_info['ansible_path']
             bmc_params = DeployBmcHelper._resolve_bmc_params(ctx)
 
+            with allure.step('Setup local TFTP/HTTP file server for BMC image'):
+                DeployBmcHelper._setup_bmc_image_file_servers(ctx)
+
             # remove-topo / add-topo / gen-mg reuse the community deploy functions
             # in sonic_only_methods directly (bmc-dual-mgmt is a normal topo); there
             # are no BMC-specific topo wrappers.
@@ -1235,15 +1241,168 @@ class DeployBmcHelper:
                 f"under noga Specific attributes for DUT {primary_dut['dut_name']}"
             )
 
+        tftp_server_ip = DeployBmcHelper._detect_local_server_ip(bmc_ip)
+
         return {
             'dut_name': primary_dut['dut_name'],
-            'tftp_server_ip': BmcDeployConstants.BMC_TFTP_SERVER_IP,
+            'tftp_server_ip': tftp_server_ip,
+            'http_server_url': f"http://{tftp_server_ip}:{BmcDeployConstants.BMC_HTTP_PORT}",
             'bmc_ip': bmc_ip,
             'bmc_bootconf': specific.get(
                 'bmc_bootconf', BmcDeployConstants.UBOOT_BOOTCONF_DEFAULT
             ),
             'engine': context.topology_obj.players['bmc']['engine'],
         }
+
+    @staticmethod
+    def _detect_local_server_ip(bmc_ip):
+        """
+        Return the local IP the sonic-mgmt container uses to reach the BMC,
+        i.e. its management-network interface address, to use as the TFTP/HTTP
+        server IP. Connecting a UDP socket triggers a routing-table lookup
+        without sending any packet, so this works even before the BMC is
+        reachable and picks the correct source IP regardless of the subnet.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect((bmc_ip, BmcDeployConstants.BMC_TFTP_PORT))
+            local_ip = sock.getsockname()[0]
+        finally:
+            sock.close()
+        if not local_ip or local_ip.startswith('127.'):
+            raise Exception(
+                f"Could not determine a routable local IP to reach BMC {bmc_ip} "
+                f"(got {local_ip!r})"
+            )
+        logger.info(f"Local file-server IP for BMC {bmc_ip}: {local_ip}")
+        return local_ip
+
+    @staticmethod
+    def _setup_bmc_image_file_servers(context):
+        """
+        Bring up the local file servers the BMC install downloads from.
+
+        U-Boot can only fetch the FIT over TFTP (its 'tftp' command speaks
+        nothing else), while the installer kernel fetches the much larger
+        eMMC image over HTTP. Both are served by the sonic-mgmt container.
+        """
+        root = BmcDeployConstants.BMC_TFTP_ROOT
+        os.makedirs(root, exist_ok=True)
+        with allure.step('Start local TFTP server'):
+            DeployBmcHelper._start_tftp_server(root)
+        with allure.step('Start local HTTP server'):
+            DeployBmcHelper._start_http_server(root)
+        with allure.step(f'Copy BMC image from NFS {context.base_version_bmc} into {root}'):
+            DeployBmcHelper._copy_bmc_image_from_nfs(context.base_version_bmc, root)
+
+    @staticmethod
+    def _start_tftp_server(root):
+        """Restart the local TFTP server so that it serves root."""
+        port = BmcDeployConstants.BMC_TFTP_PORT
+        script = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'common',
+            BmcDeployConstants.BMC_TFTP_SERVER_SCRIPT,
+        )
+        signature = BmcDeployConstants.BMC_TFTP_SERVER_SCRIPT
+        DeployBmcHelper._stop_running_server(signature)
+        cmd = ['python3', script, '--root', root, '--port', str(port)]
+        DeployBmcHelper._start_server_detached(cmd, 'bmc_tftp_server', signature)
+        logger.info(f"Started TFTP server on port {port} serving {root}")
+
+    @staticmethod
+    def _start_http_server(root):
+        """Restart the local HTTP server so that it serves root."""
+        port = BmcDeployConstants.BMC_HTTP_PORT
+        signature = f"http.server {port}"
+        DeployBmcHelper._stop_running_server(signature)
+        cmd = ['python3', '-m', 'http.server', str(port), '--directory', root]
+        DeployBmcHelper._start_server_detached(cmd, 'bmc_http_server', signature)
+        logger.info(f"Started HTTP server on port {port} serving {root}")
+
+    @staticmethod
+    def _copy_bmc_image_from_nfs(tar_path, root):
+        """Extract the BMC image tar from NFS into root and verify the served files exist."""
+        if not tar_path or not os.path.isfile(tar_path):
+            raise Exception(f"BMC image tarball not found: {tar_path!r}")
+        logger.info(f"Extracting BMC image {tar_path} into {root}")
+        with tarfile.open(tar_path) as tar:
+            try:
+                tar.extractall(path=root, filter='data')
+            except TypeError:
+                tar.extractall(path=root)
+        for name in (BmcDeployConstants.BMC_FIT_FILE_NAME,
+                     BmcDeployConstants.BMC_EMMC_IMG_FILE_NAME):
+            copied = os.path.join(root, name)
+            if not os.path.isfile(copied):
+                raise Exception(
+                    f"Expected {name} not found under {root} after extracting {tar_path}"
+                )
+        logger.info(f"Copied BMC image files into {root}")
+
+    @staticmethod
+    def _stop_running_server(signature):
+        """
+        Kill a file server left behind by an earlier deploy and wait until it
+        is really gone.
+
+        The servers are detached and outlive the pytest run, so one may still
+        be up from a previous deploy - possibly serving a different --root.
+        Reusing it silently would only surface hundreds of seconds later, as a
+        U-Boot TFTP timeout, so always restart from a known state. pkill
+        returns before the process dies, hence the wait: starting the new
+        server too early would race on the port.
+        """
+        if not DeployBmcHelper._is_server_process_running(signature):
+            return
+        logger.info(f"Stopping file server already running: {signature}")
+        run_process_on_host(f'pkill -f "{signature}"', validate=False)
+        for _ in range(BmcDeployConstants.FILE_SERVER_PROC_RETRIES):
+            if not DeployBmcHelper._is_server_process_running(signature):
+                return
+            time.sleep(BmcDeployConstants.FILE_SERVER_PROC_INTERVAL)
+        raise Exception(f"File server {signature!r} is still running after pkill")
+
+    @staticmethod
+    def _is_server_process_running(signature):
+        """True if a process whose command line matches signature is running."""
+        _, _, rc = run_process_on_host(f'pgrep -f "{signature}"', validate=False)
+        return rc == 0
+
+    @staticmethod
+    def _start_server_detached(cmd, log_name, signature):
+        """
+        Launch cmd in a new session so it survives after this pytest process
+        exits (the file servers must stay up for the whole deploy). Output
+        goes to /tmp/<log_name>.log.
+
+        Popen returns before the child has bound its port, so wait for the
+        process to actually come up: a failed start (port taken, wrong path)
+        would otherwise stay invisible until the BMC fails to download.
+        """
+        log_path = os.path.join('/tmp', f'{log_name}.log')
+        log_file = open(log_path, 'ab')
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        finally:
+            log_file.close()
+        logger.info(f"Launched detached process {cmd}, logging to {log_path}")
+        for _ in range(BmcDeployConstants.FILE_SERVER_PROC_RETRIES):
+            time.sleep(BmcDeployConstants.FILE_SERVER_PROC_INTERVAL)
+            if proc.poll() is not None:
+                raise Exception(
+                    f"File server {cmd} exited immediately with rc={proc.returncode}, "
+                    f"see {log_path}"
+                )
+            if DeployBmcHelper._is_server_process_running(signature):
+                return
+        raise Exception(f"File server {cmd} did not come up, see {log_path}")
 
     @staticmethod
     def _close_serial(serial_engine):
@@ -1340,7 +1499,7 @@ class DeployBmcHelper:
         for tail_tmpl in BmcDeployConstants.UBOOT_BOOTARGS_TAILS:
             tail = tail_tmpl.format(
                 emmc_img=emmc_img,
-                http_server=BmcDeployConstants.BMC_HTTP_SERVER_URL,
+                http_server=bmc_params['http_server_url'],
             )
             DeployBmcHelper._run_uboot_cmd(
                 serial_engine, f'setenv bootargs "${{bootargs}}{tail}"'

@@ -1462,11 +1462,15 @@ class BmcDeployConstants:
 
     Reference: https://nvidia.atlassian.net/wiki/spaces/SW/pages/3239673921/BMC+SONiC#2.-Image-installation
     """
-    # TFTP + HTTP server
-    BMC_TFTP_SERVER_IP = "10.228.227.54"
-    BMC_HTTP_SERVER_URL = f"http://{BMC_TFTP_SERVER_IP}:8080"
+    # Create TFTP + HTTP file server on the sonic-mgmt container
+    BMC_TFTP_ROOT = "/srv/tftp"
+    BMC_TFTP_PORT = 69
+    BMC_HTTP_PORT = 8080
+    BMC_TFTP_SERVER_SCRIPT = "bmc_tftp_server.py"  # bundled under ngts/common/
+    FILE_SERVER_PROC_RETRIES = 10
+    FILE_SERVER_PROC_INTERVAL = 1
 
-    # File parameters
+    # File parameters (staged into BMC_TFTP_ROOT from the --base-version-bmc tar)
     BMC_FIT_FILE_NAME = "sonic_tftp_install.fit"
     BMC_EMMC_IMG_FILE_NAME = "sonic-aspeed-arm64-emmc.img.gz"
 
