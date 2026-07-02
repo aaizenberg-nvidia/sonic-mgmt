@@ -27,6 +27,7 @@ from ngts.tests_nvos.helpers import redmine_helpers
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.nmx.Sdn import Sdn
+from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.ib.Ib import Ib
 
 logger = logging.getLogger(__name__)
@@ -600,12 +601,53 @@ class ClusterTools:
         return random.choice(valid_gpus)
 
     @staticmethod
-    def collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus):
+    def _log_zero_uuid_debug_info(sdn, engine, zero_uuid_gpus, setup_name=None):
+        """Log show output and compute GPU UUIDs to help debug uuid=0."""
+        try:
+            locations = sorted(loc for _, loc in zero_uuid_gpus)
+            logger.info("GPUs with uuid=0 at location(s) %s", locations)
+            if sdn is not None:
+                logger.info("Debug zero-uuid: nv show sdn trays:\n%s", sdn.trays.show(dut_engine=engine))
+            if engine is not None:
+                logger.info(
+                    "Debug zero-uuid: nv show interface -o json:\n%s",
+                    Interface(parent_obj=None).show(output_format=OutputFormat.json, dut_engine=engine))
+            if setup_name:
+                nodes = Configurations.compute_nodes_per_system.get(setup_name)
+                if nodes:
+                    total_nodes = len(nodes)
+                    for idx, node in enumerate(nodes, start=1):
+                        ip_address = node['ip_address']
+                        password = node['password']
+                        compute_engine = LinuxSshEngine(ip_address, node['username'], password)
+                        cmd = (f"printf '%s\\n' '{password}' | sudo -S -p '' nvidia-smi -q 2>&1 ; "
+                               f"echo GPU__UUID__\"DONE\"")
+                        logger.info(
+                            'Debug zero-uuid: compute node %d/%d (%s): running nvidia-smi -q',
+                            idx, total_nodes, ip_address)
+                        output = compute_engine.send_cmd_with_retry(
+                            cmd, timeout=120, retries=2, auto_find_prompt=False,
+                            expected_string='GPU__UUID__DONE')
+                        clean_output = "\n".join(
+                            line for line in (output or "").splitlines()
+                            if "GPU__UUID__DONE" not in line).strip()
+                        logger.info(
+                            'Debug zero-uuid: compute node %d/%d (%s) nvidia-smi -q output:\n%s',
+                            idx, total_nodes, ip_address, clean_output or "(no output)")
+        except Exception as exc:
+            logger.warning('Debug zero-uuid: failed to collect debug info: %s', exc)
+
+    @staticmethod
+    def collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus, sdn=None, engine=None, setup_name=None):
         """Scan all partitions and record any GPUs with uuid=0 into the tracker set."""
+        found_zero_uuid = False
         for partition_id, gpu_list in partitions_mapping.items():
             for uuid, location in gpu_list:
                 if str(uuid) == "0":
                     zero_uuid_gpus.add((uuid, location))
+                    found_zero_uuid = True
+        if found_zero_uuid:
+            ClusterTools._log_zero_uuid_debug_info(sdn, engine, zero_uuid_gpus, setup_name=setup_name)
 
     @staticmethod
     def assert_no_zero_uuid_gpus(zero_uuid_gpus):
