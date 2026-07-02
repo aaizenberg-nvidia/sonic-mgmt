@@ -74,7 +74,7 @@ def test_cluster_partition(engines, dut_engines, devices, random_api, has_loopbo
                 list_of_tuples = ClusterTools.get_partition_uuid_location_map(output)
                 partitions_mapping[partition_id] = list_of_tuples
 
-        ClusterTools.collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus)
+        ClusterTools.collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus, sdn=sdn, engine=engines.dut, setup_name=setup_name)
 
         ClusterTools.create_empty_partition(sdn, partitions_mapping, engine=engines.dut)
 
@@ -180,7 +180,7 @@ def test_cluster_partition_bad_flow(engines, dut_engines, devices, random_api, h
                 list_of_tuples = ClusterTools.get_partition_uuid_location_map(output)
                 partitions_mapping[partition_id] = list_of_tuples
 
-        ClusterTools.collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus)
+        ClusterTools.collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus, sdn=sdn, engine=engines.dut, setup_name=setup_name)
 
         gpus_in_partition = partitions_mapping[default_partition_id]
         (uuid, location) = ClusterTools.choose_valid_gpu(gpus_in_partition, zero_uuid_gpus)
