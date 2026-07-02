@@ -617,4 +617,13 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     reason: "Tray admin state is only supported on VR200/Rosalind and later"
     conditions:
       - "'rosalind' not in testbed"
+
+tests_nvos/interfaces/test_plr_configs.py:
+  skip:
+    reason: "PLR tests disabled on RTF system till the feature is ready #4991472"
+    conditions_logical_operator: and
+    conditions:
+      - "'sws-rtf2-rosalind-198' in testbed"
+      - https://redmine.mellanox.com/issues/4991472
+
 ########################## NVOS IGNORE END ##########################
