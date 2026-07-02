@@ -11,7 +11,7 @@ from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.TpmTool import TpmTool
 from ngts.nvos_tools.platform.Platform import Platform
-from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import BmcUsers, CURL_AUTHORIZATION_ERR_MSGS
+from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import BmcUsers
 from ngts.tests_nvos.general.security.bmc.bmc_creds.helpers import enable_mctp_pcie_ctrl_service_in_bmc
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.BmcSshEngine import BmcSshEngine
@@ -49,7 +49,10 @@ def test_reset_bmc_password_to_default(engines, topology_obj, random_api):
         with allure.step("Log into bmc root with default known password"):
             bmc_engine = LinuxSshEngine(ip=bmc_ip_address, username='root', password=root_pass)
             output = bmc_engine.run_cmd('whoami')
-            client.change_root_password(password=root_pass, new_password=BMC_ROOT_PASS_MANUAL_CHANGED)
+            output = client.change_root_password(password=root_pass, new_password=BMC_ROOT_PASS_MANUAL_CHANGED)
+            assert output and '"error"' not in output, (
+                f'BMC curl change_root_password failed:\n{output}'
+            )
             root_pass = BMC_ROOT_PASS_MANUAL_CHANGED
         with allure.step("Reset BMC Root password"):
             iterations_number = random.randint(1, 20)
@@ -71,7 +74,10 @@ def test_reset_bmc_password_to_default(engines, topology_obj, random_api):
     finally:
         client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP, username=BmcUsers.root.username,
                           password=root_pass)
-        client.change_root_password(password=root_pass)
+        output = client.change_root_password(password=root_pass)
+    assert output and '"error"' not in output, (
+        f'BMC curl change_root_password failed:\n{output}'
+    )
 
 
 @pytest.mark.bmc
@@ -107,9 +113,13 @@ def test_reset_bmc_password_to_default_while_locked_out(engines, topology_obj, t
             try_to_connect_expecting_failure(bmc_ip_address, BmcUsers.root.another_password, err_msg=f'Connection succeeded with wrong bmc password: {BmcUsers.root.another_password}')
 
     finally:
-        client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP, username=BmcUsers.root.username,
-                          password=root_pass)
-        client.change_root_password(password=root_pass)
+        with allure.step('Restore BMC root password to lab password'):
+            client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP, username=BmcUsers.root.username,
+                              password=root_pass)
+            output = client.change_root_password(password=root_pass)
+    assert output and '"error"' not in output, (
+        f'BMC curl change_root_password failed:\n{output}'
+    )
 
 
 @pytest.mark.disable_loganalyzer
@@ -136,7 +146,10 @@ def test_reset_bmc_root_password_while_bmc_down(engines, devices, topology_obj, 
         with allure.step('factory reset the bmc'):
             client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP, username=BmcUsers.root.username,
                               password=BmcUsers.root.another_password)
-            client.change_root_password(password=BmcUsers.root.default_password)
+            output = client.change_root_password(password=BmcUsers.root.default_password)
+            assert output and '"error"' not in output, (
+                f'BMC curl change_root_password failed:\n{output}'
+            )
             root_password = BmcUsers.root.default_password
             client.reset_bmc_to_factory()
 
@@ -161,12 +174,17 @@ def test_reset_bmc_root_password_while_bmc_down(engines, devices, topology_obj, 
                 bmc_engine = LinuxSshEngine(ip=bmc_ip_address, username='root', password=root_password)
                 output = bmc_engine.run_cmd('whoami')
 
-            client.change_root_password(password=root_password)
+            output = client.change_root_password(password=root_password)
+            assert output and '"error"' not in output, (
+                f'BMC curl change_root_password failed:\n{output}'
+            )
             bmc_password_restored = True
 
     finally:
         if not bmc_password_restored:
-            client.change_root_password(password=root_password)
+            output = client.change_root_password(password=root_password)
+            if not output or '"error"' in output:
+                logger.error(f'BMC curl change_root_password failed during cleanup:\n{output}')
 
 
 def try_to_connect_expecting_failure(bmc_ip_address, password, err_msg):
