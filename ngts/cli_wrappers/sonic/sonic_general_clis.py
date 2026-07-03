@@ -1274,42 +1274,12 @@ class SonicGeneralCliDefault(GeneralCliCommon):
 
         logger.info("✓ Multi-ASIC configuration applied successfully")
 
-    def _copy_sn5640_simx_sku_from_physical_to_simx_and_update_simx_specific_files(self, sn5640_simx_platform):
-        """
-        After copying Mellanox-SN5640-C512S2 from physical to simx, align simx-specific files:
-        drop independent-module SAI mode from sai.profile, and skip xcvrd in PMON (not CMIS mgr).
-        """
-        # This is a workaround to copy the SN5640 default sku from physical to simx
-        # The default sku is Mellanox-SN5640-C512S2
-        # and it is not available in the simx
-        # so we need to copy it from the physical platform folder to the simx platform folder
-        logger.info("Copying 5640 default sku from physical to simx")
-        cp_5640_default_sku_from_physic_to_simx = f"sudo cp -rf /usr/share/sonic/device/x86_64-nvidia_sn5640-r0/Mellanox-SN5640-C512S2 /usr/share/sonic/device/{sn5640_simx_platform}/"
-        self.engine.run_cmd(cp_5640_default_sku_from_physic_to_simx)
-
-        logger.info("Updating simx-specific files")
-        sku_path = f'/usr/share/sonic/device/{sn5640_simx_platform}/Mellanox-SN5640-C512S2'
-        logger.info('Removing SAI_INDEPENDENT_MODULE_MODE=1 from simx sai.profile if present')
-        self.engine.run_cmd(f"sudo sed -i '/^SAI_INDEPENDENT_MODULE_MODE=1$/d' {sku_path}/sai.profile")
-        logger.info('Updating pmon_daemon_control.json: remove skip_xcvrd_cmis_mgr, set skip_xcvrd true')
-        self.engine.run_cmd(
-            f"sudo python3 -c \"import json; p='{sku_path}/pmon_daemon_control.json'; "
-            f"d=json.load(open(p)); d.pop('skip_xcvrd_cmis_mgr', None); d['skip_xcvrd']=True; "
-            f"f=open(p,'w'); json.dump(d, f, indent=4); f.write('\\n'); f.close()\""
-        )
-
     def apply_config_files(self, topology_obj, setup_name, platform_params, is_air, custom_config_db_air_path=None,
                            deploy_chipless=False):
         platform = platform_params['platform']
         hwsku = platform_params['hwsku']
         shared_path = '{}{}'.format(InfraConst.MARS_TOPO_FOLDER_PATH, setup_name)
         config_db = None
-
-        # this is a workaround to copy the SN5640 default sku from physical to simx
-        # when image implementation supports SN5640-C512S2, this will be removed
-        sn5640_simx_platform = PlatformTypesConstants.PLATFORM_BISON_SIMX
-        if platform == sn5640_simx_platform:
-            self._copy_sn5640_simx_sku_from_physical_to_simx_and_update_simx_specific_files(sn5640_simx_platform)
 
         if is_air:
             if custom_config_db_air_path:
