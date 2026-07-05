@@ -69,6 +69,14 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             with allure.step("Creating Empty partition, then adding a GPU to it with no-reroute option"):
                 logger.info("After reboot, empty partition should persist, but GPU added to it with no-reroute should be deleted")
                 uuid, location, _, partition_to_remove_from = ClusterTools.create_empty_partition_and_add_gpu(sdn, 'no-reroute', engine=engines.dut)
+                new_partition_uuids, new_partition_locations = \
+                    ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.EMPTY_PARTITION_ID)
+                default_partition_uuids, default_partition_locations = \
+                    ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.DEFAULT_PARTITION_ID)
+                assert uuid in new_partition_uuids and location in new_partition_locations, \
+                    f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute, See current uuids: {new_partition_uuids}"
+                assert uuid not in default_partition_uuids and location not in default_partition_locations, \
+                    f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute, See current uuids: {new_partition_uuids}"
 
         tray_state_set = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
@@ -77,6 +85,8 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 tray_ids = list(trays_output.keys())
                 if tray_ids:
                     selected_tray = tray_ids[0]
+                    if location.split('.')[1] == selected_tray:
+                        selected_tray = tray_ids[-1]  # Since we know that the first and the last tray are compute nodes, take the last tray in case the first tray will not work
                     local_switch_slot = str(chassis_info.get('slot-number'))
                     partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
                     if partition_deletion_flag:
@@ -138,11 +148,9 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                                                                  output_format=output_format).get_returned_value()
             assert ClusterConsts.EMPTY_PARTITION_ID in output.keys(), f'Partition {ClusterConsts.EMPTY_PARTITION_ID} was deleted, while its expected to be kept'
             assert ClusterConsts.DEFAULT_PARTITION_ID not in output.keys(), f'Partition {ClusterConsts.DEFAULT_PARTITION_ID} was not deleted, while its expected to be deleted'
-            output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.partition_id[ClusterConsts.EMPTY_PARTITION_ID].show(output_format=output_format),
-                                                                 output_format=output_format).get_returned_value()
-            uuids, locations = ClusterTools.uuid_location_in_partition(sdn, partition_to_remove_from)
-            assert uuid not in uuids, f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute, See current uuids: {uuids}"
-            assert location not in locations, f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute. See current locations: {locations}"
+            uuids, locations = ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.EMPTY_PARTITION_ID)
+            assert uuid in uuids, f"uuid {uuid} was not deleted from partition {ClusterConsts.EMPTY_PARTITION_ID} although it was removed with no-reroute, See current uuids: {uuids}"
+            assert location in locations, f"uuid {uuid} was not deleted from partition {ClusterConsts.EMPTY_PARTITION_ID} although it was removed with no-reroute. See current locations: {locations}"
 
     finally:
         if not standalone_system:
