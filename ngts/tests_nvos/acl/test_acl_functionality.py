@@ -1,34 +1,40 @@
+from __future__ import annotations
+
+from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest
+from scapy.layers.inet import IP, ICMP
+from scapy.packet import Packet
+from typing import Callable
+from scapy import sendrecv
 import logging
-import pytest
 import random
-import subprocess
+import pytest
+import retry
 import time
-from retry import retry
-from retry.api import retry_call
+import re
 
 from infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
-from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
-from ngts.nvos_tools.infra.IpTool import IpTool
-from ngts.nvos_tools.infra.ResultObj import ResultObj
-from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_tools.acl.acl import Acl
+from infra.tools.redmine import redmine_api
+
+from ngts.nvos_constants.constants_nvos import ApiType, AclConsts, IpConsts
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
+from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.nvos_constants.constants_nvos import ApiType, AclConsts, OutputFormat, IpConsts
-from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
-from infra.tools.redmine.redmine_api import is_redmine_issue_active
-from scapy.layers.inet import IP, TCP, ICMP
-from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest
-from scapy.all import *
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.ValidationTool import ValidationTool
-from multiprocessing import Process
+from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
+from ngts.ngts_types import DevicesT, EnginesT, TopologyT
+from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.infra.ResultObj import ResultObj
+from ngts.tests_nvos.helpers import redmine_helpers
+from ngts.nvos_tools.acl.acl import Acl, AclID
+from ngts.nvos_tools.acl.rule import RuleID
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 SLEEP_TIME = 5
 IPV6_ADDR = "2001:db8:abcd:0012:0000:0000:0000:00ef"
-RULE_CONFIG_FUNCTION = {
+
+RULE_CONFIG_FUNCTION: dict[str, Callable[[RuleID, str], None]] = {
     AclConsts.ACTION: lambda rule_id_obj, param: rule_id_obj.action.recent.set() if param == 'recent' else rule_id_obj.action.set(param),
     AclConsts.ACTION_LOG_PREFIX: lambda rule_id_obj, param: rule_id_obj.action.log.set_log_prefix(param),
     AclConsts.REMARK: lambda rule_id_obj, param: rule_id_obj.set_remark(param),
@@ -72,7 +78,7 @@ RULE_CONFIG_FUNCTION = {
 
 
 @pytest.mark.acl
-def test_rules_order(devices, engines, random_api, topology_obj):
+def test_rules_order(devices: DevicesT, engines: EnginesT, random_api: str, topology_obj: TopologyT):
     """
     Validate acl rules order by priority of rules order.
     the first rule that match the packet should apply even if the next rule also match but the action is different.
@@ -175,7 +181,7 @@ def test_rules_order(devices, engines, random_api, topology_obj):
 
 
 @pytest.mark.acl
-def test_acl_order(engines, random_api, topology_obj):
+def test_acl_order(engines: EnginesT, random_api: str, topology_obj: TopologyT):
     """
     Validate ACLs rules order by priority of ACL order.
     the first rule in the first acl that match the packet should applied.
@@ -233,20 +239,20 @@ def test_acl_order(engines, random_api, topology_obj):
     with allure.step("Validate new ACL rule order"):
         rule_packets_before = get_rule_packets(mgmt_port, acl_id_2)
         ping_packet = ping_from_sonic_mgmt(engines.dut.ip, engines=engines)
-        # send(ping_packet)
+        # sendrecv.send(ping_packet)
         rule_packets_after = get_rule_packets(mgmt_port, acl_id_2)
         assert rule_packets_after[rule_id] > rule_packets_before[rule_id], \
             f'we expect to see increase in acl {acl_id_2} rule id {rule_id} counter - cause the first acl has removed'
 
 
-@retry(Exception, tries=5, delay=3)
-def wait_till_acl_applied(mgmt_port, acl_id):
+@retry.retry(Exception, tries=5, delay=3)
+def wait_till_acl_applied(mgmt_port: Port, acl_id: str):
     interface_acls_output = mgmt_port.interface.acl.parse_show()
     assert acl_id in interface_acls_output.keys(), f"{acl_id} not found"
 
 
 @pytest.mark.acl
-def test_inbound_outbound_counters(engines, random_api, topology_obj):
+def test_inbound_outbound_counters(engines: EnginesT, random_api: str, topology_obj: TopologyT):
     """
     Validate inbound outbound counters.
     rule match ip dest-ip - should increase outbound counters only
@@ -336,7 +342,7 @@ def test_inbound_outbound_counters(engines, random_api, topology_obj):
 
 
 @pytest.mark.acl
-def test_acl_recent_list(engines, random_api, topology_obj):
+def test_acl_recent_list(engines: EnginesT, random_api: str, topology_obj: TopologyT):
     """
     Validate ACL match recent-list rules.
     steps:
@@ -397,7 +403,7 @@ def test_acl_recent_list(engines, random_api, topology_obj):
 
 
 @pytest.mark.acl
-def test_adding_new_rule(engines, topology_obj, apply_default_config):
+def test_adding_new_rule(engines: EnginesT, topology_obj: TopologyT, apply_default_config: bool):
     """
     Adding new rule that will be the opposite of a default rule and validate that the first rule will catch the packet.
     steps:
@@ -502,7 +508,7 @@ def test_adding_new_rule(engines, topology_obj, apply_default_config):
 
 
 @pytest.mark.acl
-def test_override_default_rule(engines, topology_obj, apply_default_config):
+def test_override_default_rule(engines: EnginesT, topology_obj: TopologyT, apply_default_config: bool):
     """
     Override rule – not allowed to delete attr of default rule,
     just add new one or change existing one.
@@ -547,7 +553,7 @@ def test_override_default_rule(engines, topology_obj, apply_default_config):
             default_rule_to_add_field_output = acl_obj.rule.parse_show(default_rule_to_add_field)
             default_rule_to_override_field_output = acl_obj.rule.parse_show(default_rule_to_override_field)
 
-        if not is_redmine_issue_active([4138944])[0]:
+        if not redmine_api.is_redmine_issue_active([4138944])[0]:
             with ((allure.step("override default rules - add new field"))):
                 config_rule(engines.dut, acl_obj, default_rule_to_add_field, {AclConsts.SOURCE_IP: src_ip})
                 with allure.step("validate with show command"):
@@ -614,7 +620,7 @@ def test_override_default_rule(engines, topology_obj, apply_default_config):
 
 
 @pytest.mark.acl
-def test_nmx_ports(engines, devices, random_api):
+def test_nmx_ports(engines: EnginesT, devices: DevicesT, random_api: str):
     """
     Check if device has acl rules for nmx
     steps:
@@ -651,18 +657,18 @@ def test_nmx_ports(engines, devices, random_api):
 
 
 @pytest.mark.acl
-def test_acl_dscp_supported_values_ipv4(engines, devices, random_api, topology_obj):
+def test_acl_dscp_supported_values_ipv4(engines: EnginesT, devices: DevicesT, random_api: str, topology_obj: TopologyT):
     configure_validate_dscp_acl_value(engines, devices, acl_type=IpConsts.IPV4, protocol=AclConsts.ICMP, sonic_ip=engines.sonic_mgmt.ip)
 
 
 @pytest.mark.acl
-def test_acl_dscp_supported_values_ipv6(engines, devices, random_api, topology_obj, sonic_mgmt_ipv6_addr):
+def test_acl_dscp_supported_values_ipv6(engines: EnginesT, devices: DevicesT, random_api: str, topology_obj: TopologyT, sonic_mgmt_ipv6_addr: str):
     configure_validate_dscp_acl_value(engines, devices, acl_type=IpConsts.IPV6, protocol=AclConsts.ICMPV6, sonic_ip=sonic_mgmt_ipv6_addr)
 
 
 @pytest.mark.acl
 @pytest.mark.disable_loganalyzer
-def test_acl_dscp_unsupported_values(engines, devices, random_api, topology_obj):
+def test_acl_dscp_unsupported_values(engines: EnginesT, devices: DevicesT, random_api: str, topology_obj: TopologyT):
     """
     Validate ACLs dscp over ipv4.
     steps:
@@ -687,7 +693,7 @@ def test_acl_dscp_unsupported_values(engines, devices, random_api, topology_obj)
 # ------------------- functions -------------------
 
 
-def configure_validate_dscp_acl_value(engines, devices, acl_type, protocol, sonic_ip):
+def configure_validate_dscp_acl_value(engines: EnginesT, devices: DevicesT, acl_type: str, protocol: str, sonic_ip: str):
     """
     steps:
     1. config ACL with a rule and random dscp value - supported
@@ -722,17 +728,17 @@ def configure_validate_dscp_acl_value(engines, devices, acl_type, protocol, soni
     with allure.step("Check ACL counters before ping"):
         rule_packets_before = get_rule_packets(mgmt_port, acl_id, rule_id_1, rule_direction=AclConsts.OUTBOUND)
 
-    # Start tcpdump in background on sonic_mgmt
+    # Start tcpdump in background on dut
     with allure.step("Start tcpdump in background to capture ICMP packets"):
         tcpdump_output_file = "/tmp/tcpdump_dscp_test.txt"
         if acl_type == IpConsts.IPV4:
-            # Filter for ICMP between switch and sonic_mgmt
+            # Filter for ICMP between switch and dut
             tcpdump_cmd = f"timeout 30 sudo tcpdump -i eth0 -n -vv 'icmp and host {sonic_ip}' -c 30 > {tcpdump_output_file} 2>&1"
         else:
-            # Filter for ICMPv6 between switch and sonic_mgmt (avoid neighbor discovery noise)
+            # Filter for ICMPv6 between switch and dut (avoid neighbor discovery noise)
             tcpdump_cmd = f"timeout 30 sudo tcpdump -i eth0 -n -vv 'icmp6 and host {sonic_ip}' -c 30 > {tcpdump_output_file} 2>&1"
 
-        engines.sonic_mgmt.run_cmd(f"nohup {tcpdump_cmd} &")
+        engines.dut.run_cmd(f"nohup {tcpdump_cmd} &")
         time.sleep(2)  # Give tcpdump time to start
 
     try:
@@ -748,17 +754,17 @@ def configure_validate_dscp_acl_value(engines, devices, acl_type, protocol, soni
             assert packets_matched > 0, f"ACL rule matched {packets_matched} packets, expected > 0"
 
         with allure.step("Validate DSCP marking in tcpdump output"):
-            tcpdump_output = engines.sonic_mgmt.run_cmd(f"cat {tcpdump_output_file} 2>/dev/null || echo 'No tcpdump output'")
+            tcpdump_output = engines.dut.run_cmd(f"cat {tcpdump_output_file} 2>/dev/null || echo 'No tcpdump output'")
 
             # Extract TOS values from full tcpdump output
-            import re
+
             if acl_type == IpConsts.IPV4:
                 tos_values = set(re.findall(r'tos\s+(0x[0-9a-fA-F]+)', tcpdump_output))
             else:
                 tos_values = set(re.findall(r'class\s+(0x[0-9a-fA-F]+)', tcpdump_output))
 
             # Cleanup
-            engines.sonic_mgmt.run_cmd(f"rm -f {tcpdump_output_file}")
+            engines.dut.run_cmd(f"rm -f {tcpdump_output_file}")
 
             # Validate expected TOS value is present
             assert random_dscp_value_hex in tos_values, \
@@ -771,12 +777,12 @@ def configure_validate_dscp_acl_value(engines, devices, acl_type, protocol, soni
                 ValidationTool.verify_field_exist_in_json_output(output, AclConsts.DSCP, should_be_found=False)
 
 
-def sleep():
+def sleep() -> None:
     logger.info(f"sleep {SLEEP_TIME}")
     time.sleep(SLEEP_TIME)
 
 
-def is_acl_attached_to_interface(mgmt_port, acl_id):
+def is_acl_attached_to_interface(mgmt_port: Port, acl_id: str) -> bool:
     """Check if ACL is attached to interface"""
     try:
         mgmt_port.interface.acl.acl_id[acl_id].parse_show()
@@ -785,7 +791,7 @@ def is_acl_attached_to_interface(mgmt_port, acl_id):
         return False
 
 
-def get_rule_packets(mgmt_port, acl_id, rule_id=None, rule_direction=AclConsts.INBOUND):
+def get_rule_packets(mgmt_port: Port, acl_id: str, rule_id: str | None = None, rule_direction: str = AclConsts.INBOUND) -> dict:
     with allure.step(f"get_rule_packet({mgmt_port.name=}, {acl_id=}, {rule_id=}, {rule_direction=})"):
         try:
             output = mgmt_port.interface.acl.acl_id[acl_id].parse_show()
@@ -803,7 +809,7 @@ def get_rule_packets(mgmt_port, acl_id, rule_id=None, rule_direction=AclConsts.I
             raise e
 
 
-def config_rule(engine, acl_id_obj, rule_id, rule_config_dict):
+def config_rule(engine: ProxySshEngine, acl_id_obj: AclID, rule_id: str, rule_config_dict: dict[str, str]) -> ResultObj:
     with allure.step(f"Config rule {rule_id}"):
         acl_id_obj.rule.set(rule_id).verify_result()
         rule_id_obj = acl_id_obj.rule.rule_id[rule_id]
@@ -813,8 +819,7 @@ def config_rule(engine, acl_id_obj, rule_id, rule_config_dict):
             if (key == AclConsts.ACTION and value == 'recent' and
                     TestToolkit.tested_api in [ApiType.OPENAPI]):
                 try:
-                    from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
-                    if is_bug_active(4508304):
+                    if redmine_helpers.is_bug_active(4508304):
                         logger.info("Bug 4508304 is active - expecting failure for OpenAPI action 'recent'")
                         RULE_CONFIG_FUNCTION[key](rule_id_obj, value).verify_result(should_succeed=False)
                         continue
@@ -830,9 +835,18 @@ def config_rule(engine, acl_id_obj, rule_id, rule_config_dict):
         return result_obj
 
 
-def config_acl_with_rule_attached_to_interface(engine, acl_id, acl_type, rule_id, rule_configuration_dict, mgmt_port,
-                                               rule_direction, control_plane=AclConsts.CONTROL_PLANE, acl_obj=None,
-                                               should_succeed=True):
+def config_acl_with_rule_attached_to_interface(
+    engine: ProxySshEngine,
+    acl_id: str,
+    acl_type: str,
+    rule_id: str,
+    rule_configuration_dict: dict,
+    mgmt_port: Port,
+    rule_direction: str,
+    control_plane: str = AclConsts.CONTROL_PLANE,
+    acl_obj: Acl | None = None,
+    should_succeed: bool = True,
+) -> Acl:
     with allure.step(f"config acl {acl_id} with rule {rule_id} attached to interface {mgmt_port.name}"):
         if acl_obj:
             config_rule(engine, acl_obj, rule_id, rule_configuration_dict).verify_result()
@@ -847,7 +861,7 @@ def config_acl_with_rule_attached_to_interface(engine, acl_id, acl_type, rule_id
     return acl_obj
 
 
-def attach_acl_to_interface(acl_id, mgmt_port, rule_direction, control_plane=AclConsts.CONTROL_PLANE):
+def attach_acl_to_interface(acl_id: str, mgmt_port: Port, rule_direction: str, control_plane: str = AclConsts.CONTROL_PLANE) -> ResultObj:
     with allure.step(f"Attach acl {acl_id} to interface {mgmt_port.name}"):
         mgmt_port.interface.acl.set(acl_id).verify_result()
         if rule_direction == AclConsts.INBOUND:
@@ -857,7 +871,15 @@ def attach_acl_to_interface(acl_id, mgmt_port, rule_direction, control_plane=Acl
         return result_obj
 
 
-def validate_counters_after_traffic(engine, rule_direction, mgmt_port, acl_id, rule_id, ping_dest=None, packet=None):
+def validate_counters_after_traffic(
+    engine: ProxySshEngine,
+    rule_direction: str,
+    mgmt_port: Port,
+    acl_id: str,
+    rule_id: str,
+    ping_dest: str | None = None,
+    packet: str | None = None,
+) -> None:
     with allure.step(f"Verify {rule_direction} rule captures relevant traffic"):
         rule_packets_before = get_rule_packets(mgmt_port, acl_id, rule_id, rule_direction=rule_direction)
 
@@ -873,7 +895,6 @@ def validate_counters_after_traffic(engine, rule_direction, mgmt_port, acl_id, r
                     ping_from_switch(engine, ping_dest, mgmt_port.name).verify_result()
                 else:
                     # Use the destination from the packet if no ping_dest provided
-                    import re
                     dst_match = re.search(r'dst="([^"]+)"', packet)
                     if dst_match:
                         ping_dest = dst_match.group(1)
@@ -906,7 +927,12 @@ def ping_from_switch(engine: ProxySshEngine, dest: str, source_interface, count=
         return ResultObj(True, "", ping_output)
 
 
-def ping_from_sonic_mgmt(dst: Union[str, Packet], src=None, engines=None, ip_version='ipv4') -> Packet:
+def ping_from_sonic_mgmt(
+    dst: str | Packet,
+    src: str | None = None,
+    engines: EnginesT | None = None,
+    ip_version: str = 'ipv4',
+) -> Packet:
     with allure.step(f"ping {dst} from {src or 'default'} using {ip_version}"):
         dest_ip = dst if isinstance(dst, str) else dst.dst
 
@@ -927,7 +953,7 @@ def ping_from_sonic_mgmt(dst: Union[str, Packet], src=None, engines=None, ip_ver
                     packet = dst if isinstance(dst, Packet) else (IPv6(dst=dest_ip, src=src) / ICMPv6EchoRequest())
                 else:
                     packet = dst if isinstance(dst, Packet) else (IP(dst=dest_ip, src=src) / ICMP())
-                send(packet)
+                sendrecv.send(packet)
                 return packet
             except PermissionError as e:
                 raise Exception(
@@ -941,7 +967,7 @@ def ping_from_sonic_mgmt(dst: Union[str, Packet], src=None, engines=None, ip_ver
             return dst if isinstance(dst, Packet) else (IP(dst=dest_ip, src=src) / ICMP())
 
 
-def dest_ip_test(engines, mgmt_port, acl_type, acl_id, dest_ip_list, ping_dest):
+def dest_ip_test(engines: EnginesT, mgmt_port: Port, acl_type: str, acl_id: str, dest_ip_list: list[str], ping_dest: str) -> None:
     with allure.step(f"Define ACL {acl_id} type {acl_type}"):
         rule_id = str(len(dest_ip_list))
         acl_obj = None
@@ -957,7 +983,7 @@ def dest_ip_test(engines, mgmt_port, acl_type, acl_id, dest_ip_list, ping_dest):
             rule_id = str(int(rule_id) - 1)
 
 
-def scapy_send_packet(engine, packet, interface=''):
+def scapy_send_packet(engine: ProxySshEngine, packet: str, interface: str = '') -> None:
     args = packet
     if interface:
         args += f', iface="{interface}"'
@@ -969,7 +995,16 @@ def scapy_send_packet(engine, packet, interface=''):
             raise Exception("scapy failed: " + ret)
 
 
-def match_ip_port_test(engines, mgmt_port, acl_type, acl_id, port_list, dest_addr, port_direction, engine_send_packet):
+def match_ip_port_test(
+    engines: EnginesT,
+    mgmt_port: Port,
+    acl_type: str,
+    acl_id: str,
+    port_list: list[str],
+    dest_addr: str,
+    port_direction: str,
+    engine_send_packet: ProxySshEngine,
+) -> None:
     rule_id = str(len(port_list))
     acl_obj = None
 
@@ -989,7 +1024,7 @@ def match_ip_port_test(engines, mgmt_port, acl_type, acl_id, port_list, dest_add
             rule_id = str(int(rule_id) - 1)
 
 
-def get_dscp_hexadecimal_dict(option):
+def get_dscp_hexadecimal_dict(option: str) -> dict | str:
     if option == 'supported_dec':
         rand_int = random.randint(0, 63)
         return ({rand_int: hex(rand_int * 4)})
@@ -997,7 +1032,10 @@ def get_dscp_hexadecimal_dict(option):
         rand_int = random.randint(64, 100)
         return ({rand_int: hex(rand_int)})
     elif option == 'supported_enum':
-        enum_list = [af11, af12, af13, af21, af22, af23, af31, af32, af33, af41, af42, af43, cs1, cs2, cs3, cs4, cs5, cs6, cs7, be, ef]
+        enum_list = [
+            "af11", "af12", "af13", "af21", "af22", "af23", "af31", "af32", "af33", "af41",
+            "af42", "af43", "cs1", "cs2", "cs3", "cs4", "cs5", "cs6", "cs7", "be", "ef",
+        ]
         return (random.choice(enum_list))
     else:
         logger.info("please provide valid option")
@@ -1005,7 +1043,7 @@ def get_dscp_hexadecimal_dict(option):
 
 @pytest.mark.acl
 @pytest.mark.slow
-def test_acl_show_commands_coverage(engines, random_api, topology_obj):
+def test_acl_show_commands_coverage(engines: EnginesT, random_api: str, topology_obj: TopologyT):
     """
     Comprehensive test to validate all missing ACL show commands.
     This test creates rules with all possible configurations to ensure
