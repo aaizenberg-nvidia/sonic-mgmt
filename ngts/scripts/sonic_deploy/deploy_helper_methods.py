@@ -111,6 +111,9 @@ class DeploymentContext:
         self.base_version_bmc = base_version_bmc
         self.neighbor_mode = neighbor_mode
         self.sdk_source = sdk_source
+        # Set True for the host-switch phases of a BMC + switch deploy, so the
+        # switch deploy skips remove-topo/add-topo
+        self.skip_add_remove_topo = False
         # True when a BMC image is provided and BMC installation should run
         self.deploy_bmc = bool(base_version_bmc)
         # True when a switch base/target image is provided and switch deployment should run
@@ -901,7 +904,13 @@ class DeployOrchestrator:
             with allure.step('Setup local TFTP/HTTP file server for BMC image'):
                 DeployBmcHelper._setup_bmc_image_file_servers(ctx)
 
-            # remove-topo / add-topo / gen-mg reuse the community deploy functions
+            # bmc-dual-mgmt lists two duts: the BMC and the host-switch.
+            # The deploy-mg below must target the BMC alone. The host-switch
+            # deploy-mg executes later.
+            # A trailing --limit wins because ansible keeps only the last --limit
+            bmc_deploy_limit = "--limit {}-bmc".format(dut_name)
+
+            # remove-topo / add-topo reuse the community deploy functions
             # in sonic_only_methods directly (bmc-dual-mgmt is a normal topo); there
             # are no BMC-specific topo wrappers.
             with allure.step('BMC remove-topo'):
@@ -911,7 +920,7 @@ class DeployOrchestrator:
                     setup_name=ctx.setup_name,
                     sonic_topo=ctx.sonic_topo,
                 )
-            with allure.step('BMC add-topo and generate minigraph'):
+            with allure.step('BMC add-topo'):
                 SonicInstallationSteps.start_community_background_threads(
                     bmc_topo_threads, ctx.setup_name, dut_name, ctx.sonic_topo,
                     'ceos', MarsConstants.DEFAULT_PTF_TAG, '', ansible_path,
@@ -920,13 +929,16 @@ class DeployOrchestrator:
                 )
             with allure.step('BMC installation'):
                 DeployBmcHelper.install_bmc(ctx)
-            with allure.step('Wait for BMC add-topo/gen-mg to finish'):
+            with allure.step('Wait for BMC add-topo to finish'):
                 wait_until_background_procs_done(bmc_topo_threads)
 
             # deploy-mg produces the NetworkBmc DEVICE_METADATA, the default ACL
             # tables and the telemetry certificates on the BMC.
             with allure.step('BMC deploy minigraph'):
                 deploy_cmd = get_deploy_minigraph_cmd().format(SWITCH=dut_name, TOPO=ctx.sonic_topo)
+                # Restrict deploy-mg to the BMC (see bmc_deploy_limit above); otherwise
+                # it would push the NetworkBmc minigraph onto the real host-switch.
+                deploy_cmd = "{} {}".format(deploy_cmd, bmc_deploy_limit)
                 logger.info(f"Running CMD: {deploy_cmd}")
                 execute_script(deploy_cmd, ansible_path, validate=True, timeout=900)
 
@@ -944,6 +956,17 @@ class DeployOrchestrator:
                     DeployBmcHelper._disable_unavailable_services(bmc_params)
 
         if self.context.deploy_switch:
+            # In a dual (BMC + switch) deploy the single --sonic-topo drives the
+            # BMC deploy above (bmc-dual-mgmt). The host-switch is deployed on its
+            # own fixed management topology and must NOT run remove-topo/add-topo,
+            # because the BMC deploy already set up the testbed topology. Redirect
+            # the switch deploy-mg to the fixed switch topo and skip topology
+            # add/remove. Switch-only deploys (no BMC image) keep using
+            # --sonic-topo unchanged.
+            if self.context.deploy_bmc:
+                self.context.sonic_topo = BmcDeployConstants.SWITCH_DUAL_DEPLOY_TOPO
+                self.context.skip_add_remove_topo = True
+
             # Phase 1: Pre-installation
             with allure.step('pre installation steps'):
                 results['pre_install_threads'] = self.execute_pre_installation_steps()
@@ -1474,27 +1497,32 @@ class DeployBmcHelper:
     @staticmethod
     def _run_uboot_cmd(serial_engine, cmd, timeout=None):
         timeout = timeout or BmcDeployConstants.UBOOT_PROMPT_TIMEOUT
-        serial_engine.run_cmd(
+        output, _ = serial_engine.run_cmd(
             cmd,
             expected_value=BmcDeployConstants.UBOOT_PROMPT,
             timeout=timeout,
         )
+        return output or ''
 
     @staticmethod
     def _run_uboot_install(serial_engine, bmc_params):
         """Execute the U-Boot command sequence to start the install."""
         emmc_img = BmcDeployConstants.BMC_EMMC_IMG_FILE_NAME
 
+        # Drop whatever a previous install left in the saved U-Boot environment.
+        DeployBmcHelper._run_uboot_cmd(
+            serial_engine, BmcDeployConstants.UBOOT_ENV_DEFAULT_CMD
+        )
+
         # DHCP can occasionally fail; retry a few times.
         dhcp_ok = False
         for attempt in range(BmcDeployConstants.DHCP_RETRY_LIMIT):
             try:
-                DeployBmcHelper._run_uboot_cmd(
+                output = DeployBmcHelper._run_uboot_cmd(
                     serial_engine, 'dhcp', timeout=BmcDeployConstants.DHCP_TIMEOUT
                 )
-                output = DeployBmcHelper._wait_uboot_prompt(serial_engine)
                 logger.info(f"DHCP output: {output}")
-                dhcp_ok = "DHCP client bound to address" in output
+                dhcp_ok = BmcDeployConstants.UBOOT_DHCP_BOUND_MARKER in output
                 if dhcp_ok:
                     break
             except Exception as e:
@@ -1780,13 +1808,16 @@ class DeployBmcHelper:
         logger.info(
             f"BMC clock before sync: {engine.run_cmd('date').strip()}"
         )
-        engine.run_cmd("sudo systemctl start chrony")
-        time.sleep(BmcDeployConstants.BMC_CHRONY_SETTLE_SECONDS)
-        engine.run_cmd("sudo chronyc -a makestep")
+        # Write the drop-in before chronyd starts, so no chronyd restart is needed afterwards
         if is_redmine_issue_active([5083483])[0]:
             logger.info('Redmine #5083483 is active, persisting chrony makestep on BMC')
             engine.run_cmd("echo 'makestep 1 3' | sudo tee /etc/chrony/conf.d/step.conf")
-            engine.run_cmd("sudo systemctl restart chrony")
+        engine.run_cmd("sudo systemctl start chrony")
+        time.sleep(BmcDeployConstants.BMC_CHRONY_SETTLE_SECONDS)
+        engine.run_cmd("sudo chronyc -a makestep")
+        # The clock step re-triggers the overdue set-epoch.timer, keep the unit out of failed state
+        engine.run_cmd("sudo systemctl start set-epoch.service || true")
+        engine.run_cmd("sudo systemctl reset-failed set-epoch.service || true")
         logger.info(
             f"BMC clock after sync:  {engine.run_cmd('date').strip()}"
         )

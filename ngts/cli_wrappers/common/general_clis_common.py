@@ -9,7 +9,7 @@ import glob
 import subprocess
 from ngts.cli_wrappers.interfaces.interface_general_clis import GeneralCliInterface
 from ngts.cli_wrappers.sonic.sonic_onie_clis import SonicOnieCli
-from ngts.constants.constants import InfraConst, SSHConsts, Sonic_Cache
+from ngts.constants.constants import InfraConst, SSHConsts, Sonic_Cache, BmcDeployConstants
 from ngts.constants.performance_constants import PerfConsts
 from ngts.helpers.run_process_on_host import run_process_on_host
 from ngts.helpers.secure_boot_helper import SecureBootHelper
@@ -551,9 +551,20 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         ip = self.engine.ip
         port = self.engine.ssh_port
         logger.info('Executing remote reboot')
-        cmd = topology_obj.players[dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
-            'remote_reboot']
-        _, _, rc = run_process_on_host(cmd)
+        # On a SONiC BMC setup, boot the switch into ONIE by power-cycling only the switch
+        # host CPU from the BMC. A whole-board power cycle would reset the shared serial
+        # console mux back to the BMC, leaving the host GRUB menu off the serial console.
+        bmc_player = topology_obj.players.get('bmc', {})
+        if boot_into_onie and self._is_sonic_bmc(bmc_player):
+            self._reboot_switch_host_via_bmc(topology_obj)
+            rc = InfraConst.RC_SUCCESS
+        else:
+            # If sonic BMC is unreachable, it will block later steps
+            if boot_into_onie and bmc_player and not self._is_bmc_reachable(bmc_player):
+                raise Exception('BMC is not reachable, cannot boot the switch into ONIE')
+            cmd = topology_obj.players[dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
+                'remote_reboot']
+            _, _, rc = run_process_on_host(cmd)
         if rc == InfraConst.RC_SUCCESS:
             if boot_into_onie:
                 self.boot_into_onie_by_serial_on_remote_reboot(topology_obj, dut_alias)
@@ -561,6 +572,63 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
                 check_port_status_till_alive(should_be_alive=True, destination_host=ip, destination_port=port)
         else:
             raise Exception('Remote reboot rc is other then 0')
+
+    @staticmethod
+    def _is_sonic_bmc(bmc_player):
+        """
+        Check whether the BMC attached to this setup runs SONiC BMC.
+
+        Probe the BMC over SSH for hw-management-bmc-powerctrl.sh, which is shipped only by
+        SONiC BMC. Returns False when there is no BMC player or when the probe fails.
+        """
+        if not bmc_player:
+            return False
+        try:
+            output = bmc_player['engine'].run_cmd(
+                f"test -f {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} && echo yes")
+            return 'yes' in output
+        except Exception as err:
+            logger.warning(f'BMC probe failed, using NOGA remote_reboot: {err}')
+            return False
+
+    @staticmethod
+    def _is_bmc_reachable(bmc_player):
+        """
+        Check whether the BMC answers on the network.
+
+        Tells "this setup has no SONiC BMC" apart from "the SONiC BMC is down": an OpenBMC
+        setup answers ping but rejects the SONiC BMC credentials, so _is_sonic_bmc() returns
+        False in both cases.
+        """
+        bmc_ip = bmc_player['engine'].ip
+        return subprocess.call(['ping', '-c', '2', '-W', '3', bmc_ip],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+    @staticmethod
+    def _reboot_switch_host_via_bmc(topology_obj):
+        """
+        Point the shared serial console at the host switch CPU and cold-boot it
+        through the BMC.
+        """
+        engine = topology_obj.players['bmc']['engine']
+        with allure.step('Cold power-cycle host switch CPU via BMC'):
+            engine.run_cmd(f"sudo {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} power_off")
+            time.sleep(BmcDeployConstants.BMC_HOST_POWER_OFF_SETTLE)
+            engine.run_cmd(f"sudo {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} power_on")
+            time.sleep(BmcDeployConstants.BMC_HOST_POWER_ON_SETTLE)
+
+        # The 'powerctrl.sh power_off' resets the CPLD uart_sel register back to 0 (BMC),
+        # so uart_sel MUST be selected after the power cycle.
+        with allure.step('Set the serial console to host switch'):
+            engine.run_cmd(
+                f"echo {BmcDeployConstants.BMC_UART_SEL_HOST} | "
+                f"sudo tee {BmcDeployConstants.BMC_UART_SEL_PATH}"
+            )
+            # Check the uart_sel value
+            uart_sel = engine.run_cmd(f"cat {BmcDeployConstants.BMC_UART_SEL_PATH}").strip()
+            if uart_sel != str(BmcDeployConstants.BMC_UART_SEL_HOST):
+                raise Exception(f'Failed to switch the serial console to the host CPU, '
+                                f'uart_sel is {uart_sel}')
 
     def switch_dut_to_onie_by_serial_on_dut_stuck_on_selecting_os_page(self, topology_obj, dut_alias='dut'):
         """

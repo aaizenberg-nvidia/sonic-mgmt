@@ -635,7 +635,8 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # will be verified after config_db is updated
         if not deploy_chipless:
 
-            if not is_air:
+            # Chipless setup swss/syncd container never come up
+            if not is_air and setup_name not in SonicDeployConstants.CHIPLESS_SETUPS:
                 with allure.step('Verify dockers are up'):
                     self.verify_dockers_are_up()
 
@@ -2382,7 +2383,8 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             threads_dict, context.destination_hwsku, context.is_performance,
             parallel=context.deploy_testbed_in_parallel, deploy_image_only=context.deploy_image_only,
             deploy_chipless=context.deploy_chipless,
-            deploy_sequential=context.deploy_sequential
+            deploy_sequential=context.deploy_sequential,
+            skip_add_remove_topo=context.skip_add_remove_topo
         )
 
     def post_installation_steps(self, context, image_helper=None):

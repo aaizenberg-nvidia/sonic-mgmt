@@ -79,7 +79,7 @@ class SonicInstallationSteps:
     def pre_installation_steps(
             sonic_topo, neighbor_type, base_version, target_version, setup_info, port_number, is_simx, threads_dict,
             destination_hwsku, is_performance=False, parallel=False, deploy_image_only=False, is_air=False,
-            deploy_chipless=False, deploy_sequential=False):
+            deploy_chipless=False, deploy_sequential=False, skip_add_remove_topo=False):
         """
         Pre-installation steps for SONIC
         :param sonic_topo: the topo for SONiC testing, for example: t0, t1, t1-lag, ptf32
@@ -96,6 +96,9 @@ class SonicInstallationSteps:
         :param deploy_image_only: deploy image only flag
         :param deploy_chipless: deploy chipless flag
         :param deploy_sequential: perform deployment sequentially
+        :param skip_add_remove_topo: skip remove-topo/add-topo. Used for the host-switch phase of
+                                     a dual (BMC + switch) deploy, where the BMC deploy already
+                                     owns the testbed topology.
         """
         setup_name = setup_info['setup_name']
         dut_name = setup_info['duts'][0]['dut_name']
@@ -122,6 +125,13 @@ class SonicInstallationSteps:
                 dut_names.append(dut['dut_name'])
             if deploy_image_only:
                 logger.info("Skipping remove-topo as deploy_image_only is True")
+                return
+            if skip_add_remove_topo:
+                # Dual (BMC + switch) deploy: the host-switch runs on a fixed
+                # management topology and must not touch the testbed topology
+                # already set up by the BMC deploy. The switch minigraph is pushed
+                # later by the post-installation deploy-mg.
+                logger.info("Skipping remove-topo/add-topo for the host-switch in a dual BMC+switch deploy")
                 return
             with allure.step('Remove topologies'):
                 cached_hwsku = get_cached_hwsku(dut_name)

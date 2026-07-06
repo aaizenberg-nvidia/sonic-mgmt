@@ -1449,11 +1449,8 @@ class SonicDeployConstants:
                              't0-isolated-d2u510s2', 't1-isolated-d510u2', 't1-isolated-v6-d56u1-lag',
                              't0-isolated-d256u256s2', 't1-isolated-d508u1s2', 't2-isolated-d128s2']
     BGP_SCALE_TOPOLOGIES_LIST = ['t0-isolated-d2u510s2']
-    # 'slm-' DUTs are excluded from gen-mg in start_community_background_threads by default.
-    # BMC setups (e.g. bmc-dual-mgmt) still need their minigraph generated, so list the
-    # 'slm-' DUT names that must run gen-mg here. Value is the DUT name used to build the
-    # gen-mg command (the switch dut_name, e.g. 'slm-chipless-2700a1-146'), not the '-bmc' host.
     SLM_GEN_MG_ALLOWLIST = ['slm-chipless-2700a1-146']
+    CHIPLESS_SETUPS = ['sonic_salamandra_r-salamandra-01', 'sonic_slm-chipless-2700a1-146']
 
 
 class BmcDeployConstants:
@@ -1478,9 +1475,11 @@ class BmcDeployConstants:
     UBOOT_PROMPT = "=> "
     UBOOT_AUTOBOOT_HINT = "Hit any key to stop autoboot"
     UBOOT_LOAD_ADDR = "0x432000000"
+    UBOOT_ENV_DEFAULT_CMD = "env default -f -a"
+    UBOOT_DHCP_BOUND_MARKER = "DHCP client bound to address"
     UBOOT_BOOTCONF_DEFAULT = "sonic-ast2700-nvidia-spc6-bmc"
     UBOOT_BOOTARGS_TAILS = (
-        'console=ttyS12,115200n8 earlycon=uart8250,mmio32,0x14c33b00 ',
+        'console=ttyS12,${{baudrate}}n8 earlycon=uart8250,mmio32,0x14c33b00 ',
         'root=/dev/ram0 rw ',
         'sonic_install.tftp_server=${{serverip}} ',
         'sonic_install.bmc_image={http_server}/{emmc_img} ',
@@ -1521,6 +1520,17 @@ class BmcDeployConstants:
 
     # BMC HWSKU
     BMC_HWSKU = "NVIDIA-AST2700-BMC"
+
+    # Switch topo when deploy bmc setup
+    SWITCH_DUAL_DEPLOY_TOPO = "ptp-64"
+
+    # BMC UART
+    BMC_UART_SEL_PATH = "/var/run/hw-management/system/uart_sel"
+    BMC_UART_SEL_HOST = 2   # serial console connected to the host switch CPU
+    BMC_UART_SEL_BMC = 0    # serial console connected to the BMC (default)
+    BMC_POWERCTRL_SCRIPT = "/usr/bin/hw-management-bmc-powerctrl.sh"
+    BMC_HOST_POWER_OFF_SETTLE = 30   # wait after power_off before power_on
+    BMC_HOST_POWER_ON_SETTLE = 10    # wait after power_on before watching the host serial console
 
     # Timeouts (seconds).
     UBOOT_PROMPT_TIMEOUT = 120         # time to interrupt autoboot and reach U-Boot prompt
