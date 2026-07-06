@@ -105,6 +105,7 @@ def _select_link_up_aport(devices, setup_topology) -> Port:
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
+@pytest.mark.nvos_build
 @pytest.mark.parametrize("api", ALL_APIS)
 def test_planeport_state_default_disabled(engines, gnmi_client, api):
     """
