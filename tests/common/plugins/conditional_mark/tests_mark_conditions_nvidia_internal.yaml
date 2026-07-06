@@ -368,12 +368,6 @@ tests/push_build_tests/general/wjh/test_wjh.py::test_l3_non_ip_packet:
     conditions:
     - "https://redmine.mellanox.com/issues/3770476 and 'simx' in platform"
 
-tests/push_build_tests/L2/vxlan/test_vxlan.py:
-  skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/2804440 on SIMX platform"
-    conditions:
-    - "https://redmine.mellanox.com/issues/2804440 and 'simx' in platform"
-
 tests/push_build_tests/L3/dhcp_relay/test_dhcp_relay.py::TestDHCPRelay::test_dhcp_relay_release_message:
   skip:
     reason: "Testcase ignored due to GitHub issue: https://github.com/Azure/sonic-buildimage/issues/6053"
@@ -411,18 +405,7 @@ tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::tes
     conditions:
     - "'simx' in platform"
 
-tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::test_cpu_usage:
-  skip:
-    reason: "The test is related to performance, no meaningful to run it on simx platform "
-    conditions:
-    - "'simx' in platform"
-
 tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::test_ram_usage:
-  skip:
-    reason: "The test is related to performance, no meaningful to run it on simx platform"
-    conditions_logical_operator: or
-    conditions:
-    - "'simx' in platform"
   xfail:
     reason: "Testcase ignored due to RM issues"
     conditions_logical_operator: or
