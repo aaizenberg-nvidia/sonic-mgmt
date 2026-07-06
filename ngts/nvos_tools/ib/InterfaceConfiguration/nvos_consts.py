@@ -81,7 +81,7 @@ class IbInterfaceConsts:
     LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT: LinkDiagnosticT = {'0': {'status': 'No issue was observed'}}
     LINK_DIAGNOSTICS_NEGOTIATION_FAILURE_PORT: LinkDiagnosticT = {'2': {'status': 'Negotiation failure'}}
     LINK_DIAGNOSTICS_SIGNAL_NOT_DETECTED: LinkDiagnosticT = {'57': {'status': 'signal not detected'}}
-    LINK_DIAGNOSTICS_LOW_BER: LinkDiagnosticT = {'70': {'status': 'Other issues'}}
+    LINK_DIAGNOSTICS_LOW_BER: LinkDiagnosticT = {'70': {'status': "link not healthy, BER doesn't meet criteria"}}
     LINK_BREAKOUT = "breakout"
     LINK_STATS_LINK_DOWNED = "carrier-down-count"
     LINK_IB_SPEED = "ib-speed"
