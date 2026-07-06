@@ -98,6 +98,9 @@
     <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/telemetry/nvos_telemetry_ib_gnmi.cases </cases>
     </test>
+    <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/telemetry/nvos_telemetry_ib_peerport.cases </cases>
+    </test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/nvos_system_certificate_mgmt.cases </cases>
 	</test>

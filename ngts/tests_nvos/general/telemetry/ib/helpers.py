@@ -1,18 +1,9 @@
-"""
-Helpers for the gNMI-for-IB plane-port and extended-telemetry test suite.
-
-Only the helpers needed by the currently-merged test cases live here; this
-module grows one test at a time as each plane-port case passes review.
-
-Current scope:
-- plane-port knob read / set / unset via NVUE CLI;
-- plane-port enumeration for an Aport;
-- gNMI / NVUE / OTEL interface enumeration + per-interface subtree reads
-  (OTEL is a pytest.skip stub for now);
-- per-API type-leaf mapping + Allure attach helper.
-"""
+"""Helpers for the gNMI-for-IB plane-port, peer-port (HCA), and extended-telemetry tests."""
 
 import ast
+import base64
+import csv
+import io
 import json
 import logging
 import re
@@ -24,15 +15,16 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 import pytest
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.cli_wrappers.nvue.nvue_system_clis import NvueSystemCli
+from ngts.cli_wrappers.openapi.openapi_system_clis import OpenApiSystemCli
 from ngts.constants.constants import GnmiConsts
-from ngts.helpers.object_filters import filter_objects
-from ngts.nvos_constants.constants_nvos import DatabaseConst, UfmMadConsts
+from ngts.nvos_constants.constants_nvos import ApiType, DatabaseConst, UfmMadConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
+from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RegisterTool import RegisterTool
-from ngts.nvos_tools.infra.RegressionConfigurations import PlanePortConnectivity
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
@@ -53,18 +45,31 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     API_GNMIC,
     API_NVUE_CLI,
     API_OTEL,
+    BER_INJECT_SETTLE_SEC,
+    CONCAT_DELIMITER,
     COUNTER_SNAPSHOT_SETTLE_SEC,
     COUNTERMGRD_MAX_COUNTERS,
     COUNTERMGRD_SUM_COUNTERS,
-    CONCAT_DELIMITER,
     CounterMgrdRule,
     EXPECTED_PLANE_PORT_DB_FIELDS,
     GNMI_REBOOT_READY_DELAY_SEC,
     GNMI_REBOOT_READY_TRIES,
+    GnmiTypeKind,
     GnmiYangPaths,
     IfaceType,
+    NMXT_CONTROL_SOCKET,
+    NMXT_IB_CONTAINER,
+    NMXT_IB_SERVICE,
+    NMXT_XCSET_ENDPOINT,
+    NMXT_XCSET_SOCKET,
+    NMXT_XCSET_TO_DB_FIELD,
     NvuePaths,
     OTEL_PENDING_MSG,
+    PEER_TELEMETRY_SAMPLING_SEC,
+    PEER_TELEMETRY_SERVICE,
+    PeerPortFields,
+    PeerTelemetryHealth,
+    PeerType,
     PlanePortState,
     PLANEPORT_SUM_AGGREGATION_MIN_DELTA,
     SAI_TO_GNMI_MAX_COUNTER_LEAF,
@@ -402,23 +407,6 @@ def dut_hostname(topology_obj, devices) -> str:
         return str(getattr(devices.dut, "hostname", "") or "")
 
 
-def resolve_engine_for_hostname(topology_obj, engines, hostname_hint: str) -> Optional[Any]:
-    """Return an SSH engine for `dut` / `dut2` / ... when its hostname matches."""
-    hint = PlanePortConnectivity.normalize_hostname(hostname_hint)
-    if not hint:
-        return None
-    for player_name, player in filter_objects(
-        topology_obj.players, host_type="dut", engine_type="ssh"
-    ).items():
-        try:
-            player_name_value = player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
-        except (AttributeError, KeyError, TypeError):
-            continue
-        if PlanePortConnectivity.normalize_hostname(player_name_value) == hint:
-            return engines[player_name]
-    return None
-
-
 def is_gnmi_server_unavailable(err: Optional[str]) -> bool:
     """True when the DUT gNMI server is down/unreachable (skip, do not false-pass)."""
     return _is_gnmi_unavailable(err)
@@ -493,26 +481,6 @@ def _sai_snapshot_from_gnmi_max_payload(payload: Dict[str, str]) -> Dict[str, in
             out[sai_field] = parse_counter_value(raw)
         except (AssertionError, ValueError):
             continue
-    return out
-
-
-def capture_gnmi_counter_snapshot(
-    client: GnmiClient,
-    port_name: str,
-    sai_fields: Optional[List[str]] = None,
-) -> Dict[str, int]:
-    """
-    Read countermgrd default-SUM + MAX fields for a port via gNMI counter leaves.
-
-    Returns {SAI_PORT_STAT_*: int} for each leaf that is present and parseable.
-    """
-    fields = sai_fields if sai_fields is not None else COUNTERMGRD_SUM_COUNTERS
-    sum_prefix = GnmiYangPaths.STATE_COUNTERS.format(name=port_name)
-    sum_payload = gnmi_get_flat(client, prefix=sum_prefix, path="")
-    out = _sai_snapshot_from_gnmi_sum_payload(sum_payload, fields)
-    max_prefix = GnmiYangPaths.INFINIBAND_COUNTERS_PORT.format(name=port_name)
-    max_payload = gnmi_get_flat(client, prefix=max_prefix, path="")
-    out.update(_sai_snapshot_from_gnmi_max_payload(max_payload))
     return out
 
 
@@ -790,97 +758,6 @@ def _wait_for_admin_down_quiesce(
 
 
 @contextmanager
-def quiesce_aport_for_counter_reads(
-    aport: Port,
-    engines=None,
-    devices=None,
-    setup_topology=None,
-    topology_obj=None,
-    require_oper_down: bool = True,
-) -> Generator[None, None, None]:
-    """
-    Admin-down an Aport (and optionally its inter-switch partner) for counter reads.
-
-    Waits for oper-down, then pauses briefly so gNMI Aport aggregation can catch
-    up with plane-port sums. Restores admin-up in ``finally`` so assertion
-    failures do not leave links down.
-    """
-    partner_engine = None
-    partner_host = None
-    partner_port = None
-    partner_was_down = False
-
-    if setup_topology is not None and topology_obj is not None and devices is not None:
-        partner = setup_topology.inter_switch_partner(
-            aport.name, dut_hostname(topology_obj, devices)
-        )
-        if partner is not None:
-            partner_host, partner_port = partner
-            partner_engine = resolve_engine_for_hostname(topology_obj, engines, partner_host)
-            allure.attach(
-                f"inter-switch partner for {aport.name}",
-                f"host={partner_host!r} port={partner_port!r} "
-                f"engine={'yes' if partner_engine is not None else 'no'}",
-            )
-
-    with allure.step(f"Admin-down Aport {aport.name} for counter snapshot"):
-        if partner_port and partner_engine is None:
-            pytest.skip(
-                f"Connectivity lists inter-switch partner {partner_host!r} port "
-                f"{partner_port!r} for {aport.name} but no matching SSH engine "
-                "was found in topology (add dut2/dut3 to the setup players)."
-            )
-
-        aport.interface.link.state.set(
-            op_param_name=NvosConsts.LINK_STATE_DOWN, apply=True, ask_for_confirmation=True
-        ).verify_result()
-
-        if partner_engine is not None and partner_port:
-            with allure.step(
-                f"Admin-down inter-switch partner {partner_port} on {partner_host} for {aport.name}"
-            ):
-                _set_link_state_on_engine(partner_engine, partner_port, NvosConsts.LINK_STATE_DOWN)
-                partner_was_down = True
-
-        _wait_for_admin_down_quiesce(
-            aport,
-            require_oper_down=require_oper_down,
-            tries=(
-                _QUIESCE_PARTNER_DOWN_OPER_TRIES
-                if partner_was_down
-                else _QUIESCE_ADMIN_DOWN_OPER_TRIES
-            ),
-            partner_port=partner_port,
-            partner_quiesce_attempted=partner_was_down,
-        )
-    with allure.step(
-        f"Wait {COUNTER_SNAPSHOT_SETTLE_SEC}s for counter aggregation to settle on {aport.name}"
-    ):
-        time.sleep(COUNTER_SNAPSHOT_SETTLE_SEC)
-    try:
-        yield
-    finally:
-        if partner_was_down and partner_engine is not None and partner_port:
-            with allure.step(f"Admin-up partner {partner_port} (restore)"):
-                try:
-                    _set_link_state_on_engine(partner_engine, partner_port, NvosConsts.LINK_STATE_UP)
-                    _wait_for_link_oper_on_engine(
-                        partner_engine, partner_port, NvosConsts.LINK_STATE_UP,
-                        tries=_QUIESCE_PARTNER_DOWN_OPER_TRIES,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("partner admin-up restore failed for %s: %s", partner_port, exc)
-        with allure.step(f"Admin-up Aport {aport.name} (restore)"):
-            try:
-                aport.interface.link.state.set(
-                    op_param_name=NvosConsts.LINK_STATE_UP, apply=True, ask_for_confirmation=True
-                ).verify_result()
-                Port.wait_for_port_state(aport, NvosConsts.LINK_STATE_UP)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("admin-up restore failed for %s: %s", aport.name, exc)
-
-
-@contextmanager
 def quiesce_aport_via_loopback_partner(
     aport: Port,
     peer_port_name: str,
@@ -1105,8 +982,12 @@ def db_hgetall(engines, db_name: str, key: str) -> Dict[str, str]:
     quoted), so ``ast.literal_eval`` is tried first; JSON and line-pair splitting
     are kept only as defensive fallbacks for other emitters.
     """
+    # STATE_DB/CONFIG_DB keys carry a '|' separator, which the shell reads as a pipe. The
+    # shared reader inserts the table name unquoted, so callers must pre-quote it (matching
+    # the UfmMadConsts.*_TEMPLATE convention); otherwise HGETALL on e.g.
+    # "PEER_PORT_TELEMETRY_HEALTH|global" silently returns nothing.
     raw = Tools.DatabaseTool.sonic_db_cli_hgetall(
-        engine=engines.dut, asic="", db_name=db_name, table_name=key
+        engine=engines.dut, asic="", db_name=db_name, table_name=f'"{key}"'
     )
 
     if raw and "{" in raw and "}" in raw:
@@ -1521,3 +1402,819 @@ def simulate_peer_plug_in(engines, devices, port: Port, settle_sec: int = 50) ->
             )
             return
         raise
+
+
+# ============================================================================
+# Peer-port / HCA / nmxt-ib telemetry helpers (ported from change 336026)
+# ============================================================================
+
+
+# Aports whose HCA peer was administratively downed by simulate_hca_peer_down,
+# so restore_hca_peer can bring the original switch port back up.
+_HCA_DOWNED_APORTS: Dict[str, str] = {}
+
+# DUT-side record (one Aport alias per line) of ports we admin-downed, so the
+# safety teardown can bring them back even after a hard abort that skips the
+# test's own finally (the in-process dict above does not survive that).
+_HCA_DOWNED_APORTS_FILE = "/tmp/peerport_downed_aports"
+
+
+# Top-level `nv show peer-port` listing resource (distinct from System().peer_port).
+_PEER_PORT_RESOURCE = BaseComponent(
+    parent=None,
+    api={ApiType.NVUE: NvueSystemCli, ApiType.OPENAPI: OpenApiSystemCli},
+    path='/peer-port',
+)
+
+
+def canonical_aport(name: str) -> str:
+    """Canonical switch-Aport key for cross-source compare; bridges the ibdiagnet p0 <-> NVOS p1 off-by-one while keeping distinct ports distinct."""
+    return re.sub(r"p0$", "p1", str(name).strip().lower())
+
+
+def gnmi_list_members(client: GnmiClient, list_prefix: str) -> Dict[str, Dict[str, str]]:
+    """Enumerate a gNMI list under `list_prefix` as ``{member_key: {leaf: value}}``."""
+    members: Dict[str, Dict[str, str]] = {}
+    for line in gnmi_get_raw_lines(client, prefix=list_prefix, path=""):
+        if ": " not in line:
+            continue
+        path, _, value = line.partition(": ")
+        keys = re.findall(r"\[[^\]=]+=([^\]]+)\]", path)
+        if not keys:
+            continue
+        members.setdefault(keys[-1], {})[path.rsplit("/", 1)[-1]] = value.strip()
+    return members
+
+
+def _flatten_dict(body: Dict, prefix: str = "") -> Dict[str, str]:
+    """Flatten nested NVUE JSON to {leaf: value} (leaf segment only, stringified) for diffing vs gnmic flat."""
+    out: Dict[str, str] = {}
+    if not isinstance(body, dict):
+        return out
+    for k, v in body.items():
+        if isinstance(v, dict):
+            out.update(_flatten_dict(v, prefix=k))
+        else:
+            out[str(k)] = "" if v is None else str(v)
+    return out
+
+
+# Peer-port (GPU + HCA) read + classification.
+def _parse_peer_port_flat_lines(lines: List[str]) -> Dict[str, Dict[str, str]]:
+    """Parse gnmic flat peer-port lines into ``{peer_id: {leaf: value}}``."""
+    result: Dict[str, Dict[str, str]] = {}
+    for line in lines:
+        match = re.search(r"interface\[name=([^\]]+)\]/(.+?):\s*(.*)$", line)
+        if not match:
+            continue
+        pid, path, value = match.group(1), match.group(2), match.group(3)
+        leaf = path.rsplit("/", 1)[-1].strip()
+        result.setdefault(pid, {})[leaf] = value.strip()
+    return result
+
+
+def gnmi_get_peer_port_list(client: GnmiClient) -> Dict[str, Dict[str, str]]:
+    """Return ``{peer_id: {leaf: value}}`` for the whole peer-port subtree."""
+    lines = gnmi_get_raw_lines(client, GnmiYangPaths.PEER_PORT_INTERFACES, path="")
+    return _parse_peer_port_flat_lines(lines)
+
+
+def gnmi_get_peer_port(client: GnmiClient, peer_id: str) -> Dict[str, str]:
+    """Return a single peer-port entry as a flat ``{leaf: value}`` dict."""
+    lines = gnmi_get_raw_lines(client, GnmiYangPaths.PEER_PORT_BY_ID.format(pid=peer_id), path="")
+    parsed = _parse_peer_port_flat_lines(lines)
+    out = parsed.get(peer_id, {})
+    # GET-by-id often omits identity-name leaves; inject the requested id.
+    if out and not any(out.get(k) for k in ("peer-port-name", "peer_port_name", "peer-component",
+                                            "peer_component", PeerPortFields.HCA_ALIAS_FIELD)):
+        out.setdefault("peer-port-name", peer_id)
+    return out
+
+
+def nvue_show_peer_ports(engines) -> Dict[str, Dict[str, str]]:
+    """`nv show peer-port` via the wrapper; returns ``{peer_id: {leaf: value}}`` (flattened)."""
+    body = _PEER_PORT_RESOURCE.parse_show(dut_engine=engines.dut)
+    out: Dict[str, Dict[str, str]] = {}
+    for pid, entry in (body or {}).items():
+        out[str(pid)] = _flatten_dict(entry) if isinstance(entry, dict) else {}
+    return out
+
+
+def nvue_peer_port_shows_no_data(engines) -> bool:
+    """True if ``nv show peer-port`` renders the "No data" sentinel (all peers down)."""
+    out = engines.dut.run_cmd("nv show peer-port") or ""
+    return "no data" in out.lower()
+
+
+def nvue_show_peer_port(engines, peer_id: str) -> Dict[str, str]:
+    """`nv show peer-port <id>` via the framework wrapper; returns a flat dict."""
+    body = _PEER_PORT_RESOURCE.parse_show(op_param=peer_id, dut_engine=engines.dut)
+    return _flatten_dict(body) if isinstance(body, dict) else {}
+
+
+def nvue_show_peer_port_raw(engines, peer_id: str) -> Dict:
+    """`nv show peer-port <id>` returning the nested JSON as-is (not flattened)."""
+    body = _PEER_PORT_RESOURCE.parse_show(op_param=peer_id, dut_engine=engines.dut)
+    return body if isinstance(body, dict) else {}
+
+
+def peer_port_counters(entry_raw: Dict) -> Dict[str, str]:
+    """Flat ``{leaf: value}`` of a peer-port ``counters`` subtree from a raw nv-show dict."""
+    return _flatten_dict(entry_raw.get("counters", {})) if isinstance(entry_raw, dict) else {}
+
+
+def nvue_peer_port_phy_raw(engines, peer_id: str) -> Dict:
+    """`nv show peer-port <id> link phy` JSON (BER ``health`` + PLR ``detail`` subtree)."""
+    body = _PEER_PORT_RESOURCE.parse_show(op_param=f"{peer_id} link phy", dut_engine=engines.dut)
+    return body if isinstance(body, dict) else {}
+
+
+def peer_port_phy(phy_raw: Dict) -> Dict[str, str]:
+    """Flat ``{leaf: value}`` of a peer-port ``link phy`` subtree (BER ``health`` + PLR ``detail``)."""
+    return _flatten_dict(phy_raw) if isinstance(phy_raw, dict) else {}
+
+
+def peer_port_planes(entry_raw: Dict) -> Dict[str, Dict[str, str]]:
+    """``{plane_id: {leaf: value}}`` of a peer-port ``plane-ports`` map from a raw nv-show dict."""
+    planes = {}
+    if isinstance(entry_raw, dict):
+        planes = entry_raw.get("plane-ports") or entry_raw.get("plane_ports") or {}
+    out: Dict[str, Dict[str, str]] = {}
+    for plane_id, body in (planes or {}).items():
+        out[str(plane_id)] = _flatten_dict(body) if isinstance(body, dict) else {}
+    return out
+
+
+def list_peer_ports_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[str, Dict[str, str]]:
+    """Enumerate peer-ports across APIs as ``{peer_id: {leaf: value}}`` (OTEL excluded today)."""
+    assert api in ALL_APIS, f"Unsupported api: {api!r}"
+    if api == API_NVUE_CLI:
+        return nvue_show_peer_ports(engines)
+    if api == API_GNMIC:
+        return gnmi_get_peer_port_list(gnmi_client)
+    if api == API_OTEL:
+        pull_otel_metric("<peer-port-list>", "peer-type")
+        return {}  # unreachable; pull_otel_metric raises
+    raise ValueError(api)
+
+
+def get_peer_port_via_api(api: str, engines, gnmi_client: GnmiClient, peer_id: str) -> Dict[str, str]:
+    """Read a single peer-port entry across APIs as a flat dict."""
+    assert api in ALL_APIS, f"Unsupported api: {api!r}"
+    if api == API_NVUE_CLI:
+        return nvue_show_peer_port(engines, peer_id)
+    if api == API_GNMIC:
+        return gnmi_get_peer_port(gnmi_client, peer_id)
+    if api == API_OTEL:
+        pull_otel_metric(peer_id, "peer-type")
+        return {}  # unreachable
+    raise ValueError(api)
+
+
+def classify_peer_type(peer_id: str, fields: Optional[Dict[str, str]] = None) -> str:
+    """Return 'GPU'/'HCA'/'' for a peer-port (by id-prefix; explicit peer-type wins)."""
+    if fields:
+        explicit = str(fields.get(PeerPortFields.PEER_TYPE, "")).strip().upper()
+        if explicit in (PeerType.GPU, PeerType.HCA):
+            return explicit
+    pid = str(peer_id).strip().lower()
+    for prefix, ptype in PeerType.ID_PREFIXES.items():
+        if pid.startswith(prefix):
+            return ptype
+    return ""
+
+
+def peer_entry_type(fields: Dict[str, str], peer_id: str = "") -> str:
+    """Classify a peer-port entry as 'GPU'/'HCA' ('' if undecidable), via name/id-prefix."""
+    explicit = str(fields.get(PeerPortFields.PEER_TYPE, "")).strip().upper()
+    if explicit in (PeerType.GPU, PeerType.HCA):
+        return explicit
+    for key in ("peer_port_name", "peer-port-name", PeerPortFields.HCA_ALIAS_FIELD,
+                "peer_component", "peer-component"):
+        ptype = classify_peer_type(str(fields.get(key, "")))
+        if ptype:
+            return ptype
+    return classify_peer_type(peer_id, fields) if peer_id else ""
+
+
+def peer_entry_aport(fields: Dict[str, str]) -> str:
+    """Return the Aport a peer-port entry is associated with (first candidate hit)."""
+    for cand in PeerPortFields.APORT_REF_CANDIDATES:
+        if fields.get(cand):
+            return str(fields[cand]).strip()
+    return ""
+
+
+def peer_row_aports(fields: Dict[str, str]) -> set:
+    """Every aport identifier a DB/API entry exposes (sw-alias and IB-name)."""
+    out = set()
+    for cand in (PeerPortFields.ASSOCIATED_SWITCH_PORT, PeerPortFields.SWITCH_PORT_ALIAS_FIELD,
+                 PeerPortFields.APORT_NAME_FIELD):
+        val = str(fields.get(cand, "")).strip()
+        if val:
+            out.add(val)
+    return out
+
+
+def peer_row_tier(fields: Dict[str, str]) -> str:
+    """Return the peer-port tier ('plane'/'aggregated'/'') of a DB row."""
+    return str(fields.get(PeerPortFields.TIER_FIELD, "")).strip().lower()
+
+
+def peer_row_parent(fields: Dict[str, str]) -> str:
+    """Return the parent (aggregated) peer-id a plane DB row rolls up into ('' if none)."""
+    return str(fields.get(PeerPortFields.PARENT_FIELD, "")).strip()
+
+
+def hca_aggregate_counters_partitioned_by_planes(
+    aggregate: Dict[str, str],
+    plane_rows: Dict[str, Dict[str, str]],
+    member_pids: List[str],
+) -> bool:
+    """True when plane DB rows share the aggregate's ``port_guid`` (counters then sum)."""
+    agg_guid = str(aggregate.get("port_guid") or "").strip().lower()
+    if not agg_guid:
+        return False
+    for pid in member_pids:
+        row = plane_rows.get(pid, {})
+        plane_guid = str(row.get("port_guid") or "").strip().lower()
+        if plane_guid != agg_guid:
+            return False
+    return True
+
+
+def peer_entry_identity(fields: Dict[str, str], fallback: str = "") -> str:
+    """Return the identity (e.g. node GUID) of a peer-port entry (first candidate hit)."""
+    for cand in PeerPortFields.IDENTITY_CANDIDATES:
+        if fields.get(cand):
+            return str(fields[cand]).strip()
+    return fallback
+
+
+def peer_entry_node_guid(fields: Dict[str, str]) -> str:
+    """Return the HCA node GUID of a peer-port entry ('' if absent)."""
+    for cand in ("node-guid", "node_guid"):
+        if fields.get(cand):
+            return str(fields[cand]).strip().lower()
+    return ""
+
+
+def aggregated_hca_node_guids(entries: Dict[str, Dict[str, str]]) -> set:
+    """Unique lowercase node GUIDs across aggregated HCA peer-port entries."""
+    return {g for g in (peer_entry_node_guid(f) for f in entries.values()) if g}
+
+
+def filter_peer_entries_by_type(entries: Dict[str, Dict[str, str]], peer_type: str) -> Dict[str, Dict[str, str]]:
+    """Sub-select peer entries whose classified type equals `peer_type` (by id-prefix or field)."""
+    want = peer_type.strip().upper()
+    return {pid: f for pid, f in entries.items() if classify_peer_type(pid, f) == want}
+
+
+def aggregated_peer_entries(entries: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Keep only aggregated peer entries, dropping per-plane (``...plN``) members."""
+    return {pid: f for pid, f in entries.items() if not is_plane_port_name(pid)}
+
+
+def plane_peer_ids_for_parent(all_peer_ids, parent_id: str) -> List[str]:
+    """Return sorted plane-tier peer ids that belong to an aggregated parent (``hca5p1`` -> ``hca5p1pl1``)."""
+    prefix = f"{parent_id}pl"
+    return sorted(
+        str(pid) for pid in all_peer_ids
+        if str(pid).startswith(prefix) and is_plane_port_name(str(pid))
+    )
+
+
+def list_peer_port_keys(engines) -> List[str]:
+    """Return COUNTERS_DB keys for ingested peer-ports (``PEER_COUNTERS:*``)."""
+    out = Tools.DatabaseTool.sonic_db_cli_get_keys(
+        engine=engines.dut,
+        asic="",
+        db_name=SystemDbCli.COUNTERS_DB,
+        grep_str=SystemDbCli.PEER_PORT_KEY_PREFIX,
+    )
+    return [line.strip() for line in (out or "").splitlines() if line.strip()]
+
+
+def peer_id_from_key(key: str) -> str:
+    """Strip the ``PEER_COUNTERS:`` prefix off a Redis key."""
+    return key.split(SystemDbCli.PEER_PORT_KEY_PREFIX, 1)[-1].strip().strip('"')
+
+
+def read_peer_port_row(engines, peer_id: str) -> Dict[str, str]:
+    """hgetall the COUNTERS_DB ``PEER_COUNTERS`` row for one peer-port."""
+    key = SystemDbCli.PEER_PORT_COUNTERS_KEY_FMT.format(peer_id=peer_id)
+    return db_hgetall(engines, SystemDbCli.COUNTERS_DB, key)
+
+
+def read_peer_port_mapping(engines, peer_id: str) -> Dict[str, str]:
+    """hgetall the COUNTERS_DB ``PEER_PORT_MAPPING`` row for one peer-port."""
+    key = SystemDbCli.PEER_PORT_MAPPING_KEY_FMT.format(peer_id=peer_id)
+    return db_hgetall(engines, SystemDbCli.COUNTERS_DB, key)
+
+
+def list_hca_peer_rows(engines, tier: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+    """Return ``{peer_id: row}`` for HCA peers, merging PEER_COUNTERS + PEER_PORT_MAPPING (optional tier filter)."""
+    want_tier = tier.strip().lower() if tier else None
+    out: Dict[str, Dict[str, str]] = {}
+    for key in list_peer_port_keys(engines):
+        pid = peer_id_from_key(key)
+        row = db_hgetall(engines, SystemDbCli.COUNTERS_DB, key)
+        if classify_peer_type(pid, row) != PeerType.HCA:
+            continue
+        if want_tier and peer_row_tier(row) != want_tier:
+            continue
+        mapping = read_peer_port_mapping(engines, pid)
+        out[pid] = {**mapping, **row}
+    return out
+
+
+def list_peer_telemetry_health_keys(engines) -> List[str]:
+    out = Tools.DatabaseTool.sonic_db_cli_get_keys(
+        engine=engines.dut,
+        asic="",
+        db_name=SystemDbCli.STATE_DB,
+        grep_str=SystemDbCli.PEER_TELEMETRY_HEALTH_KEY_GREP,
+    )
+    return [line.strip() for line in (out or "").splitlines() if line.strip()]
+
+
+def classify_peer_health(raw: Dict[str, str]) -> str:
+    """Classify a PEER_PORT_TELEMETRY_HEALTH row as 'healthy'/'degraded'/'unknown'."""
+    if PeerTelemetryHealth.HEALTH_FIELD in raw:
+        vals = [raw[PeerTelemetryHealth.HEALTH_FIELD]]
+    else:
+        vals = list(raw.values())
+    text = " ".join(str(v).strip().lower() for v in vals)
+    if any(token in text for token in PeerTelemetryHealth.DEGRADED_VALUES):
+        return "degraded"
+    tokens = set(text.split())
+    if any(h in tokens or h == text.strip() for h in PeerTelemetryHealth.HEALTHY_VALUES):
+        return "healthy"
+    return "unknown"
+
+
+def read_peer_telemetry_health(engines) -> Tuple[str, Dict[str, str]]:
+    """Read gpu-telemetry health from STATE_DB; returns ``(classification, raw_row)``."""
+    keys = list_peer_telemetry_health_keys(engines) or [SystemDbCli.PEER_TELEMETRY_HEALTH_KEY]
+    raw: Dict[str, str] = {}
+    for key in keys:
+        raw.update(db_hgetall(engines, SystemDbCli.STATE_DB, key))
+    return classify_peer_health(raw), raw
+
+
+def read_gpu_telemetry_log(engines, tail: int = 400) -> str:
+    """Return the last `tail` lines of the peer-telemetry (consumer) journal."""
+    cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager -n {tail} 2>&1"
+    return engines.dut.run_cmd(cmd) or ""
+
+
+def restart_gpu_telemetry(engines, settle_sec: int = 15) -> None:
+    """Restart the peer-telemetry (consumer) service and settle (drives §10.8)."""
+    with allure.step(f"Restart the {PEER_TELEMETRY_SERVICE} service"):
+        engines.dut.run_cmd(f"sudo systemctl restart {PEER_TELEMETRY_SERVICE}")
+    time.sleep(settle_sec)
+
+
+def hca_peer_switch_aport(engines, peer) -> str:
+    """Resolve the switch Aport alias (e.g. ``swA2p1``) an HCA peer is cabled to ('' if unresolved)."""
+    peer_id = str(getattr(peer, "peer_id", peer))
+    mapping = read_peer_port_mapping(engines, peer_id)
+    alias = str(mapping.get(PeerPortFields.SWITCH_PORT_ALIAS_FIELD, "")).strip()
+    if not alias:
+        rows = list_hca_peer_rows(engines)
+        alias = next(
+            (a for a in sorted(peer_row_aports(rows.get(peer_id, {}))) if str(a).lower().startswith("sw")),
+            "",
+        )
+    return alias
+
+
+def pick_hca_peer_with_switch_port(engines, hca_rows: Dict[str, Dict[str, str]]) -> str:
+    """First HCA peer-id whose PEER_PORT_MAPPING resolves a switch Aport alias ('' if none)."""
+    return next((pid for pid in sorted(hca_rows) if hca_peer_switch_aport(engines, pid)), "")
+
+
+def _set_switch_port_link(engines, aport: str, *, up: bool) -> None:
+    """`nv set interface <aport> link state up|down` + apply, then let it settle."""
+    state = "up" if up else "down"
+    with allure.step(f"nv set interface {aport} link state {state}"):
+        engines.dut.run_cmd(f"nv set interface {aport} link state {state}")
+        NvueGeneralCli.apply_config(engine=engines.dut, option='-y')
+    time.sleep(BER_INJECT_SETTLE_SEC)
+
+
+def simulate_hca_peer_down(engines, peer) -> None:
+    """Bring an HCA peer down by admin-downing its switch-side Aport (alias cached)."""
+    peer_id = str(getattr(peer, "peer_id", peer))
+    aport = hca_peer_switch_aport(engines, peer)
+    assert aport, f"Could not resolve switch Aport alias for HCA peer {peer_id!r}"
+    # Aport aliases are DB-derived and always [A-Za-z0-9]+; guard the shell boundary so
+    # a malformed alias fails loudly here rather than corrupting the marker file / sed
+    # cleanup (mirrors the validation in restore_downed_hca_aports).
+    assert re.fullmatch(r"[A-Za-z0-9]+", aport), \
+        f"Unexpected switch Aport alias {aport!r} for HCA peer {peer_id!r}"
+    _HCA_DOWNED_APORTS[peer_id] = aport
+    # Owner-only marker so the crash-recovery list can't be read/tampered with by
+    # another user on a shared DUT. Perms are best-effort (umask on create + chmod,
+    # both non-fatal via ';'): recording the aport (the final echo) must always run
+    # so the teardown can restore the port, even if a stale file blocks the chmod.
+    engines.dut.run_cmd(
+        f"( umask 077; touch {_HCA_DOWNED_APORTS_FILE} ) 2>/dev/null; "
+        f"chmod 600 {_HCA_DOWNED_APORTS_FILE} 2>/dev/null; "
+        f"echo {aport} >> {_HCA_DOWNED_APORTS_FILE}"
+    )
+    _set_switch_port_link(engines, aport, up=False)
+
+
+def restore_hca_peer(engines, peer) -> None:
+    """Counterpart of `simulate_hca_peer_down`: bring the switch Aport back up so the peer returns."""
+    peer_id = str(getattr(peer, "peer_id", peer))
+    aport = _HCA_DOWNED_APORTS.pop(peer_id, None) or hca_peer_switch_aport(engines, peer)
+    assert aport, f"Could not resolve switch Aport alias to restore HCA peer {peer_id!r}"
+    # Guard the shell/sed boundary: an [A-Za-z0-9]+ alias cannot carry regex/shell
+    # metacharacters, so the sed '/^{aport}$/d' cleanup stays safe and exact.
+    assert re.fullmatch(r"[A-Za-z0-9]+", aport), \
+        f"Unexpected switch Aport alias {aport!r} to restore HCA peer {peer_id!r}"
+    _set_switch_port_link(engines, aport, up=True)
+    engines.dut.run_cmd(f"sed -i '/^{aport}$/d' {_HCA_DOWNED_APORTS_FILE} 2>/dev/null || true")
+
+
+def restore_downed_hca_aports(engines) -> None:
+    """Bring back any switch Aports left admin-down by an aborted simulate_hca_peer_down (reads the DUT-side marker; only touches ports we recorded)."""
+    listing = engines.dut.run_cmd(f"cat {_HCA_DOWNED_APORTS_FILE} 2>/dev/null") or ""
+    aports = [ln.strip() for ln in listing.splitlines()
+              if re.fullmatch(r"[A-Za-z0-9]+", ln.strip())]
+    if not aports:
+        return
+    with allure.step(f"Restore Aports left admin-down: {aports}"):
+        for aport in aports:
+            _set_switch_port_link(engines, aport, up=True)
+        engines.dut.run_cmd(f"rm -f {_HCA_DOWNED_APORTS_FILE}")
+    _HCA_DOWNED_APORTS.clear()
+
+
+def make_nmxt_lite_unreachable(engines) -> None:
+    """Make NMX-T-for-IB unreachable to peer-telemetry by masking + stopping the unit."""
+    with allure.step(f"Mask + stop {NMXT_IB_SERVICE} (defeats the peer-telemetry watchdog)"):
+        engines.dut.run_cmd(f"sudo systemctl mask {NMXT_IB_SERVICE}")
+        engines.dut.run_cmd(f"sudo systemctl stop {NMXT_IB_SERVICE} 2>/dev/null")
+        engines.dut.run_cmd(f"sudo docker stop {NMXT_IB_CONTAINER} 2>/dev/null")
+
+
+def restore_nmxt_lite(engines) -> None:
+    """Counterpart of `make_nmxt_lite_unreachable`: unmask and start the backend."""
+    with allure.step(f"Unmask + start {NMXT_IB_SERVICE}"):
+        engines.dut.run_cmd(f"sudo systemctl unmask {NMXT_IB_SERVICE}")
+        engines.dut.run_cmd(f"sudo systemctl start {NMXT_IB_SERVICE}")
+
+
+# HTTP-over-unix-socket server impersonating NMX-T-for-IB (fronts telemetry +
+# control sockets). Argv: ctrl_sock tele_sock csv.
+_NMXT_FAKE_SERVER = r'''
+import os, sys, threading, time
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn, UnixStreamServer
+
+CTRL, TELE, CSV = sys.argv[1], sys.argv[2], sys.argv[3]
+HEALTH = b'{"message":"OK","status":0}'
+with open(CSV, "rb") as fh:
+    BODY = fh.read()
+
+class H(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def log_message(self, *a):
+        pass
+    def _w(self, body, ctype):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        if self.path == "/healthcheck":
+            self._w(HEALTH, "application/json")
+        elif self.path.startswith("/csv/"):
+            self._w(BODY, "text/csv")
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+class S(ThreadingMixIn, UnixStreamServer):
+    daemon_threads = True
+    def get_request(self):
+        req, _ = super().get_request()
+        return req, ("local", 0)
+
+def serve(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    srv = S(path, H)
+    os.chmod(path, 0o666)
+    srv.serve_forever()
+
+for _p in (CTRL, TELE):
+    threading.Thread(target=serve, args=(_p,), daemon=True).start()
+time.sleep(3600)
+'''
+
+
+_NMXT_FAKE_SCRIPT_PATH = "/tmp/peerport_nmxt_fake.py"
+
+
+_NMXT_FAKE_CSV_PATH = "/tmp/peerport_xcset_bad.csv"
+
+
+_NMXT_FAKE_PID_PATH = "/tmp/peerport_nmxt_fake.pid"
+
+
+_NMXT_FAKE_LOG_PATH = "/tmp/peerport_nmxt_fake.log"
+
+
+# Structurally broken xcset (header advertises 6 columns; rows do not match).
+_MALFORMED_XCSET = (
+    "timestamp,node_guid,port_guid,port_num,aport,device_id\n"
+    "NOT_A_TIMESTAMP,0xbad,0xbad,1\n"
+    "garbage,,,,,extra,columns,@@@\n"
+)
+
+
+def _put_remote_file(engines, remote_path: str, contents: str) -> None:
+    """Write `contents` to `remote_path` on the DUT via base64."""
+    blob = base64.b64encode(contents.encode()).decode()
+    engines.dut.run_cmd(f"echo {blob} | base64 -d | sudo tee {remote_path} >/dev/null")
+
+
+def inject_malformed_hca_xcset(engines) -> None:
+    """Serve a malformed HCA xcset (via the interceptor) so peer-telemetry hits the CSV parse-failure path."""
+    with allure.step("Ship the malformed xcset + interceptor to the DUT"):
+        _put_remote_file(engines, _NMXT_FAKE_CSV_PATH, _MALFORMED_XCSET)
+        _put_remote_file(engines, _NMXT_FAKE_SCRIPT_PATH, _NMXT_FAKE_SERVER)
+
+    with allure.step(f"Mask + stop {NMXT_IB_SERVICE} and start the interceptor"):
+        engines.dut.run_cmd(f"sudo systemctl mask {NMXT_IB_SERVICE}")
+        engines.dut.run_cmd(f"sudo systemctl stop {NMXT_IB_SERVICE} 2>/dev/null")
+        engines.dut.run_cmd(f"sudo docker stop {NMXT_IB_CONTAINER} 2>/dev/null")
+        engines.dut.run_cmd("sudo mkdir -p /var/run/nmx-t/ib")
+        time.sleep(3)  # let the real daemon release its sockets
+        engines.dut.run_cmd(
+            f"sudo bash -c 'nohup python3 {_NMXT_FAKE_SCRIPT_PATH} {NMXT_CONTROL_SOCKET} "
+            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} >{_NMXT_FAKE_LOG_PATH} 2>&1 "
+            f"< /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
+        )
+
+
+def restore_valid_hca_xcset(engines) -> None:
+    """Tear down the interceptor and bring the real NMX-T-for-IB backend back."""
+    with allure.step("Stop the interceptor and restore the real backend"):
+        engines.dut.run_cmd(
+            f"sudo bash -c 'kill $(cat {_NMXT_FAKE_PID_PATH} 2>/dev/null) 2>/dev/null; "
+            "pkill -f \"[p]eerport_nmxt_fake.py\" 2>/dev/null; true'"
+        )
+        engines.dut.run_cmd(f"sudo rm -f {NMXT_XCSET_SOCKET} {NMXT_CONTROL_SOCKET}")
+        engines.dut.run_cmd(
+            f"sudo rm -f {_NMXT_FAKE_CSV_PATH} {_NMXT_FAKE_PID_PATH} "
+            f"{_NMXT_FAKE_SCRIPT_PATH} {_NMXT_FAKE_LOG_PATH}"
+        )
+        engines.dut.run_cmd(f"sudo systemctl unmask {NMXT_IB_SERVICE}")
+        # restart, not start: we just removed the sockets, and `start` is a no-op when the
+        # service is already running - which would leave the backend with no live sockets.
+        engines.dut.run_cmd(f"sudo systemctl restart {NMXT_IB_SERVICE}")
+
+
+def hca_xcset_interceptor_active(engines) -> bool:
+    """True only when the fake NMX-T interceptor is genuinely active: a live fake process or a masked real backend.
+
+    Stale ``/tmp`` artifacts alone do NOT count - they intercept nothing, and treating them as
+    active would trigger restore_valid_hca_xcset against a healthy backend (which is destructive).
+    """
+    # The bracketed first char keeps the pattern from matching pgrep's own shell command line.
+    if "yes" in (engines.dut.run_cmd(
+            "pgrep -f '[p]eerport_nmxt_fake.py' >/dev/null 2>&1 && echo yes || echo no") or ""):
+        return True
+    masked = (engines.dut.run_cmd(f"systemctl is-enabled {NMXT_IB_SERVICE} 2>&1") or "").lower()
+    return "masked" in masked
+
+
+def ensure_valid_hca_xcset_backend(engines) -> bool:
+    """Restore the real NMX-T-for-IB backend if an interceptor is active; True when restored."""
+    if not hca_xcset_interceptor_active(engines):
+        return False
+    restore_valid_hca_xcset(engines)
+    return True
+
+
+def wait_for_peer_telemetry_healthy(
+    engines,
+    timeout_sec: Optional[int] = None,
+) -> Tuple[str, Dict[str, str]]:
+    """Poll PEER_PORT_TELEMETRY_HEALTH until healthy or ``timeout_sec`` elapses.
+
+    A cold enable warms up through a transient (``CSV parse failed`` -> ``telemetry_status=-1``
+    -> ``OK``) before health settles, so the default bound is sized for that warm-up (returns
+    as soon as healthy - typically well under a minute).
+    """
+    bound = timeout_sec or (10 + PEER_TELEMETRY_SAMPLING_SEC * 5)
+    deadline = time.time() + bound
+    health, raw = read_peer_telemetry_health(engines)
+    while health != "healthy" and time.time() < deadline:
+        time.sleep(min(5, max(1, bound // 10)))
+        health, raw = read_peer_telemetry_health(engines)
+    return health, raw
+
+
+def wait_for_nmxt_ib_active(engines, timeout_sec: int = 120) -> bool:
+    """Wait until ``nmx-t-ib.service`` is active, unmasking/starting it if left masked."""
+    ensure_valid_hca_xcset_backend(engines)
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        active = (engines.dut.run_cmd(f"systemctl is-active {NMXT_IB_SERVICE} 2>&1") or "").strip()
+        if active == "active":
+            return True
+        enabled = (engines.dut.run_cmd(f"systemctl is-enabled {NMXT_IB_SERVICE} 2>&1") or "").lower()
+        if "masked" in enabled:
+            engines.dut.run_cmd(f"sudo systemctl unmask {NMXT_IB_SERVICE}")
+        engines.dut.run_cmd(f"sudo systemctl start {NMXT_IB_SERVICE} 2>/dev/null")
+        time.sleep(5)
+    return False
+
+
+def wait_for_hca_peer_rows(
+    engines,
+    *,
+    tier: Optional[str] = None,
+    required: Optional[set] = None,
+    timeout_sec: Optional[int] = None,
+    poll_sec: Optional[int] = None,
+) -> Tuple[Dict[str, Dict[str, str]], set]:
+    """Poll COUNTERS_DB until ``required`` HCA peer ids are present; returns ``(rows, still_missing)``."""
+    want = set(required) if required is not None else None
+    cadence = poll_sec or min(PEER_TELEMETRY_SAMPLING_SEC, 5)
+    bound = timeout_sec or (10 + PEER_TELEMETRY_SAMPLING_SEC * 2)
+    deadline = time.time() + bound
+    rows: Dict[str, Dict[str, str]] = {}
+    missing: set = set()
+    while time.time() < deadline:
+        rows = list_hca_peer_rows(engines, tier=tier)
+        if want is None:
+            if rows:
+                return rows, set()
+        else:
+            missing = want - set(rows)
+            if not missing:
+                return rows, set()
+        time.sleep(cadence)
+    rows = list_hca_peer_rows(engines, tier=tier)
+    missing = (want - set(rows)) if want is not None else set()
+    return rows, missing
+
+
+def _parse_xcset_csv(raw: str) -> List[Dict[str, str]]:
+    """Parse the NMX-T-for-IB CSV into column->value dicts (skips noise/short rows)."""
+    lines = (raw or "").splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("timestamp,")), None)
+    if start is None:
+        return []
+    rows = [r for r in csv.reader(io.StringIO("\n".join(lines[start:]))) if r]
+    if not rows:
+        return []
+    header = rows[0]
+    return [dict(zip(header, r)) for r in rows[1:] if len(r) == len(header)]
+
+
+def _is_hca_xcset_row(row: Dict[str, str]) -> bool:
+    """True for an HCA peer row, excluding the switch's own aggregation-node ports."""
+    if "aggregation node" in (row.get("node_description") or "").lower():
+        return False
+    device = (row.get("device_id") or "").strip()
+    return bool(device) and device.upper() not in ("UNKNOWN", "N/A")
+
+
+def hca_xcset_join_key(fields: Dict[str, str]) -> str:
+    """Join key (port_guid[:port_num]) shared by xcset CSV rows and ingested DB rows."""
+    guid = str(fields.get("port_guid") or "").strip().lower()
+    if not guid:
+        return ""
+    for num_field in ("port_num", "hca_port_index", "hca_ib_port"):
+        num = str(fields.get(num_field) or "").strip()
+        if num:
+            return f"{guid}:{num}"
+    return guid
+
+
+def read_hca_xcset(engines, attempts: int = 3) -> Dict[str, Dict[str, str]]:
+    """Read the NMX-T-for-IB xcset as ``{join_key: {sai_field: value}}`` (HCA rows only, counters summed per join key)."""
+    cmd = f"sudo curl -s --unix-socket {NMXT_XCSET_SOCKET} http://localhost{NMXT_XCSET_ENDPOINT}"
+    out: Dict[str, Dict[str, str]] = {}
+    for attempt in range(max(1, attempts)):
+        raw = engines.dut.run_cmd(cmd) or ""
+        out = {}
+        for row in _parse_xcset_csv(raw):
+            if not _is_hca_xcset_row(row):
+                continue
+            key = hca_xcset_join_key(row)
+            if not key:
+                continue
+            mapped = {db_field: row[col]
+                      for col, db_field in NMXT_XCSET_TO_DB_FIELD.items() if col in row}
+            if key not in out:
+                out[key] = mapped
+                continue
+            # Sum additive counters across plane rows sharing a join key.
+            for field, val in mapped.items():
+                out[key][field] = str(_safe_counter_sum(out[key].get(field), val))
+        if out or attempt == max(1, attempts) - 1:
+            return out
+        time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
+    return out
+
+
+def gnmi_typecheck(kind: str, value) -> str:
+    """Return an error string if `value` violates the declared `kind`, else "" (empty tolerated)."""
+    text = "" if value is None else str(value).strip().strip('"').strip()
+    if text == "":
+        return ""
+    if kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT, GnmiTypeKind.DECIMAL):
+        want_int = kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT)
+        noun = "unsigned integer" if want_int else "decimal"
+        for token in text.split("/"):
+            token = token.strip()
+            if token == "":
+                continue
+            try:
+                fval = float(token)
+            except ValueError:
+                return f"expected {noun} ({kind}); got {value!r}"
+            if fval < 0:
+                return f"{kind} is negative: {value!r}"
+            if want_int and not fval.is_integer():
+                return f"expected integer ({kind}); got {value!r}"
+        return ""
+    if kind == GnmiTypeKind.BOOL:
+        return "" if text.lower() in ("true", "false", "0", "1") else f"expected boolean; got {value!r}"
+    return ""  # STRING / enum / identity: any non-empty value is acceptable
+
+
+def _safe_counter_sum(acc, val) -> int:
+    """Add a counter value onto an accumulator, treating unparseable parts as 0."""
+    total = 0
+    for piece in (acc, val):
+        try:
+            total += parse_counter_value(piece)
+        except (AssertionError, ValueError):
+            continue
+    return total
+
+
+def assert_counters_within_tolerance(a_row, b_row, fields, tolerance_pct: float, label: str) -> int:
+    """Assert shared additive counters agree within tolerance_pct; returns count compared."""
+    pairs = fields.items() if isinstance(fields, dict) else ((f, f) for f in fields)
+    compared = 0
+    for a_key, b_key in pairs:
+        if a_key not in a_row or b_key not in b_row:
+            continue
+        try:
+            a_val = parse_counter_value(a_row[a_key])
+            b_val = parse_counter_value(b_row[b_key])
+        except (AssertionError, ValueError):
+            continue
+        assert values_within_tolerance(a_val, b_val, tolerance_pct), (
+            f"{label}: counter {a_key!r} differs beyond tolerance: {a_val} vs {b_val}"
+        )
+        compared += 1
+    return compared
+
+
+def counters_nondecreasing(before_row, after_row, fields) -> bool:
+    """Non-asserting twin of `assert_counters_monotonic` (True when no shared counter decreased)."""
+    for field in fields:
+        if field not in before_row or field not in after_row:
+            continue
+        try:
+            pre = parse_counter_value(before_row[field])
+            post = parse_counter_value(after_row[field])
+        except (AssertionError, ValueError):
+            continue
+        if post < pre:
+            return False
+    return True
+
+
+def assert_counters_monotonic(before_row, after_row, fields, label: str) -> int:
+    """Assert no shared additive counter decreased between two readings; returns count compared."""
+    compared = 0
+    for field in fields:
+        if field not in before_row or field not in after_row:
+            continue
+        try:
+            pre = parse_counter_value(before_row[field])
+            post = parse_counter_value(after_row[field])
+        except (AssertionError, ValueError):
+            continue
+        assert post >= pre, (
+            f"{label}: counter {field!r} regressed: pre={pre}, post={post}"
+        )
+        compared += 1
+    return compared

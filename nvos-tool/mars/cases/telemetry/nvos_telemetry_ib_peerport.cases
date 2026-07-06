@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> NVOS </group>
+      <name> NVOS telemetry IB peer-port gnmi </name>
+      <info> HCA peer-port ingestion telemetry tests (HLD: gNMI for InfiniBand) </info>
+      <owner> Ori Steinmetz </owner>
+    </Test>
+    <Case>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <name> test_peer_port_nvue_listing_and_identity </name>
+    <info> Every NVUE-listed peer carries an identity, an associated switch port, and classifies as HCA. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_nvue_listing_and_identity --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_nvue_fields_present_and_typed </name>
+    <info> Each documented NVUE peer-port family is present and correctly typed on every live peer. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_nvue_fields_present_and_typed --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_nvue_plane_mapping </name>
+    <info> Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_nvue_plane_mapping --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_nvue_knob_and_interval_lifecycle </name>
+    <info> The peer-port knob round-trips: enable lists peers, interval is settable, disable drains. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_nvue_knob_and_interval_lifecycle --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_lists_hca </name>
+    <info> The peer-port view lists ingested HCA peers: classified HCA, Aport-anchored, DB-consistent. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_lists_hca --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_api_parity_nvue_vs_gnmi </name>
+    <info> The same HCA peer is reported identically by NVUE and gNMI (peer-type, Aport, counters). </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_api_parity_nvue_vs_gnmi --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_xcset_ingestion </name>
+    <info> gpu-telemetry writes each HCA as its own DB row; additive counters stay monotonic under traffic. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_xcset_ingestion --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_xcset_matches_system_db </name>
+    <info> Every ingested DB row traces back to an xcset HCA with matching counters (plane-tier, DB subset of xcset). </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_xcset_matches_system_db --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_peerport_to_aport_mapping </name>
+    <info> Every HCA peer-port maps to a real local switch port matching external HCA cabling (by plane IB port). </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_peerport_to_aport_mapping --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_peerport_aggregation </name>
+    <info> Validate HCA parent/child aggregation: plane rows link to parent; counters sum when guids partition. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_peerport_aggregation --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_peerport_db_api_set_consistency </name>
+    <info> The HCA peer set in System DB exactly matches gNMI, with unique keys (no duplicate ingestion). </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_peerport_db_api_set_consistency --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_telemetry_health_steady_state_healthy </name>
+    <info> In steady state, gpu-telemetry publishes PEER_PORT_TELEMETRY_HEALTH healthy in STATE_DB. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_telemetry_health_steady_state_healthy --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_gnmi_schema_paths_present_and_typed </name>
+    <info> Positive gNMI schema sweep of the nvidia-peer-port model: every documented leaf present and typed. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_gnmi_schema_paths_present_and_typed --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_gnmi_list_subtree_paths_present_and_typed </name>
+    <info> Positive schema sweep of the peer-port list subtrees: each exposed member's value leaf present and typed (empty tolerated). </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_gnmi_list_subtree_paths_present_and_typed --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_ingestion_persists_across_reboot </name>
+    <info> The peer-port knob survives a reboot and gpu-telemetry re-ingests the HCA rows. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_ingestion_persists_across_reboot --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_peerport_behavior_on_peer_down </name>
+    <info> A down HCA peer's row disappears within ~10s and reappears with the same Aport on recovery. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_peerport_behavior_on_peer_down --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_xcset_unreachable_resiliency </name>
+    <info> On an NMX-T-for-IB outage: rows preserved, health -&gt; degraded, recovery logged; health -&gt; healthy on return. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_xcset_unreachable_resiliency --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_xcset_malformed_csv_resiliency </name>
+    <info> On a malformed xcset: rows frozen (no partial writes), parse error logged, health -&gt; degraded; recovers on a good feed. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_xcset_malformed_csv_resiliency --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_hca_ingestion_recovers_after_gpu_telemetry_restart </name>
+    <info> A gpu-telemetry restart loses no HCA ingestion: rows repopulate, counters do not reset, health -&gt; healthy. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_hca_ingestion_recovers_after_gpu_telemetry_restart --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+</CASEDEF>
