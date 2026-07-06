@@ -302,7 +302,13 @@ class ClusterTools:
                         ib.device.show(op_param=device, dut_engine=engine)).get_returned_value()
 
                 if IbConsts.DEVICE_ASIC_PREFIX in device:
-                    assert dev_output['lid'] > 0, "Invalid number of lid"
+                    lid = dev_output.get('lid')
+                    if lid is None:
+                        # New schema: guid/lid nested under ib-subnet.<subnet-name>
+                        subnets = dev_output.get(IbConsts.DEVICE_ASIC_SUBNET_KEY, {})
+                        subnet_entry = subnets.get(IbConsts.DEVICE_ASIC_DEFAULT_SUBNET, {})
+                        lid = subnet_entry.get('lid')
+                    assert lid is not None and lid > 0, "Invalid number of lid"
 
     @staticmethod
     def verify_interface_up(devices, has_loopbox, setup_name, engine=None):
