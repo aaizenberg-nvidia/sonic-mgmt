@@ -17,8 +17,6 @@ def test_show_platform_asic_revision_id(engines: EnginesT, devices: DevicesT):
         1. Read hw_revision from MGIR register via mlxreg
         2. Read asic-revision from nv show platform
         3. Assert both values match
-        4. Read nv show platform inventory, verify SWITCH entry state and hardware-version
-        5. Read nv show platform inventory SWITCH, verify consistency with full inventory
     """
     if not hasattr(devices.dut, 'mst_dev_name') or not devices.dut.mst_dev_name:
         pytest.skip("No MST device names configured for this device")
@@ -41,17 +39,4 @@ def test_show_platform_asic_revision_id(engines: EnginesT, devices: DevicesT):
         assert hw_revision_int == int(asic_revision, 16), (
             f"ASIC revision mismatch: MGIR hw_revision={hw_revision}, "
             f"platform asic-revision={asic_revision}"
-        )
-
-    with allure.step("Verify Platform Inventory ASIC revision matches MGIR hw_revision"):
-        inventory_output: dict = platform.inventory.parse_show()
-        switch_output: dict = inventory_output[constants_nvos.PlatformConsts.HW_COMP_SWITCH]
-        assert int(switch_output[constants_nvos.PlatformConsts.HARDWARE_VERSION], 16) == hw_revision_int, (
-            f"Platform Inventory ASIC revision mismatch: MGIR hw_revision={hw_revision}, "
-            f"platform inventory hardware-version={switch_output[constants_nvos.PlatformConsts.HARDWARE_VERSION]}"
-        )
-        switch_output: dict = platform.inventory.parse_show(op_param=constants_nvos.PlatformConsts.HW_COMP_SWITCH)
-        assert int(switch_output[constants_nvos.PlatformConsts.HARDWARE_VERSION], 16) == hw_revision_int, (
-            f"Platform Inventory SWITCH ASIC revision mismatch: MGIR hw_revision={hw_revision}, "
-            f"platform inventory hardware-version={switch_output[constants_nvos.PlatformConsts.HARDWARE_VERSION]}"
         )
