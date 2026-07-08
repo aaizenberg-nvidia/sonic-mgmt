@@ -344,12 +344,17 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
         logger.info(f"Bug Handler Output: {bug_handler_output}")
         try:
             bug_handler_file_result = json.loads(bug_handler_output.message)
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse bug handler output as JSON.\n"
-                         f"Command: {bug_handler_cmd}\n"
-                         f"Output: {bug_handler_output.message}\n"
-                         f"Stderr: {bug_handler_output.stderr}\n"
-                         f"RC: {bug_handler_output.returncode}")
+        except json.JSONDecodeError as json_err:
+            # Tool returned non-JSON (usually it crashed with a non-zero RC, e.g. Mongo backend
+            # down). Raise a clear error instead of falling through and leaving
+            # bug_handler_file_result unbound, which masked the real failure with an UnboundLocalError.
+            err_msg = (f"Bug handler tool failed - could not parse its output as JSON.\n"
+                       f"Command: {bug_handler_cmd}\n"
+                       f"RC: {bug_handler_output.returncode}\n"
+                       f"Stdout: {bug_handler_output.message}\n"
+                       f"Stderr: {bug_handler_output.stderr}")
+            logger.error(err_msg)
+            raise RuntimeError(err_msg) from json_err
 
     if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
         ticket_id = get_ticket_id(bug_handler_file_result)
