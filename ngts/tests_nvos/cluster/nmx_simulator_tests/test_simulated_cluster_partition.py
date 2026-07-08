@@ -63,8 +63,19 @@ def test_simulated_cluster_partition(engines, devices, test_api):
         partitions_mapping = {}  # key: partition_id, value: list of tuples, each index is (uuid, location)
 
     with allure.step("Show All Partitions - at the beginning its just the default partition"):
-        initial_partition_output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
-                                                                               output_format=output_format).get_returned_value()
+        if is_bug_active(4998867):
+            for _ in range(3):
+                initial_partition_output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
+                                                                                       output_format=output_format).get_returned_value()
+                if initial_partition_output:
+                    break
+                logger.info("Failed to get initial partition output, sleeping for 5 seconds...")
+                time.sleep(5)
+        else:
+            initial_partition_output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
+                                                                                   output_format=output_format).get_returned_value()
+        assert initial_partition_output, "Failed to get initial partition output"
+
         partition_ids = list(initial_partition_output.keys())
         default_partition_id = partition_ids[0]
         default_partition_type = initial_partition_output[default_partition_id]['partition-type']

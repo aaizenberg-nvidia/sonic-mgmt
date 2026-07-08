@@ -192,11 +192,8 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
                     output_format=OutputFormat.json).get_returned_value()
 
                 if output[SystemConsts.STATE] == 'disabled':
-                    ClusterTools.start_cluster(cluster, setup_name)
-
-                if not standalone_system:
-                    ClusterTools.wait_for_app_healthy(cluster, ClusterConsts.NMX_CONTROLLER, engine=engines.dut)
-                ClusterTools.wait_for_app_healthy(cluster, ClusterConsts.NMX_TELEMETRY, engine=engines.dut)
+                    cluster.set(op_param_name="state", op_param_value='enabled', apply=True)
+                    ClusterTools.wait_for_apps_to_be_in_wanted_state(cluster, cluster_expected_state='enabled', nmx_c_expected_state='up')
 
         with allure.step('Run nv action generate system tech-support and validate dump files'):
             tech_support_file, duration = system.techsupport.action_generate(test_name=test_name)
