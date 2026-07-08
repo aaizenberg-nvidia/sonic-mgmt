@@ -469,7 +469,7 @@ class IbSwitch(BaseSwitch):
                                                       'rules.v6', 'gnmi-server_reconcile', 'lsb_release', 'usr.sbin.haveged',
                                                       'nvidia_modprobe', '.placeholder', 'installed', '.pwd.lock',
                                                       'verification_test', 'opasswd.old', 'opasswd', 'sbin.dhclient', 'reload.lock',
-                                                      'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable']
+                                                      'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable', 'event_db.json']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
         self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
