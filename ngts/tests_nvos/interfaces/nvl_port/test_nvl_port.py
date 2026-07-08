@@ -5,6 +5,7 @@ from typing import Any
 import logging
 import random
 import pytest
+import math
 import time
 import re
 
@@ -418,7 +419,7 @@ def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup)
                 ask_for_confirmation=True,
             ).verify_result()
         for port in ports:
-            _verify_time_to_link_up(port, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_DISABLED)
+            _verify_time_to_link_up(port, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
 
     with allure_step("fec-measure-mode=enabled, force-max-iterations=disabled on both ends, verify time-to-link-up"):
         for fae in faes:
@@ -576,14 +577,23 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
         all_ports = Port(group_all_ports)
 
     speed = IbInterfaceConsts.XDR_SLOW_SPEED
+    link_up_timeout = InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED
+    link_up_retry_delay = 15
+    link_up_retry_tries = math.ceil(link_up_timeout / link_up_retry_delay) + 1
+
     try:
         with allure.step(f"Test speed {speed}"):
             all_ports.interface.link.set(op_param_name=IbInterfaceConsts.LINK_SPEED, op_param_value=speed, apply=True,
                                          ask_for_confirmation=True).verify_result()
 
             with allure.step(f"Validate xdr slow speed on ports"):
-                retry_call(validate_ports_state_and_speed, [speed, port_names, prefix], exceptions=AssertionError, tries=6,
-                           delay=30)
+                retry_call(
+                    validate_ports_state_and_speed,
+                    [speed, port_names, prefix],
+                    exceptions=AssertionError,
+                    tries=link_up_retry_tries,
+                    delay=link_up_retry_delay,
+                )
                 time.sleep(30)  # GNMI 30 seconds pulling interval
 
     # Unset port speed and verify default (device-specific: access_port_speed or nvl_trunk_port_speed) is restored
@@ -594,8 +604,13 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
             with allure.step(f"Validate unset xdr slow speed on ports"):
                 # Select correct default speed based on port type (access vs trunk)
                 expected_default_speed = devices.dut.access_port_speed if prefix == 'acp' else devices.dut.nvl_trunk_port_speed
-                retry_call(validate_ports_state_and_speed, [expected_default_speed, port_names, prefix], exceptions=AssertionError, tries=6,
-                           delay=30)
+                retry_call(
+                    validate_ports_state_and_speed,
+                    [expected_default_speed, port_names, prefix],
+                    exceptions=AssertionError,
+                    tries=link_up_retry_tries,
+                    delay=link_up_retry_delay,
+                )
 
         with allure.step('verify that client received the xdr speed in the existing streaming session'):
             out, err = client.close_session_and_get_out_and_err(session)
