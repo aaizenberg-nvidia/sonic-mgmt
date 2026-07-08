@@ -546,7 +546,8 @@ def is_mellanox_devices(hwsku):
     hwsku = hwsku.lower()
     return 'mellanox' in hwsku \
         or 'msn' in hwsku \
-        or 'mlnx' in hwsku
+        or 'mlnx' in hwsku \
+        or 'acs' in hwsku
 
 
 def is_virtual_platform(duthost):
