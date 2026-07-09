@@ -1,22 +1,32 @@
+from fnmatch import fnmatch
 from itertools import chain
+from ipaddress import IPv4Address
 import logging
 import os
 import pytest
 from shlex import quote
-from collections.abc import Iterable
+
+import ptf.testutils as testutils
 
 from tests.common.plugins.nasa_debug import NASA_DEBUG_ENTITY, NASA_DEBUG_DUMP_DIR, nasa_entity_debug_set
 from tests.common.plugins.nasa_debug import get_nasa_entity_debug_enabled, get_nasa_entity_debug_file
 from tests.common.plugins.nasa_debug import nasa_debuggability_enable, nasa_debuggability_disable
 from tests.common.plugins.nasa_debug import get_file_size
-# NASA debug: env var key to suppress sysdump collection during nested pytest runs
-GET_DUMP_AT_TEST_FAILURE_ENV = "GET_DUMP"
+from tests.common.plugins.nasa_debug import nasa_ct_dump_set, get_nasa_ct_dump_enabled
+from tests.common.plugins.nasa_debug import NASA_CT_DUMP_FILES, NASA_MST_DUMP_PATTERNS, get_techsupport_file_list
+from tests.common.config_reload import config_reload
+from tests.common.dash_utils import apply_dash_configs
+from packets import outbound_pl_packets
+from tests.dash.conftest import get_interface_ip
+import configs.privatelink_config as pl
+from constants import LOCAL_PTF_INTF, LOCAL_DUT_INTF, REMOTE_DUT_INTF, REMOTE_PTF_RECV_INTF
 
 
 logger = logging.getLogger(__name__)
 pytestmark = [
     pytest.mark.topology("smartswitch")
 ]
+
 
 @pytest.fixture(autouse=True)
 def nasa_debug_cleanup(dpuhost):
@@ -26,6 +36,11 @@ def nasa_debug_cleanup(dpuhost):
     # this is the cleanup in case the debuggability test failed
     logger.info("Disable/Clean up NASA debuggability after the debuggability tests")
     nasa_debuggability_disable(dpuhost)
+    # CT dump is disabled by default
+    nasa_ct_dump_set(dpuhost, False)
+    assert not get_nasa_ct_dump_enabled(dpuhost), \
+        "Expected NASA CT dump to be disabled after cleanup"
+
 
 # these tests are parametrized by the config record and packet drop, since the CLI commands are very similar
 @pytest.mark.parametrize("entity", NASA_DEBUG_ENTITY)
@@ -79,64 +94,113 @@ def test_nasa_debug_disabled(dpuhost, entity):
     assert get_nasa_entity_debug_file(dpuhost, entity) is None, "Expected config record debug file to be None after disabling"
 
 
-@pytest.fixture(scope="session")
-def eni_counter_test_params(request):
-    "this fixture will build the test params for the ENI counter test based on the current environment"
-
-    # ENI counter test script
-    ENI_COUNTER_TEST_SCRIPT_SELECT = ['dash/test_dash_eni_counter.py', '-k', 'test_outbound_pkt_ca_pa_entry_miss_drop_counter[vxlan-tcp]']
-
-    # options to reuse from the current environment
-    READ_OPTIONS = ['--inventory', '--host-pattern','--module-path', '--testbed', '--setup_name', '--testbed_file', '--topology', '--dpu-pattern']
-    OTHER_OPTIONS = ['--allow_recover', '--assert', 'plain', '--show-capture=no', '-ra',
-                     '--showlocals', '--log-cli-level', 'info', '--skip_sanity', '--dynamic_update_skip_reason', '--disable_loganalyzer', '--strict-markers', '--collect_techsupport=False']
-
-    # build the params for the pytest command
-    params = ENI_COUNTER_TEST_SCRIPT_SELECT.copy()
-    for option in READ_OPTIONS:
-        option_value = request.config.getoption(option)
-        # check if the option is iterable and not a string (list for example), join with commas
-        if isinstance(option_value, Iterable) and not isinstance(option_value, str):
-            option_value = ','.join(map(quote, option_value))
-        else:
-            option_value  = quote(str(option_value))
-        params.append(f'{option}={option_value}')
-    params.extend(OTHER_OPTIONS)
-
-    return params
-
-@pytest.fixture(scope="session")
-def eni_counter_test_params_debug(eni_counter_test_params):
-    """This fixture will add the --nasa_debug option to the ENI counter test params"""
-    return eni_counter_test_params + ['--nasa_debug']
-
 def get_host_epoch(dpuhost):
     """This function will return the host epoch"""
-    return int(dpuhost.shell(f"date +%s")['stdout'].strip())
+    return int(dpuhost.shell("date +%s")['stdout'].strip())
 
 
-def run_external_pytest(params):
-    """This function will run the pytest command with the given params
-       With the disabled sysdump generation
+def get_nasa_debug_dump_files(dpuhost):
+    """This function will return the list of the files in the NASA debug dump directories"""
+    files_list = dict()
+    for entity in NASA_DEBUG_ENTITY:
+        dump_dir = f"{NASA_DEBUG_DUMP_DIR}/{entity.value.config_key}"
+        dpuhost.shell(f"mkdir -p {quote(dump_dir)}")
+        files_list[entity] = set(dpuhost.shell(f"ls {quote(dump_dir)}/* 2>/dev/null || true")['stdout_lines'])
+    return files_list
+
+
+@pytest.fixture(scope="function")
+def dash_pipeline_teardown(dpuhost):
     """
-    env_saved = os.environ.copy()
-    os.environ[GET_DUMP_AT_TEST_FAILURE_ENV] = "False"
-    result = pytest.main(params)
-    os.environ = env_saved
-    return result
+    This fixture will reload the DPU config after the test.
+    """
+
+    yield
+
+    config_reload(dpuhost, safe_reload=True)
 
 
-def test_nasa_debug_action(dpuhost, eni_counter_test_params):
-    """Test the NASA debuggability action, by running the ENI counter test with the NASA debuggability enabled, and checking the debug files
+@pytest.fixture(scope="module", autouse=True)
+def setup_npu_routes(duthost, dash_pl_config, dpu_index, dpuhosts):
+    """Set up static routes on NPU to forward traffic to DPU.
+
+    Same as test_dash_eni_counter.setup_npu_routes. These routes are required for
+    PTF traffic to reach the DPU:
+    - APPLIANCE_VIP -> DPU data port IP (so VxLAN packets reach the DPU)
+    - VM1_PA -> VM nexthop (so return traffic works)
+    - PE_PA -> PE nexthop (so PE traffic works)
+    """
+
+    dpuhost = dpuhosts[dpu_index]
+    vm_nexthop_ip = get_interface_ip(duthost, dash_pl_config[LOCAL_DUT_INTF]).ip + 1
+    pe_nexthop_ip = get_interface_ip(duthost, dash_pl_config[REMOTE_DUT_INTF]).ip + 1
+
+    cmds = []
+    cmds.append(f"ip route replace {pl.APPLIANCE_VIP}/32 via {dpuhost.dpu_data_port_ip}")
+    cmds.append(f"ip route replace {pl.VM1_PA}/32 via {vm_nexthop_ip}")
+    cmds.append(f"ip route replace {pl.PE_PA}/32 via {pe_nexthop_ip}")
+    logger.info(f"Adding static routes on NPU: {cmds}")
+    duthost.shell_cmds(cmds=cmds)
+
+    yield
+
+    cmds = []
+    cmds.append(f"ip route del {pl.APPLIANCE_VIP}/32 via {dpuhost.dpu_data_port_ip}")
+    cmds.append(f"ip route del {pl.VM1_PA}/32 via {vm_nexthop_ip}")
+    cmds.append(f"ip route del {pl.PE_PA}/32 via {pe_nexthop_ip}")
+    logger.info(f"Removing static routes from NPU: {cmds}")
+    duthost.shell_cmds(cmds=cmds)
+
+
+def apply_dash_pipeline_config(localhost, duthost, ptfhost, dpuhost):
+    """Apply full DASH pipeline config via gNMI (same as test_dash_eni_counter common_setup_teardown).
+
+    This must be called after NASA debuggability is enabled so that SAI configuration
+    changes are captured by config-record.
+    """
+    # ``INBOUND_VNI_ROUTE_RULE_CONFIG`` is only programmed on Bluefield DPUs;
+    # on other platforms ROUTE_RULE entries are skipped at the source.
+    bluefield_route_rule_configs = []
+    if 'bluefield' in dpuhost.facts['asic_type']:
+        bluefield_route_rule_configs = [pl.INBOUND_VNI_ROUTE_RULE_CONFIG]
+
+    # ``apply_dash_configs`` buckets entries by DASH table name and applies
+    # them in dependency order (see ``DashPhase`` in ``tests/common/dash_utils.py``):
+    # GROUP_1 (APPLIANCE) -> GROUP_2 (ROUTING_TYPE/METER_POLICY/OUTBOUND_PORT_MAP/VNET) ->
+    # GROUP_3 (METER_RULE) -> GROUP_4 (TUNNEL/OUTBOUND_PORT_MAP_RANGE/ENI/ROUTE_GROUP) ->
+    # GROUP_5 (ROUTE_RULE/ROUTE/VNET_MAPPING) -> GROUP_6 (ENI_ROUTE).
+    apply_dash_configs(
+        localhost, duthost, ptfhost, dpuhost.dpu_index,
+        pl.APPLIANCE_CONFIG,
+        pl.ROUTING_TYPE_PL_CONFIG,
+        pl.VNET_CONFIG,
+        pl.ROUTE_GROUP1_CONFIG,
+        pl.METER_POLICY_V4_CONFIG,
+        pl.PE_VNET_MAPPING_CONFIG,
+        pl.PE_SUBNET_ROUTE_CONFIG,
+        pl.VM_SUBNET_ROUTE_CONFIG,
+        *bluefield_route_rule_configs,
+        pl.METER_RULE1_V4_CONFIG,
+        pl.METER_RULE2_V4_CONFIG,
+        pl.ENI_CONFIG,
+        pl.ENI_ROUTE_GROUP1_CONFIG,
+    )
+
+    logger.info("DASH pipeline config applied")
+
+
+def test_nasa_debug_action(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_setup):
+    """Test the NASA debuggability action, by sending traffic and checking the debug files.
     The test has multiple steps:
     1. Enable NASA debuggability
-    2. Building the pytest params to run the ENI counter test with the NASA debuggability enabled
-    3. Check the debug files are present and the size is increased
-    4. Run the packet analyzer of the dropped packets
-    5. Check the packet analyzer output and create a pcap file
-    5. Check the pcap file is present
-    6. Check the pcap file not empty and created recently
-    7. Generate the tech support information and check the debug files are present
+    2. Apply DASH pipeline config (triggers config-record capture)
+    3. Record debug file paths and sizes
+    4. Send a packet that triggers CA-PA entry miss drop
+    5. Disable NASA debuggability
+    6. Check the debug files are present and the size is increased
+    7. Run the packet analyzer of the dropped packets
+    8. Check the packet analyzer output and create a pcap file
+    9. Check the pcap file is present, not empty, and created recently
     """
 
     # Enable NASA debuggability
@@ -154,10 +218,14 @@ def test_nasa_debug_action(dpuhost, eni_counter_test_params):
         # save the file along with the size
         debug_files[entity] = [debug_file, get_file_size(dpuhost, debug_file)]
 
-    # run the ENI counter test with the NASA debuggability enabled
-    result = run_external_pytest(eni_counter_test_params)
-    if result != pytest.ExitCode.OK:
-        logger.warning(f"ENI counter test failed with pytest exit code {result}")
+    apply_dash_pipeline_config(localhost, duthost, ptfhost, dpuhost)
+
+    logger.info("Sending packet to trigger CA-PA entry miss drop")
+    pkt, _ = outbound_pl_packets(dash_pl_config, "vxlan", inner_packet_type="tcp")
+    ip_with_same_outbound_route_prefix = str(IPv4Address(pl.PE_CA) + 1)
+    pkt["VXLAN"]["IP"].dst = ip_with_same_outbound_route_prefix
+    testutils.send(ptfadapter, dash_pl_config[LOCAL_PTF_INTF], pkt, count=1)
+
     nasa_debuggability_disable(dpuhost)
 
     # check the debug files, size must increase from the original
@@ -192,34 +260,61 @@ def test_nasa_debug_action(dpuhost, eni_counter_test_params):
     assert f_ctime >= host_epoch, f"Expected generated pcap file creation time to be no earlier than host epoch {host_epoch}, got {f_ctime}"
 
 
-def get_nasa_debug_dump_files(dpuhost):
-    """This function will return the list of the files in the NASA debug dump directories"""
-    files_list = dict()
-    for entity in NASA_DEBUG_ENTITY:
-        files_list[entity] = set(dpuhost.shell(f"ls {quote(NASA_DEBUG_DUMP_DIR)}/{quote(entity.value.config_key)}/*")['stdout_lines'])
-    return files_list
+def test_nasa_debug_tech_support(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_setup):
+    """This test will send traffic with NASA debuggability enabled,
+       then ensure the debug files are created and present in the tech support dump.
 
-
-def test_nasa_debug_tech_support(dpuhost, eni_counter_test_params_debug):
-    """This test will run the ENI counter test with the NASA debuggability enabled,
-       by CLI option.
-       After the test, it will ensure the debug files are created and present in the tech support dump.
+    This test verifies:
+    1. NASA debuggability creates new debug dump files when drop traffic is sent
+    2. CT dump enable/disable via CLI and sentinel file
+    3. show techsupport includes:
+       - config-record and packet-drop debug files matching on-disk files
+       - CT dump files (ct_table_log.bin.gz, ct_table_log_ipvx.bin.gz) in sai_sdk_dump/
+    4. Disabling CT dump removes sentinel file
     """
     # Get the host epoch
     host_epoch = get_host_epoch(dpuhost)
 
-    # get the list of the files in the NASA debug dump directory
-    logger.info(f"Getting the list of the files in the NASA debug dump directory before the test")
+    # Get the list of debug dump files before enabling debug (so enable's new file is captured)
+    logger.info("Getting the list of the files in the NASA debug dump directory before the test")
     before_files_list = get_nasa_debug_dump_files(dpuhost)
 
-    logger.info(f"Running the ENI counter test with the NASA debuggability enabled: {eni_counter_test_params_debug}")
-    # run the test with the NASA debuggability enabled
-    result = run_external_pytest(eni_counter_test_params_debug)
-    if result != pytest.ExitCode.OK:
-        logger.warning(f"ENI counter test failed with pytest exit code {result}")
+    # Enable NASA debuggability (config-record + packet-drop)
+    nasa_debuggability_enable(dpuhost)
 
-    # get the new list of the files in the NASA debug dump directory
-    logger.info(f"Getting the list of the files in the NASA debug dump directory after the test")
+    # Enable CT dump and verify sentinel file
+    logger.info("Verifying CT dump is disabled by default")
+    assert not get_nasa_ct_dump_enabled(dpuhost), \
+        "Expected NASA CT dump to be disabled by default"
+
+    logger.info("Enabling NASA CT dump in techsupport")
+    nasa_ct_dump_set(dpuhost, True)
+    assert get_nasa_ct_dump_enabled(dpuhost), \
+        "Expected NASA CT dump to be enabled after enabling"
+
+    # Apply DASH pipeline config after enabling debug so SAI config changes
+    # are captured by config-record
+    apply_dash_pipeline_config(localhost, duthost, ptfhost, dpuhost)
+
+    # Send a packet that triggers CA-PA entry miss drop to create debug recording files
+    logger.info("Sending packet to trigger CA-PA entry miss drop for debug recording")
+    pkt, _ = outbound_pl_packets(dash_pl_config, "vxlan", inner_packet_type="tcp")
+    ip_with_same_outbound_route_prefix = str(IPv4Address(pl.PE_CA) + 1)
+    pkt["VXLAN"]["IP"].dst = ip_with_same_outbound_route_prefix
+    testutils.send(ptfadapter, dash_pl_config[LOCAL_PTF_INTF], pkt, count=1)
+
+    # Send outbound pass traffic to create flows in the Connection Table (for CT dump and flow dump)
+    logger.info("Sending outbound traffic to create flows in the Connection Table")
+    pkt, exp_pkt = outbound_pl_packets(dash_pl_config, outer_encap="vxlan", inner_packet_type="tcp")
+    testutils.send(ptfadapter, dash_pl_config[LOCAL_PTF_INTF], pkt, count=5)
+    if exp_pkt:
+        testutils.verify_packet_any_port(ptfadapter, exp_pkt, dash_pl_config[REMOTE_PTF_RECV_INTF], timeout=10)
+
+    # Disable NASA debuggability
+    nasa_debuggability_disable(dpuhost)
+
+    # Get the list of debug dump files after the test
+    logger.info("Getting the list of the files in the NASA debug dump directory after the test")
     after_files_list = get_nasa_debug_dump_files(dpuhost)
 
     # Verify there is exactly one new NASA debug dump file in each folder
@@ -233,7 +328,7 @@ def test_nasa_debug_tech_support(dpuhost, eni_counter_test_params_debug):
         file_epoch = int(dpuhost.shell(f"stat -c %W {quote(new_filename)}")['stdout'].strip())
         assert file_epoch > host_epoch, "Expecting the nasa debug file to be created recently"
 
-    # Generate the tech support information
+    # Generate the tech support information with --flow-dump option
     logger.info(f"Generating the tech support information to check the debug files are present")
     result = dpuhost.shell("show techsupport")
     tech_support_file = result['stdout_lines'][-1].strip()
@@ -259,7 +354,6 @@ def test_nasa_debug_tech_support(dpuhost, eni_counter_test_params_debug):
                                                      f"{quote(tech_support_file_basename)}/log/pkt_dump_record_*.gz")['stdout_lines']
 
     logger.info(f"NASA debug files in the tech support file: {nasa_debug_files_in_tech_support}")
-    # remove the path from the file name and the .gz
     nasa_debug_files_in_tech_support_set = {os.path.splitext(os.path.basename(file))[0] for file in nasa_debug_files_in_tech_support}
     assert len(nasa_debug_files_in_tech_support_set) == len(nasa_debug_files_in_tech_support), \
         f"Expected the same number of files in the tech support file and in the NASA debug dump directories, but got {len(nasa_debug_files_in_tech_support_set)} and {len(nasa_debug_files_in_tech_support)}"
@@ -267,3 +361,25 @@ def test_nasa_debug_tech_support(dpuhost, eni_counter_test_params_debug):
     assert len(nasa_debug_files_in_folders_set) == sum(map(len, after_files_list.values())), "Expecting only unique files in NASA debug dump directories"
     assert nasa_debug_files_in_tech_support_set == nasa_debug_files_in_folders_set, \
         f"Expected the same files in the tech support file and in the NASA debug dump directories, but got {nasa_debug_files_in_tech_support_set} and {nasa_debug_files_in_folders_set}"
+
+    # Verify CT dump files are present in sai_sdk_dump/
+    logger.info("Verifying CT dump files are present in techsupport sai_sdk_dump/")
+    file_list = get_techsupport_file_list(dpuhost, tech_support_file)
+    sai_dump_basenames = {
+        os.path.basename(f) for f in file_list
+        if f.startswith("sai_sdk_dump/") and os.path.basename(f)
+    }
+    logger.info(f"sai_sdk_dump files found: {sorted(sai_dump_basenames)}")
+
+    for ct_file in NASA_CT_DUMP_FILES:
+        assert ct_file in sai_dump_basenames, \
+            f"CT dump file '{ct_file}' expected but not found in techsupport sai_sdk_dump/. " \
+            f"Found: {sorted(sai_dump_basenames)}"
+
+    # Verify MST dump files are present in sai_sdk_dump/
+    logger.info("Verifying MST dump files are present in techsupport sai_sdk_dump/")
+    for mst_pattern in NASA_MST_DUMP_PATTERNS:
+        matched = [f for f in sai_dump_basenames if fnmatch(f, mst_pattern)]
+        assert len(matched) >= 1, \
+            f"MST dump file matching '{mst_pattern}' expected but not found in techsupport sai_sdk_dump/. " \
+            f"Found: {sorted(sai_dump_basenames)}"

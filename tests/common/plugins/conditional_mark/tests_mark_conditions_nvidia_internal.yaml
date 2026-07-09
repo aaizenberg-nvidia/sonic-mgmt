@@ -588,12 +588,6 @@ dash/test_dash_crm.py::TestDashCRM::test_dash_crm_cleanup:
     conditions:
     - "https://redmine.mellanox.com/issues/4531681"
 
-dash/nasa_debug/test_nasa_debug.py::test_nasa_debug_action:
-  skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5099209"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5099209"
-
 dash/test_dash_privatelink_redirect.py::TestPrivateLinkRedirectFNIC::test_dst_port_above_port_map_range:
   xfail:
     reason: "Xfail the test for RM issue https://redmine.mellanox.com/issues/5095761"
