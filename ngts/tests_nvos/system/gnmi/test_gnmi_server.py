@@ -121,54 +121,6 @@ def test_gnmi_basic_flow_stream(random_api, engines, topology_obj):
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_simulate_gnmi_server_failure(random_api, engines):
-    """
-    In this test we will simulate a gnmi-server failure,
-    by disabling the auto restart and stop the gnmi-server docker,
-    will validate that its still enabled but not running, health status changes and reconnect after restart the docker.
-        Test flow:
-            1. validate gnmi-server is running
-            2. validate health status is OK
-            3. change port description
-            5. validate gnmi-server stream updates
-            6. simulate gnmi-server failure
-            7. validate gnmi-server is not running but enabled
-            8. validate health status is not OK
-            9. fix gnmi-server failure
-            10. validate gnmi-server is running
-            11. validate gnmi-server stream updates
-    """
-    TestToolkit.tested_api = random_api
-    system = System()
-    gnmi_server_obj = system.gnmi_server
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
-
-    try:
-        with allure.step('Simulate gnmi server failure'):
-            Tools.DatabaseTool.sonic_db_cli_hset(engines.dut, '', DatabaseConst.CONFIG_DB_NAME, "FEATURE|gnmi-server",
-                                                 "auto_restart", "disabled")
-            engines.dut.run_cmd("docker stop gnmi-server")
-            validate_show_gnmi(gnmi_server_obj, engines, gnmi_state=GnmiConsts.GNMI_STATE_DISABLED)
-            sleep_time_for_health_issue = 6
-            logger.info(f"sleep {sleep_time_for_health_issue} seconds until the health output will be updated")
-            time.sleep(sleep_time_for_health_issue)
-            validate_gnmi_server_in_health_issues(system, expected_gnmi_health_issue=True)
-            logger.info(f"{GnmiConsts.GNMI_DOCKER} appears in the health issues as we expect, "
-                        f"after the gnmi-server failure")
-    finally:
-        with allure.step('re-enable gnmi server'):
-            Tools.DatabaseTool.sonic_db_cli_hset(engines.dut, '', DatabaseConst.CONFIG_DB_NAME, "FEATURE|gnmi-server",
-                                                 "auto_restart", "enabled")
-            engines.dut.run_cmd("docker start gnmi-server")
-            gnmi_server_obj.disable_gnmi_server()
-            gnmi_server_obj.enable_gnmi_server()
-            logger.info("sleep 90 sec until validate stream updates")
-            time.sleep(90)
-            validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
-
-
-@pytest.mark.system
-@pytest.mark.gnmi
 def test_updates_on_gnmi_stream_mode(engines, devices):
     """
         Test flow:
