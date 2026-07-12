@@ -377,9 +377,9 @@ class TxBwLossMonitorConsts:
             return [member.value for member in cls]
 
     # Default show values (port up, no config applied)
-    DEFAULT_OPER_STATE: str = State.DISABLED.value
+    DEFAULT_OPER_STATE: str = State.ENABLED.value
     DEFAULT_APPLIED_STATE: str = State.FW_DEFAULT.value
-    DEFAULT_MONITOR_STATUS: str = MonitorStatus.NA.value
+    DEFAULT_MONITOR_STATUS: str = MonitorStatus.NORMAL.value
 
     # Link-down diagnostics opcode for BW-loss threshold exceeded
     BW_LOSS_DIAG_CODE: str = '45'
