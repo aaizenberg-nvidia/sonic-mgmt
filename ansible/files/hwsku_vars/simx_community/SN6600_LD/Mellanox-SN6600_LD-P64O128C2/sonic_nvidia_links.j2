@@ -1,0 +1,13 @@
+StartDevice,StartPort,EndDevice,EndPort,BandWidth,VlanID,VlanMode,AutoNeg
+{%- for cage in range(1, 64) %}
+{%- set base = (cage - 1) * 8 %}
+{%- set v = 1101 + (cage - 1) * 3 %}
+{{ setup_name }}-dut,Ethernet{{ base }},{{ setup_name }}-fanout,Ethernet{{ base }},400000,{{ v }},Access,off
+{{ setup_name }}-dut,Ethernet{{ base + 2 }},{{ setup_name }}-fanout,Ethernet{{ base + 2 }},400000,{{ v + 1 }},Access,off
+{{ setup_name }}-dut,Ethernet{{ base + 4 }},{{ setup_name }}-fanout,Ethernet{{ base + 4 }},800000,{{ v + 2 }},Access,off
+{%- endfor %}
+{{ setup_name }}-dut,Ethernet504,{{ setup_name }}-fanout,Ethernet504,400000,1290,Access,off
+{{ setup_name }}-dut,Ethernet506,{{ setup_name }}-fanout,Ethernet506,400000,1291,Access,off
+{{ setup_name }}-dut,Ethernet512,{{ setup_name }}-fanout,Ethernet512,100000,1292,Access,off
+{{ setup_name }}-dut,Ethernet513,{{ setup_name }}-fanout,Ethernet513,100000,1293,Access,off
+{{ setup_name }}-fanout,Ethernet508,{{ setup_name }}-hypervisor,eth1,800000,1101-1293,Trunk,off
