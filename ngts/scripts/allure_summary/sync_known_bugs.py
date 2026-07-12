@@ -118,11 +118,30 @@ QUOTED_TOKEN_RE = re.compile(r"['\"]([A-Za-z][A-Za-z0-9_\-]{2,60})['\"]")
 # Already covered by QUOTED_TOKEN_RE.
 
 # Tokens that are too generic to be useful as standalone patterns even though
-# they appear quoted in messages.
+# they appear quoted in messages. Two categories:
+#   1. Universal noise: boolean/null/status words
+#   2. Generic NVOS field names: appear quoted in assertions ('status', 'state'
+#      etc.) but substring-match hundreds of unrelated failures
+# Also includes the NVOS test-framework prefix "*** POSSIBLE BUG ***" which is
+# prepended to every command failure output and is useless as a discriminator.
 NOISE_TOKENS = {
+    # Boolean / null equivalents
     "true", "false", "none", "null", "nan",
+    # Binary / tri-state flags
     "yes", "no", "on", "off",
+    # Generic status words
     "up", "down", "ok", "fail", "failed", "error", "warning",
+    # Generic NVOS field names — appear quoted in assertions but too common
+    # to discriminate between unrelated failures
+    "status", "state", "value", "result", "reason", "message",
+    "type", "name", "data", "code", "info", "detail", "key",
+    "output", "input", "response", "request", "version",
+    "enabled", "disabled", "active", "config", "mode", "level",
+    "timestamp", "time", "id", "flag", "count", "index", "port",
+    # NVOS test-framework prefix — prepended to every command error output,
+    # appears in virtually every test failure, useless as a discriminator
+    "*** possible bug ***", "possible bug",
+    # Test name noise
     "test_path", "test_id", "test_name",
 }
 
@@ -336,9 +355,13 @@ def extract_error_patterns(kind: str, subject: str, plain_desc: str) -> list[str
                     add(phrase)
                 # Also explode any quoted tokens inside the phrase as their
                 # own patterns - failures quote individual fields, not the
-                # whole Python list-repr we mined.
+                # whole Python list-repr we mined. Require >=6 chars so
+                # short generic words ('ok', 'type', 'state') are skipped
+                # even if they aren't already in NOISE_TOKENS.
                 for tok_m in QUOTED_TOKEN_RE.finditer(phrase):
-                    add(tok_m.group(1))
+                    tok = tok_m.group(1)
+                    if len(tok) >= 6:
+                        add(tok)
 
     return patterns[:16]  # cap so a chatty description does not balloon the rule set
 

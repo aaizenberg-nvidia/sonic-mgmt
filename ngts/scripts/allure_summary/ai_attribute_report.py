@@ -68,7 +68,6 @@ from ngts.scripts.allure_summary.bug_marker import (
     REJECTED_BUG_SENTINEL_PREFIX, REJECTED_BUG_SENTINEL_SUFFIX,
     NO_KNOWN_BUG_SENTINEL, KNOWN_BUG_CATEGORIES,
     SYSTEM_TYPE_ALIASES,
-    XDR_FAMILY,
     score_failure_against_baseline,
     strip_prior_sentinels,
 )
@@ -166,7 +165,6 @@ def _setup_matches(setups, setup_name: str) -> bool:
     if isinstance(setups, str):
         setups = [setups]
     name_lc = setup_name.lower()
-    setup_in_xdr = any(m in name_lc for m in XDR_FAMILY)
     for s in setups:
         s_lc = (s or "").strip().lower()
         if s_lc in name_lc:
@@ -174,8 +172,6 @@ def _setup_matches(setups, setup_name: str) -> bool:
         for alias in SYSTEM_TYPE_ALIASES.get(s_lc, []):
             if alias.lower() in name_lc:
                 return True
-        if setup_in_xdr and s_lc in XDR_FAMILY:
-            return True
     return False
 
 

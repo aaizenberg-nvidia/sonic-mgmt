@@ -91,11 +91,6 @@ SYSTEM_TYPE_ALIASES = {
     "gorilla": ["gorilla"],
 }
 
-# bm/taipan/croc share the same XDR software stack; differ in transceivers.
-# Used to widen setup-filter matching so a bug filed on one is eligible on
-# the others. LLM Check 3 still rejects hardware/PHY/transceiver defects.
-XDR_FAMILY = {"bm", "taipan", "croc"}
-
 
 def _default_baseline_path() -> str:
     if os.path.exists(BASELINE_PATH_SHARED):
@@ -570,7 +565,6 @@ def _bug_setup_match(bug: dict, setup_name: Optional[str]) -> bool:
     if not setup_name:
         return True
     name_lc = setup_name.lower()
-    setup_in_xdr = any(m in name_lc for m in XDR_FAMILY)
     for f in filters:
         f_lc = (f or "").strip().lower()
         if not f_lc:
@@ -580,8 +574,6 @@ def _bug_setup_match(bug: dict, setup_name: Optional[str]) -> bool:
         for alias in SYSTEM_TYPE_ALIASES.get(f_lc, []):
             if alias.lower() in name_lc:
                 return True
-        if setup_in_xdr and f_lc in XDR_FAMILY:
-            return True
     return False
 
 
@@ -667,14 +659,10 @@ def score_failure_against_baseline(
             return
         if not _bug_setup_match(bug, setup_name):
             return
-        # log_analyzer bugs auto-list affected tests speculatively (every
-        # test whose run window contained the warning). For these bugs,
-        # test-name alone is NOT evidence of an actual match - drop the
-        # candidate unless the syslog pattern also appears verbatim in
-        # the failure's statusMessage (the assertion text).
-        if (bug.get("kind") == "log_analyzer" and
-                source == "test_name" and
-                rid not in bugs_hit_in_msg):
+        # A bug is only linked when at least one of its error_patterns
+        # matches the failure's statusMessage. Test-name match alone is
+        # not sufficient. Bugs with no error_patterns are never linked.
+        if rid not in bugs_hit_in_msg:
             return
         if bug.get("kind") == "feature":
             score += 5
@@ -840,20 +828,13 @@ def attach_baseline_to_failed_results(
         # on syslog lines the loganalyzer plugin pulls into the trace during
         # teardown of unrelated tests).
         # Score legend (higher = stronger evidence):
-        #   100 = test-name exact match in bug.tests[] (NON log_analyzer)
-        #    80 = test-name prefix-with-underscore match (NON log_analyzer)
-        #    60 = error_pattern hit in statusMessage (assertion text)
-        #    30 = test-name exact match for log_analyzer-kind bug WITHOUT
-        #         error_pattern hit in statusMessage. log_analyzer tickets
-        #         auto-list affected tests speculatively; we treat the test
-        #         name as a weak signal that only wins when the syslog
-        #         pattern also fires verbatim in statusMessage.
-        #    20 = error_pattern hit in statusTrace ONLY (teardown noise -
-        #         common for log_analyzer bugs; weak signal, kind-aware drop)
-        # Additional boost: feature-kind > log_analyzer-kind by +5 so
-        # specific-defect bugs beat generic syslog bugs at the same score.
-        # If a bug matches in BOTH statusMessage AND tests[] we keep the
-        # higher score (test-name wins, except for log_analyzer kind).
+        #    60 = error_pattern hit in statusMessage (required to fire at all)
+        #   +100 = also has test-name exact match in bug.tests[] (non log_analyzer)
+        #    +80 = also has test-name prefix-with-underscore match (non log_analyzer)
+        #    +20 = error_pattern hit in statusTrace only (weak, non log_analyzer)
+        #     +5 = feature-kind tiebreaker over log_analyzer-kind
+        # A bug that has no error_patterns, or whose patterns don't match
+        # statusMessage, is never linked regardless of test-name match.
         candidate_scores: dict = {}  # redmine_id -> (score, bug)
 
         # Pre-compute which bugs had an error_pattern hit in statusMessage,
@@ -871,15 +852,12 @@ def attach_baseline_to_failed_results(
             rid = bug.get("redmine_id")
             if rid is None:
                 return
-            # log_analyzer auto-filings list affected tests speculatively
-            # (the loganalyzer plugin scans syslog at teardown and tags every
-            # test whose run window contained the warning). For these bugs,
-            # test-name alone is NOT evidence of an actual match - drop the
-            # candidate unless the syslog pattern also appears verbatim in
-            # the failure's statusMessage (the assertion text).
-            if (bug.get("kind") == "log_analyzer" and
-                    source == "test_name" and
-                    rid not in bugs_hit_in_msg):
+            # A bug is only linked when at least one of its error_patterns
+            # matches the failure's statusMessage. Test-name match alone is
+            # not sufficient — the same test can fail for many unrelated
+            # reasons, and test-name-only attribution produces too many false
+            # positives. Bugs with no error_patterns defined are never linked.
+            if rid not in bugs_hit_in_msg:
                 return
             if bug.get("kind") == "feature":
                 score += 5
