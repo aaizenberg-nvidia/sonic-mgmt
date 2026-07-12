@@ -487,7 +487,7 @@ def get_phy_recovery_counters(port_name: str) -> Dict[str, int]:
     with allure.step(f"Get PHY recovery counters for {port_name}"):
         port = Port(name=port_name)
         output = OutputParsingTool.parse_json_str_to_dictionary(
-            port.interface.link.phy_diag.show()
+            port.interface.link.phy.detail.show()
         ).get_returned_value()
 
         counters = {

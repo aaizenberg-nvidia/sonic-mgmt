@@ -59,7 +59,7 @@ def test_show_fw_recovery_counters(engines, devices):
         Verify default FAE recovery counters via NV "show interface" and GNMI subscription.
 
     Steps:
-    1. Run `nv show interface <port> link phy-diag --view detailed` and parse JSON output.
+    1. Run `nv show interface <port> link phy detail --view detailed` and parse JSON output.
     2. Confirm all default counters match FWRecoveryConsts.DEFAULT_FW_RECOVERY_COUNTERS.
     3. Pick a random counter, subscribe via GNMI ONCE to `phy-diag/state/<counter>`.
     4. Verify GNMI stream contains the counter name and its default value.
@@ -72,7 +72,7 @@ def test_show_fw_recovery_counters(engines, devices):
     selected_port = port_result.get_returned_value()
 
     with allure.step("Validate show interface command with all nvl5 interfaces"):
-        port_output = OutputParsingTool.parse_json_str_to_dictionary(selected_port.interface.link.phy_diag.show()).get_returned_value()
+        port_output = OutputParsingTool.parse_json_str_to_dictionary(selected_port.interface.link.phy.detail.show()).get_returned_value()
 
     expected_fields = list(FWRecoveryConsts.DEFAULT_FW_RECOVERY_COUNTERS.keys())
     expected_values = list(FWRecoveryConsts.DEFAULT_FW_RECOVERY_COUNTERS.values())
