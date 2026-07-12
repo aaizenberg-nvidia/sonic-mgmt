@@ -137,6 +137,7 @@ tests_nvos/platform/test_platform_environment.py::test_show_platform_environment
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5098668'
     conditions:
     - https://redmine.mellanox.com/issues/5098668
+    - '''juliet'' in testbed'
 
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:

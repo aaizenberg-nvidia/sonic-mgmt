@@ -487,7 +487,7 @@ class IbSwitch(BaseSwitch):
         self.reboot_reason_dict = {
             RebootConsts.HALT: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_ADMIN),
             RebootConsts.COLD: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.IMMEDIATE: ("Platform reset", RebootConsts.REBOOT_USER_ADMIN),
+            RebootConsts.IMMEDIATE: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
             RebootConsts.FACTORY_RESET: ("reboot", RebootConsts.REBOOT_USER_SYSTEM),
             RebootConsts.POWER_BUTTON: (SystemConsts.REBOOT_REASON_POWER_BUTTON, RebootConsts.REBOOT_USER_NA),
             RebootConsts.PSU_OFF: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
@@ -1939,7 +1939,7 @@ class JulietSwitch(NvLinkSwitch):
             RebootConsts.HALT: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_ADMIN),
             RebootConsts.POWER_CYCLE: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_ADMIN),
             RebootConsts.COLD: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.IMMEDIATE: ("Platform reset", RebootConsts.REBOOT_USER_ADMIN),
+            RebootConsts.IMMEDIATE: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
             RebootConsts.FACTORY_RESET: ("reboot", RebootConsts.REBOOT_USER_SYSTEM),
             RebootConsts.POWER_BUTTON: (SystemConsts.REBOOT_REASON_POWER_BUTTON, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_NA),
