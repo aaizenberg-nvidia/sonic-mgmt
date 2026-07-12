@@ -25,7 +25,6 @@ from ngts.cli_wrappers.linux.linux_cli import LinuxCli, LinuxCliStub
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli, SonicCliStub
 from ngts.cli_wrappers.sonic.sonic_general_clis import SonicGeneralCliDefault
-from ngts.constants.constants import REGRESSION_TYPE_ENV_VAR, RegressionType
 from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType, SonicConst
 from ngts.constants.constants import SerialLoggerConst
 from ngts.helpers.general_helper import get_all_setups, get_dut_cli_obj_from_topo_obj
@@ -818,8 +817,8 @@ def is_debug_kernel_run(engines, should_skip_checking_fixture):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def is_ci_run():
-    pytest.is_ci_run = os.environ.get(REGRESSION_TYPE_ENV_VAR) in RegressionType.ci_types()
+def is_ci_run(setup_name):
+    pytest.is_ci_run = "_CI_" in setup_name
     return pytest.is_ci_run
 
 
@@ -829,8 +828,8 @@ def mars_key_id(request):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def is_mars_run():
-    pytest.is_mars_run = os.environ.get(REGRESSION_TYPE_ENV_VAR) in RegressionType.mars_types()
+def is_mars_run(mars_key_id):
+    pytest.is_mars_run = True if mars_key_id else False
     return pytest.is_mars_run
 
 
