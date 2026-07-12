@@ -1,0 +1,20 @@
+[sonic_latest]
+
+{{setup_name}}-dut ansible_host={{dut_ip}} sonic_version=v2 sonic_hwsku={{hwsku}} iface_speed=800000 serial={{serial_num}} model=SN6600_LD serial_console="" ptf_host=ptf ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host=
+{{setup_name}}-fanout ansible_host={{fanout_ip}} ansible_ssh_user="{% raw %}{{ lookup('env','SONIC_SWITCH_USER') }}{% endraw %}" ansible_ssh_pass="{% raw %}{{ lookup('env','SONIC_SWITCH_PASSWORD') }}{% endraw %}" os=sonic
+
+[sonic:children]
+sonic_latest
+
+[leaf_topo_1]
+{{setup_name}}-dut
+
+[leaf_topo_1:vars]
+podset_number=200
+
+[lab]
+{{setup_name}}-dut
+
+[ptf]
+ptf-{{setup_name}} ansible_host={{ ptf_ip }} ansible_ssh_user="{% raw %}{{ lookup('env','PTF_USER') }}{% endraw %}" ansible_ssh_pass="{% raw %}{{ lookup('env','PTF_PASSWORD') }}{% endraw %}"
+{{ ptf_ip }} ansible_host={{ ptf_ip }} ansible_ssh_user="{% raw %}{{ lookup('env','PTF_USER') }}{% endraw %}" ansible_ssh_pass="{% raw %}{{ lookup('env','PTF_PASSWORD') }}{% endraw %}"
