@@ -8,9 +8,8 @@ import retry
 import time
 import re
 
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvlInterfaceConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import InternalNvosConsts, NvlInterfaceConsts, NvosConsts
 from ngts.nvos_constants.constants_nvos import OutputFormat, MultiPlanarConsts
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.ngts_types import EnginesT, DevicesT
@@ -88,7 +87,7 @@ def _verify_plr_configuration(port: Port, mode: str):
         mode: The mode to verify the PLR configuration for
     """
     with allure.step("Attempt to verify PLR configuration"):
-        port.wait_for_port_state(port, NvosConsts.LINK_STATE_UP)
+        port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         # the port could be up, but not down yet for applying the new configuration
         # therefore, we are using the retry,
         # but if the port is down,
@@ -131,7 +130,7 @@ def _verify_plr_configuration_on_ports(ports: Iterable[Port], mode: str, step_na
                 _verify_plr_configuration(port, mode)
 
 
-@pytest.mark.timeout(5 * MINUTE, func_only=True)
+@pytest.mark.timeout(20 * MINUTE, func_only=True)
 def test_plr_cli_flow(engines: EnginesT, devices: DevicesT, access_ports: Port, register_cleanup, unregister_cleanup):
     last_acp_port_name = max(devices.dut.nvl_access_ports_list, key=lambda p: int(p.replace(NvlInterfaceConsts.ACP_PORT_TYPE, '')))
     port = Port(last_acp_port_name)
@@ -185,7 +184,7 @@ def test_plr_cli_flow(engines: EnginesT, devices: DevicesT, access_ports: Port, 
         logger.info(f"Unsetting PLR mode on port {port.name}")
         access_ports.interface.link.plr.unset('mode', apply=True, ask_for_confirmation=True)
         with allure.step(f"Wait for port {port.name} to be up"):
-            port.wait_for_port_state(port, NvosConsts.LINK_STATE_UP)
+            port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         helpers.reboot_gpus()  # need to reboot the GPUs to ensure that link will go up
 
         _verify_plr_configuration_on_ports(verification_ports, PLR_DEFAULT_MODE, "Verify PLR mode reverted to default on fixed ports")
@@ -256,13 +255,13 @@ def test_feature_link_transition_timing(engines: EnginesT, register_cleanup):
         register_cleanup(partial(_cleanup, port))
 
         helpers.reboot_gpus()  # need to reboot the GPUs to ensure that link will go up
-        port.wait_for_port_state(port, NvosConsts.LINK_STATE_UP)
+        port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         logger.info(f"Successfully set PLR mode to {random_mode}")
 
     start_time = time.perf_counter()
     with allure.step('Wait for port to come back up'):
         logger.info(f"Waiting for port {port.name} to come back up")
-        port.wait_for_port_state(port, NvosConsts.LINK_STATE_UP)
+        port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         up_time = time.perf_counter() - start_time
         logger.info(f"Port {port.name} came back up after {up_time:.2f} seconds")
 

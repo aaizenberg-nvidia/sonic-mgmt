@@ -235,6 +235,7 @@ class FaeSystem(BaseComponent):
         self.dockers = BaseComponent(self, path='/control/dockers')
         self.resource_limit = BaseComponent(self, path='/control/dockers/resource-limit')
         self.asic_debug_config = BaseComponent(self, path='/asic-debug-config')
+        self.mloop = Mloop(self)
         self.cpo = BaseComponent(self, path='/cpo')
         self.peer_port = FaePeerPort(self)
         self.sto_event = StoEvent(self)
@@ -248,6 +249,14 @@ class FaeLog(BaseComponent):
     def __init__(self, parent_obj=None):
         BaseComponent.__init__(self, parent=parent_obj, path='/log')
         self.remarkable_logs = BaseComponent(self, path='/remarkable-logs')
+
+
+class Mloop(BaseComponent):
+    """Represents the ``/fae/system/mloop`` workaround subtree."""
+
+    def __init__(self, parent_obj=None):
+        super().__init__(parent=parent_obj, path='/mloop')
+        self.state = BaseComponent(self, path='/state')
 
 
 class FaePeerPort(BaseComponent):

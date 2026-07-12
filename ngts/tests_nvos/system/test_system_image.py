@@ -205,7 +205,6 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
     cp_acl_bindings = None
     acl_persist_mangle_state = None
     include_mtu_testing = getattr(devices.dut, 'supports_mtu_testing', False)
-
     if not downgrade_version_realpath:
         pytest.skip("Cannot run test because base_version parameter is missing from the setup file")
 
@@ -317,11 +316,11 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                 with allure.step('Verify MTU preserved after upgrade'):
                     InterfaceConfigurationTool.verify_and_cleanup_mtu(mtu_info)
 
-            if json_acl_rules is not None:
+            if upgrade_succeeded and json_acl_rules is not None:
                 with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
                     system_helpers.verify_acl_rules_preserved(
                         json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
-            if cp_acl_bindings is not None:
+            if upgrade_succeeded and cp_acl_bindings is not None:
                 with allure.independent_step(
                     'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
                 ):

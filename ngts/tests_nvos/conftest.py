@@ -1541,12 +1541,17 @@ def update_fw_versions_json_file(fw_versions_json_file):
 
 
 @pytest.fixture
-def handle_la_marker_in_manufacture(engines, loganalyzer):
+def handle_la_marker_in_manufacture(request, engines: EnginesT, loganalyzer: dict):
     """
     When the test ends, injects the log-analyzer test-start marker as the first line in the log.
     This is intended for tests that cause all log files to be deleted, e.g. by manufacture or factory-reset.
     This fixture calls the 'loganalyzer' fixture just to ensure that these 2 fixtures run in the correct order.
     """
+    if request.config.getoption("--disable_loganalyzer") or "disable_loganalyzer" in request.keywords:
+        logging.info("Log analyzer is disabled")
+        yield
+        return
+
     try:
         marker = engines.dut.run_cmd(r"grep -oE '\S+ \S+ start-LogAnalyzer-.*' " + SyslogConsts.SYSLOG_LOG_PATH,
                                      validate=True).splitlines()[-1]

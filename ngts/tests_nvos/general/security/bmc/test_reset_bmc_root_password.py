@@ -17,13 +17,14 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.BmcSshEngine import BmcSshEngine
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from devts.infra.tools.validations.traffic_validations.ping.send import ping_till_alive
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
-from ngts.nvos_constants.constants_nvos import PlatformConsts
 
 logger = logging.getLogger()
 BMC_DEFAULT_KNOWN_PASSWORD = 'ABYX12#14artb'
 BMC_ROOT_PASS_MANUAL_CHANGED = 'dummypassword'
 AUTHENTICATION_FAILED = 'Authentication to device failed'
+REDFISH_AUTH_ERROR = 'Invalid username or password'
 
 
 @pytest.mark.bmc
@@ -85,7 +86,7 @@ def test_reset_bmc_password_to_default(engines, topology_obj, random_api):
 def test_reset_bmc_password_to_default_while_locked_out(engines, topology_obj, test_api):
     '''
     Run the reset command after being temporarily locked out from the BMC due to too many failed connection attempts to root user.
-    Expected: The password will reset, and after the temporary block will end (600 sec) you will be able to connect with ‘0penBmc’.
+    Expected: The password will reset, and after the temporary block ends you will be able to connect with '0penBmc'.
     '''
     # LA ignores some BMC errors during this test, pending on FR 4210208
     dut: LinuxSshEngine = engines.dut
@@ -96,6 +97,7 @@ def test_reset_bmc_password_to_default_while_locked_out(engines, topology_obj, t
     with allure.step("get bmc addresses"):
         ip_addresses = BmcTool.get_bmc_ip_addresses(engines, topology_obj)
     bmc_ip_address = ip_addresses["IPv4"]
+    lockout_duration = get_bmc_account_lockout_duration(client)
     try:
         with allure.step("Log into bmc root with wrong password - 10 times to get locked out"):
             wrong_pass = 'some#wrong#pass'
@@ -106,7 +108,8 @@ def test_reset_bmc_password_to_default_while_locked_out(engines, topology_obj, t
         with allure.step("Reset BMC Root password while locked out"):
             platform.bmc_password.action_reset()
             root_pass = PlatformConsts.BMC_DEFAULT_ROOT_PASSWORD_AFTER_RESET_VIA_NOS
-            time.sleep(600)
+            with allure.step(f"Wait for account lockout to expire ({lockout_duration}s)"):
+                time.sleep(lockout_duration)
             bmc_engine = LinuxSshEngine(ip=bmc_ip_address, username='root', password=root_pass)
             output = bmc_engine.run_cmd('whoami')
         with allure.step("login with old bmc password, expected to fail"):
@@ -117,6 +120,13 @@ def test_reset_bmc_password_to_default_while_locked_out(engines, topology_obj, t
             client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP, username=BmcUsers.root.username,
                               password=root_pass)
             output = client.change_root_password(password=root_pass)
+            if output and REDFISH_AUTH_ERROR in output:
+                with allure.step(
+                    f"Account still locked while it should be unlocked, wait {lockout_duration}s "
+                    "and try again for a clean state"
+                ):
+                    time.sleep(lockout_duration)
+                    output = client.change_root_password(password=root_pass)
     assert output and '"error"' not in output, (
         f'BMC curl change_root_password failed:\n{output}'
     )
@@ -185,6 +195,19 @@ def test_reset_bmc_root_password_while_bmc_down(engines, devices, topology_obj, 
             output = client.change_root_password(password=root_password)
             if not output or '"error"' in output:
                 logger.error(f'BMC curl change_root_password failed during cleanup:\n{output}')
+
+
+def get_bmc_account_lockout_duration(client: CurlTool) -> int:
+    with allure.step('Read BMC AccountService AccountLockoutDuration'):
+        output = client.run_redfish_command(rest_op='GET', path='/AccountService')
+        account_service = OutputParsingTool.parse_json_str_to_dictionary(output).get_returned_value()
+        lockout_duration = account_service.get('AccountLockoutDuration')
+        assert isinstance(lockout_duration, int), (
+            'BMC AccountService did not return a valid integer AccountLockoutDuration '
+            f'(got {lockout_duration!r}). Raw Redfish output:\n{output}'
+        )
+        logger.info(f'BMC AccountLockoutDuration={lockout_duration}s')
+        return lockout_duration
 
 
 def try_to_connect_expecting_failure(bmc_ip_address, password, err_msg):

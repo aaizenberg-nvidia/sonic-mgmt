@@ -4,7 +4,6 @@ import re
 from enum import Enum
 from pathlib import Path
 from typing import List, TypedDict
-import re
 
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import ADMIN
 
@@ -2189,6 +2188,16 @@ class ClusterConsts:
     INITIAL_EXPECTED_APPS = [NMX_CONTROLLER, NMX_TELEMETRY]
     INITIAL_APPS_PATH = '/usr/local/cluster_pkgfiles/'
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
+
+
+class OtlpConsts:
+    ENDPOINT = "endpoint"
+    CRL = "crl"
+    ENCRYPTION = "encryption"
+    CERT_ID = "cert-id"
+    CA_CERT_ID = "cacert-id"
+    CRL_ID = "crl-id"
+    MODE = "mode"
 
 
 class SyslogSeverityLevels:

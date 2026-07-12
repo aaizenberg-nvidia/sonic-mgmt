@@ -17,11 +17,11 @@ from ngts.tools.test_utils import nvos_general_utils
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
-from ngts.tests_nvos.general.security.radius.constants import RadiusVmServer
-from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer0
+from ngts.tests_nvos.general.security.radius.constants import RadiusPhysicalServer
+from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer1
 from ngts.tests_nvos.general.security.test_aaa_ldap.ldap_servers_info import LdapServersP3
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
-from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts, AddressingType, AuthConsts
+from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts, AddressingType, AuthConsts, AuthMedium, UserRole
 from ngts.tests_nvos.general.security.security_test_tools.generic_remote_aaa_testing.constants import RemoteAaaType
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaaServerInfo import RemoteAaaServerInfo
 from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
@@ -36,7 +36,15 @@ def _test_ssh_connection(engines: EnginesT, user: UserInfo) -> bool:
         with SSHClient() as ssh:
             ssh.set_missing_host_key_policy(AutoAddPolicy())
             ssh.connect(engines.dut.ip, username=user.username, password=user.password)
-            success = True
+            # run a simple command to confirm the authenticated session is usable, not just that auth succeeded
+            _, stdout, stderr = ssh.exec_command('id')
+            id_output = stdout.read().decode().strip()
+            exit_status = stdout.channel.recv_exit_status()
+            err_output = stderr.read().decode().strip()
+            success = exit_status == 0 and bool(id_output)
+            if not success:
+                logger.error(f"'id' command failed for user {user.username} on {engines.dut.ip}: "
+                             f"exit_status={exit_status}, stdout={id_output!r}, stderr={err_output!r}")
     except Exception as e:
         logger.error(f"SSH connection to {engines.dut.ip} failed for user {user.username} with password {user.password}: {e}")
         success = False
@@ -125,20 +133,19 @@ def _aaa_method_keep_check(engines: EnginesT, auth_method: str):
         with allure.step('set tacacs server'):
             tac_server: RemoteAaaServerInfo = TacacsDockerServer1.SERVER_BY_ADDRESSING_TYPE[AddressingType.IPV4]
             tac_server.configure(engines)
-            return tac_server.users[0]
+            return tac_server.users_per_auth_medium[AuthMedium.SSH][UserRole.ADMIN][0]
 
     def _setup_ldap() -> UserInfo:
         with allure.step('set ldap server'):
             ldap_server: RemoteAaaServerInfo = LdapServersP3.LDAP3_SERVERS[AddressingType.IPV4]
             ldap_server.configure(engines)
-            return ldap_server.users[0]
+            return ldap_server.users_per_auth_medium[AuthMedium.SSH][UserRole.ADMIN][0]
 
     def _setup_radius() -> UserInfo:
         with allure.step('set radius server'):
-            rad_server: RemoteAaaServerInfo = RadiusVmServer.SERVER_BY_ADDRESSING_TYPE[
-                random.choice([AddressingType.IPV4, AddressingType.DN])]
+            rad_server: RemoteAaaServerInfo = RadiusPhysicalServer.SERVER_BY_ADDRESSING_TYPE[AddressingType.IPV4]
             rad_server.configure(engines)
-            return rad_server.users[0]
+            return rad_server.users_per_auth_medium[AuthMedium.SSH][UserRole.ADMIN][0]
     system = System()
     with allure.step("set AAA servers"):
         with allure.step(f'set AAA {auth_method} server'):

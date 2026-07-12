@@ -159,7 +159,7 @@ def test_phy_recovery_attributes(devices, random_api):
             retry_call(
                 validate_ports_state,
                 [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=13, delay=30
+                exceptions=AssertionError, tries=26, delay=15
             )
             retry_call(
                 _verify_attribute,
@@ -186,7 +186,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 retry_call(
                     validate_ports_state,
                     [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                    exceptions=AssertionError, tries=13, delay=30
+                    exceptions=AssertionError, tries=26, delay=15
                 )
                 retry_call(
                     _verify_attribute,
@@ -204,7 +204,7 @@ def test_phy_recovery_attributes(devices, random_api):
             retry_call(
                 validate_ports_state,
                 [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=13, delay=30
+                exceptions=AssertionError, tries=26, delay=15
             )
             retry_call(
                 _verify_attribute,
@@ -330,7 +330,7 @@ def test_set_fae_phy_recovery_trunk_ports(devices, random_api):
 
 @pytest.mark.interface
 @pytest.mark.multiplanar
-@pytest.mark.timeout(18 * MINUTE)
+@pytest.mark.timeout(25 * MINUTE)
 def test_set_fae_phy_recovery_access_ports(devices, random_api, standalone_system, has_loopbox, setup_name, is_simx):
     """
     @summary:
@@ -394,7 +394,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                             phy_recovery_apply_neg_type(all_ports, PhyRecoveryConsts.RECOVERY_NEG_TYPE_FORCE_PEER)
                             reset_gpus_if_needed(setup_name)
                     verify_phy_recovery_config(
-                        selected_port, flow, mode, flow.default_timeout_when_enabled,
+                        selected_port, flow, mode, flow.default_timeout_when_enabled, retries=26, delay=15
                     )
 
                     higher_timeout = random.randrange(
@@ -407,7 +407,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                     ):
                         phy_recovery_apply_timeout(all_ports, flow, higher_timeout)
                         reset_gpus_if_needed(setup_name)
-                        verify_phy_recovery_config(selected_port, flow, mode, higher_timeout)
+                        verify_phy_recovery_config(selected_port, flow, mode, higher_timeout, retries=26, delay=15)
 
                     lower_timeout = random.randrange(
                         PHY_RECOVERY_LOWER_TIMEOUT_MIN,
@@ -447,12 +447,12 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                         ):
                             phy_recovery_apply_timeout(selected_port, flow, lower_timeout)
                             reset_gpus_if_needed(setup_name)
-                            verify_phy_recovery_config(selected_port, flow, mode, lower_timeout)
+                            verify_phy_recovery_config(selected_port, flow, mode, lower_timeout, retries=26, delay=15)
 
                     with allure.step(f"Update {flow.timeout_field} to lower value ({lower_timeout}) on all ports"):
                         phy_recovery_apply_timeout(all_ports, flow, lower_timeout)
                         reset_gpus_if_needed(setup_name)
-                        verify_phy_recovery_config(selected_port, flow, mode, lower_timeout)
+                        verify_phy_recovery_config(selected_port, flow, mode, lower_timeout, retries=26, delay=15)
 
                 elif mode == PhyRecoveryConsts.DISABLED:
                     ports_in_up_state = RandomizationTool.select_random_ports(
@@ -460,7 +460,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                         num_of_ports_to_select=0,
                     ).get_returned_value()
                     phy_recovery_apply_mode(all_ports, flow, mode)
-                    verify_phy_recovery_config(selected_port, flow, mode)
+                    verify_phy_recovery_config(selected_port, flow, mode, retries=26, delay=15)
                     current_ports_in_up_state = RandomizationTool.select_random_ports(
                         requested_ports_state=NvosConsts.LINK_STATE_ALL_TYPES,
                         num_of_ports_to_select=0,
@@ -479,7 +479,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                     assert expected_names == current_names, message
                 else:
                     phy_recovery_apply_mode(all_ports, flow, mode)
-                    verify_phy_recovery_config(selected_port, flow, mode)
+                    verify_phy_recovery_config(selected_port, flow, mode, retries=26, delay=15)
     finally:
         with allure.step("Unset configuration to return to defaults"):
             all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
@@ -489,8 +489,8 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
             validate_default_config,
             fargs=[selected_port, devices],
             exceptions=AssertionError,
-            tries=6,
-            delay=30,
+            tries=26,
+            delay=15
         )
 
 

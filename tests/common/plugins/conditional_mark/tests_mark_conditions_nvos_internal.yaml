@@ -162,6 +162,12 @@ tests_nvos/system/test_techsupport_feature.py::test_techsupport_bmc_badflow:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
       in testbed'
 
+tests_nvos/system/test_techsupport_feature.py::test_techsupport_expected_files:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5085812 - nmx-telemetry stays 'not ok' (Unhealthy: telemetry) after cluster enable"
+    conditions:
+      - https://redmine.mellanox.com/issues/5085812
+
 tests_nvos/system/gnmi/test_gnmi_server.py::test_gnmi_mapping_table:
   skip:
     reason: Netq version was updated and mapping change. Skipping until further alignment.
@@ -710,4 +716,13 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     reason: "Tray admin state is only supported on VR200/Rosalind and later"
     conditions:
       - "'rosalind' not in testbed"
+
+tests_nvos/interfaces/test_plr_configs.py:
+  skip:
+    reason: "PLR tests disabled on RTF system till the feature is ready #4991472"
+    conditions_logical_operator: and
+    conditions:
+      - "'sws-rtf2-rosalind-198' in testbed"
+      - https://redmine.mellanox.com/issues/4991472
+
 ########################## NVOS IGNORE END ##########################

@@ -2,27 +2,24 @@ import pytest
 import logging
 import pexpect
 import random
-import time
 
-from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
-from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
 from ngts.tests_nvos.cluster.dscp_marking_tools import DscpValueSelector
 from ngts.tests_nvos.cluster.test_cluster_dscp_marking import _get_random_dscp_not_default
-from ngts.nvos_constants.constants_nvos import OutputFormat, ApiType
+from ngts.nvos_constants.constants_nvos import ApiType, OutputFormat
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.constants import MINUTE
-from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
+from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from retry.api import retry_call
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
+from ngts.tests_nvos.cluster.tray_admin_state.helpers import is_rtf_compute_tray_scenario, delete_sdn_partitions_before_compute_tray_test
 
 logger = logging.getLogger()
 
@@ -33,7 +30,7 @@ logger = logging.getLogger()
 @pytest.mark.nmx
 @pytest.mark.timeout(35 * MINUTE, func_only=True)
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, standalone_system, setup_name):
+def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, standalone_system, setup_name, chassis_info, tray_topology_config):
     """
     Test flow:
         1. Enable cluster
@@ -71,18 +68,35 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             with allure.step("Verify links Active prior to reboot"):
                 ClusterTools.verify_interface_up(devices, has_loopbox, setup_name, engine=engines.dut)
 
+        uuid = location = partition_to_remove_from = None
         if not standalone_system:
             with allure.step("Creating Empty partition, then adding a GPU to it with no-reroute option"):
-                logger.info("After reboot, empty partition should persist, but GPU added to it with no-reroute should be deleted")
+                logger.info("After reboot, the empty partition should persist with the GPU, "
+                            "and the GPU should stay removed from its original partition")
                 uuid, location, _, partition_to_remove_from = ClusterTools.create_empty_partition_and_add_gpu(sdn, 'no-reroute', engine=engines.dut)
+                new_partition_uuids, new_partition_locations = \
+                    ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.EMPTY_PARTITION_ID)
+                default_partition_uuids, default_partition_locations = \
+                    ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.DEFAULT_PARTITION_ID)
+                assert uuid in new_partition_uuids and location in new_partition_locations, \
+                    f"uuid {uuid} was not added to partition {ClusterConsts.EMPTY_PARTITION_ID}, See current uuids: {new_partition_uuids}"
+                assert uuid not in default_partition_uuids and location not in default_partition_locations, \
+                    f"uuid {uuid} still appears in default partition {ClusterConsts.DEFAULT_PARTITION_ID} although it was moved to {ClusterConsts.EMPTY_PARTITION_ID}, See current uuids: {default_partition_uuids}"
 
         tray_state_set = False
+        partition_deletion_flag = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
             with allure.step("Set tray maintenance-state to non-default before reboot"):
                 trays_output = OutputParsingTool.parse_show_output_to_dict(sdn.trays.show()).get_returned_value()
                 tray_ids = list(trays_output.keys())
                 if tray_ids:
                     selected_tray = tray_ids[0]
+                    if location and location.split('.')[1] == selected_tray:
+                        selected_tray = tray_ids[-1]  # Since we know that the first and the last tray are compute nodes, take the last tray in case the first tray will not work
+                    local_switch_slot = str(chassis_info.get('slot-number'))
+                    partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
+                    if partition_deletion_flag:
+                        delete_sdn_partitions_before_compute_tray_test(sdn, excluded_partitions=[ClusterConsts.EMPTY_PARTITION_ID])
                     tray_non_default = random.choice(['down', 'diag'])
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
@@ -139,11 +153,18 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
                                                                  output_format=output_format).get_returned_value()
             assert ClusterConsts.EMPTY_PARTITION_ID in output.keys(), f'Partition {ClusterConsts.EMPTY_PARTITION_ID} was deleted, while its expected to be kept'
-            output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.partition_id[ClusterConsts.EMPTY_PARTITION_ID].show(output_format=output_format),
-                                                                 output_format=output_format).get_returned_value()
-            uuids, locations = ClusterTools.uuid_location_in_partition(sdn, partition_to_remove_from)
-            assert uuid not in uuids, f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute, See current uuids: {uuids}"
-            assert location not in locations, f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute. See current locations: {locations}"
+            if partition_deletion_flag:
+                # partitions (except the empty one) were deleted before the compute-tray flow,
+                # so the default partition must stay deleted after reboot
+                assert ClusterConsts.DEFAULT_PARTITION_ID not in output.keys(), \
+                    f'Partition {ClusterConsts.DEFAULT_PARTITION_ID} was not deleted, while its expected to be deleted'
+            uuids, locations = ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.EMPTY_PARTITION_ID)
+            assert uuid in uuids, f"uuid {uuid} is missing from partition {ClusterConsts.EMPTY_PARTITION_ID} after reboot, See current uuids: {uuids}"
+            assert location in locations, f"location {location} is missing from partition {ClusterConsts.EMPTY_PARTITION_ID} after reboot. See current locations: {locations}"
+            if partition_to_remove_from in output.keys():
+                original_uuids, original_locations = ClusterTools.uuid_location_in_partition(sdn, partition_to_remove_from)
+                assert uuid not in original_uuids, f"uuid {uuid} was not deleted from {partition_to_remove_from} although it was removed with no-reroute, See current uuids: {original_uuids}"
+                assert location not in original_locations, f"location {location} was not deleted from {partition_to_remove_from} although it was removed with no-reroute. See current locations: {original_locations}"
 
     finally:
         if not standalone_system:
