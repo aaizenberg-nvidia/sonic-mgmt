@@ -143,6 +143,12 @@ tests_nvos/system/test_techsupport_feature.py::test_techsupport_bmc_badflow:
     conditions:
       - "'juliet' not in testbed and 'rosalind' not in testbed and 'portia' not in testbed"
 
+tests_nvos/system/test_techsupport_feature.py::test_techsupport_expected_files:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5085812 - nmx-telemetry stays 'not ok' (Unhealthy: telemetry) after cluster enable"
+    conditions:
+      - https://redmine.mellanox.com/issues/5085812
+
 tests_nvos/system/gnmi/test_gnmi_server.py::test_gnmi_mapping_table:
   skip:
     reason: "Netq version was updated and mapping change. Skipping until further alignment."
