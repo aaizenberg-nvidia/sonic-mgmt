@@ -595,12 +595,13 @@ tests_nvos/system/gnmi/test_gnmi_server.py::test_simulate_gnmi_server_failure:
 
 tests_nvos/cluster/nmx_simulator_tests/test_simulated_cluster_partition.py:
   skip:
-    reason: Skip partition tests if device is not JulietSwitch or if it's not a standalone
-      system.
+    reason: "Skip partition tests if device is not JulietSwitch or if it's not a standalone system or RM issue #5149287"
     conditions_logical_operator: or
     conditions:
-    - '''juliet'' not in testbed'
-    - '''juliet-148'' in testbed'
+      - "('juliet' not in testbed and 'rosalind' not in testbed)"
+      - "'juliet-148' in testbed"
+      - "'sws-rtf2-rosalind-198' in testbed"
+      - https://redmine.mellanox.com/issues/5149287
 
 tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
   skip:
