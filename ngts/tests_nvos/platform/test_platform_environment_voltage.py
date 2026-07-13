@@ -145,10 +145,10 @@ def test_database_platform_environment_voltage(engines, devices):
 
         logger.info("the sensors from switch's CLI are: {}".format(cli_sensors_list))
 
-    with allure.step("get all the tabled with SENSOR in STATE_DB"):
+    with allure.step("get all VOLTAGE_INFO tables in STATE_DB"):
         database_output = Tools.DatabaseTool.sonic_db_cli_get_keys(engine=engines.dut, asic="",
                                                                    db_name=DatabaseConst.STATE_DB_NAME,
-                                                                   grep_str="VOLTAGE").splitlines()
+                                                                   grep_str="VOLTAGE_INFO").splitlines()
 
     with allure.step("Check the Sensors output from CLI and db tables"):
         # Normalize sensor names by removing all non-alphanumeric characters
