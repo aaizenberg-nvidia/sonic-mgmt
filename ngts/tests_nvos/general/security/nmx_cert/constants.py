@@ -15,6 +15,9 @@ CA_CERTIFICATE = "ca-certificate"
 ENCRYPTION = "encryption"
 ALTERNATE_CERTIFICATE = "alternate-certificate"
 CRL = "crl"
+ENDPOINT = "endpoint"
+PROTOCOL = "protocol"
+REMOTE_URL = "remote-url"
 
 DEFAULT_NMX_C_MGMT_PORT = 9370
 DEFAULT_NMX_T_MGMT_PORT = 9351
@@ -83,7 +86,11 @@ class Defaults:
     CERT = ""
     CACERT = ""
     ALTERNATE_CERTIFICATE = ""
+    CRL = ""
+    ENDPOINT = ""
     ENCRYPTION = EncryptionMode.DISABLED
+    PROTOCOL = ""
+    REMOTE_URL = ""
 
 
 class ClusterAppUserCfgJsonFields:

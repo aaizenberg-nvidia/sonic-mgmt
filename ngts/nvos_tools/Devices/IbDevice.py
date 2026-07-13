@@ -60,7 +60,10 @@ from ngts.tests_nvos.general.security.nmx_cert.constants import (
     CA_CERTIFICATE,
     CERTIFICATE,
     CRL,
+    ENDPOINT,
     ENCRYPTION,
+    PROTOCOL,
+    REMOTE_URL,
     Defaults,
 )
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
@@ -3194,11 +3197,30 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             ALTERNATE_CERTIFICATE: Defaults.ALTERNATE_CERTIFICATE,
             CA_CERTIFICATE: Defaults.CACERT,
             CERTIFICATE: Defaults.CERT,
-            CRL: "",
+            CRL: Defaults.CRL,
             ENCRYPTION: Defaults.ENCRYPTION,
         }
         for app_name, app_data in self.cluster_app.items():
             self.cluster_app[app_name] = {**app_data, "internal": internal_defaults.copy()}
+
+        # Only nmx-controller exposes log-stream and OTLP configuration in its show output.
+        self.cluster_app[ClusterConsts.NMX_CONTROLLER].update({
+            "log-stream": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                PROTOCOL: Defaults.PROTOCOL,
+                REMOTE_URL: Defaults.REMOTE_URL,
+            },
+            "otlp": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                ENDPOINT: Defaults.ENDPOINT,
+            },
+        })
 
         # Rosalind has nmx-telemetry-agent
         self.has_nmx_telemetry_agent = True
