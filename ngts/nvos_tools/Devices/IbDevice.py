@@ -84,6 +84,7 @@ class IbSwitch(BaseSwitch):
         super().__init__(switch_type=switch_type, asic_amount=asic_amount, switch_class=switch_class)
         self.port_type = self.switch_type.lower()
         self.supports_mtu_testing = True
+        self.single_fw_pkg_supported = False
         self.documents_path = None
         self.documents_files = None
         self._init_sensors_dict()
@@ -2750,6 +2751,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
+        self.single_fw_pkg_supported = True
 
     def get_spdm_components(self, setup_name: str) -> list[str]:
         """
