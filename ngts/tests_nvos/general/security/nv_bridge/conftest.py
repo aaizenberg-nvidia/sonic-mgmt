@@ -4,8 +4,6 @@ Conftest for NV Bridge encryption tests.
 
 import logging
 import os
-import time
-from dataclasses import dataclass
 
 import pytest
 
@@ -26,72 +24,65 @@ from ngts.tests_nvos.general.security.crl.helpers import (
     BridgeClusterInternalCrlValidator,
     BridgeSystemInternalCrlValidator,
 )
-from ngts.tests_nvos.general.security.helpers import generate_certs, get_test_certs_dir_location, import_crl_safely
+from ngts.tests_nvos.general.security.helpers import (
+    generate_certs,
+    get_test_certs_dir_location,
+    import_crl_safely,
+)
 from ngts.tests_nvos.general.security.nv_bridge.helpers import (
+    BridgeCrlCerts,
+    BridgeSpiffeCerts,
+    BridgeSpiffeParams,
     build_internal_bridge_cert,
     generate_internal_certs,
     import_internal_certs,
     is_cluster_enabled,
+    restore_internal_config_with_retry,
 )
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.system.gnmi.helpers import get_scp_player, verify_gnmi_client_tools_installed
 
 logger = logging.getLogger(__name__)
 
+_BRIDGE_RESTORE_FIXTURES = frozenset({
+    "restore_system_internal_config",
+    "restore_cluster_app_internal_config",
+})
+_BRIDGE_CRL_FIXTURES = frozenset({
+    "import_crl_bridge_certs",
+    "bridge_crl_factory",
+})
+
+
+def _test_uses_internal_restore(request: pytest.FixtureRequest) -> bool:
+    return bool(_BRIDGE_RESTORE_FIXTURES & set(request.fixturenames))
+
+
+def _cleanup_imported_bridge_security_artifacts(request: pytest.FixtureRequest) -> None:
+    """Delete imported certs/CAs/CRLs from the DUT security store."""
+    with allure.step("cleanup imported bridge security artifacts"):
+        delete_certificates()
+        delete_certificates(ca=True)
+        if _BRIDGE_CRL_FIXTURES & set(request.fixturenames):
+            delete_crl()
+
+
+@pytest.fixture
+def _bridge_cert_cleanup_after_restore(request: pytest.FixtureRequest):
+    """Delete imported security artifacts only after internal-config restore.
+
+    Restore fixtures depend on this anchor so pytest tears them down first
+    (unbind internal encryption config) and runs cert/CA/CRL deletion last.
+    """
+    yield
+    if _test_uses_internal_restore(request):
+        _cleanup_imported_bridge_security_artifacts(request)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def verify_grpc_tools_installed():
     """Ensure grpcurl is installed on the test player before running bridge tests."""
     verify_gnmi_client_tools_installed()
-
-
-@dataclass(frozen=True)
-class BridgeSpiffeParams:
-    """SPIFFE values for primary/alternate and system/cluster override use-cases."""
-
-    primary_cert_spiffe: str
-    alternate_cert_spiffe: str
-    system_cert_spiffe: str | None = None
-    cluster_cert_spiffe: str | None = None
-
-    @property
-    def system_primary_spiffe(self) -> str:
-        return self.system_cert_spiffe or self.primary_cert_spiffe
-
-    @property
-    def cluster_primary_spiffe(self) -> str:
-        return self.cluster_cert_spiffe or self.primary_cert_spiffe
-
-
-@dataclass(frozen=True)
-class BridgeSpiffeCerts:
-    """SPIFFE certs for nv-bridge tests."""
-
-    system_primary_cert: CertInfo
-    system_alt_cert: CertInfo
-    cluster_primary_cert: CertInfo
-    cluster_alt_cert: CertInfo
-    certs_dir: str
-    params: BridgeSpiffeParams
-
-    @property
-    def all_certs(self) -> list[CertInfo]:
-        return [self.system_primary_cert, self.system_alt_cert, self.cluster_primary_cert, self.cluster_alt_cert]
-
-
-@dataclass(frozen=True)
-class BridgeCrlCerts:
-    """CRL-focused cert set for nv-bridge tests."""
-
-    primary_cert: CertInfo
-    alt_cert: CertInfo
-    revoked_primary_cert: CertInfo
-    revoked_alt_cert: CertInfo
-    certs_dir: str
-
-    @property
-    def all_certs(self) -> list[CertInfo]:
-        return [self.primary_cert, self.alt_cert, self.revoked_primary_cert, self.revoked_alt_cert]
 
 
 @pytest.fixture(scope="session")
@@ -148,15 +139,14 @@ def generate_internal_bridge_certs(engines, dut_hostname):
 
 
 @pytest.fixture(scope="function")
-def import_certs(engines, generate_internal_bridge_certs):
+def import_certs(engines, generate_internal_bridge_certs, request: pytest.FixtureRequest):
     """Import required certificates for testing."""
     server_cert, client_ca_cert = generate_internal_bridge_certs
     with allure.step("import test certificates"):
         import_internal_certs(engines, [server_cert, client_ca_cert], [client_ca_cert, server_cert])
     yield server_cert, client_ca_cert
-    with allure.step("cleanup certificates"):
-        delete_certificates()
-        delete_certificates(ca=True)
+    if not _test_uses_internal_restore(request):
+        _cleanup_imported_bridge_security_artifacts(request)
 
 
 @pytest.fixture(scope="function")
@@ -179,15 +169,14 @@ def generate_certs_with_alt(engines, dut_hostname):
 
 
 @pytest.fixture(scope="function")
-def import_certs_with_alt(engines, generate_certs_with_alt):
+def import_certs_with_alt(engines, generate_certs_with_alt, request: pytest.FixtureRequest):
     """Import required certificates for testing."""
     cert, cert_alt, other_cert = generate_certs_with_alt
     with allure.step("import test certificates"):
         import_internal_certs(engines, [cert, cert_alt, other_cert], [cert, other_cert])
     yield cert, cert_alt, other_cert
-    with allure.step("cleanup certificates"):
-        delete_certificates()
-        delete_certificates(ca=True)
+    if not _test_uses_internal_restore(request):
+        _cleanup_imported_bridge_security_artifacts(request)
 
 
 @pytest.fixture(scope="function")
@@ -256,14 +245,13 @@ def generate_spiffe_bridge_certs(
 
 
 @pytest.fixture(scope="function")
-def import_spiffe_bridge_certs(engines, generate_spiffe_bridge_certs: BridgeSpiffeCerts):
+def import_spiffe_bridge_certs(engines, generate_spiffe_bridge_certs: BridgeSpiffeCerts, request: pytest.FixtureRequest):
     """Import SPIFFE cert fixture independently from CRL fixture flow."""
     with allure.step("import SPIFFE bridge certificates"):
         import_internal_certs(engines, generate_spiffe_bridge_certs.all_certs, generate_spiffe_bridge_certs.all_certs)
     yield generate_spiffe_bridge_certs
-    with allure.step("cleanup SPIFFE bridge certificates"):
-        delete_certificates()
-        delete_certificates(ca=True)
+    if not _test_uses_internal_restore(request):
+        _cleanup_imported_bridge_security_artifacts(request)
 
 
 @pytest.fixture(scope="function")
@@ -315,19 +303,17 @@ def generate_crl_bridge_certs(engines, dut_hostname) -> BridgeCrlCerts:
 
 
 @pytest.fixture(scope="function")
-def import_crl_bridge_certs(engines, generate_crl_bridge_certs: BridgeCrlCerts):
+def import_crl_bridge_certs(engines, generate_crl_bridge_certs: BridgeCrlCerts, request: pytest.FixtureRequest):
     """Import CRL cert fixture flow independently from SPIFFE fixtures."""
     with allure.step("import CRL bridge certificates"):
         import_internal_certs(engines, generate_crl_bridge_certs.all_certs, generate_crl_bridge_certs.all_certs)
     yield generate_crl_bridge_certs
-    with allure.step("cleanup CRL bridge certificates"):
-        delete_certificates()
-        delete_certificates(ca=True)
-        delete_crl()
+    if not _test_uses_internal_restore(request):
+        _cleanup_imported_bridge_security_artifacts(request)
 
 
 @pytest.fixture(scope="function")
-def bridge_crl_factory(engines):
+def bridge_crl_factory(engines, request: pytest.FixtureRequest):
     """Generate + import CRL files for bridge tests using standard CRL flow."""
     certificate_generator = CertificateGenerator()
     scp_player = get_scp_player(engines)
@@ -370,8 +356,9 @@ def bridge_crl_factory(engines):
 
     yield _create_crl
 
-    with allure.step("cleanup imported CRLs for bridge test"):
-        delete_crl()
+    if not _test_uses_internal_restore(request):
+        with allure.step("cleanup imported CRLs for bridge test"):
+            delete_crl()
 
 
 @pytest.fixture(scope="function")
@@ -427,42 +414,51 @@ def disable_cluster(setup_name):
 
 
 @pytest.fixture
-def restore_system_internal_config(nv_command: NvCommand):
-    """Restore system internal config after test."""
+def restore_system_internal_config(nv_command: NvCommand, _bridge_cert_cleanup_after_restore):
+    """Restore system internal config after test.
+
+    Retries each restore item and falls back to a full node restore so a failed
+    restore never leaves a certificate bound to the config (a bound certificate
+    cannot be deleted, which would make the next test fail on cert/CA import).
+    """
     yield
     with allure.step("restore system internal config"):
-        try:
-            nv_command.system.internal.encryption.action_restore().verify_result()
-            nv_command.system.internal.crl.action_restore().verify_result()
-            nv_command.system.internal.certificate.action_restore().verify_result()
-            nv_command.system.internal.ca_certificate.action_restore().verify_result()
-            nv_command.system.internal.alternate_certificate.action_restore().verify_result()
-        except Exception as e:
-            logger.warning("Failed to restore system internal config: %s", e)
-            if is_bug_active(4824684):
-                time.sleep(100)
-                nv_command.system.internal.action_restore().verify_result()
-            raise
+        internal = nv_command.system.internal
+        restore_internal_config_with_retry(
+            restore_actions=[
+                internal.encryption.action_restore,
+                internal.crl.action_restore,
+                internal.certificate.action_restore,
+                internal.ca_certificate.action_restore,
+                internal.alternate_certificate.action_restore,
+            ],
+            fallback_action=internal.action_restore,
+            scope_name="system",
+            fallback_settle_time=100 if is_bug_active(4824684) else 0,
+        )
 
 
 @pytest.fixture(scope="function")
-def restore_cluster_app_internal_config():
-    """Restore cluster app internal config after test."""
+def restore_cluster_app_internal_config(_bridge_cert_cleanup_after_restore):
+    """Restore cluster app internal config after test.
+
+    Retries each restore item and falls back to a full node restore so a failed
+    restore never leaves a certificate bound to the config (a bound certificate
+    cannot be deleted, which would make the next test fail on cert/CA import).
+    """
     yield ClusterConsts.NMX_CONTROLLER
     with allure.step("restore cluster app internal config"):
-        app = None
-        try:
-            cluster = Cluster()
-            app_name = ClusterConsts.NMX_CONTROLLER
-            app = cluster.apps.app_name[app_name]
-            app.internal.encryption.action_restore().verify_result()
-            app.internal.crl.action_restore().verify_result()
-            app.internal.certificate.action_restore().verify_result()
-            app.internal.alternate_certificate.action_restore().verify_result()
-            app.internal.ca_certificate.action_restore().verify_result()
-        except Exception as e:
-            logger.warning("Failed to restore cluster app internal config: %s", e)
-            if app and is_bug_active(4824684):
-                time.sleep(100)
-                app.internal.action_restore().verify_result()
-            raise
+        app_name = ClusterConsts.NMX_CONTROLLER
+        internal = Cluster().apps.app_name[app_name].internal
+        restore_internal_config_with_retry(
+            restore_actions=[
+                internal.encryption.action_restore,
+                internal.crl.action_restore,
+                internal.certificate.action_restore,
+                internal.alternate_certificate.action_restore,
+                internal.ca_certificate.action_restore,
+            ],
+            fallback_action=internal.action_restore,
+            scope_name=app_name,
+            fallback_settle_time=100 if is_bug_active(4824684) else 0,
+        )

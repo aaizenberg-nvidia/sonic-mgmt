@@ -14,6 +14,7 @@ _UDS_WRITE_PROBE_ALLOWED = "__sonic_mgmt_dni_uds_w_ok__"
 _UDS_WRITE_PROBE_DENIED = "__sonic_mgmt_dni_uds_w_no__"
 
 logger = logging.getLogger(__name__)
+_NMAP_MISSING_MARKER = "__sonic_mgmt_dni_nmap_missing__"
 
 
 # ── ss output parsing ────────────────────────────────────────────────────────
@@ -85,6 +86,22 @@ def parse_nmap_open_ports(nmap_output: str) -> Set[int]:
         if match:
             ports.add(int(match.group(1)))
     return ports
+
+
+def is_nmap_installed(engine: LinuxSshEngine) -> bool:
+    """Return True when ``nmap`` is available on the scanner host."""
+    output = engine.run_cmd(
+        f"command -v nmap >/dev/null 2>&1 && nmap --version || echo {_NMAP_MISSING_MARKER}",
+        validate=False,
+    )
+    installed = _NMAP_MISSING_MARKER not in output and "Nmap version" in output
+    logger.info("nmap is %s on scanner host", "installed" if installed else "not installed")
+    return installed
+
+
+def install_nmap(engine: LinuxSshEngine) -> None:
+    """Install ``nmap`` on the scanner host."""
+    engine.run_cmd("sudo apt-get update && sudo apt-get install -y nmap", validate=True)
 
 
 # ── Remote command helpers ───────────────────────────────────────────────────
@@ -293,6 +310,11 @@ def run_nmap(engine: LinuxSshEngine, target_ip: str) -> str:
     if not _IP_RE.match(target_ip):
         raise ValueError(f"run_nmap: invalid target_ip {target_ip!r}")
     output = engine.run_cmd(f"nmap -sT -p 1-65535 --open {target_ip}", validate=False)
+    if "nmap: command not found" in output or "-bash: nmap: command not found" in output:
+        raise RuntimeError(
+            "run_nmap: nmap is not installed on scanner host. "
+            "Run the verify_nmap_installed fixture before executing external scans."
+        )
     missing = [m for m in ("Nmap scan report", "Nmap done") if m not in output]
     if missing:
         raise ValueError(
