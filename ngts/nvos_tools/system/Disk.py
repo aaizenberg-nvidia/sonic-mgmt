@@ -1,8 +1,5 @@
+from ngts.nvos_constants.constants_nvos import ActionConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
-from ngts.nvos_constants.constants_nvos import ApiType
-from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
-from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 
 
@@ -10,12 +7,6 @@ class Disk(BaseComponent):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/disk')
 
-    def action_erase(self, dut_engine=None, device=None, force=None) -> ResultObj:
-        with allure.step(f'Execute disk erase action {self.get_resource_path()}'):
-            engine = dut_engine if dut_engine else TestToolkit.engines.dut
-            if TestToolkit.tested_api == ApiType.OPENAPI:
-                params_dict = {'force': True} if force else None
-                return SendCommandTool.execute_command(
-                    self._cli_wrapper.action_erase, engine, device, self.get_resource_path(), params_dict)
-            return SendCommandTool.execute_command(
-                self._cli_wrapper.action_erase, engine, device, self.get_resource_path(), force=bool(force))
+    def action_erase(self, engine=None, device=None, force=None, timeout=300) -> ResultObj:
+        flags = 'force' if force else ''
+        return self.action(ActionConsts.ERASE, flags=flags, engine=engine, device=device, timeout=timeout)

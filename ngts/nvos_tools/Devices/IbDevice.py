@@ -1513,22 +1513,6 @@ class TaipanSwitch(IbSwitch):
             DutUtilsTool.wait_on_system_reboot(engine, device=self)
 
 
-# -------------------------- Taipan Single Asic Switch ----------------------------
-class TaipanSingleAsicSwitch(TaipanSwitch):
-
-    def __init__(self):
-        super().__init__(switch_class=NvosConst.TAIPAN_SINGLE_ASIC_SWITCH)
-
-    def _init_constants(self):
-        super()._init_constants()
-        self.number_of_transceivers = 4
-        self.transceivers_tables_name = "TRANSCEIVER_INFO"
-        self.transceiver_list = [f'els{a + 1}' for a in range(4)] + ['fnm1'] + [f'oe{b + 18}' for b in range(18)]
-
-    def _init_psu_list(self):
-        self.psu_list = []
-
-
 # -------------------------- Crocodile Switch ----------------------------
 class CrocodileSwitch(IbSwitch):
 

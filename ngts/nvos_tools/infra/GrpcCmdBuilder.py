@@ -66,7 +66,3 @@ class GrpcCmdBuilder:
         return self.CMD_TEMPLATE.format(
             host=host, port=self.port, opts=self.options, endpoint=self.endpoint_loc, rpc_header=self.rpc_header
         ).strip()
-        self.endpoint_loc.strip()
-        self.options.strip()
-        self.rpc_header.strip()
-        return GrpcCmdBuilder.CMD_TEMPLATE.format(host=host, port=self.port, opts=self.options, endpoint=self.endpoint_loc, rpc_header=self.rpc_header).strip()

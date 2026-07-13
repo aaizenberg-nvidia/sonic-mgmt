@@ -172,6 +172,9 @@ def factory_reset_general_pre_steps(engines, devices, system):
         update_timezone(system)
         current_time = get_current_time(engines)
 
+    with allure.step("get all tech-support files and sizes"):
+        engines.dut.run_cmd(f"sudo find {RemarkableLogsConsts.LOGS_PATH} -type f -exec du -h {{}} + | sort -h")
+
     return health_status, current_time, apply_and_save_port, description, just_apply_port, not_apply_port, username
 
 
