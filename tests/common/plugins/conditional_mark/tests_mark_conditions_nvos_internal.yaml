@@ -635,12 +635,6 @@ tests_nvos/multi_asic/test_fatal_mode.py:
     conditions:
     - https://redmine.mellanox.com/issues/4780661
 
-tests_nvos/system/issu/test_system_issu.py:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5049077'
-    conditions:
-    - https://redmine.mellanox.com/issues/5049077
-
 tests_nvos/system/gnmi/test_gnmi_server.py::test_simulate_gnmi_server_failure:
   skip:
     reason: '[NVOS - Design] Bug SW #4841879: [nv-gNMI] No system health events when
