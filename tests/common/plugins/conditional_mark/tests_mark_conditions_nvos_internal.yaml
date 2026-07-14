@@ -12,6 +12,12 @@ tests_nvos/system/test_system_log.py::test_log_idle:
     conditions:
     - https://redmine.mellanox.com/issues/5100996
 
+tests_nvos/interfaces/test_response_mgmt_ip_inband.py::test_configure_feature_state:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after DHCP renew/disable)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
 tests_nvos/interfaces/test_2_mgmt_interfaces.py::test_table_seperation_switch_client:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after DHCP renew/disable)'
