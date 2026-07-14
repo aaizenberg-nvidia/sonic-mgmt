@@ -10,7 +10,7 @@ from ngts.helpers.performance.performance_setup_helpers import (configure_mloops
                                                                 get_is_simx, _build_default_port_group_df)
 from ngts.helpers.performance.Performance_log_print import print_players_logs, remove_players_logs
 from ngts.constants.constants import PytestConst
-from ngts.constants.performance_constants import MongoDbConsts, PowerConsts, PerfConsts, ValidationConsts
+from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
@@ -108,7 +108,7 @@ def init(request):
 
 @pytest.fixture(scope='session', autouse=True)
 def power_thresholds_by_chip_type(chip_type):
-    return PowerConsts.POWER_TH_PER_ASIC[chip_type]
+    return RailModel.asic_total_threshold(chip_type)
 
 
 @pytest.fixture(scope="session")
