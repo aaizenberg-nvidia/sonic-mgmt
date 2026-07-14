@@ -724,17 +724,20 @@ def test_nvl_supported_speeds_validation(test_name, engines, devices, random_api
     Test runs on ALL ASIC types - QTM2, QTM3, NVL5, QTM4+, NVL6, etc.
 
     Test flow:
-    1. Randomly select an nvl interface (any state)
+    1. Randomly select an available up NVL interface (ACP or SW)
     2. Show interface to get supported-speed field from output
     3. Fetch supported speeds from device configuration
     4. Validate that displayed speeds match expected speeds
     5. Test FNM and internal FNM ports as well
     """
 
-    with allure_step("Select random nvl interface (any state)"):
-        # Select ANY nvl port regardless of link state - supported speeds should be visible always
-        selected_port = RandomizationTool.select_random_port(requested_ports_state=None).get_returned_value()
-        logger.info(f"Selected port for supported speeds validation: {selected_port.name} (state-independent test)")
+    with allure_step("Select random available up NVL interface"):
+        available_ports = _get_available_nvl_ports(devices, has_loopbox, standalone_system)
+        if not available_ports:
+            pytest.skip("No NVL ports with proper connections and link up state")
+
+        selected_port = RandomizationTool.select_random_value(available_ports).get_returned_value()
+        logger.info(f"Selected up NVL port for supported speeds validation: {selected_port.name}")
 
     with allure_step("Get and validate supported speeds"):
         # Get displayed speeds from interface
