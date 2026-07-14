@@ -239,6 +239,7 @@ class FaeSystem(BaseComponent):
         self.cpo = BaseComponent(self, path='/cpo')
         self.peer_port = FaePeerPort(self)
         self.sto_event = StoEvent(self)
+        self.mlid_event_snapshot = MlidEventSnapshot(self)
 
     def ssd_cleanup(self, expected_str="", dut_engine=None):
         """nv action run fae system ssd-cleanup """
@@ -269,3 +270,8 @@ class FaePeerPort(BaseComponent):
 class StoEvent(BaseComponent):
     def __init__(self, parent_obj=None):
         BaseComponent.__init__(self, parent=parent_obj, path='/sto-debug')
+
+
+class MlidEventSnapshot(BaseComponent):
+    def __init__(self, parent_obj=None):
+        BaseComponent.__init__(self, parent=parent_obj, path='/mlid-event-snapshot')

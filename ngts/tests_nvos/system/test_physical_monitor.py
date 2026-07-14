@@ -1,15 +1,13 @@
 import pytest
 import logging
 import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Union, Iterable, Dict
+from typing import Dict
 
-from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from ngts.nvos_constants.constants_nvos import EventConsts
 from ngts.nvos_tools.Devices import IbDevice
+from ngts.nvos_tools.infra.McraTool import McraTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
-from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.SecureBootTool import SecureBootTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
@@ -51,7 +49,7 @@ def test_physical_monitor(devices, engines):
                 raise Exception(f"Cannot test feature because the physical-monitor event counter must be 0 before the test "
                                 f"starts, but it's current value for {asic_dev} is {event_counter}")
 
-    with enable_backdoor(asic_devices):
+    with McraTool.enable_backdoor(asic_devices):
         time_before_first = datetime.now(timezone.utc)
         prepare_and_inject_error(asic_devices[0])
         event = nv.system.events.get_last()
@@ -69,22 +67,6 @@ def test_physical_monitor(devices, engines):
         assert_event(event, asics[0], time_before_third)
 
 
-def run_mcra_commands(mst_device: str, commands: Union[str, Iterable[str]], validate=True) -> str:
-    """
-    Runs `sudo mcra <mst_device> <cmd>` for each command in the list.
-    `commands` can be a string, then it's interpreted as a single command.
-    Returns the output of the last command; for write operations it's an empty string and for read operation it's the
-    register's value.
-    """
-    engine: LinuxSshEngine = TestToolkit.engines.dut
-    last_output = ''
-    if isinstance(commands, str):
-        commands = (commands,)
-    for command in commands:
-        last_output = engine.run_cmd(f"sudo mcra {mst_device} {command}", validate=validate)
-    return last_output
-
-
 def prepare_and_inject_error(mst_device: str) -> None:
     """
     From FW team - the following commands are used for injecting a PSC event:
@@ -99,31 +81,14 @@ def prepare_and_inject_error(mst_device: str) -> None:
     mcra /dev/mst/mt54004_pciconf0 0x201f4c 0xa0300001
     """
     with allure.step(f"Preparing error-injection to {mst_device}"):
-        run_mcra_commands(mst_device, ("0x201b50.0 0x4e444247", "0x201b54.0 0xc", "0x201b58.0 0x10000000",
-                                       "0x201b5c.0 0x000f4c1c", "0x201b60.0 0x200"))
+        McraTool.run_commands(mst_device, ("0x201b50.0 0x4e444247", "0x201b54.0 0xc", "0x201b58.0 0x10000000",
+                                           "0x201b5c.0 0x000f4c1c", "0x201b60.0 0x200"))
     inject_error(mst_device)
 
 
 def inject_error(mst_device: str) -> None:
     with allure.step(f"Performing error injection into {mst_device}"):
-        run_mcra_commands(mst_device, "0x201f4c 0xa0300001")
-
-
-@contextmanager
-def enable_backdoor(mst_device: Union[str, Iterable[str]]) -> str:
-    """Enables error-injection to the given device, then disables it when exiting the context"""
-    if isinstance(mst_device, str):
-        mst_device = (mst_device, )
-    for dev in mst_device:
-        with allure.step(f"Enabling error-injection for ASIC {dev}"):
-            run_mcra_commands(dev, "0x3ffffffc 0x80000000")
-    try:
-        yield
-    finally:
-        with allure.step("Cleanup"):
-            for dev in mst_device:
-                with allure.step(f"Disabling error-injection for ASIC {dev}"):
-                    run_mcra_commands(dev, "0x3ffffffc 0x90000000", validate=False)
+        McraTool.run_commands(mst_device, "0x201f4c 0xa0300001")
 
 
 def get_physical_counter(mst_device: str) -> int:
@@ -131,7 +96,7 @@ def get_physical_counter(mst_device: str) -> int:
     Reads the PSC event counter directly from the ASIC. The counter is initially 0 and increases by 1 after each event
     happens (or is simulated) up to a maximum value of 15, then it stops increasing.
     """
-    return int(run_mcra_commands(mst_device, "0x318ffc.4"), base=16)
+    return int(McraTool.run_commands(mst_device, "0x318ffc.4"), base=16)
 
 
 def assert_event(event: Dict[str, str], asic: int, time_before_injection: datetime):

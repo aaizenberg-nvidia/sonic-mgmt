@@ -209,6 +209,8 @@ class AnsiblePlaybooksConsts:
     SOFTWARE_CONFIGURE_SWITCH = 'SOFTWARE_CONFIGURE_SWITCH'
     TESTS_EXECUTE = 'TESTS_EXECUTE'
     TESTS_EXECUTE_P2P = 'TESTS_EXECUTE_P2P'
+    TESTS_INSTALL_NCCL = 'TESTS_INSTALL_NCCL'
+    TESTS_EXECUTE_NCCL = 'TESTS_EXECUTE_NCCL'
 
     # =========================================================================
     # Component Keys (from JSON file)
@@ -357,6 +359,18 @@ class AnsiblePlaybooksConsts:
             'collection_path': PATH_TO_NVIDIA_INTERNAL_NVLINK,
             'component_param_mapping': [],  # No components - just runs tests
             'extra_args': '-e \'{"cuda_test_list":["p2p_bandwidth"]}\''  # Runs only p2p_bandwidth test
+        },
+        TESTS_INSTALL_NCCL: {
+            'name': 'tests_install_nccl.yml',
+            'collection_path': PATH_TO_NVIDIA_NVLINK,
+            'component_param_mapping': [],
+            'extra_args': ''
+        },
+        TESTS_EXECUTE_NCCL: {
+            'name': 'tests_execute_nccl.yml',
+            'collection_path': PATH_TO_NVIDIA_NVLINK,
+            'component_param_mapping': [],
+            'extra_args': ''
         },
         SOFTWARE_CONFIGURE_SWITCH: {
             'name': 'software_configure_switch.yml',
