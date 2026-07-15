@@ -29,7 +29,7 @@ class PxeTool:
 
     # ---- Steps for ONIE ----
     OPN_STEPS = 1
-    IPN_STEPS = 3
+    IPN_STEPS = 5
 
     # ---- Authentication Prompts ----
     PASSWORD_PROMPT = "Enter Password"      # PXE password prompt
