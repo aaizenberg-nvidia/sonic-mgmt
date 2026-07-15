@@ -60,6 +60,24 @@ tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_mgmt_interface_dhcp_opti
     conditions:
     - https://redmine.mellanox.com/issues/5100996
 
+tests_nvos/interfaces/test_ib0_interface_mtu.py::test_interface_ib0_mtu_disabled_sm:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_ib_interface_configuration.py::test_ib_interface_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_interface_eth0_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
 tests_nvos/general/security/tpm_attestation/test_tpm_attestation.py:
   skip:
     reason: Testcase skipped on gorilla systems - feature is pruned on gorilla
