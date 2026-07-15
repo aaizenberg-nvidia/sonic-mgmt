@@ -57,6 +57,9 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     GnmiTypeKind,
     GnmiYangPaths,
     IfaceType,
+    LINK_RECOVERY_POLL_SEC,
+    LINK_RECOVERY_TIMEOUT_SEC,
+    LINK_STATE_RECOVERY_LEAVES,
     NMXT_CONTROL_SOCKET,
     NMXT_IB_CONTAINER,
     NMXT_IB_SERVICE,
@@ -145,9 +148,16 @@ def unset_plane_port_state(engines, apply: bool = True) -> None:
 def get_plane_port_state(engines) -> str:
     """Return the plane-port ``state`` leaf ('enabled' / 'disabled')."""
     with allure.step("Read plane-port state via NVUE"):
-        result = System().plane_port.parse_show(dut_engine=engines.dut)
+        # Fetch the ResultObj (not the parsed dict) so a missing/failed
+        # plane-port resource is reported via _assert_plane_port_operation_ok
+        # with a helpful message instead of raising deep inside the parser.
+        result = System().plane_port.show(
+            dut_engine=engines.dut, should_succeed=False, if_returned_value=False
+        )
         _assert_plane_port_operation_ok(result, "nv show system plane-port")
-        parsed = result.get_returned_value()
+        parsed = OutputParsingTool.parse_json_str_to_dictionary(
+            result.get_returned_value()
+        ).get_returned_value()
         return str(parsed.get(NvuePaths.KEY_STATE, "")).lower()
 
 
@@ -182,6 +192,38 @@ def gnmi_get_interface_subtree(client: GnmiClient, name: str) -> Dict[str, str]:
     verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, out, err)
     _assert_gnmi_ok(out, err, f"interface subtree for {name!r}")
     return parse_gnmi_output(out)
+
+
+def wait_link_state_recovered(client, ports, pre, *,
+                              timeout_sec=LINK_RECOVERY_TIMEOUT_SEC,
+                              poll_sec=LINK_RECOVERY_POLL_SEC):
+    """Poll each port until its LINK_STATE_RECOVERY_LEAVES match the ``pre`` snapshot.
+
+    Returns ``(recovered, port_name, leaf, pre_value, post_value)``: on success
+    ``recovered`` is True and the rest are None; otherwise they describe the
+    first leaf that never returned to its pre-value before the timeout.
+    """
+    # A re-enabled / plugged-back IB link transits PORT_CONFIGURATION_TRAINING
+    # before LINK_UP, so a single immediate read races the retrain - poll instead.
+    deadline = time.time() + timeout_sec
+    while True:
+        mismatch = None
+        for port in ports:
+            payload = gnmi_get_interface_subtree(client, port.name)
+            pre_payload = pre[port.name]
+            for leaf_name in LINK_STATE_RECOVERY_LEAVES:
+                if leaf_name in pre_payload and leaf_name in payload:
+                    if payload[leaf_name] != pre_payload[leaf_name]:
+                        mismatch = (False, port.name, leaf_name,
+                                    pre_payload[leaf_name], payload[leaf_name])
+                        break
+            if mismatch:
+                break
+        if mismatch is None:
+            return (True, None, None, None, None)
+        if time.time() >= deadline:
+            return mismatch
+        time.sleep(poll_sec)
 
 
 def gnmi_get_flat(client: GnmiClient, prefix: str, path: str = "") -> Dict[str, str]:

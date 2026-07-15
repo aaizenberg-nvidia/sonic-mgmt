@@ -253,6 +253,11 @@ LINK_STATE_RECOVERY_LEAVES = ("oper-status", "physical-port-state", "physical-st
 # Physical-state leaf with its build-dependent fallback name (preferred first).
 PHYSICAL_STATE_LEAVES = ("physical-port-state", "physical-state")
 
+# A re-enabled / plugged-back IB link transits PORT_CONFIGURATION_TRAINING before
+# LINK_UP; poll the recovery leaves up to this ceiling at this interval.
+LINK_RECOVERY_TIMEOUT_SEC = 90
+LINK_RECOVERY_POLL_SEC = 3
+
 # Link-down reason codes (PRM PUDE table). The reason STRINGS are reused from
 # CODE_TO_DESCRIPTION in test_ib_interface_phy_detail.py (Rowaida R7) rather than
 # duplicated here, so this stays a thin code -> shared-lookup indirection.

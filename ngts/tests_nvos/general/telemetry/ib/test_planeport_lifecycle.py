@@ -26,7 +26,6 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     IfaceType,
     LINK_DOWN_CODE_ADMIN_DISABLE,
     LINK_DOWN_CODE_CABLE_UNPLUGGED,
-    LINK_STATE_RECOVERY_LEAVES,
     PHYSICAL_STATE_LEAVES,
     PlanePortState,
 )
@@ -209,15 +208,13 @@ def test_planeport_state_follows_aport_admin_down(engines, devices, gnmi_client,
             )
 
     with allure.step("Aport and every plane recover to pre-state"):
-        for p in all_ports:
-            payload = _gnmi_link_state(gnmi_client, p.name)
-            pre_payload = pre[p.name]
-            for leaf_name in LINK_STATE_RECOVERY_LEAVES:
-                if leaf_name in pre_payload and leaf_name in payload:
-                    assert payload[leaf_name] == pre_payload[leaf_name], (
-                        f"{p.name}: leaf {leaf_name!r} did not recover; "
-                        f"pre={pre_payload[leaf_name]!r}, post={payload[leaf_name]!r}"
-                    )
+        recovered, pname, leaf_name, pre_val, post_val = ibh.wait_link_state_recovered(
+            gnmi_client, all_ports, pre
+        )
+        assert recovered, (
+            f"{pname}: leaf {leaf_name!r} did not recover; "
+            f"pre={pre_val!r}, post={post_val!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +311,13 @@ def test_planeport_state_follows_peer_link_loss(engines, devices, gnmi_client, s
         with allure.step("Plug back and confirm recovery"):
             ibh.simulate_peer_plug_in(engines, devices, aport)
             plugged_back = True
-            for p in all_ports:
-                payload = _gnmi_link_state(gnmi_client, p.name)
-                pre_payload = pre[p.name]
-                for leaf_name in LINK_STATE_RECOVERY_LEAVES:
-                    if leaf_name in pre_payload and leaf_name in payload:
-                        assert payload[leaf_name] == pre_payload[leaf_name], (
-                            f"{p.name}: leaf {leaf_name!r} did not recover after plug-back"
-                        )
+            recovered, pname, leaf_name, pre_val, post_val = ibh.wait_link_state_recovered(
+                gnmi_client, all_ports, pre
+            )
+            assert recovered, (
+                f"{pname}: leaf {leaf_name!r} did not recover after plug-back; "
+                f"pre={pre_val!r}, post={post_val!r}"
+            )
     finally:
         if not plugged_back:
             try:

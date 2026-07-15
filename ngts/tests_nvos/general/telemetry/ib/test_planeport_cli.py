@@ -178,7 +178,20 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
     enable/disable stress cycles (test plan section 5.2 step 8).
     """
     general_cli = GeneralCliCommon(engines.dut)
-    restart_before = general_cli.get_container_restart_counts(_RESTART_MONITORED_CONTAINERS)
+    # sym-mgr / gpu-telemetry only exist on cluster-telemetry platforms
+    # (Crocodile / DGX). On a plain multi-planar switch they are absent, so
+    # monitor only the containers actually present and skip the restart check
+    # when none exist rather than failing on `docker inspect`.
+    present_containers = set(
+        engines.dut.run_cmd("docker ps -a --format '{{.Names}}'").split()
+    )
+    monitored_containers = tuple(
+        c for c in _RESTART_MONITORED_CONTAINERS if c in present_containers
+    )
+    restart_before = (
+        general_cli.get_container_restart_counts(monitored_containers)
+        if monitored_containers else {}
+    )
 
     with allure.step(f"Enable plane-port and verify visibility via {api}"):
         iface_types = _enable_and_assert_visible(api, engines, gnmi_client)
@@ -239,17 +252,23 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
         # Compare RestartCount before vs after the toggle stress: a daemon that
         # crashed and was restarted increments this counter even if it is already
         # "Up" again by the time we look.
-        restart_after = general_cli.get_container_restart_counts(_RESTART_MONITORED_CONTAINERS)
-        ibh.attach_dict("docker restart counts", {"before": restart_before, "after": restart_after})
-        for name, before in restart_before.items():
-            after = restart_after.get(name)
-            assert after is not None, (
-                f"{name} container disappeared during toggle stress (before RestartCount={before})"
+        if not monitored_containers:
+            logger.info(
+                "No monitored telemetry containers (%s) present on this DUT; "
+                "skipping restart check", ", ".join(_RESTART_MONITORED_CONTAINERS)
             )
-            assert after == before, (
-                f"{name} restarted during plane-port toggle stress: "
-                f"RestartCount {before} -> {after}"
-            )
+        else:
+            restart_after = general_cli.get_container_restart_counts(monitored_containers)
+            ibh.attach_dict("docker restart counts", {"before": restart_before, "after": restart_after})
+            for name, before in restart_before.items():
+                after = restart_after.get(name)
+                assert after is not None, (
+                    f"{name} container disappeared during toggle stress (before RestartCount={before})"
+                )
+                assert after == before, (
+                    f"{name} restarted during plane-port toggle stress: "
+                    f"RestartCount {before} -> {after}"
+                )
 
 
 # ---------------------------------------------------------------------------
