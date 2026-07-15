@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import shlex
 from functools import partial
 
 import pytest
@@ -571,6 +572,248 @@ def test_ztp_provisioning_script_positive(engines: EnginesT):
 
 @pytest.mark.ztp
 @pytest.mark.system
+def test_ztp_provisioning_script_parameters_positive(engines: EnginesT):
+    """
+    Verify the provisioning-script "parameters" object is forwarded to the downloaded
+    script as named command-line arguments (name value), each value paired with its name.
+
+    Test flow:
+        1. Check default values for ztp
+        2. Apply json with mixed-type parameters, verify the script received the exact
+           argument list: flags verbatim, numbers stringified, booleans lowercase, values
+           paired with names, delivered in alphabetical order of names
+        3. Apply json with the maximum (20) parameters, verify all are forwarded
+    """
+    system = System(None)
+
+    _run_system_ztp_with_empty_config(engines, system)
+    _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES)
+
+    with allure.step("Run provisioning script with mixed-type parameters"):
+        system.ztp.action_abort_ztp().verify_result()
+        _remove_recorder_output(engines)
+        _download_ztp_json_config(engines, SystemConsts.SCRIPT_PARAMS_POSITIVE)
+        log_mark = _ztp_log_mark(engines)
+        _run_system_ztp_with_empty_config(engines, system)
+
+        with allure.step("Check ztp status"):
+            _wait_until_ztp_step_status(system, SystemConsts.PROVISIONING_SCRIPT_STEP, SystemConsts.ZTP_STATUS_SUCCESS)
+            _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_SUCCESS)
+
+        with allure.step("Verify the script received the parameters as named CLI arguments"):
+            # Names sorted alphabetically (ZTP serializes the per-stage input.json with sorted keys);
+            # numbers stringified; boolean rendered lowercase; single-dash short option passed verbatim.
+            # Covers single-dash single-char ("-n", "-s") and double-dash single-char ("--s") forms.
+            expected_args = [
+                '--nvos_image', '/images/nvos-3.10.bin',
+                '--retries', '3',
+                '--role', 'leaf',
+                '--s', 'alpha',
+                '--site', 'dc1',
+                '--verbose', 'true',
+                '-n', '5',
+                '-s', 'bravo',
+            ]
+            _verify_recorder_args(engines, expected_args)
+
+        with allure.step("Verify ztp.log logs the parameter count + names, but not the values"):
+            _validate_param_names_logged(
+                engines,
+                SystemConsts.PARAMS_LOG_PASSING_POSITIVE,
+                forbidden_values=['/images/nvos-3.10.bin', 'dc1', 'leaf', 'true', 'alpha', 'bravo'],
+                since_line=log_mark,
+            )
+
+    with allure.step(f"Run provisioning script with the maximum ({SystemConsts.ZTP_PARAMS_EXPECTED_MAX}) parameters"):
+        system.ztp.action_abort_ztp().verify_result()
+        _remove_recorder_output(engines)
+        _download_ztp_json_config(engines, SystemConsts.SCRIPT_PARAMS_MAX)
+        log_mark = _ztp_log_mark(engines)
+        _run_system_ztp_with_empty_config(engines, system)
+
+        with allure.step("Check ztp status"):
+            _wait_until_ztp_step_status(system, SystemConsts.PROVISIONING_SCRIPT_STEP, SystemConsts.ZTP_STATUS_SUCCESS)
+            _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_SUCCESS)
+
+        with allure.step(f"Verify all {SystemConsts.ZTP_PARAMS_EXPECTED_MAX} parameters were forwarded, each paired with its name"):
+            args = _read_recorder_args(engines)
+            expected_token_count = SystemConsts.ZTP_PARAMS_EXPECTED_MAX * 2
+            assert len(args) == expected_token_count, \
+                f'expected {expected_token_count} tokens ({SystemConsts.ZTP_PARAMS_EXPECTED_MAX} name/value pairs), got {len(args)}: {args}'
+
+        with allure.step("Verify ztp.log logs the parameter count + names, but not the values"):
+            _validate_param_names_logged(
+                engines,
+                SystemConsts.PARAMS_LOG_PASSING_MAX,
+                forbidden_values=['v01', 'v20'],
+                since_line=log_mark,
+            )
+
+
+@pytest.mark.ztp
+@pytest.mark.system
+def test_ztp_provisioning_script_parameters_python_positive(engines: EnginesT):
+    """
+    Verify the "parameters" feature is script-language-agnostic: ZTP forwards each parameter
+    as a standard `name value` argv pair, and a Python provisioning script parses them natively
+    with argparse. Uses a minimal parameter set (one long flag + one short flag).
+
+    The Python recorder writes back the argparse-PARSED namespace (not raw argv), so an exact
+    match proves Python consumed the ZTP-forwarded flags/values correctly.
+
+    Test flow:
+        1. Check default values for ztp
+        2. Apply json whose url points to the Python (argparse) recorder, with a minimal parameters set
+        3. Verify the script parsed the flags/values correctly and ztp.log logs the count + names (no values)
+    """
+    system = System(None)
+
+    _run_system_ztp_with_empty_config(engines, system)
+    _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES)
+
+    with allure.step("Run a Python (argparse) provisioning script with a minimal parameters set"):
+        system.ztp.action_abort_ztp().verify_result()
+        _remove_recorder_output(engines)
+        _download_ztp_json_config(engines, SystemConsts.SCRIPT_PARAMS_PYTHON_MIN)
+        log_mark = _ztp_log_mark(engines)
+        _run_system_ztp_with_empty_config(engines, system)
+
+        with allure.step("Check ztp status"):
+            _wait_until_ztp_step_status(system, SystemConsts.PROVISIONING_SCRIPT_STEP, SystemConsts.ZTP_STATUS_SUCCESS)
+            _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_SUCCESS)
+
+        with allure.step("Verify the Python (argparse) script parsed the forwarded flags/values"):
+            # Recorder emits the PARSED namespace (name value, names sorted); exact match => argparse consumed them.
+            expected_args = [
+                '--role', 'leaf',
+                '-n', '5',
+            ]
+            _verify_recorder_args(engines, expected_args)
+
+        with allure.step("Verify ztp.log logs the parameter count + names, but not the values"):
+            _validate_param_names_logged(
+                engines,
+                SystemConsts.PARAMS_LOG_PASSING_PYTHON_MIN,
+                forbidden_values=['leaf'],
+                since_line=log_mark,
+            )
+
+
+@pytest.mark.ztp
+@pytest.mark.system
+def test_ztp_provisioning_script_parameters_backward_compat(engines: EnginesT):
+    """
+    Verify backward compatibility: when the provisioning-script section has no "parameters"
+    key, or an empty "parameters" object, the script runs with zero arguments (unchanged
+    behavior). Also covers the upgrade contract (existing json without parameters is unaffected).
+
+    Test flow:
+        1. Check default values for ztp
+        2. Apply json with no parameters key, verify the script ran with zero arguments
+        3. Apply json with an empty parameters object, verify the script ran with zero arguments
+    """
+    system = System(None)
+
+    _run_system_ztp_with_empty_config(engines, system)
+    _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES)
+
+    backward_compat_cases = [
+        (SystemConsts.SCRIPT_PARAMS_NO_KEY, "no parameters key"),
+        (SystemConsts.SCRIPT_PARAMS_EMPTY, "empty parameters object"),
+    ]
+
+    for fixture, description in backward_compat_cases:
+        with allure.step(f"Backward-compat: {description} -> script runs with zero arguments"):
+            system.ztp.action_abort_ztp().verify_result()
+            _remove_recorder_output(engines)
+            _download_ztp_json_config(engines, fixture)
+            _run_system_ztp_with_empty_config(engines, system)
+
+            with allure.step("Check ztp status"):
+                _wait_until_ztp_step_status(system, SystemConsts.PROVISIONING_SCRIPT_STEP, SystemConsts.ZTP_STATUS_SUCCESS)
+                _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_SUCCESS)
+
+            with allure.step("Verify the script was executed with zero arguments"):
+                args = _read_recorder_args(engines)
+                assert args == [], f'expected zero arguments for "{description}", got: {args}'
+
+
+@pytest.mark.ztp
+@pytest.mark.system
+@pytest.mark.timeout(10 * MINUTE, func_only=True)
+def test_ztp_provisioning_script_parameters_negative(engines: EnginesT):
+    """
+    Verify fail-fast validation of a malformed "parameters" object: the provisioning-script
+    stage fails (before downloading the script) for each validation error category, and the
+    script is never executed (the recorder output file is never created).
+
+    Test flow (one sub-case per validation error category):
+        1. parameters is not a JSON object
+        2. a parameter name is empty
+        3. a parameter name is not a valid option flag (no dash / whitespace after "--" /
+           numeric after "--" / single-dash multi-char)
+        4. a parameter value is not a scalar (list, or JSON null)
+        5. more than 20 parameters
+        6. malformed JSON literal (bare TRUE) -> ZTP JSON load fails before parameter validation
+    """
+    system = System(None)
+
+    _run_system_ztp_with_empty_config(engines, system)
+    _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES)
+
+    negative_cases = [
+        (SystemConsts.SCRIPT_PARAMS_NOT_OBJECT, "parameters is not a JSON object", SystemConsts.PARAMS_ERR_NOT_OBJECT),
+        (SystemConsts.SCRIPT_PARAMS_EMPTY_NAME, "empty parameter name", SystemConsts.PARAMS_ERR_EMPTY_NAME),
+        (SystemConsts.SCRIPT_PARAMS_INVALID_FLAG, "parameter name is not a valid option flag", SystemConsts.PARAMS_ERR_INVALID_FLAG),
+        (SystemConsts.SCRIPT_PARAMS_WHITESPACE_NAME, 'whitespace-only name after "--"', SystemConsts.PARAMS_ERR_INVALID_FLAG),
+        (SystemConsts.SCRIPT_PARAMS_NUMERIC_NAME, 'numeric name after "--" ("--1")', SystemConsts.PARAMS_ERR_INVALID_FLAG),
+        (SystemConsts.SCRIPT_PARAMS_SHORT_MULTICHAR, 'single-dash multi-char name ("-ss")', SystemConsts.PARAMS_ERR_INVALID_FLAG),
+        (SystemConsts.SCRIPT_PARAMS_NON_SCALAR, "parameter value is not a scalar", SystemConsts.PARAMS_ERR_NON_SCALAR),
+        (SystemConsts.SCRIPT_PARAMS_NULL_VALUE, "parameter value is null (non-scalar)", SystemConsts.PARAMS_ERR_NON_SCALAR),
+        (SystemConsts.SCRIPT_PARAMS_TOO_MANY, "more than 20 parameters", SystemConsts.PARAMS_ERR_TOO_MANY),
+    ]
+
+    for fixture, description, expected_error in negative_cases:
+        with allure.step(f"Negative: {description} -> stage fails before download"):
+            system.ztp.action_abort_ztp().verify_result()
+            _remove_recorder_output(engines)
+            _download_ztp_json_config(engines, fixture)
+            log_mark = _ztp_log_mark(engines)
+            _run_system_ztp_with_empty_config(engines, system)
+
+            with allure.step("Check the provisioning-script stage failed"):
+                _wait_until_ztp_step_status(system, SystemConsts.PROVISIONING_SCRIPT_STEP, SystemConsts.ZTP_STATUS_FAILED)
+                _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_FAILED)
+
+            with allure.step("Verify the descriptive failure reason is logged in ztp.log"):
+                _validate_ztp_log_file(engines, expected_error, since_line=log_mark)
+
+            with allure.step("Verify fail-fast: the script was never downloaded/executed"):
+                _assert_recorder_output_absent(engines)
+
+    # Malformed JSON literal (bare TRUE) fails during ZTP JSON parsing, *before* the parameters
+    # validator runs. ZTP does not reach a terminal 'failed' stage here (it logs a load error and
+    # retries), so this case is verified via the ztp.log load-failure line + recorder absence.
+    with allure.step('Negative: invalid JSON boolean literal (TRUE) -> ZTP JSON load fails, script never runs'):
+        system.ztp.action_abort_ztp().verify_result()
+        _remove_recorder_output(engines)
+        _download_ztp_json_config(engines, SystemConsts.SCRIPT_PARAMS_INVALID_BOOL)
+        log_mark = _ztp_log_mark(engines)
+        _run_system_ztp_with_empty_config(engines, system)
+
+        with allure.step("Verify ztp.log reports the JSON load failure"):
+            _wait_for_ztp_log_line(engines, SystemConsts.PARAMS_ERR_JSON_LOAD, since_line=log_mark)
+
+        with allure.step("Verify fail-fast: the script was never downloaded/executed"):
+            _assert_recorder_output_absent(engines)
+
+        # Stop ZTP's retry loop and remove the malformed local JSON so it does not affect later runs.
+        system.ztp.action_abort_ztp().verify_result()
+        engines.dut.run_cmd('sudo rm -f /host/ztp/ztp_data_local.json')
+
+
+@pytest.mark.ztp
+@pytest.mark.system
 def test_ztp_hashed_password(engines: EnginesT, topology_obj: TopologyT):
     """
     Test flow:
@@ -663,9 +906,82 @@ def _run_system_ztp_with_empty_config(engines: EnginesT, system: System) -> None
         system.ztp.action_run_ztp().verify_result()
 
 
-def _validate_ztp_log_file(engines: EnginesT, string_to_validate: str = '') -> None:
-    output = engines.dut.run_cmd(f'cat /var/log/ztp.log | grep "{string_to_validate}"')
+def _validate_ztp_log_file(engines: EnginesT, string_to_validate: str = '', since_line: int = 0) -> None:
+    # Only search lines appended after `since_line` so stale entries from earlier runs can't match.
+    # Use fixed-string grep (-F) with an end-of-options guard (--) and a shell-quoted pattern so
+    # regex/shell metacharacters in the log string (e.g. '.', '[', '(', quotes) match literally and
+    # never break the remote command. The Python `in` assertion below is the authoritative check.
+    pattern = shlex.quote(string_to_validate)
+    output = engines.dut.run_cmd(
+        f'tail -n +{since_line + 1} {SystemConsts.ZTP_DEFAULT_LOG_FILE} | grep -F -- {pattern}')
     assert string_to_validate in output, 'String not in ztp log'
+
+
+def _ztp_log_mark(engines: EnginesT) -> int:
+    """Snapshot the current ztp.log line count, so later greps can be scoped to lines added after now."""
+    output = engines.dut.run_cmd(f'cat {SystemConsts.ZTP_DEFAULT_LOG_FILE} 2>/dev/null | wc -l').strip()
+    return int(output) if output.isdigit() else 0
+
+
+def _wait_for_ztp_log_line(engines: EnginesT, string_to_validate: str = '', since_line: int = 0,
+                           tries: int = 30, delay: int = 2) -> None:
+    """Poll ztp.log (scoped to lines after `since_line`) until `string_to_validate` appears."""
+    @retry.retry(AssertionError, tries=tries, delay=delay)
+    def _inner():
+        _validate_ztp_log_file(engines, string_to_validate, since_line=since_line)
+
+    with allure.step(f"Waiting for ztp.log to contain {string_to_validate!r}"):
+        _inner()
+
+
+def _validate_param_names_logged(engines: EnginesT, expected_names_line: str, forbidden_values: list[str] = None,
+                                 since_line: int = 0) -> None:
+    """Assert /var/log/ztp.log logs the parameter count + names, and (optionally) that no values leaked."""
+    with allure.step("Verify parameter count+names logged (no values) in ztp.log"):
+        # Only search lines appended after `since_line` so stale entries from earlier runs can't match.
+        # Fixed-string grep (-F) with an end-of-options guard (--) and a shell-quoted pattern, so
+        # metacharacters/quotes in the expected line match literally and never break the remote command.
+        pattern = shlex.quote(expected_names_line)
+        log_line = engines.dut.run_cmd(
+            f'tail -n +{since_line + 1} {SystemConsts.ZTP_DEFAULT_LOG_FILE} | grep -F -- {pattern} | tail -n 1')
+        assert expected_names_line in log_line, \
+            f'expected parameter info log not found in {SystemConsts.ZTP_DEFAULT_LOG_FILE}: {expected_names_line!r}'
+        for value in (forbidden_values or []):
+            assert value not in log_line, \
+                f'parameter VALUE {value!r} leaked into the log line (must log names only): {log_line!r}'
+
+
+def _remove_recorder_output(engines: EnginesT) -> None:
+    """Remove the recorder output file and confirm it is gone, so each run starts from a known-clean
+    state. Verifying the removal prevents a stale file (e.g. from a crashed/aborted prior run) from
+    being misread as the current run's output - the determinism risk with a fixed output path."""
+    engines.dut.run_cmd(f'sudo rm -f {SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT}')
+    check = engines.dut.run_cmd(
+        f'test -e {SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT} && echo EXISTS || echo MISSING')
+    assert 'MISSING' in check, \
+        f'failed to clean recorder output {SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT} before the run; ' \
+        f'a stale file would make results non-deterministic'
+
+
+def _read_recorder_args(engines: EnginesT) -> list[str]:
+    """Read the argv tokens the recorder provisioning script received (one token per line)."""
+    output = engines.dut.run_cmd(f'sudo cat {SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT}').strip()
+    return output.splitlines() if output else []
+
+
+def _verify_recorder_args(engines: EnginesT, expected_args: list[str]) -> None:
+    with allure.step("Read recorder output and compare with expected arguments"):
+        actual_args = _read_recorder_args(engines)
+        allure.attach("recorder-args", str(actual_args))
+        assert actual_args == expected_args, \
+            f'script received unexpected arguments.\nexpected: {expected_args}\nactual:   {actual_args}'
+
+
+def _assert_recorder_output_absent(engines: EnginesT) -> None:
+    """Assert the recorder output file was never created (fail-fast: script never executed)."""
+    output = engines.dut.run_cmd(f'test -f {SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT} && echo EXISTS || echo MISSING')
+    assert 'MISSING' in output, \
+        f'{SystemConsts.ZTP_PARAMS_RECORDER_OUTPUT} exists -> the script was executed despite invalid parameters (fail-fast violated)'
 
 
 @retry.retry(Exception, tries=30, delay=2)

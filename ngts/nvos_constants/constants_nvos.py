@@ -842,6 +842,38 @@ class SystemConsts:
     SCRIPT_POSITIVE_PYTHON = 'ztp_provisioning_python.json'
     SCRIPT_BAD_FILE = 'ztp_provisioning_bad_file.json'
     SCRIPT_HASHED_PASSWORD = 'ztp_hashed_password.json'
+
+    # ZTP provisioning-script "parameters"
+    PROVISIONING_SCRIPT_STEP = '01-provisioning-script'
+    SCRIPT_PARAMS_POSITIVE = 'ztp_provisioning_params_positive.json'
+    SCRIPT_PARAMS_MAX = 'ztp_provisioning_params_max.json'
+    SCRIPT_PARAMS_PYTHON_MIN = 'ztp_provisioning_params_python_min.json'
+    SCRIPT_PARAMS_NO_KEY = 'ztp_provisioning_params_no_key.json'
+    SCRIPT_PARAMS_EMPTY = 'ztp_provisioning_params_empty.json'
+    SCRIPT_PARAMS_NOT_OBJECT = 'ztp_provisioning_params_not_object.json'
+    SCRIPT_PARAMS_EMPTY_NAME = 'ztp_provisioning_params_empty_name.json'
+    SCRIPT_PARAMS_INVALID_FLAG = 'ztp_provisioning_params_invalid_flag.json'
+    SCRIPT_PARAMS_NON_SCALAR = 'ztp_provisioning_params_non_scalar.json'
+    SCRIPT_PARAMS_TOO_MANY = 'ztp_provisioning_params_too_many.json'
+    SCRIPT_PARAMS_WHITESPACE_NAME = 'ztp_provisioning_params_whitespace_name.json'  # "--  "
+    SCRIPT_PARAMS_NUMERIC_NAME = 'ztp_provisioning_params_numeric_name.json'        # "--1"
+    SCRIPT_PARAMS_SHORT_MULTICHAR = 'ztp_provisioning_params_short_multichar.json'  # "-ss"
+    SCRIPT_PARAMS_NULL_VALUE = 'ztp_provisioning_params_null_value.json'            # {"--nullval": null}
+    SCRIPT_PARAMS_INVALID_BOOL = 'ztp_provisioning_params_invalid_bool.json'        # {"--name": TRUE}
+    ZTP_PARAMS_RECORDER_OUTPUT = '/tmp/ztp_params_recorder.out'
+    ZTP_PARAMS_EXPECTED_MAX = 20
+    PARAMS_LOG_PASSING_POSITIVE = ('passing 8 parameter(s): --nvos_image, --retries, --role, --s, --site, '
+                                   '--verbose, -n, -s')
+    PARAMS_LOG_PASSING_PYTHON_MIN = 'passing 2 parameter(s): --role, -n'
+    PARAMS_LOG_PASSING_MAX = ('passing 20 parameter(s): --p01, --p02, --p03, --p04, --p05, --p06, --p07, --p08, '
+                              '--p09, --p10, --p11, --p12, --p13, --p14, --p15, --p16, --p17, --p18, --p19, --p20')
+    PARAMS_ERR_NOT_OBJECT = 'must be a JSON object of name/value pairs'
+    PARAMS_ERR_EMPTY_NAME = 'Parameter name must be a non-empty string'
+    PARAMS_ERR_INVALID_FLAG = 'is not a valid option flag'
+    PARAMS_ERR_NON_SCALAR = 'is not a scalar value'
+    PARAMS_ERR_TOO_MANY = 'Too many parameters (21); at most 20 are allowed'
+    PARAMS_ERR_JSON_LOAD = 'ZTP JSON load failed'
+
     ZTP_STATUS_RUNNING = 'running'
     ZTP_STATUS_IN_PROGRESS = 'in-progress'
     ZTP_STATUS_SUCCESS = 'success'
