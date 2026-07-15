@@ -1,0 +1,47 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<DBDEF>
+    <global>
+        <default_params_type> extended_setup_step_params </default_params_type>
+        <DB>
+            <info> NVOS IB plane-port telemetry (loopback cabling + Subnet Manager) </info>
+            <owner> Ori Steinmetz </owner>
+            <group> NVOS </group>
+            <dimension> VER </dimension>
+
+            <pre>
+            </pre>
+
+        </DB>
+        <Test>
+            <post> </post>
+        </Test>
+        <Case>
+            <pre>
+            </pre>
+            <post>
+            </post>
+            <on_not_success>
+                <name> Failures post checker </name>
+                <type> setup_mode </type>
+                <cmd>
+                    <type> reg_exec_cmd </type>
+                    <players_selection>
+                        <ep_targets> SONIC_MGMT </ep_targets>
+                    </players_selection>
+                    <name> on_failures_post_checker </name>
+                    <tout> 900 </tout>
+                    <params>
+                        <exec> PYTHONPATH=/devts/ /ngts_venv/bin/pytest /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/post_checker/test_post_checker.py  --setup_name=[[conf:extra_info.setup_name]]  --timeout 600  --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --session_id=[[run_time:session_id]]  --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini     --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results</exec>
+                    </params>
+                </cmd>
+                <on_return_code>
+                    <return_codes> 42 </return_codes>
+                    <operation> exec_stop </operation>
+                </on_return_code>
+            </on_not_success>
+        </Case>
+    </global>
+    <test>
+        <cases> sonic-mgmt/nvos-tool/mars/cases/telemetry/nvos_telemetry_ib_gnmi_planeport.cases </cases>
+    </test>
+</DBDEF>
