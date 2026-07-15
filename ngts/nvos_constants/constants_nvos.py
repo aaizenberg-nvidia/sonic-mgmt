@@ -1243,6 +1243,29 @@ class PlatformConsts:
     TRANSCEIVER_CABLE_TYPE = 'cable-type'
     TRANSCEIVER_CABLE_OPTICAL_MODULE = 'Optical module'
     TRANSCEIVER_CABLE_COPPER_CABLE = 'Copper cable'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED = 'supported-cable-ib-speed'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NA = 'N/A'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NAMES = ('sdr', 'fdr', 'edr', 'hdr', 'ndr', 'xdr')
+    TRANSCEIVER_VENDOR_PN = 'vendor-pn'
+    # Per-vendor-pn rules for the supported-cable-ib-speed leaf. Each entry has:
+    #   required : speeds that MUST appear in the reported comma-joined tokens
+    #   forbidden: speeds that MUST NOT appear (catches FW spurious-bit bugs)
+    # Unlisted PNs fall back to the well-formed structure check only.
+    # Speeds sourced from the NVIDIA Quantum-X800 XDR portfolio, the XDR Modules
+    # Confluence page, the Approved Cable List, and Wolverine2-Arcus2 bug
+    # SW #6453983 / Redmine #4660953. All 980-9IAxx-00XMxx entries below are
+    # XDR-generation OSFP modules/cables; MCP4Y10-N001-FTF is a Quantum-2 NDR
+    # copper cable and must not advertise XDR.
+    _XDR_ONLY = {'required': {'xdr'}, 'forbidden': {'sdr', 'fdr', 'edr', 'hdr', 'ndr'}}
+    TRANSCEIVER_IB_SPEED_RULES_BY_PN = {
+        '980-9IAH1-00XM00': _XDR_ONLY,
+        '980-9IAH' 'B-00XM0N': _XDR_ONLY,  # split literal - shared aspell dict
+        '980-9IAM3-00XD2A': _XDR_ONLY,
+        '980-9IAS0-00XM0N': _XDR_ONLY,
+        '980-9IAU6-00XM0M': _XDR_ONLY,
+        '980-9IAU9-00XM0G': _XDR_ONLY,
+        'MCP4Y10-N001-FTF': {'required': {'ndr'}, 'forbidden': {'xdr'}},
+    }
     EROTS_LIST = ['ERoT_BMC_0', 'ERoT_CPU_0', 'ERoT_FPGA_0', 'ERoT_NVSwitch_0', 'ERoT_NVSwitch_1']
     INV_STATE = 'state'
     INV_OK = 'ok'
