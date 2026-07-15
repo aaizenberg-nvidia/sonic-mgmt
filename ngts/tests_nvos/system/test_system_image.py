@@ -970,7 +970,6 @@ def normalize_image_name(image_name):
 def install_image_and_verify(
     orig_engine: ProxySshEngine,
     image_name: str,
-    partition_id: str,
     original_images: dict,
     system: System,
     release_name: str,
