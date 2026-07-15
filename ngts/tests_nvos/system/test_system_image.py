@@ -317,15 +317,17 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                 with allure.step('Verify MTU preserved after upgrade'):
                     InterfaceConfigurationTool.verify_and_cleanup_mtu(mtu_info)
 
-            if json_acl_rules is not None:
-                with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
-                    system_helpers.verify_acl_rules_preserved(
-                        json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
-            if cp_acl_bindings is not None:
-                with allure.independent_step(
-                    'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
-                ):
-                    system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
+            if upgrade_succeeded and (json_acl_rules is not None or cp_acl_bindings is not None):
+                with allure.step('Verify ACL and control-plane bindings preserved after upgrade'):
+                    if json_acl_rules is not None:
+                        with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
+                            system_helpers.verify_acl_rules_preserved(
+                                json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
+                    if cp_acl_bindings is not None:
+                        with allure.independent_step(
+                            'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
+                        ):
+                            system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
 
         with allure.step('Clear ACL persistence mangle state (if any)'):
             system_helpers.clear_acl_configs(acl_persist_mangle_state, dut_engine=engines.dut)
