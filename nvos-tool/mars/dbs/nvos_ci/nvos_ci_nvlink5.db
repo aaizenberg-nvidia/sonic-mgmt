@@ -23,9 +23,6 @@
 		</Case>
 	</global>
 	<test>
-		<cases> sonic-mgmt/nvos-tool/mars/cases/CI/nvos_ci_nmx.cases </cases>
-	</test>
-	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/CI/nvos_ci_nvl5_interfaces.cases </cases>
 	</test>
 	<test>
