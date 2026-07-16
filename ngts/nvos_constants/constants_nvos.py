@@ -3019,6 +3019,8 @@ class PeerPortConsts:
                                      ApiType.OPENAPI: {"under_limit": LOWER_INTERVAL_ERR_MSG,
                                                        "over_limit": HIGHER_INTERVAL_ERR_MSG}}
     ASSOCIATED_SWITCH_PORT = "associated-switch-port"
+    HOSTNAME = "hostname"
+    EXPECTED_GPU_HOSTNAME = "GR100"
 
 
 class StoDebug:
