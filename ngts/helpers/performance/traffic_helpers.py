@@ -8,6 +8,13 @@ import pandas as pd
 from netaddr import EUI
 from ngts.helpers.performance.packet_json_generator import PacketGenerator
 from ngts.constants.performance_constants import PerfConsts, ValidationConsts, BwFairnessThreshold, OccupancyVarianceConfig
+from ngts.helpers.performance.validation_precision_helpers import (
+    round_for_reference_comparison,
+    round_pair_for_comparison,
+    round_to_threshold_precision,
+    value_above_threshold,
+    value_below_threshold,
+)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ast import literal_eval
 from typing import Dict, List, Any, Optional
@@ -344,13 +351,17 @@ def validate_bw(traffic_json, bw_threshold, validate_bw_rx, violations_list):
                     violations_list.append(f"No threshold specified for port group {port_group_name}.")
                     continue
 
-                if tx_threshold is not None and bw_stats[tx_validation_key] < tx_threshold:
+                tx_value = bw_stats[tx_validation_key]
+                if tx_threshold is not None and value_below_threshold(tx_value, tx_threshold):
                     violations_list.append(
-                        f"TX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{tx_validation_key}']={bw_stats[tx_validation_key]} was below threshold {tx_threshold}."
+                        f"TX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{tx_validation_key}']="
+                        f"{round_to_threshold_precision(tx_value, tx_threshold)} was below threshold {tx_threshold}."
                     )
-                if validate_bw_rx and rx_threshold is not None and bw_stats[rx_validation_key] < rx_threshold:
+                rx_value = bw_stats[rx_validation_key]
+                if validate_bw_rx and rx_threshold is not None and value_below_threshold(rx_value, rx_threshold):
                     violations_list.append(
-                        f"RX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{rx_validation_key}']={bw_stats[rx_validation_key]} was below threshold {rx_threshold}."
+                        f"RX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{rx_validation_key}']="
+                        f"{round_to_threshold_precision(rx_value, rx_threshold)} was below threshold {rx_threshold}."
                     )
 
 
@@ -390,11 +401,12 @@ def validate_bw_per_ports(traffic_json, bw_threshold, ports_list, violations_lis
             for port in ports_list:
                 if port in bw_df[ValidationConsts.PORT].values:
                     port_tx = bw_df.loc[bw_df[ValidationConsts.PORT] == hex(literal_eval(port))].loc[:, ValidationConsts.TX_RATE].values[0]
-                    if bw_threshold == 0 and port_tx > bw_threshold:
-                        violations_list.append(f"Port {port} tx: {port_tx} > {bw_threshold}, "
+                    rounded_port_tx, _ = round_pair_for_comparison(port_tx, bw_threshold)
+                    if bw_threshold == 0 and value_above_threshold(port_tx, bw_threshold):
+                        violations_list.append(f"Port {port} tx: {rounded_port_tx} > {bw_threshold}, "
                                                f"please check {sample_id} in port group: {port_group_name}")
-                    if port_tx < bw_threshold:
-                        violations_list.append(f"Port {port} tx: {port_tx} < {bw_threshold}, "
+                    if value_below_threshold(port_tx, bw_threshold):
+                        violations_list.append(f"Port {port} tx: {rounded_port_tx} < {bw_threshold}, "
                                                f"please check {sample_id} in port group: {port_group_name}")
 
 
@@ -426,12 +438,16 @@ def _validate_bw_utilization_fairness_per_port_group(sample_id: str, port_group_
             min_val = bw_df[rate_col].min()
             max_val = bw_df[rate_col].max()
             min_tolerated_value = max_val * (1 - threshold)
-            if min_val < min_tolerated_value:
+            rounded_min_val = round_to_threshold_precision(min_val, threshold)
+            rounded_min_tolerated_value = round_to_threshold_precision(min_tolerated_value, threshold)
+            rounded_max_val = round_to_threshold_precision(max_val, threshold)
+            if rounded_min_val < rounded_min_tolerated_value:
                 min_port = bw_df.loc[bw_df[rate_col].idxmin(), ValidationConsts.PORT]
                 max_port = bw_df.loc[bw_df[rate_col].idxmax(), ValidationConsts.PORT]
                 violations_list.append(
                     f"{sample_id} (group: {port_group_name}) {direction} min utilization "
-                    f"{min_val:.3f} < min_tolerated_value {min_tolerated_value:.3f} (= max {max_val:.3f} * {1 - threshold}) "
+                    f"{rounded_min_val} < min_tolerated_value {rounded_min_tolerated_value} "
+                    f"(= max {rounded_max_val} * {1 - threshold}) "
                     f"(min port: {min_port}, max port: {max_port})"
                 )
     except (KeyError, TypeError, ValueError) as exc:
@@ -531,20 +547,23 @@ def _check_metric_fairness(
         ).append(json_metric)
         return None
     min_tolerated = max_val * (1 - variance)
+    rounded_min_val = round_to_threshold_precision(min_val, variance)
+    rounded_max_val = round_to_threshold_precision(max_val, variance)
+    rounded_min_tolerated = round_to_threshold_precision(min_tolerated, variance)
     logger.info(
         f"      checking fairness: buffer_type={buffer_type} "
         f"buffer_id={buffer_id} metric={json_metric} occ_key={occ_key} variance={variance} "
-        f"min={min_val:.3f} max={max_val:.3f} min_tolerated={min_tolerated:.3f} "
+        f"min={rounded_min_val} max={rounded_max_val} min_tolerated={rounded_min_tolerated} "
         f"min_port={min_port} max_port={max_port}"
     )
-    if min_val < min_tolerated:
-        deviation_from_max = (max_val - min_val) / max_val
-        shortfall_from_threshold = (min_tolerated - min_val) / max_val
+    if rounded_min_val < rounded_min_tolerated:
+        deviation_from_max = (rounded_max_val - rounded_min_val) / rounded_max_val
+        shortfall_from_threshold = (rounded_min_tolerated - rounded_min_val) / rounded_max_val
         return (
             f"{buffer_type} buffer_id={buffer_id} metric={json_metric} "
-            f"min={min_val:.3f} [{deviation_from_max:.1%} from max] < "
-            f"min_tolerated {min_tolerated:.3f} [exceeded by {shortfall_from_threshold:.1%} of max] "
-            f"(= max {max_val:.3f} * {1 - variance:.3f}) "
+            f"min={rounded_min_val} [{deviation_from_max:.1%} from max] < "
+            f"min_tolerated {rounded_min_tolerated} [exceeded by {shortfall_from_threshold:.1%} of max] "
+            f"(= max {rounded_max_val} * {1 - variance:.3f}) "
             f"(min port: {min_port}, max port: {max_port})"
         )
     passed_check_count_by_buffer_type.setdefault(buffer_type, {}).setdefault(occ_key, 0)
@@ -722,8 +741,11 @@ def validate_tc(traffic_json, tc_occ_threshold, violations_list):
                     tc_occ_threshold = _get_tc_occ_threshold(tc_occ_threshold, port_group_name)
                     for tc_occ_key, tc_occ_th in tc_occ_threshold.items():
                         tc_occ = tc_dict[tc_occ_key]
-                        if tc_occ > tc_occ_th:
-                            violations_list.append(f"{sample_id},{port_group_name} - TC {tc_name} {tc_occ_key} {tc_occ} > {tc_occ_th} threshold")
+                        if value_above_threshold(tc_occ, tc_occ_th):
+                            violations_list.append(
+                                f"{sample_id},{port_group_name} - TC {tc_name} {tc_occ_key} "
+                                f"{round_to_threshold_precision(tc_occ, tc_occ_th)} > {tc_occ_th} threshold"
+                            )
                             with allure.step(f"Attach TC sample {sample_id} in port group: {port_group_name}: {tc_dict}"):
                                 pass
 
@@ -770,8 +792,11 @@ def validate_tc_occ_value(tc_occ, tc_occ_th, tolerance, higher_tc_samples, sampl
         if not is_within_range:
             higher_tc_samples.append(f"{sample_id} - TC {tc_name} {tc_occ_key} {tc_occ} is off range {min_range} - {max_range}")
     else:
-        if tc_occ > tc_occ_th:
-            higher_tc_samples.append(f"{sample_id} - TC {tc_name} {tc_occ_key} {tc_occ} > {tc_occ_th} threshold")
+        if value_above_threshold(tc_occ, tc_occ_th):
+            higher_tc_samples.append(
+                f"{sample_id} - TC {tc_name} {tc_occ_key} "
+                f"{round_to_threshold_precision(tc_occ, tc_occ_th)} > {tc_occ_th} threshold"
+            )
 
 
 def is_within_tolerance_range(value, threshold, tolerance):
@@ -786,7 +811,13 @@ def is_within_tolerance_range(value, threshold, tolerance):
         raise ValueError("Tolerance value must be between 0 and 1")
     min_tolerance, max_tolerance = 1 - tolerance, 1 + tolerance
     min_range, max_range = threshold * min_tolerance, threshold * max_tolerance
-    is_within_range = value > min_range and value < max_range
+    # Use the comparison helper so 0-place thresholds keep raw floats (0.4 / 0.8 stay
+    # 0.4 / 0.8 instead of rounding to 0 / 1) while fractional thresholds still clear
+    # float noise at their declared precision.
+    cmp_value, _ = round_pair_for_comparison(value, threshold)
+    cmp_min_range, _ = round_pair_for_comparison(min_range, threshold)
+    cmp_max_range, _ = round_pair_for_comparison(max_range, threshold)
+    is_within_range = cmp_min_range < cmp_value < cmp_max_range
     return min_range, max_range, is_within_range
 
 
@@ -828,8 +859,15 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
                             else:
                                 min_limit, max_limit = reference_tc_occ - allowed_deviation, reference_tc_occ + allowed_deviation
                             min_limit = max(min_limit, 0)
-                            if tc_occ < min_limit or tc_occ > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {key} is not within reference comparison range {min_limit} - {max_limit}, current value: {tc_occ}")
+                            rounded_tc_occ = round_for_reference_comparison(tc_occ, reference_tc_occ)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_tc_occ)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_tc_occ)
+                            if rounded_tc_occ < rounded_min_limit or rounded_tc_occ > rounded_max_limit:
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {key} "
+                                    f"is not within reference comparison range {rounded_min_limit} - {rounded_max_limit}, "
+                                    f"current value: {rounded_tc_occ}"
+                                )
 
 
 def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validate, allowed_deviation, violations_list,
@@ -868,8 +906,15 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
                                 min_limit, max_limit = reference_pg_occ * (1 - allowed_deviation), reference_pg_occ * (1 + allowed_deviation)
                             else:
                                 min_limit, max_limit = reference_pg_occ - allowed_deviation, reference_pg_occ + allowed_deviation
-                            if pg_occ < min_limit or pg_occ > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} {buffer_type_name} {key} is not within reference comparison range {min_limit} - {max_limit}, current value: {pg_occ}")
+                            rounded_pg_occ = round_for_reference_comparison(pg_occ, reference_pg_occ)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_pg_occ)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_pg_occ)
+                            if rounded_pg_occ < rounded_min_limit or rounded_pg_occ > rounded_max_limit:
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                    f"{buffer_type_name} {key} is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_pg_occ}"
+                                )
 
 
 def get_tc_occ_from_traffic_json(traffic_json, port_group_name, tc_key, tc):
@@ -936,8 +981,15 @@ def compare_latency_to_reference(traffic_json, reference_json, latency_keys, tc_
                             latency_value = tc_dict[latency_attribute_to_compare]
                             reference_latency = get_latency_from_traffic_json(reference_json, port_group_name, latency_attribute_to_compare, tc_name)
                             min_limit, max_limit = reference_latency - allowed_deviation, reference_latency + allowed_deviation
-                            if latency_value < min_limit or latency_value > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {latency_attribute_to_compare} is not within reference comparison range {min_limit} - {max_limit}, current value: {latency_value}")
+                            rounded_latency_value = round_for_reference_comparison(latency_value, reference_latency)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_latency)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_latency)
+                            if rounded_latency_value < rounded_min_limit or rounded_latency_value > rounded_max_limit:
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} "
+                                    f"{latency_attribute_to_compare} is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_latency_value}"
+                                )
 
 
 def get_latency_from_traffic_json(traffic_json, port_group_name, tc_latency_key, tc):
