@@ -885,8 +885,8 @@ def get_aport_oid(engines, port_name: str) -> str:
     return get_port_oid_from_infiniband_port(engines.dut, ib_name)
 
 
-# Memoized ``plan-ports`` map of an Aport, keyed by (engine, Aport). The no-arg
-# bulk ``nv show fae interface`` only exposes link+type, so plan-ports/key detail
+# Memoized ``plane-ports`` map of an Aport, keyed by (engine, Aport). The no-arg
+# bulk ``nv show fae interface`` only exposes link+type, so plane-ports/key detail
 # must come from the per-Aport ``nv show fae interface <aport>`` form. Caching per
 # Aport keeps it at one show per active Aport, never one per plane.
 _FAE_APORT_PLAN_PORTS_CACHE: Dict[Tuple[int, str], Dict[str, dict]] = {}
@@ -894,7 +894,7 @@ _FAE_APORT_PLAN_PORTS_CACHE: Dict[Tuple[int, str], Dict[str, dict]] = {}
 
 def _fae_aport_plan_ports(engine, aport_name: str) -> Dict[str, dict]:
     """
-    Return one Aport's ``plan-ports`` map from ``nv show fae interface <aport>``,
+    Return one Aport's ``plane-ports`` map from ``nv show fae interface <aport>``,
     memoized per (engine, Aport).
 
     ``Port.show_interface`` returns the raw JSON string (no error-keyword
@@ -913,7 +913,7 @@ def _fae_aport_plan_ports(engine, aport_name: str) -> Dict[str, dict]:
         plan_ports: Dict[str, dict] = {}
     else:
         parsed = res.get_returned_value()
-        plan_ports = parsed.get("plan-ports", {}) if isinstance(parsed, dict) else {}
+        plan_ports = parsed.get("plane-ports", {}) if isinstance(parsed, dict) else {}
         if not isinstance(plan_ports, dict):
             plan_ports = {}
     _FAE_APORT_PLAN_PORTS_CACHE[cache_key] = plan_ports
@@ -963,8 +963,8 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # Fallback: resolve via the FAE plan-ports "key" from the per-Aport
-    # `nv show fae interface <aport>` form (the no-arg bulk lacks plan-ports),
+    # Fallback: resolve via the FAE plane-ports "key" from the per-Aport
+    # `nv show fae interface <aport>` form (the no-arg bulk lacks plane-ports),
     # cached per Aport so a multi-plane caller hits one show per Aport, not per
     # plane. A miss is just "not in the map" - no failed ResultObj leaking to
     # teardown.
@@ -973,13 +973,13 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     port_key_with_suffix = plane_entry.get("key", "") if isinstance(plane_entry, dict) else ""
     if not port_key_with_suffix:
         raise AssertionError(
-            f"No FAE plan-ports key for {plane_port_name}; "
-            f"Aport {aport_name!r} plan-ports keys={list(plan_ports.keys())}"
+            f"No FAE plane-ports key for {plane_port_name}; "
+            f"Aport {aport_name!r} plane-ports keys={list(plan_ports.keys())}"
         )
     # FAE's 'key' carries a 3-char tail we strip; the trimmed value is the
     # IB-internal port name fed into COUNTERS_PORT_NAME_MAP.
     if len(port_key_with_suffix) <= 3:
-        raise AssertionError(f"unexpected FAE plan-ports key, too short to trim: {port_key_with_suffix!r}")
+        raise AssertionError(f"unexpected FAE plane-ports key, too short to trim: {port_key_with_suffix!r}")
     port_key = port_key_with_suffix[:-3]
     output = Tools.DatabaseTool.sonic_db_cli_hget(
         engine=engines.dut, asic="",
