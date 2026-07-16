@@ -209,7 +209,7 @@ def prepare_test_port(rand_selected_dut, tbinfo):
                 (topo == "t0" and ("T1" in neighbor["name"] or "PT0" in neighbor["name"])) or \
                 (topo == "m0" and "M1" in neighbor["name"]) or (topo == "mx" and "M0" in neighbor["name"]) or \
                 (topo == "m1" and ("MA" in neighbor["name"] or "MB" in neighbor["name"])) or \
-                (topo_name in ("t1-isolated-d32", "t1-isolated-d128", "t1-isolated-d32u1s2")
+                (topo_name in ("t1-isolated-d32", "t1-isolated-d128", "t1-isolated-d32u1s2", "t1-d118u8s2")
                  and "T0" in neighbor["name"]):
             upstream_ports[neighbor['namespace']].append(interface)
             upstream_port_ids.append(port_id)
