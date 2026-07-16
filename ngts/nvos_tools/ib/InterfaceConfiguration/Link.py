@@ -20,7 +20,7 @@ class LinkMgmt(BaseComponent):
         self.health = BaseComponent(self, path='/health')
         self.stats = MgmtStats(self)
         self.phy = Phy(self)
-        self.plan_ports = BaseComponent(self, path='/plan-ports')
+        self.plane_ports = BaseComponent(self, path='/plane-ports')
         self.connection_mode = BaseComponent(self, path='/connection-mode')
         self.delayed_recovery = BaseComponent(self, path='/delayed-recovery')
         self.phy_recovery = PhyRecovery(self)

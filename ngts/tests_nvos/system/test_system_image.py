@@ -1147,7 +1147,7 @@ def _restore_original_image(
         system.image.boot_next_and_verify(original_image_partition)
 
     with allure.step("Reboot the system"):
-        system.action_reboot(reboot_params=RebootParams(recovery_engine=orig_engine))
+        system.action_reboot(reboot_params=RebootParams(recovery_engine=orig_engine, topology_obj=TestToolkit.topology_obj))
 
     with allure.step('restore original dut engine'):
         TestToolkit.engines.dut = orig_engine or TestToolkit.engines.dut

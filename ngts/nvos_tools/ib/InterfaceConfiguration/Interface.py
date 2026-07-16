@@ -39,7 +39,7 @@ class Interface(BaseComponent):
         self.ipv6 = IpV6(self)
         self.vrf = BaseComponent(self, path='/vrf')
         self.link = LinkMgmt(self)
-        self.plan_ports = BaseComponent(self, path='/plan-ports')
+        self.plane_ports = BaseComponent(self, path='/plane-ports')
         self.acl = Acl(self)
         self.lldp = LldpInterface(self)
         self.counters = Counters(self)

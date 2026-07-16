@@ -27,7 +27,7 @@ def test_interface_fnm_port_split(engines, devices, random_api, players, interfa
     4. Validate show fae interface <interface-id> link counters
     5. Validate show fae interface <interface-id> link diagnostics
     6. Validate show fae interface <interface-id> link state
-    7. Validate show fae interface <interface-id> link plan-ports
+    7. Validate show fae interface <interface-id> link plane-ports
     8. Validate set fae interface <interface-id> link lanes <1X/2X/4X>
     9. Validate unset fae interface <interface-id> link lanes
     """
