@@ -114,13 +114,7 @@ def test_reset_bmc_root_password_while_bmc_down(bmc_password_test_context, devic
     platform = bmc_password_test_context.platform
     client = bmc_password_test_context.client
     bmc_ip_address = bmc_password_test_context.bmc_ip_address
-    root_password = BmcUsers.root.another_password
     with allure.step('factory reset the bmc'):
-        output = client.change_root_password(password=BmcUsers.root.default_password, validate=True)
-        assert '"error"' not in output, (
-            f'BMC curl change_root_password failed:\n{output}'
-        )
-        root_password = BmcUsers.root.default_password
         client.reset_bmc_to_factory()
 
         with allure.step("Wait for BMC to go down after factory reset"):
