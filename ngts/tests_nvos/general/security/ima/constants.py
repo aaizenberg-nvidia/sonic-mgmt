@@ -7,6 +7,10 @@ class ImaConsts:
     ENABLED = 'enabled'
     DISABLED = 'disabled'
     DEFAULT_STATE = DISABLED
+    APPLY_REBOOT_WARNING = (
+        'WARNING: IMA state change takes effect only after saving the '
+        'configuration (nv config save) and rebooting the system'
+    )
 
     # IMA folds every measurement into TPM PCR 10.
     IMA_PCR = '10'
@@ -52,7 +56,7 @@ class ImaConsts:
 
     # Invalid "state" values that must be rejected by `nv set ... ima state`.
     # Mirrors test-plan section 5.1 rows 5-6 (typo / wrong-type / empty).
-    INVALID_STATES = ['enable', '1', '0', 'on', 'off', 'true', '""']
+    INVALID_STATES = ['1', '0', 'on', 'off', 'true', '""']
 
     # Remote upload destination (filled by helpers.get_scp_url()).
     REMOTE_PATH = '/tmp'

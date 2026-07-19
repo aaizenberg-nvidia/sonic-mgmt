@@ -74,7 +74,12 @@ def test_ima_configuration(test_api, engines, restore_ima_default):
         verify_ima_applied_state(ImaConsts.DISABLED)
 
     with allure.step('set enabled and verify applied'):
-        set_ima_state(ImaConsts.ENABLED)
+        set_ima_state(
+            ImaConsts.ENABLED,
+            expected_apply_message=(
+                ImaConsts.APPLY_REBOOT_WARNING if test_api == ApiType.NVUE else ''
+            ),
+        )
         verify_ima_applied_state(ImaConsts.ENABLED)
 
     with allure.step('unset (revert to default) and verify applied'):

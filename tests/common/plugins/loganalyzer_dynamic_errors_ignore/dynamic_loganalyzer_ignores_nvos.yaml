@@ -848,6 +848,13 @@
     - Affected_test_cases:
       - tests_nvos/general/security/platform_certificate/test_platform_certificate.py::test_upload_platform_certificate_bad_url
 
+# NVOS SECURITY - IMA error flows intentionally exercise bad SCP upload destinations
+- Errors_list:
+    - '.*ERR nvued:.*ERROR:.*Failed to upload file.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/general/security/ima/test_ima.py::test_ima_error_flows
+
 # NVOS SECURITY
 - Errors_list:
     - '.*ERR nvued:.*ERROR:.*Something went wrong in fetching the X\.509.*certificate.*URI.*'

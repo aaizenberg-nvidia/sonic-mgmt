@@ -331,17 +331,44 @@ def verify_ima_pending_state(expected_operational: str, expected_applied: str, d
              f'applied="{expected_applied}"; got operational="{operational}", applied="{applied}"')
 
 
-def set_ima_state(state: str, apply: bool = True):
+def set_ima_state(state: str, apply: bool = True, expected_apply_message: str = ''):
     """
     Set IMA ``state`` to the given value and (by default) apply the config.
+
+    Enabling IMA makes NVUE warn that the change requires ``nv config save`` and
+    a reboot, then request confirmation.  ``ask_for_confirmation=True`` uses the
+    common NVUE wrapper's non-interactive approval (``nv config apply
+    --assume-yes``), preventing the automated test from blocking at
+    ``Are you sure?``.  OpenAPI apply is non-interactive and safely ignores this
+    argument.
 
     Persisting across a reboot additionally requires :func:`save_config`.
 
     :param state: ``enabled`` or ``disabled``.
     :param apply: run ``nv config apply`` after the set.
+    :param expected_apply_message: NVUE-only message that must appear while
+        applying. When provided, the helper performs the set and apply separately
+        so the raw apply output can be validated.
     """
     with allure.step(f'set IMA state to "{state}"'):
-        System().security.ima.set(ImaConsts.STATE, state, apply=apply).verify_result()
+        # When validating the apply warning, keep set and apply separate so we can
+        # inspect the raw apply output (BaseComponent.apply path does not return it).
+        validate_apply = bool(expected_apply_message)
+        System().security.ima.set(
+            ImaConsts.STATE,
+            state,
+            apply=apply and not validate_apply,
+            ask_for_confirmation=apply and not validate_apply and state == ImaConsts.ENABLED,
+        ).verify_result()
+        if apply and validate_apply:
+            output = NvueGeneralCli.apply_config(
+                TestToolkit.get_engine(),
+                ask_for_confirmation=state == ImaConsts.ENABLED,
+            )
+            assert expected_apply_message in output, \
+                (f'expected apply message was not found:\n{expected_apply_message}\n'
+                 f'actual output:\n{output}')
+            SendCommandTool.verify_no_error_message(output).verify_result()
 
 
 def save_config(engines):

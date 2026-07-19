@@ -30,9 +30,10 @@ BOOT_AGGREGATE = 'boot_aggregate'
 # user-space programs/regular files. Their measurement-log entries therefore
 # do NOT indicate that IMA is actively measuring user space, so they are treated
 # as infrastructure too. Recognized by the measured file path:
-#   * kernel modules end in ``.ko`` (optionally compressed)
+#   * kernel modules end in ``.ko`` (optionally compressed) or ``.o`` (e.g. AMI
+#     flash driver ``/usr/bin/amifldrv_mod.o`` measured by MODULE_CHECK)
 #   * the kexec kernel image / initramfs live under /boot (vmlinuz / initramfs / initrd)
-_KERNEL_MODULE_SUFFIXES = ('.ko', '.ko.xz', '.ko.gz', '.ko.zst')
+_KERNEL_MODULE_SUFFIXES = ('.ko', '.ko.xz', '.ko.gz', '.ko.zst', '.o')
 _BOOT_IMAGE_MARKERS = ('/boot/', 'vmlinuz', 'initramfs', 'initrd')
 
 PATH_NO_EXIST_ERR = 'No such file or directory'
@@ -122,9 +123,10 @@ class ImaTool:
         """
         Return True if a measured path comes from the kernel's built-in boot policy.
 
-        These entries (``boot_aggregate``, the IMA policy file, kernel modules and
-        the kexec kernel image / initramfs) are present even when NVOS IMA is
-        "disabled", so they never count as a user-space file measurement.
+        These entries (``boot_aggregate``, the IMA policy file, kernel modules /
+        module objects (``.ko`` / ``.o``) and the kexec kernel image / initramfs)
+        are present even when NVOS IMA is "disabled", so they never count as a
+        user-space file measurement.
         """
         if file_path == BOOT_AGGREGATE:
             return True
@@ -143,9 +145,9 @@ class ImaTool:
 
         When NVOS IMA is off the log either does not exist or contains only the
         kernel's built-in boot measurements (``boot_aggregate``, the IMA policy
-        file, kernel modules and the kexec image); all of those mean "IMA is not
-        measuring user space". Such entries are therefore ignored; any other
-        measured path makes this return False.
+        file, kernel modules / ``.o`` module objects and the kexec image); all of
+        those mean "IMA is not measuring user space". Such entries are therefore
+        ignored; any other measured path makes this return False.
         """
         for file_path in self.get_measured_paths():
             if not self._is_builtin_boot_measurement(file_path):
