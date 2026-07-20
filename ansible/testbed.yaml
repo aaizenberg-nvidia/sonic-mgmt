@@ -992,6 +992,25 @@
   inv_name: lab
   comment: Mellanox MTR testbed
 
+- conf-name: r-bobcat-09-t1-d96u4
+  group-name: vm-t1
+  topo: t1-d96u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-bobcat-09
+  ptf_ip: 10.215.38.4/16
+  ptf_ipv6:
+  server: server_1
+  vm_base: VM0101
+  dut:
+    - r-bobcat-09
+    - r-bobcat-09-dpu-0
+    - r-bobcat-09-dpu-1
+    - r-bobcat-09-dpu-2
+    - r-bobcat-09-dpu-3
+  inv_name: lab
+  comment: Mellanox MTR testbed
+  use_converged_peers: True
+
 - conf-name: r-bobcat-10-t0-28
   group-name: vm-t2
   topo: t0-28
@@ -1063,6 +1082,25 @@
     - r-bobcat-10-dpu-3
   inv_name: lab
   comment: Mellanox MTR testbed
+
+- conf-name: r-bobcat-10-t1-d96u4
+  group-name: vm-t2
+  topo: t1-d96u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-bobcat-10
+  ptf_ip: 10.215.38.5/16
+  ptf_ipv6:
+  server: server_2
+  vm_base: VM0201
+  dut:
+    - r-bobcat-10
+    - r-bobcat-10-dpu-0
+    - r-bobcat-10-dpu-1
+    - r-bobcat-10-dpu-2
+    - r-bobcat-10-dpu-3
+  inv_name: lab
+  comment: Mellanox MTR testbed
+  use_converged_peers: True
 
 - conf-name: mtvr-bobcat-03-t0-28
   group-name: vm-t1
@@ -1506,6 +1544,25 @@
   inv_name: lab
   comment: Mellanox MEC01 testbed
 
+- conf-name: bobcat-1245-t1-d96u4
+  group-name: vm-t1
+  topo: t1-d96u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-bobcat-1245
+  ptf_ip: 10.220.10.183/24
+  ptf_ipv6:
+  server: server_01
+  vm_base: VM0163
+  dut:
+    - bobcat-1245
+    - bobcat-1245-dpu-0
+    - bobcat-1245-dpu-1
+    - bobcat-1245-dpu-2
+    - bobcat-1245-dpu-3
+  inv_name: lab
+  comment: Mellanox MEC01 testbed
+  use_converged_peers: True
+
 - conf-name: bobcat-1240-t0-28
   group-name: vm-t2
   topo: t0-28
@@ -1577,6 +1634,25 @@
     - bobcat-1240-dpu-3
   inv_name: lab
   comment: Mellanox MEC01 testbed
+
+- conf-name: bobcat-1240-t1-d96u4
+  group-name: vm-t2
+  topo: t1-d96u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-bobcat-1240
+  ptf_ip: 10.220.10.190/24
+  ptf_ipv6:
+  server: server_01
+  vm_base: VM0063
+  dut:
+    - bobcat-1240
+    - bobcat-1240-dpu-0
+    - bobcat-1240-dpu-1
+    - bobcat-1240-dpu-2
+    - bobcat-1240-dpu-3
+  inv_name: lab
+  comment: Mellanox MEC01 testbed
+  use_converged_peers: True
 
 - conf-name: r-moose-01-t0
   group-name: vm-t1

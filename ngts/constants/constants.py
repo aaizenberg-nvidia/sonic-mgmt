@@ -1346,7 +1346,7 @@ class MarsConstants:
         "dualtor-aa-64-breakout", "t0-88-o8c80", "ptp-256", "ptp-130", "t1-isolated-d28u1", 't1-isolated-d28u4',
         "t1-isolated-d56u2", "t0-isolated-d32u32s2", "t0-isolated-v6-d32u32s2", "t0-isolated-d2u254s2", "t0-isolated-d32u32s2-mix",
         "t1-isolated-v6-d56u1-lag", "t1-48-lag", "t1-isolated-d56u1-lag", "t0-isolated-d128u128s2", "t0-isolated-d2u510s2", "t1-isolated-d510u2",
-        "bmc-dual-mgmt", "t1-isolated-d32u1s2", "t2-isolated-d128s2", "t0-d96-u30s2", "ptp-126", "t1-d118u8s2"
+        "bmc-dual-mgmt", "t1-isolated-d32u1s2", "t2-isolated-d128s2", "t0-d96-u30s2", "ptp-126", "t1-d118u8s2", "t1-d96u4"
     )
     TOPO_ARRAY_DUALTOR = ("dualtor", "dualtor-64", "dualtor-aa", "dualtor-64-breakout", "dualtor-aa-64-breakout")
     TOPO_ARRAY_HA = ("t1-smartswitch-ha",)

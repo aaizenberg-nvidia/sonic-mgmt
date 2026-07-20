@@ -1,0 +1,22 @@
+[sonic_latest]
+bobcat-1245      ansible_host=10.220.12.145 ansible_hostv6="fe80::966d:aeff:fe04:1f58" sonic_version=v2 hwsku="Mellanox-SN4280-O4X96" iface_speed=400000  mgmt_subnet_mask_length=24 vm_base=VM0001
+bobcat-1245-dpu-0      ansible_host=10.220.12.145 ansible_ssh_port=5021 ansible_hostv6="fe80::966d:aeff:fe04:1f58" sonic_version=v2 hwsku="Nvidia-bf3-com-dpu" iface_speed=400000  mgmt_subnet_mask_length=24 vm_base=VM0001
+bobcat-1245-dpu-1      ansible_host=10.220.12.145 ansible_ssh_port=5022 ansible_hostv6="fe80::966d:aeff:fe04:1f58" sonic_version=v2 hwsku="Nvidia-bf3-com-dpu" iface_speed=400000  mgmt_subnet_mask_length=24 vm_base=VM0001
+bobcat-1245-dpu-2      ansible_host=10.220.12.145 ansible_ssh_port=5023 ansible_hostv6="fe80::966d:aeff:fe04:1f58" sonic_version=v2 hwsku="Nvidia-bf3-com-dpu" iface_speed=400000  mgmt_subnet_mask_length=24 vm_base=VM0001
+bobcat-1245-dpu-3      ansible_host=10.220.12.145 ansible_ssh_port=5024 ansible_hostv6="fe80::966d:aeff:fe04:1f58" sonic_version=v2 hwsku="Nvidia-bf3-com-dpu" iface_speed=400000  mgmt_subnet_mask_length=24 vm_base=VM0001
+
+[sonic:children]
+sonic_latest
+
+[ptf]
+ptf-bobcat-1245   ansible_host=10.220.10.183 ansible_ssh_user=root ansible_ssh_pass=root
+
+[lab:children]
+sonic
+fanout
+
+[lab:vars]
+mgmt_subnet_mask_length="24"
+
+[fanout]
+leopard-1244        ansible_host=10.220.12.144 os=sonic
