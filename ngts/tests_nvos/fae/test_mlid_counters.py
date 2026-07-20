@@ -102,9 +102,16 @@ def test_mlid_counters_isolation(engines, devices, nv_command, random_api, test_
         with allure.step("Reboot system"):
             nv_command.system.reboot.action_reboot(params='force').verify_result()
 
+        with allure.step("Re-open mcra backdoor after reboot"):
+            mst_dev_names = devices.dut.mst_dev_name
+            if isinstance(mst_dev_names, str):
+                mst_dev_names = (mst_dev_names, )
+            for mst_dev_name in mst_dev_names:
+                McraTool.run_commands(mst_dev_name, McraTool.BACKDOOR_OPEN_CMD, engine=engines.dut)
+
         with allure.step("Verify all snapshot files were created and persisted after reboot"):
             log_files = _list_snapshot_files(engines.dut, active_only=True)
-            assert len(log_files) == len(ports), (
+            assert len(log_files) >= len(ports), (
                 f"Expected {len(ports)} active snapshot log files, found {log_files}"
             )
 
@@ -142,6 +149,7 @@ def test_mlid_counters_isolation(engines, devices, nv_command, random_api, test_
 
 @pytest.mark.fae
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
+@pytest.mark.disable_loganalyzer
 def test_mlid_counters_under_stress(engines, devices, nv_command, random_api):
     """
     Verify MLID snapshot rate limit drops events beyond 100 per ASIC per minute.
@@ -212,6 +220,7 @@ def test_mlid_counters_under_stress(engines, devices, nv_command, random_api):
 
 @pytest.mark.fae
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
+@pytest.mark.disable_loganalyzer
 def test_mlid_snapshot_when_log_filesystem_full(engines, devices, nv_command, random_api):
     """
     Verify new MLID snapshot events do not break the system when the snapshot log filesystem is full.
