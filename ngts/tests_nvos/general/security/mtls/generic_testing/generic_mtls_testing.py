@@ -23,7 +23,8 @@ from ngts.tests_nvos.general.security.mtls.generic_testing.helpers import verify
     verify_mtls_config, verify_connection, VerifyConnFunc
 from ngts.tests_nvos.general.security.security_test_tools.constants import AddressingType
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
-from ngts.tests_nvos.system.gnmi.helpers import get_scp_player
+from ngts.tests_nvos.system.gnmi.constants import GNMI_INSTALLED
+from ngts.tests_nvos.system.gnmi.helpers import get_scp_player, wait_for_gnmi_ready
 from ngts.ngts_types import EnginesT
 
 
@@ -291,6 +292,9 @@ def generic_test_mtls_reboot(reboot_flow: str, engines, feature_resource: MTLSab
     with allure.step('verify show'):
         verify_ca_configuration(feature_resource, installed_app_name, server_ca.cacert_name if with_save else None)
 
+    if installed_app_name == GNMI_INSTALLED:
+        wait_for_gnmi_ready(engines)
+
     with allure.step(f'verify {"no " if not with_save else ""} mtls only connection'):
         verify_connection(TestFlowType.ALL_TYPES, engines.dut, user, with_save, server_cert, server_ca,
                           non_matching_client_cert_should_work, verify_connection_func, test_certs=certs)
@@ -304,6 +308,7 @@ CleanupFunc: TypeAlias = Callable[[str, List[CertInfo], List[CertInfo]], None]
 
 def generic_mtls_factory_reset_no_params_check(setup_steps: SetupFunc, cleanup_steps: CleanupFunc,
                                                feature_resource: MTLSableServerResource,
+                                               installed_app_name: str,
                                                verify_connection_func: VerifyConnFunc,
                                                non_matching_client_cert_should_work: bool):
     """
@@ -332,6 +337,8 @@ def generic_mtls_factory_reset_no_params_check(setup_steps: SetupFunc, cleanup_s
                 with allure.step('verify no mtls after this factory reset'):
                     with allure.independent_step('verify mtls is not configured in show'):
                         verify_mtls_config(feature_resource)
+                    if installed_app_name == GNMI_INSTALLED:
+                        wait_for_gnmi_ready(engines)
                     with allure.independent_step('verify no mtls only connection'):
                         verify_connection(TestFlowType.ALL_TYPES, engines.dut, UserInfo(engines.dut.username, engines.dut.password, 'admin'),
                                           False, server_cert, server_ca, non_matching_client_cert_should_work, verify_connection_func)
@@ -373,6 +380,8 @@ def generic_mtls_factory_reset_keep_all_config_check(setup_steps: SetupFunc, cle
             with allure.step('verify mtls after this factory reset'):
                 with allure.independent_step('verify mtls is configured in show'):
                     verify_ca_configuration(feature_resource, installed_app_name, server_ca.cacert_name)
+                if installed_app_name == GNMI_INSTALLED:
+                    wait_for_gnmi_ready(engines)
                 with allure.independent_step('verify mtls only connection'):
                     verify_connection(TestFlowType.ALL_TYPES, engines.dut, UserInfo(engines.dut.username, engines.dut.password, 'admin'),
                                       True, server_cert, server_ca, non_matching_client_cert_should_work, verify_connection_func)

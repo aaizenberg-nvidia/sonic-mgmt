@@ -107,7 +107,8 @@ def test_api_mtls_reboot(reboot_flow, engines):
 
 api_mtls_factory_reset_no_params_check = generic_mtls_factory_reset_no_params_check(setup_mtls_checker,
                                                                                     cleanup_mtls_test,
-                                                                                    System().api, run_curl_and_verify,
+                                                                                    System().api, API_INSTALLED,
+                                                                                    run_curl_and_verify,
                                                                                     True)
 
 api_mtls_factory_reset_keep_all_config_check = generic_mtls_factory_reset_keep_all_config_check(setup_mtls_checker,

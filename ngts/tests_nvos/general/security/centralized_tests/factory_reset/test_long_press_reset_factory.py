@@ -18,7 +18,7 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.general.security.radius.constants import RadiusVmServer
-from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer0
+from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer1
 from ngts.tests_nvos.general.security.test_aaa_ldap.ldap_servers_info import LdapServersP3
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts, AddressingType, AuthConsts

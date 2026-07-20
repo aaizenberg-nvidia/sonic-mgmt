@@ -590,22 +590,46 @@ def check_ldap_user_with_getent_passwd(engine: ProxySshEngine, username: str, us
             assert any(row.startswith(f'{username}:') for row in rows) == user_should_exist, err_msg
 
 
-def check_ldap_user_groups_with_id(engine: ProxySshEngine, username: str, groupname: str, group_should_exist: bool) -> None:
-    with allure.step('Get id output'):
-        cmd = f'id {username}'
-        output = engine.run_cmd(cmd)
-
+def check_ldap_user_groups_with_id(engine: ProxySshEngine, username: str, groupname: str,
+                                   group_should_exist: bool, timeout: float = 0,
+                                   poll_interval: float = 1) -> None:
     groups = [groupname] if isinstance(groupname, str) else groupname
-    if group_should_exist:
-        violating_groups = [group for group in groups if f'({group})' not in output]
-    else:
-        violating_groups = [group for group in groups if f'({group})' in output]
+    cmd = f'id {username}'
+    deadline = time.monotonic() + timeout
+    output = ''
+    violating_groups = list(groups)
 
-    assert not violating_groups, (f'some groups violating the expectations.\n'
-                                  f'groups that expected{"" if group_should_exist else " not"} to exist for user "{username}": {groups}\n'
-                                  f'violating groups: {violating_groups}\n'
-                                  f'cmd: {cmd}\n'
-                                  f'full output: {output}')
+    with allure.step('Get id output'):
+        while True:
+            output = engine.run_cmd(cmd)
+            if group_should_exist:
+                violating_groups = [group for group in groups if f'({group})' not in output]
+            else:
+                violating_groups = [group for group in groups if f'({group})' in output]
+
+            if not violating_groups:
+                return
+
+            if time.monotonic() >= deadline:
+                timeout_note = (
+                    f'timed out after {timeout}s waiting for LDAP user groups to reach expected state.\n'
+                    if timeout > 0 else ''
+                )
+                raise AssertionError(
+                    f'{timeout_note}'
+                    f'some groups violating the expectations.\n'
+                    f'groups that expected{"" if group_should_exist else " not"} '
+                    f'to exist for user "{username}": {groups}\n'
+                    f'violating groups: {violating_groups}\n'
+                    f'cmd: {cmd}\n'
+                    f'full output: {output}'
+                )
+
+            logging.info(
+                'LDAP groups %s have not reached the expected state for user %s; retrying in %ss',
+                violating_groups, username, poll_interval,
+            )
+            time.sleep(poll_interval)
 
 
 # ==================== FIPS Mode Management Functions ====================
