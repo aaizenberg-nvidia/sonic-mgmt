@@ -24,6 +24,7 @@ KEEP_ALL_CONFIG = "keep all-config"
 KEEP_ONLY_FILES = "keep only-files"
 KEEP_BASIC = "keep basic"
 DO_NOT_CHECK_DOCKERS = ['snmp']
+KEEP_SDK_FILES = "keep sdk-files"
 
 
 @retry.retry(RuntimeError, tries=4, delay=5)
@@ -233,6 +234,12 @@ def verify_cleanup_done_for_ib(engine, time_before_rf, system, username, param='
             output = engine.run_cmd("ls /var/dump/ 2>/dev/null || true")
             if output and "No such file or directory" not in output:
                 errors += f"\n/var/dump was not cleaned up after factory reset: {output}"
+
+    with allure.step("verify cleanup for sdk files in paths matching to pattern: /var/log/mellanox/sdk*"):
+        if param != KEEP_SDK_FILES:
+            output = engine.run_cmd("ls /var/log/mellanox/sdk* 2>/dev/null || true")
+            if output and "No such file or directory" not in output:
+                errors += f"\n/var/log/mellanox/sdk* was not cleaned up after factory reset: {output}"
 
     with allure.step("Verify old stats internal files were deleted"):
         if param != KEEP_ONLY_FILES:
