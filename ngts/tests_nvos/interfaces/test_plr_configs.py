@@ -49,7 +49,7 @@ PLR_MODES_MAPPER = {
 @pytest.fixture(scope='module', autouse=True)
 def cleanup_plr_config(access_ports: Port):
     yield
-    access_ports.interface.link.plr.unset('mode', apply=True, ask_for_confirmation=True)
+    access_ports.interface.link.plr.unset(apply=True, ask_for_confirmation=True)
     helpers.reboot_gpus()
 
 
@@ -171,6 +171,7 @@ def test_plr_cli_flow(engines: EnginesT, devices: DevicesT, access_ports: Port, 
 
         with allure.step(f'Set {random_mode} mode'):
             logger.info(f"Setting PLR mode to {random_mode} on port {port.name}")
+            access_ports.interface.link.plr.set('negotiation-mode', 'force-peer')
             access_ports.interface.link.plr.set('mode', random_mode, apply=True, ask_for_confirmation=True)
             register_cleanup(cleanup_func_ptr := partial(_cleanup, access_ports))
 
@@ -182,7 +183,7 @@ def test_plr_cli_flow(engines: EnginesT, devices: DevicesT, access_ports: Port, 
 
     with allure.step('Unset PLR mode'):
         logger.info(f"Unsetting PLR mode on port {port.name}")
-        access_ports.interface.link.plr.unset('mode', apply=True, ask_for_confirmation=True)
+        access_ports.interface.link.plr.unset(apply=True, ask_for_confirmation=True)
         with allure.step(f"Wait for port {port.name} to be up"):
             port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP, InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         helpers.reboot_gpus()  # need to reboot the GPUs to ensure that link will go up
