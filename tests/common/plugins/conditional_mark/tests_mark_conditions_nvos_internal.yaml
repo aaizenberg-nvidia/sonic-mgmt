@@ -653,13 +653,6 @@ tests_nvos/multi_asic/test_fatal_mode.py:
     conditions:
     - https://redmine.mellanox.com/issues/4780661
 
-tests_nvos/system/issu/test_system_issu.py:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5049077'
-    conditions:
-    - https://redmine.mellanox.com/issues/5049077
-
-
 tests_nvos/system/gnmi/test_gnmi_server.py::test_simulate_gnmi_server_failure:
   skip:
     reason: '[NVOS - Design] Bug SW #4841879: [nv-gNMI] No system health events when
@@ -719,15 +712,19 @@ tests_nvos/cluster/test_nmx_t_distributed.py:
 tests_nvos/system/test_system_health.py::test_show_system_health:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
+    - '''simx'' in testbed'
 
 tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
   regex: true
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
+    - '''simx'' in testbed'
 
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:
