@@ -26,6 +26,14 @@ KEEP_BASIC = "keep basic"
 DO_NOT_CHECK_DOCKERS = ['snmp']
 
 
+@retry.retry(RuntimeError, tries=4, delay=5)
+def _retry_docker_inspect(engine, docker_name):
+    output = engine.run_cmd(r"docker inspect -f \{\{'.Created'\}\} " + docker_name)
+    if "Error" in output:
+        raise RuntimeError(output)
+    return output
+
+
 def update_timezone(system):
     with allure.step('Configure timezone'):
         logger.info(
@@ -321,6 +329,11 @@ def verify_cleanup_done_for_ib(engine, time_before_rf, system, username, param='
                 if docker_name.startswith('nmx'):
                     continue
                 output = engine.run_cmd(r"docker inspect -f \{\{'.Created'\}\} " + docker_name)
+                if docker_name == NvosConst.NV_GNMI_DOCKER and "Error" in output:
+                    try:
+                        output = _retry_docker_inspect(engine, docker_name)
+                    except RuntimeError as error:
+                        output = str(error)
                 if "Error" in output:
                     create_time = ""
                 else:
