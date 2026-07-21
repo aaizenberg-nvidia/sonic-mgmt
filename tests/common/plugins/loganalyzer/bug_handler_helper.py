@@ -151,26 +151,22 @@ def handle_log_analyzer_errors(cli_type, branch, test_name, duthost, log_analyze
                         logger.info(f"{yaml_file_path} exists?: {os.path.exists(yaml_file_path)}")
                         if yaml_file_path:
                             with allure.step("Run Bug Handler on Log Analyzer error"):
-                                start_time = time.perf_counter()
-                                # logger.info(f"Run Bug Handler on Log Analyzer error: {error_group}")
                                 error_dict = {BugHandlerConst.LA_ERROR: error_group}
-                                error_dict.update(
-                                    bug_handler_wrapper_err_msg(
-                                        conf_path,
-                                        redmine_project,
-                                        branch,
-                                        yaml_file_path,
-                                        BugHandlerConst.BUG_HANDLER_LOG_ANALYZER_USER,
-                                        BugHandlerConst.BUG_HANDLER_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_SCRIPT["default"]),
-                                        bug_handler_action,
-                                        bug_handler_params
-                                    )
+                                bug_handler_file_result, bug_handler_runtime_secs = bug_handler_wrapper_err_msg(
+                                    conf_path,
+                                    redmine_project,
+                                    branch,
+                                    yaml_file_path,
+                                    BugHandlerConst.BUG_HANDLER_LOG_ANALYZER_USER,
+                                    BugHandlerConst.BUG_HANDLER_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_SCRIPT["default"]),
+                                    bug_handler_action,
+                                    bug_handler_params
                                 )
+                                error_dict.update(bug_handler_file_result)
                                 bug_handler_dumps_results.append(error_dict)
                                 list_of_bugs_ids.append(error_dict.get(BugHandlerConst.BUG_HANDLER_BUG_ID, ''))
-                                runtime_secs = time.perf_counter() - start_time
-                                logger.info(f"Bug handler took {timedelta(seconds=runtime_secs)} seconds for trace number {trace_number}")
-                                _record_la_bug_handler_result(hostname, error_dict, runtime_secs)
+                                logger.info(f"Bug handler took {timedelta(seconds=bug_handler_runtime_secs)} seconds for trace number {trace_number}")
+                                _record_la_bug_handler_result(hostname, error_dict, bug_handler_runtime_secs)
         except Exception as err:
             logger.error("Bug handler failed")
             raise err

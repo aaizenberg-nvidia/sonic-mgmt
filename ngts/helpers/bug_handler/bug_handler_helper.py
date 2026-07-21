@@ -10,6 +10,7 @@ import logging
 import allure
 import math
 import pathlib
+import time
 
 from ansible.utils.unsafe_proxy import AnsibleUnsafeText
 from collections.abc import Mapping, Iterable
@@ -273,8 +274,9 @@ def run_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, u
     return bug_handler_file_result
 
 
-def bug_handler_wrapper_err_msg(conf_path, redmine_project, branch, yaml_parsed_file, user,
-                                bug_handler_path, bug_handler_action={}, bug_handler_params={}):
+def bug_handler_wrapper_err_msg(conf_path: str, redmine_project: str, branch: str, yaml_parsed_file: str,
+                                user: str, bug_handler_path: str, bug_handler_action: dict = {},
+                                bug_handler_params: dict = {}) -> tuple[dict, float]:
     """
     call bug handler on sanitizer or log analyzer file and return results as dictionary
     :param conf_path: i.e, /tmp/sonic_bug_handler.conf
@@ -285,27 +287,34 @@ def bug_handler_wrapper_err_msg(conf_path, redmine_project, branch, yaml_parsed_
     :param bug_handler_path: i.e /auto/sw_tools/Internal/BugHandling/bin/handle_bug.py
     :param bug_handler_action: a dictionary that defined the actions for the bughandler
     :param bug_handler_params: a dictionary to define the params of the bughandler
-    :return: dictionary with bug handler results,
+    :return: tuple of (bug handler result dict, runtime in seconds),
     i.e,
-    {'file_name': '2022-06-21_23-24-07_orchagent-asan.log.40',
+    ({'file_name': '2022-06-21_23-24-07_orchagent-asan.log.40',
     'messages': ['INFO:handle_bug:reading configuration from', ...],
     'rc': 0,
     'action': 'update',
-    'bug_id': '1122554'}
+    'bug_id': '1122554'}, 1.23)
     """
 
-    bug_handler_file_result = run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, user,
-                                                           bug_handler_path, bug_handler_action, bug_handler_params)
+    bug_handler_file_result, runtime_secs = run_err_msg_bug_handler_tool(
+        conf_path, redmine_project, branch, yaml_parsed_file, user,
+        bug_handler_path, bug_handler_action, bug_handler_params)
 
     logger.info(f"Bug Handler RC: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_RC]}")
     logger.info(f"Bug Handler Status: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_STATUS]}")
     logger.info(f"Bug Handler Action: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_ACTION]}")
-    return bug_handler_file_result
+    return bug_handler_file_result, runtime_secs
 
 
-def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, user, bug_handler_path,
-                                 bug_handler_action={}, bug_handler_params={}):
+def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: str, yaml_parsed_file: str,
+                                 user: str, bug_handler_path: str, bug_handler_action: dict = {},
+                                 bug_handler_params: dict = {}) -> tuple[dict, float]:
+    """
+    Run the bug handler tool for an error-message yaml file.
 
+    :return: tuple of (bug handler result dict, runtime in seconds)
+    """
+    runtime_secs = 0.0
     bug_handler_create_action = bug_handler_action.get("create", False)
     bug_handler_update_action = bug_handler_action.get("update", False)
     bug_handler_no_action = not bug_handler_create_action and not bug_handler_update_action
@@ -317,8 +326,10 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
     cli_type = bug_handler_params.get("cli_type", '')
     if cli_type == "Sonic":
 
+        start_time = time.perf_counter()
         bug_handler_file_result = run_bug_handler_with_no_action(
             conf_path, redmine_project, branch, yaml_parsed_file, user, bug_handler_path)
+        runtime_secs = time.perf_counter() - start_time
         if not bug_handler_no_action:
             action_mode = get_action_based_on_no_action_results(
                 bug_handler_file_result, branch, bug_handler_params, bug_handler_update_action)
@@ -340,7 +351,9 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
             f"--user {user} --branch {branch} --debug_level 2 " \
             f"--parsed_data '{yaml_parsed_file}' {no_action} {update_only_mode}"
 
+        start_time = time.perf_counter()
         bug_handler_output = _run_bug_handler_command(bug_handler_cmd)
+        runtime_secs = time.perf_counter() - start_time
         logger.info(f"Bug Handler Output: {bug_handler_output}")
         try:
             bug_handler_file_result = json.loads(bug_handler_output.message)
@@ -381,7 +394,7 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
             logger.error(f"Failed to upload the file: {upload_error}")
 
         bug_handler_file_result["file_name"] = ",".join(tar_file_path_list)
-    return bug_handler_file_result
+    return bug_handler_file_result, runtime_secs
 
 
 def handle_file_size_exceedance(tar_file_path):
