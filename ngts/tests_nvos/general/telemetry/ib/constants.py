@@ -390,6 +390,13 @@ NMXT_XCSET_ENDPOINT = "/csv/xcset/ib_nvos"
 NMXT_CONTROL_SOCKET = "/var/run/nmx-t/ib/control.sock"
 
 
+# gRPC Connection API socket. The daemon keeps a connection to it open; if it is
+# missing the connector times out and the daemon wipes the last-good rows. The
+# malformed-feed interceptor must bind/listen here (no responses needed) so the
+# parse-failure path is exercised without tripping the connector-timeout wipe.
+NMXT_CONNECTOR_SOCKET = "/var/run/nmx-t/ib/connector.sock"
+
+
 # xcset CSV counter column -> COUNTERS_DB SAI field (xcset already uses SAI names).
 NMXT_XCSET_TO_DB_FIELD = {
     "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT": "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT",

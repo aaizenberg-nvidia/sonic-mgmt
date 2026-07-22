@@ -11,6 +11,7 @@ from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
 from ngts.tests_nvos.general.telemetry.ib.constants import (
@@ -116,6 +117,47 @@ def _wait_for_xcset_parse_failure(engines, baseline: int,
             return True
         time.sleep(min(interval, 2))
     return False
+
+
+# NMX-T-for-IB outage: the daemon retries the backend a few times, then declares it
+# unrecoverable and intentionally drops the stale rows (dev decision, Ayal). Key off the
+# log wording rather than the attempt count so the check survives the count changing.
+NMXT_UNRECOVERABLE_TOKEN = "nmx-t backend unrecoverable after"
+NMXT_UNRECOVERABLE_DEADLINE_SEC = 3 * MINUTE
+
+
+def _nmxt_unrecoverable_logged(engines, since: str) -> bool:
+    """True once peer-telemetry declares the backend unrecoverable in the journal after ``since``."""
+    log = (ibh.read_gpu_telemetry_log(engines, since=since) or "").lower()
+    return NMXT_UNRECOVERABLE_TOKEN in log
+
+
+def _wait_for_nmxt_unrecoverable(engines, since: str,
+                                 deadline_sec: int = NMXT_UNRECOVERABLE_DEADLINE_SEC) -> bool:
+    """Poll until a 'backend unrecoverable' declaration is logged after ``since``.
+
+    Scoping the search to the outage window keeps a stale line from an earlier outage - the
+    journal spans prior runs - from satisfying the wait too early, without the tail-scrolling
+    fragility of counting occurrences in a fixed-size tail.
+    """
+    interval = _peer_port_interval_sec()
+    deadline = time.time() + deadline_sec
+    while time.time() < deadline:
+        if _nmxt_unrecoverable_logged(engines, since):
+            return True
+        time.sleep(min(interval, 5))
+    return False
+
+
+def _wait_for_hca_rows(engines, *, present: bool, deadline_sec: int) -> Dict[str, Dict[str, str]]:
+    """Poll the HCA peer-port rows until they are present / absent, or the deadline passes."""
+    interval = _peer_port_interval_sec()
+    deadline = time.time() + deadline_sec
+    rows = ibh.list_hca_peer_rows(engines)
+    while bool(rows) != present and time.time() < deadline:
+        time.sleep(min(interval, 5))
+        rows = ibh.list_hca_peer_rows(engines)
+    return rows
 
 
 def _require_hca_topology(setup_topology) -> List:
@@ -1152,7 +1194,7 @@ def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology
 @pytest.mark.multiplanar
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
-    """On an NMX-T-for-IB outage: rows preserved, health -> degraded, recovery logged; health -> healthy on return."""
+    """NMX-T-for-IB outage: rows retained while transient, removed once deemed unrecoverable, restored on return."""
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines)
 
@@ -1166,52 +1208,80 @@ def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
             "expected healthy. Confirm the health key/values with dev (HLD §6.1.2)."
         )
 
-    with allure.step("Make NMX-T Lite unreachable"):
-        ibh.make_nmxt_lite_unreachable(engines)
+    # Negative flow: while NMX-T-for-IB is down the daemon retries the backend and logs the
+    # outage; once the failure is deemed persistent it logs "nmx-t backend unrecoverable
+    # after ..." (kept at error level by design) and intentionally drops the stale rows
+    # (dev decision, Ayal). Suppress LogAnalyzer over the whole deliberate outage window;
+    # LogAnalyzer stays active for the pre-outage setup above.
+    with loganalyzer_ignore():
+        with allure.step("Make NMX-T Lite unreachable"):
+            # Mark the outage start so the unrecoverable-declaration search is scoped to this
+            # window and can't be satisfied by a stale line from an earlier outage.
+            outage_since = ibh.dut_journal_since_marker(engines)
+            ibh.make_nmxt_lite_unreachable(engines)
 
-    try:
-        with allure.step("After >= 2 sampling cycles: rows preserved, health degraded, backoff logged"):
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            during = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows during outage", during)
-            # Retention: the row SET must match the pre-outage snapshot.
-            assert set(during) == set(snapshot), (
-                "HCA rows were added/dropped during the NMX-T Lite outage; FS §6.1.2 "
-                "requires the last-good rows to be retained. "
-                f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
-            )
-            # Frozen within the outage: re-sample and require byte-identical rows.
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            during_b = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows later in outage", during_b)
-            drift = "were WIPED" if not during_b else "kept changing"
-            assert during_b == during, (
-                f"HCA rows {drift} across the NMX-T Lite outage window "
-                f"(during={len(during)} rows, ~{2 * PEER_TELEMETRY_SAMPLING_SEC}s later="
-                f"{len(during_b)} rows): with the backend unreachable the daemon must "
-                "retain the last-good rows (stale but consistent, FS §6.1.2), not drop "
-                "or keep updating them."
-            )
-            health, raw = ibh.read_peer_telemetry_health(engines)
-            assert health == "degraded", (
-                f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
-            )
-            log = ibh.read_gpu_telemetry_log(engines)
-            lowered = log.lower()
-            assert "unreachable" in lowered or "nmx" in lowered, (
-                "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
-            )
-            # Recovery action: auto-restart or retry/backoff wording.
-            assert any(tok in lowered for tok in ("retry", "backoff", "restart")), (
-                "peer-telemetry log shows no retry/backoff/restart recovery attempt during the outage"
-            )
-    finally:
-        with allure.step("Restore NMX-T Lite"):
-            ibh.restore_nmxt_lite(engines)
+        try:
+            with allure.step("While the outage is still transient: last-good rows retained, health degraded"):
+                time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
+                during = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows during transient outage", during)
+                # Retention while transient: the row SET must still match the pre-outage snapshot.
+                assert set(during) == set(snapshot), (
+                    "HCA rows were added/dropped while the NMX-T Lite outage was still transient; "
+                    "the last-good rows must be retained until the failure is deemed persistent. "
+                    f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
+                )
+                health, raw = ibh.read_peer_telemetry_health(engines)
+                assert health == "degraded", (
+                    f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
+                )
+                log = ibh.read_gpu_telemetry_log(engines)
+                lowered = log.lower()
+                assert "unreachable" in lowered or "nmx" in lowered, (
+                    "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
+                )
 
+            with allure.step("Once the failure is deemed persistent: last-good rows are intentionally removed"):
+                # Dev decision (Ayal): after the backend is declared unrecoverable the daemon drops
+                # the stale rows instead of serving them forever. Key off the log wording (robust to
+                # the restart-attempt count changing), then require the rows to drain.
+                assert _wait_for_nmxt_unrecoverable(engines, outage_since), (
+                    "peer-telemetry never logged 'nmx-t backend unrecoverable after ...' during the "
+                    f"outage (waited {NMXT_UNRECOVERABLE_DEADLINE_SEC}s); expected the daemon to declare "
+                    "the NMX-T-for-IB failure persistent"
+                )
+                remaining = _wait_for_hca_rows(engines, present=False,
+                                               deadline_sec=2 * PEER_TELEMETRY_SAMPLING_SEC)
+                ibh.attach_dict("rows after persistence declared", remaining)
+                assert not remaining, (
+                    "HCA rows were still present after the NMX-T-for-IB failure was declared "
+                    "unrecoverable; expected the daemon to remove the stale rows. "
+                    f"remaining={sorted(remaining)!r}"
+                )
+        finally:
+            with allure.step("Restore NMX-T Lite"):
+                ibh.restore_nmxt_lite(engines)
+
+    # LogAnalyzer is re-enabled here (outside the ignore): recovery should be clean, so any
+    # unexpected error log during the post-restore validation is a real regression to catch.
     with allure.step("After recovery: ingestion resumes and health is healthy again"):
-        time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
-        health, raw = ibh.read_peer_telemetry_health(engines)
+        # Wait for the full pre-outage peer set to return, not just any row - a partial
+        # re-ingestion would otherwise pass the "restored on return" claim. Size the
+        # deadline off the live sampling interval, but never below the constant so a
+        # smaller configured interval can't starve the nmx-t-ib restart + rediscovery.
+        interval = max(_peer_port_interval_sec(), PEER_TELEMETRY_SAMPLING_SEC)
+        resumed, still_missing = ibh.wait_for_hca_peer_rows(
+            engines, required=set(snapshot),
+            timeout_sec=PEER_PORT_ENABLE_GRACE_SEC + 2 * interval,
+        )
+        ibh.attach_dict("rows after recovery", resumed)
+        # Poll for health rather than a one-shot read: the classification can lag row
+        # reappearance and pass through transient states during the daemon's warm-up.
+        health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
+        assert not still_missing, (
+            "HCA rows did not fully resume after NMX-T Lite was restored; "
+            f"missing peers={sorted(still_missing)!r}, snapshot={sorted(snapshot)!r}"
+        )
         assert health == "healthy", (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
@@ -1245,54 +1315,62 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
         )
         parse_fail_baseline = _count_xcset_parse_failures(engines)
 
-    with allure.step("Serve a malformed HCA xcset from NMX-T-for-IB"):
-        ibh.inject_malformed_hca_xcset(engines)
+    # Negative flow: the malformed feed makes the daemon log expected parse-failure
+    # warnings (Redmine 5159311). Ignore them for LogAnalyzer over the deliberate
+    # malformed-feed window; LogAnalyzer stays active for the pre-injection setup above.
+    with loganalyzer_ignore():
+        with allure.step("Serve a malformed HCA xcset from NMX-T-for-IB"):
+            ibh.inject_malformed_hca_xcset(engines)
 
-    try:
-        with allure.step("Wait for the malformed feed to take effect (a new CSV parse failure is logged)"):
-            assert _wait_for_xcset_parse_failure(engines, parse_fail_baseline), (
-                "No CSV parse-failure logged after serving a malformed xcset; the interceptor "
-                "may not have taken over the telemetry socket (injection ineffective)"
-            )
+        try:
+            with allure.step("Wait for the malformed feed to take effect (a new CSV parse failure is logged)"):
+                assert _wait_for_xcset_parse_failure(engines, parse_fail_baseline), (
+                    "No CSV parse-failure logged after serving a malformed xcset; the interceptor "
+                    "may not have taken over the telemetry socket (injection ineffective)"
+                )
 
-        with allure.step("During the malformed feed: rows are frozen (stale but consistent), none dropped"):
-            # Baseline the freeze after the feed is unparseable; compare within the window.
-            frozen_a = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows at start of malformed feed", frozen_a)
-            assert set(frozen_a) == set(snapshot), (
-                "HCA rows were added/dropped during the malformed feed; FS §6.1.2 requires the "
-                f"last-good rows to be retained. before={sorted(snapshot)!r}, during={sorted(frozen_a)!r}"
-            )
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            frozen_b = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows later in malformed feed", frozen_b)
-            assert frozen_b == frozen_a, (
-                "HCA rows changed across the malformed-feed window; on a parse failure the daemon "
-                "must not write the batch (stale but consistent / no partial writes, FS §6.1.2). "
-                "Expected the journal's 'retaining last ... snapshot' behaviour to hold the rows steady."
-            )
+            with allure.step("During the malformed feed: rows are frozen (stale but consistent), none dropped"):
+                # Baseline the freeze after the feed is unparseable; compare within the window.
+                frozen_a = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows at start of malformed feed", frozen_a)
+                assert set(frozen_a) == set(snapshot), (
+                    "HCA rows were added/dropped during the malformed feed; FS §6.1.2 requires the "
+                    f"last-good rows to be retained. before={sorted(snapshot)!r}, during={sorted(frozen_a)!r}"
+                )
+                time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
+                frozen_b = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows later in malformed feed", frozen_b)
+                assert frozen_b == frozen_a, (
+                    "HCA rows changed across the malformed-feed window; on a parse failure the daemon "
+                    "must not write the batch (stale but consistent / no partial writes, FS §6.1.2). "
+                    "Expected the journal's 'retaining last ... snapshot' behaviour to hold the rows steady."
+                )
 
-        with allure.step("Parse failure is logged"):
-            log = ibh.read_gpu_telemetry_log(engines)
-            assert any(tok in log.lower() for tok in ("malformed", "parse", "invalid")), (
-                "peer-telemetry log shows no parse-failure error for the malformed xcset"
-            )
+            with allure.step("Parse failure is logged"):
+                log = ibh.read_gpu_telemetry_log(engines)
+                assert any(tok in log.lower() for tok in ("malformed", "parse", "invalid")), (
+                    "peer-telemetry log shows no parse-failure error for the malformed xcset"
+                )
 
-        with allure.step("Health reflects the parse failure (FS §6.1.2: update health state -> degraded)"):
-            health, raw = ibh.read_peer_telemetry_health(engines)
-            assert health == "degraded", (
-                f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the malformed "
-                "feed; FS §6.1.2 requires the daemon to update health state to degraded."
-            )
-    finally:
-        with allure.step("Restore a valid HCA xcset"):
-            ibh.restore_valid_hca_xcset(engines)
+            with allure.step("Health reflects the parse failure (FS §6.1.2: update health state -> degraded)"):
+                health, raw = ibh.read_peer_telemetry_health(engines)
+                assert health == "degraded", (
+                    f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the malformed "
+                    "feed; FS §6.1.2 requires the daemon to update health state to degraded."
+                )
+        finally:
+            with allure.step("Restore a valid HCA xcset"):
+                ibh.restore_valid_hca_xcset(engines)
 
+    # LogAnalyzer is re-enabled here (outside the ignore): recovery should be clean, so any
+    # unexpected error log during the post-restore validation is a real regression to catch.
     with allure.step("After recovery: ingestion resumes and health is healthy again"):
         time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
         during = ibh.list_hca_peer_rows(engines)
         assert during, "HCA rows did not resume after a valid xcset was restored"
-        health, raw = ibh.read_peer_telemetry_health(engines)
+        # Poll for health rather than a one-shot read: the classification can lag row
+        # reappearance and pass through transient states during the daemon's warm-up.
+        health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
         assert health == "healthy", (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )

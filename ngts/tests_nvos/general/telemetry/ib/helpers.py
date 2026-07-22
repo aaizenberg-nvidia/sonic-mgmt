@@ -60,6 +60,7 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     LINK_RECOVERY_POLL_SEC,
     LINK_RECOVERY_TIMEOUT_SEC,
     LINK_STATE_RECOVERY_LEAVES,
+    NMXT_CONNECTOR_SOCKET,
     NMXT_CONTROL_SOCKET,
     NMXT_IB_CONTAINER,
     NMXT_IB_SERVICE,
@@ -1804,10 +1805,23 @@ def read_peer_telemetry_health(engines) -> Tuple[str, Dict[str, str]]:
     return classify_peer_health(raw), raw
 
 
-def read_gpu_telemetry_log(engines, tail: int = 400) -> str:
-    """Return the last `tail` lines of the peer-telemetry (consumer) journal."""
-    cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager -n {tail} 2>&1"
+def read_gpu_telemetry_log(engines, tail: int = 400, since: Optional[str] = None) -> str:
+    """Return peer-telemetry (consumer) journal lines.
+
+    With ``since`` (a ``journalctl``-compatible timestamp) only entries from that moment on
+    are returned - use it to scope a search to a specific window and skip stale history.
+    Otherwise the last ``tail`` lines are returned.
+    """
+    if since:
+        cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager --since '{since}' 2>&1"
+    else:
+        cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager -n {tail} 2>&1"
     return engines.dut.run_cmd(cmd) or ""
+
+
+def dut_journal_since_marker(engines) -> str:
+    """DUT-local timestamp (``YYYY-MM-DD HH:MM:SS``) usable as a ``journalctl --since`` boundary."""
+    return (engines.dut.run_cmd("date '+%Y-%m-%d %H:%M:%S'") or "").strip()
 
 
 def restart_gpu_telemetry(engines, settle_sec: int = 15) -> None:
@@ -1911,13 +1925,16 @@ def restore_nmxt_lite(engines) -> None:
 
 
 # HTTP-over-unix-socket server impersonating NMX-T-for-IB (fronts telemetry +
-# control sockets). Argv: ctrl_sock tele_sock csv.
+# control sockets) plus a bare listener on the gRPC connector socket. Without a
+# live connector the daemon times out and wipes the last-good rows, so we only
+# need to accept and hold the connection open (no gRPC responses - dev-confirmed,
+# Joe). Argv: ctrl_sock tele_sock csv connector_sock.
 _NMXT_FAKE_SERVER = r'''
-import os, sys, threading, time
+import os, sys, socket, threading, time
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn, UnixStreamServer
 
-CTRL, TELE, CSV = sys.argv[1], sys.argv[2], sys.argv[3]
+CTRL, TELE, CSV, CONN = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 HEALTH = b'{"message":"OK","status":0}'
 with open(CSV, "rb") as fh:
     BODY = fh.read()
@@ -1957,8 +1974,36 @@ def serve(path):
     os.chmod(path, 0o666)
     srv.serve_forever()
 
+def serve_connector(path):
+    # gRPC connector: the daemon only needs a live peer to avoid the connect
+    # timeout that would wipe the rows, so accept and hold connections open
+    # without ever replying. Each connection is held on its own thread and
+    # closed once the peer goes away, so reconnect churn can't leak FDs.
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(path)
+    os.chmod(path, 0o666)
+    sock.listen(128)
+
+    def hold(conn):
+        try:
+            while conn.recv(4096):
+                pass  # drain and ignore - never reply
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    while True:
+        conn, _ = sock.accept()
+        threading.Thread(target=hold, args=(conn,), daemon=True).start()
+
 for _p in (CTRL, TELE):
     threading.Thread(target=serve, args=(_p,), daemon=True).start()
+threading.Thread(target=serve_connector, args=(CONN,), daemon=True).start()
 time.sleep(3600)
 '''
 
@@ -2003,8 +2048,8 @@ def inject_malformed_hca_xcset(engines) -> None:
         time.sleep(3)  # let the real daemon release its sockets
         engines.dut.run_cmd(
             f"sudo bash -c 'nohup python3 {_NMXT_FAKE_SCRIPT_PATH} {NMXT_CONTROL_SOCKET} "
-            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} >{_NMXT_FAKE_LOG_PATH} 2>&1 "
-            f"< /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
+            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} {NMXT_CONNECTOR_SOCKET} "
+            f">{_NMXT_FAKE_LOG_PATH} 2>&1 < /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
         )
 
 
@@ -2015,7 +2060,9 @@ def restore_valid_hca_xcset(engines) -> None:
             f"sudo bash -c 'kill $(cat {_NMXT_FAKE_PID_PATH} 2>/dev/null) 2>/dev/null; "
             "pkill -f \"[p]eerport_nmxt_fake.py\" 2>/dev/null; true'"
         )
-        engines.dut.run_cmd(f"sudo rm -f {NMXT_XCSET_SOCKET} {NMXT_CONTROL_SOCKET}")
+        engines.dut.run_cmd(
+            f"sudo rm -f {NMXT_XCSET_SOCKET} {NMXT_CONTROL_SOCKET} {NMXT_CONNECTOR_SOCKET}"
+        )
         engines.dut.run_cmd(
             f"sudo rm -f {_NMXT_FAKE_CSV_PATH} {_NMXT_FAKE_PID_PATH} "
             f"{_NMXT_FAKE_SCRIPT_PATH} {_NMXT_FAKE_LOG_PATH}"
