@@ -724,7 +724,7 @@ tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
     conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
-    - '''simx'' in testbed'
+
 
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:
