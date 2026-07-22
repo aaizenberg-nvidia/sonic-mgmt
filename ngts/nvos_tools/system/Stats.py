@@ -21,12 +21,17 @@ class Stats(BaseComponent):
 
 
 class StatsCategory(BaseComponent):
-    categoryName = {}
-
     def __init__(self, parent_obj, devices_dut):
         BaseComponent.__init__(self, parent=parent_obj, path='/category')
+        # Per instance: a shared dict would keep categories a later device prunes,
+        # and hand back objects still parented to the System that registered them.
+        self.categoryName = {}
         if devices_dut:
             for name in devices_dut.category_list:
+                self.categoryName.update({name: StatsCategoryName(self, name)})
+            # Counters Historical Analysis categories are kept in a separate list on
+            # the device so the existing stats suite is unaffected; register them here.
+            for name in getattr(devices_dut, 'new_category_list', []):
                 self.categoryName.update({name: StatsCategoryName(self, name)})
             self.categoryName.update(
                 {StatsConsts.INVALID_CATEGORY_NAME: StatsCategoryName(self, StatsConsts.INVALID_CATEGORY_NAME)})

@@ -439,6 +439,7 @@ class IbSwitch(BaseSwitch):
         self.mst_dev_name = ('/dev/mst/mt54002_pciconf0')
         self.category_list = ['temperature', 'cpu', 'disk', 'power', 'fan', 'mgmt-interface', 'voltage']
         self.category_disk_interval_default = '30'
+        self.category_temperature_interval_default = '1'
         self.system_profile_default_values = ['enabled', '2048', 'disabled', 'disabled', '1']
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/crocodile_versions.json"
         self.erot_fw_image_info = self.ErotFirmwareImagesTestConsts(
@@ -522,8 +523,18 @@ class IbSwitch(BaseSwitch):
             StatsConsts.INTERVAL: self.category_disk_interval_default,
             StatsConsts.STATE: StatsConsts.State.DISABLED.value
         }
+        self.category_temperature_default_dict = {
+            StatsConsts.HISTORY_DURATION: StatsConsts.HISTORY_DURATION_DEFAULT,
+            StatsConsts.INTERVAL: self.category_temperature_interval_default,
+            StatsConsts.STATE: StatsConsts.STATE_DEFAULT
+        }
+        self.category_temperature_default_disable_dict = {
+            StatsConsts.HISTORY_DURATION: StatsConsts.HISTORY_DURATION_DEFAULT,
+            StatsConsts.INTERVAL: self.category_temperature_interval_default,
+            StatsConsts.STATE: StatsConsts.State.DISABLED.value
+        }
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -532,13 +543,26 @@ class IbSwitch(BaseSwitch):
             self.category_list[6]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
             self.category_list[4]: self.category_default_dict,
             self.category_list[5]: self.category_default_dict,
             self.category_list[6]: self.category_default_dict
+        }
+
+        # Counters Historical Analysis new categories (interface / peer-port /
+        # transceivers), shared by all IB and NVL switches. Kept in a separate list
+        # so the existing stats suite (which iterates category_list) is unaffected;
+        # the new suite discovers the categories actually present at runtime and
+        # skips the ones a given platform prunes.
+        self.new_category_list = [StatsConsts.INTERFACE, StatsConsts.PEER_PORT, StatsConsts.TRANSCEIVERS]
+        self.new_category_list_default_dict = {
+            name: StatsConsts.NEW_CATEGORY_DEFAULT_DICT for name in self.new_category_list
+        }
+        self.new_category_disabled_dict = {
+            name: StatsConsts.NEW_CATEGORY_DEFAULT_DISABLED_DICT for name in self.new_category_list
         }
 
         # NVUE logic-relock defaults (override per switch class, e.g. BlackMamba)
@@ -1849,7 +1873,7 @@ class JulietSwitch(NvLinkSwitch):
         self.supported_nvl_speeds = ['200G', '400G']
         self.category_list = ['temperature', 'cpu', 'disk', 'fan', 'mgmt-interface', 'voltage']
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -1857,7 +1881,7 @@ class JulietSwitch(NvLinkSwitch):
             self.category_list[5]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
@@ -2484,7 +2508,7 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
-            self.category_list[4]: self.category_default_disabled_dict,
+            self.category_list[4]: self.category_temperature_default_disable_dict,
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
@@ -2492,7 +2516,7 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
-            self.category_list[4]: self.category_default_dict,
+            self.category_list[4]: self.category_temperature_default_dict,
             self.category_list[5]: self.category_default_dict,
         }
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/juliet_gb300_versions.json"
@@ -2812,7 +2836,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                 FW_COMPONENT_BIOS,
                                 FW_COMPONENT_EROT]
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -2820,7 +2844,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,

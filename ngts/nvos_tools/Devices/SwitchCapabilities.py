@@ -89,6 +89,26 @@ class NoFanCapability(BaseCapability):
         )
 
 
+class NoTransceiverCapability(BaseCapability):
+    """Capability for switches without transceivers (transceivers stats category pruned)."""
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="NoTransceiver",
+            excluded_categories={"transceivers"},
+        )
+
+
+class NoPeerPortCapability(BaseCapability):
+    """Capability for switches without peer-port support (peer-port stats category pruned)."""
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="NoPeerPort",
+            excluded_categories={"peer-port"},
+        )
+
+
 class CpoCapability(BaseCapability):
     """Capability for CPO-capable switches.
 
@@ -225,6 +245,13 @@ class CategoryConfigurator(SwitchConfigurator):
         self._update_category_dicts(switch_instance, new_categories)
         self._update_stats_files(switch_instance, new_categories)
 
+        # Also prune Counters Historical Analysis categories (interface / peer-port /
+        # transceivers) that live in a separate list on the switch, if present.
+        original_new = getattr(switch_instance, 'new_category_list', None)
+        if original_new is not None:
+            switch_instance.new_category_list = [cat for cat in original_new
+                                                 if cat not in config.excluded_categories]
+
         logger.info(f"Excluded categories: {config.excluded_categories}")
 
     def _update_category_dicts(self, switch_instance, category_list: List[str]) -> None:
@@ -242,6 +269,17 @@ class CategoryConfigurator(SwitchConfigurator):
                 )
                 default_value = getattr(
                     switch_instance, "category_disk_default_dict", {}
+                )
+            elif category == "temperature":
+                # Temperature only differs from the generic defaults by its interval, so a
+                # device that never declared the pair keeps the generic dict rather than {}.
+                disabled_value = getattr(
+                    switch_instance, "category_temperature_default_disable_dict",
+                    getattr(switch_instance, "category_default_disabled_dict", {})
+                )
+                default_value = getattr(
+                    switch_instance, "category_temperature_default_dict",
+                    getattr(switch_instance, "category_default_dict", {})
                 )
             else:
                 disabled_value = getattr(
