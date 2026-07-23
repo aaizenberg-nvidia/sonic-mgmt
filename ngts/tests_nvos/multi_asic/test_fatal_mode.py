@@ -5,7 +5,7 @@ import re
 import threading
 import time
 from contextlib import ExitStack
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Union
 
@@ -26,6 +26,17 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.system.clock.ClockConsts import ClockConsts
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
+from ngts.tests_nvos.system.gnmi.constants import GnmiMode
+# shared system-events-over-gnmi tooling (also used by tests_nvos/system/gnmi/test_gnmi_events_subscription.py);
+# imported with the local underscore names to keep this file's call sites unchanged
+from ngts.tests_nvos.system.gnmi.gnmi_events_tools import (
+    assert_verification_summary as _assert_verification_summary,
+    format_gnmi_event as _format_gnmi_event,
+    get_events_table as _get_events_table,
+    get_streamed_events as _get_streamed_events,
+    run_check as _run_check,
+    subscribe_system_events_stream as _subscribe_gnmi_system_events,
+)
 # Reuse the canonical ASIC_HEALTH fatal-state helper from test_system_health.py so we
 # don't carry a second copy that can silently diverge (Harel review #698). The helper
 # takes ``engines`` there; we adapt via SimpleNamespace in _set_asic_health_fatal_state below.
@@ -52,6 +63,8 @@ FATAL_REASON_FILE_CONTENT = 'Fatal health event'
 FATAL_LOG_FILE = '/var/log/fatal.log'
 FATAL_LOG_FILE_IN_DUMP = '/log/fatal.log.gz'
 FATAL_EVENT_STRING = 'System fatal state detected'
+FATAL_EVENT_SEVERITY = 'CRITICAL'
+FATAL_CLEAR_TIME_MINUTES = 4  # gnmi soft-reset test: post-fatal checks must run while still in fatal mode
 # Health-event injection now goes through SAI sx_api_dbg_health_event_simulate.
 # Requires SAI_SDK_HEALTH_EVENT_SIMULATION=1 in the running hwsku's sai.profile —
 # top-level plus per-ASIC 0/sai.profile..N-1/sai.profile on multi-ASIC platforms.
@@ -346,6 +359,10 @@ def assert_fatal_logs(engines, request):
             f'"{SAI_LOG_STRING}" lines to {FATAL_LOG_FILE}'
         )
         return
+    if not fatal_event_timestamps:
+        logger.info("No fatal events were simulated in this test (e.g. it failed before the simulation) - "
+                    "skipping fatal log check")
+        return
 
     with allure.step(f'Find lines for fatal events in {FATAL_LOG_FILE}'):
         engines.dut.engine.set_base_prompt('$')  # Let the engine find the current prompt
@@ -415,16 +432,65 @@ def test_post_fatal_recovery(engines):
 def test_fatal_flow_until_soft_reset(engines, devices, random_api, random_asic, events_count_setting):
     """
     Test that health-events trigger fatal mode properly, and that the system leaves fatal mode when everything is fine.
+    Also verify that the fatal system-event is streamed to a gnmi client subscribed to system-events.
+    The fatal system-event is verified through 3 independent sources: the full events table (CLI), syslog, and the
+    gnmi stream. All verifications run to completion even if one fails, and the test ends with a PASS/FAIL summary.
     """
+    checks = []
+    # longer clear-time: the post-fatal verifications below need the system to still be in fatal mode when they
+    # run (the syncd-restart monitoring alone can consume the default 2 minutes on 4-ASIC systems)
+    _set_settings(clear_time=FATAL_CLEAR_TIME_MINUTES)
+    gnmi_client, gnmi_process, gnmi_was_enabled, baseline_event_id = _subscribe_gnmi_system_events(engines, devices)
     try:
-        _trigger_soft_reset(False, random_asic, events_count_setting)
+        _run_check(checks, 'fatal flow: syncd restart + enter fatal mode (health/led/prompt/recent-events)',
+                   _trigger_soft_reset, False, random_asic, events_count_setting)
 
-        with allure.step(f'Validate {FATAL_REASON_FILE} exists'):
-            fatal_reason = engines.dut.run_cmd(f'cat {FATAL_REASON_FILE} && echo', validate=True).strip()
-        with allure.step(f'Validate {FATAL_REASON_FILE} contents are: "{FATAL_REASON_FILE_CONTENT}"'):
-            assert fatal_reason == FATAL_REASON_FILE_CONTENT
+        _log_fatal_pipeline_diagnostics(engines.dut)
+
+        # ordered by evidence volatility: the reason file disappears at fatal-exit, the events table gets
+        # flooded/evicted within minutes, syslog rotates, and the gnmi stream capture is immune (buffered)
+        _run_check(checks, f'{FATAL_REASON_FILE} contains "{FATAL_REASON_FILE_CONTENT}"',
+                   _assert_fatal_reason_file, engines.dut)
+
+        _run_check(checks, f'CLI: "{FATAL_EVENT_STRING}" found in the events table (or eviction proven)',
+                   _assert_fatal_event_in_events_table, baseline_event_id)
+
+        _run_check(checks, f'syslog: "{FATAL_EVENT_STRING}" logged since the simulation',
+                   _assert_fatal_event_in_syslog, engines.dut)
+
+        with allure.step('Close gnmi subscription and collect the streamed events'):
+            gnmi_out = gnmi_err = None
+            stream_alive = False
+            try:
+                stream_alive = gnmi_process.poll() is None
+                logger.info(f'gnmic stream process still alive before close: {stream_alive}' +
+                            ('' if stream_alive else f' (exited with rc={gnmi_process.poll()})'))
+                gnmi_out, gnmi_err = gnmi_client.close_session_and_get_out_and_err(gnmi_process)
+                logger.info(f'gnmi subscription closed; captured {len(gnmi_out)} bytes of stream output')
+            except Exception as e:
+                checks.append(('gnmi: collect stream output', False, f'{type(e).__name__}: {e}'))
+        if gnmi_out is not None:
+            _run_check(checks, f'gnmi: "{FATAL_EVENT_STRING}" streamed live to the subscriber',
+                       _assert_fatal_event_streamed, gnmi_out, gnmi_err, baseline_event_id, stream_alive)
+
+        _run_check(checks, f'gnmi: "{FATAL_EVENT_STRING}" received by a RECONNECTING subscriber (initial sync)',
+                   _assert_fatal_event_via_gnmi_reconnect, gnmi_client, baseline_event_id)
     finally:
-        _wait_to_exit_fatal()
+        try:
+            if gnmi_process.poll() is None:
+                gnmi_client.close_session_and_get_out_and_err(gnmi_process)
+        except Exception as e:
+            logger.warning(f'Failed closing leftover gnmi subscription: {e}')
+        _run_check(checks, 'fatal mode cleared after clear-time (health OK + "Cleared" event)',
+                   _wait_to_exit_fatal, FATAL_CLEAR_TIME_MINUTES)
+        if not gnmi_was_enabled:
+            with allure.step('Restore gnmi-server to disabled'):
+                try:
+                    System().gnmi_server.disable_gnmi_server()
+                except Exception as e:
+                    logger.warning(f'Failed restoring gnmi-server to disabled: {e}')
+
+    _assert_verification_summary(checks)
 
 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
@@ -982,10 +1048,23 @@ def _wait(minutes, seconds=0):
 
 
 def _wait_to_exit_fatal(minutes=None):
-    """Waits, then asserts system leaves fatal mode after desired time."""
+    """
+    Polls until the system leaves fatal mode (up to clear-time + 1 min grace), then verifies the exit.
+    Polling (instead of a fixed sleep from the caller's point in time) avoids overshooting when the caller
+    performed other verifications after fatal was detected, and checks the "Cleared" system-event promptly
+    (while it is still within the recent-events window).
+    """
     minutes = minutes or SETTINGS["clear_time"]
     with allure.step(_wait_to_exit_fatal.__name__):
-        _wait(minutes, seconds=13)
+        deadline = time.monotonic() + minutes * 60 + 60
+        while time.monotonic() < deadline:
+            try:
+                _assert_health_fatal(System(), expect_fatal=False)
+                logger.info('System exited fatal mode')
+                break
+            except AssertionError:
+                _wait(0, 15)
+        # full verification (health/led/prompt + "Cleared" system-event); produces the real error if still fatal
         _assert_system_fatal_mode(False, state_just_changed=True)
 
 
@@ -1014,6 +1093,181 @@ def _set_dst(enter: bool, system: System):
             system.datetime.set(ClockConsts.TIMEZONE, ClockConsts.DST_TIMEZONE, apply=True)
         else:
             system.datetime.set(ClockConsts.TIMEZONE, ClockConsts.DEFAULT_TIMEZONE, apply=True)
+
+
+def _log_fatal_pipeline_diagnostics(engine):
+    """
+    Evidence collection for when the fatal flow doesn't trigger - shows where the chain breaks:
+    kernel (sxd_kernel event classification) -> syncd/SAI (writes fatal_state to STATE_DB) -> healthd (reacts).
+    Diagnostic only - logs, never fails.
+    """
+    with allure.step('Diagnostics: fatal pipeline state (kernel -> STATE_DB -> healthd)'):
+        for title, cmd in (
+                ('sxd_kernel health-check classification (look at severity=/cause= of the simulated events)',
+                 f'grep -ah "{SAI_LOG_STRING}" {FATAL_LOG_FILE}* | tail -5'),
+                ('sxd_kernel dmesg health-check lines',
+                 'sudo dmesg -T 2>/dev/null | grep -ia "health-check\\|health_check\\|sx_dbg" | tail -10'),
+                ('STATE_DB ASIC_HEALTH (the SDK/SAI layer in syncd must set fatal_state=true here)',
+                 'sonic-db-cli STATE_DB HGETALL "ASIC_HEALTH|STATE"'),
+                ('healthd fatal-monitor syslog lines',
+                 r'sudo zgrep -a "system-fatal-monitor\|Detected fatal\|fatal state" /var/log/syslog* | tail -10'),
+                ('gnmi-server state during fatal (subscription counters reset => nv-gnmi restarted)',
+                 'nv show system gnmi-server --output json --color off'),
+                ('nv-gnmi docker uptime',
+                 'docker ps --format "{{.Names}} {{.Status}}" | grep -i gnmi')):
+            try:
+                output = engine.run_cmd(cmd)
+                logger.info(f'[diagnostic] {title}:\n{output}')
+            except Exception as e:
+                logger.warning(f'[diagnostic] {title}: failed to collect ({e})')
+
+
+def _assert_fatal_reason_file(engine):
+    with allure.step(f'Validate {FATAL_REASON_FILE} contents are: "{FATAL_REASON_FILE_CONTENT}"'):
+        fatal_reason = engine.run_cmd(f'cat {FATAL_REASON_FILE} && echo', validate=True).strip()
+        assert fatal_reason == FATAL_REASON_FILE_CONTENT, \
+            f'{FATAL_REASON_FILE} content is "{fatal_reason}" but expected "{FATAL_REASON_FILE_CONTENT}"'
+
+
+def _assert_fatal_event_in_events_table(baseline_event_id: int):
+    """
+    Searches the FULL events table for a new fatal system-event. On large systems the syncd restart floods
+    the size-capped table (e.g. Rosalind: ~1300 interface events in ~2 min) and can evict the fatal event
+    entirely - if eviction is proven, this check passes with a note (the fatal-flow check already verified
+    the event via the recent-events query at detection time).
+    """
+    with allure.step('Search the full events table for the fatal system-event'):
+        fatal_events = events_table = {}
+        for attempt in range(3):
+            events_table = _get_events_table()
+            fatal_events = {event_id: event for event_id, event in events_table.items()
+                            if event_id > baseline_event_id and event.get('text') == FATAL_EVENT_STRING}
+            if fatal_events:
+                break
+            # under the fatal event-storm the REST read can return a partial table (seen: 50 of 1000
+            # entries on rosalind) - give it another chance before concluding
+            logger.info(f'Attempt {attempt + 1}: fatal event not in this table read ({len(events_table)} '
+                        f'entries, ids {min(events_table, default=0)}..{max(events_table, default=0)}) - '
+                        f'the read may be partial under event-storm load, retrying')
+            time.sleep(10)
+        logger.info(f'Fatal system-events found in the full events table: {fatal_events or "none"}')
+        if not fatal_events:
+            oldest_kept = min(events_table, default=0)
+            assert oldest_kept > baseline_event_id + 1, (
+                f'"{FATAL_EVENT_STRING}" not found in the events table (searched all entries with event-id > '
+                f'{baseline_event_id}, oldest kept id: {oldest_kept}) and the table shows no eviction or '
+                f'partial read that could explain it.')
+            logger.info(f'Fatal event absent from this table read, but explainable: oldest kept event-id is '
+                        f'{oldest_kept} (baseline {baseline_event_id}), so ids up to {oldest_kept - 1} - '
+                        f'including the fatal event - were either evicted by the interface-event storm or the '
+                        f'REST read was partial ({len(events_table)} entries). The fatal-flow check verified the '
+                        f'event at detection time and the gnmi reconnect check verifies it independently.')
+            return
+        assert any(event.get('severity') == FATAL_EVENT_SEVERITY for event in fatal_events.values()), \
+            f'Fatal event found in events table but severity is not {FATAL_EVENT_SEVERITY}: {fatal_events}'
+
+
+def _assert_fatal_event_in_syslog(engine):
+    """
+    The fatal monitor also logs the fatal event to syslog - an evidence source that survives events-table
+    eviction. Only lines timestamped after the first simulated event count (syslog may hold older runs).
+    """
+    with allure.step(f'Search syslog for "{FATAL_EVENT_STRING}" since the simulation'):
+        assert fatal_event_timestamps, 'no simulation timestamps were recorded - cannot time-bound the search'
+        start_time = datetime.strptime(fatal_event_timestamps[0], '%Y-%m-%d %H:%M:%S') - timedelta(seconds=5)
+        # zgrep + syslog* because the interface-event storm rotates syslog within minutes on large systems
+        out = engine.run_cmd(f'sudo zgrep -ah "{FATAL_EVENT_STRING}" /var/log/syslog* | tail -20')
+        lines = [line for line in out.splitlines() if FATAL_EVENT_STRING in line]
+        logger.info(f'syslog lines containing "{FATAL_EVENT_STRING}":\n' + '\n'.join(lines))
+        recent_lines = []
+        for line in lines:
+            try:
+                # get_datetime_of_system_log_line returns a "YYYY-MM-DD hh:mm:ss" STRING
+                line_time = datetime.strptime(
+                    ClockTools.get_datetime_of_system_log_line(line, system_year=start_time.year),
+                    '%Y-%m-%d %H:%M:%S')
+                if line_time >= start_time:
+                    recent_lines.append(line)
+            except ValueError:
+                logger.warning(f'Could not parse timestamp from syslog line: {line}')
+        assert recent_lines, (f'"{FATAL_EVENT_STRING}" not found in syslog after {start_time} '
+                              f'(the first simulated event)')
+
+
+def _assert_fatal_event_streamed(gnmi_out: str, gnmi_err: str, baseline_event_id: int, stream_was_alive: bool = False):
+    """Asserts that a new fatal system-event (raised after baseline_event_id) was streamed over gnmi."""
+    MAX_EVENTS_TO_LOG = 20
+    with allure.step('Log the events that were streamed to the gnmi subscriber'):
+        allure.attach('gnmic raw stream output', gnmi_out, log=False)
+        events = _get_streamed_events(gnmi_out)
+        new_events = {event_id: values for event_id, values in events.items() if event_id > baseline_event_id}
+        non_informational = {event_id: values for event_id, values in new_events.items()
+                             if values.get('state/severity') != 'INFORMATIONAL'}
+        logger.info(f'The gnmi subscriber received {len(events)} system-events: {len(events) - len(new_events)} '
+                    f'pre-existing events replayed in the initial sync (event-id <= {baseline_event_id}), '
+                    f'and {len(new_events)} new events raised while the subscription was open '
+                    f'({len(non_informational)} of them with severity above INFORMATIONAL)')
+        # after the fatal syncd restart the stream also carries hundreds of interface events - log only the
+        # interesting ones and attach the full list to the report
+        events_to_log = new_events if len(new_events) <= MAX_EVENTS_TO_LOG else non_informational
+        for event_id in sorted(events_to_log):
+            logger.info(f'New system-event streamed to the gnmi subscriber:\n'
+                        f'{_format_gnmi_event(event_id, events_to_log[event_id])}')
+        if len(events_to_log) < len(new_events):
+            logger.info(f'({len(new_events) - len(events_to_log)} INFORMATIONAL events are not logged here - '
+                        f'see the "gnmi new events" attachment in the report for the full list)')
+        allure.attach('gnmi new events',
+                      '\n\n'.join(_format_gnmi_event(event_id, new_events[event_id])
+                                  for event_id in sorted(new_events)), log=False)
+
+    with allure.step('Assert the fatal system-event was streamed over gnmi'):
+        fatal_events = {event_id: values for event_id, values in new_events.items()
+                        if values.get('state/text') == FATAL_EVENT_STRING}
+        if not fatal_events:
+            # keep the failure message short - the full event list is in the 'gnmi new events' attachment
+            last_event_time = max((values.get('state/time-created', 0) for values in new_events.values()),
+                                  default=0)
+            stall_analysis = (
+                'The gnmic process was STILL CONNECTED when we closed it (no stderr) - the gnmi server '
+                'silently stopped pushing updates on the open subscription during the fatal handling. '
+                'A real collector would not even get a disconnect signal to trigger a reconnect.'
+                if stream_was_alive else
+                'The gnmic process had already exited - the subscription was dropped by the fatal handling; '
+                'a collector would detect the disconnect and reconnect (see the reconnect check).')
+            raise AssertionError(
+                f'"{FATAL_EVENT_STRING}" event (with event-id > {baseline_event_id}) was not streamed by the '
+                f'gnmi server. The live subscription received {len(new_events)} new events '
+                f'(ids {min(new_events, default=0)}..{max(new_events, default=0)}, last one at epoch-ns '
+                f'{last_event_time}) and then went silent. {stall_analysis} '
+                f'Full stream contents: "gnmi new events" attachment. gnmic stderr: {gnmi_err or "(empty)"}')
+        logger.info('SUCCESS: the fatal system-event was streamed to the gnmi subscriber. This is what the gnmi '
+                    'user sees:\n' +
+                    '\n'.join(_format_gnmi_event(event_id, values) for event_id, values in sorted(fatal_events.items())))
+        assert any(values.get('state/severity') == FATAL_EVENT_SEVERITY for values in fatal_events.values()), (
+            f'Streamed fatal event does not have {FATAL_EVENT_SEVERITY} severity: {fatal_events}')
+
+
+def _assert_fatal_event_via_gnmi_reconnect(gnmi_client, baseline_event_id: int):
+    """
+    Real collectors reconnect after a dropped subscription (the fatal handling kills active gnmi
+    subscriptions). Verify a NEW subscription's initial sync still delivers the fatal event - this also
+    measures whether the event survived in the events table long enough for a reconnecting collector.
+    """
+    with allure.step('Reconnect: open a fresh gnmi subscription and look for the fatal event in its initial sync'):
+        out, err, _ = gnmi_client.gnmic_subscribe_system_events(mode=GnmiMode.ONCE, skip_cert_verify=True,
+                                                                keep_session_alive=False, cmd_time=60)
+        events = _get_streamed_events(out)
+        fatal_events = {event_id: values for event_id, values in events.items()
+                        if event_id > baseline_event_id and values.get('state/text') == FATAL_EVENT_STRING}
+        logger.info(f'Reconnected subscriber received {len(events)} events in initial sync; '
+                    f'fatal events among them: {sorted(fatal_events) or "none"}')
+        assert fatal_events, (
+            f'A reconnecting gnmi subscriber did not receive "{FATAL_EVENT_STRING}" in its initial sync '
+            f'({len(events)} events received, ids {min(events, default=0)}..{max(events, default=0)}). '
+            f'This means the fatal event was already evicted from the events table - a collector that '
+            f'reconnects at this point has permanently missed the fatal event. gnmic stderr: {err or "(empty)"}')
+        logger.info('SUCCESS: a reconnecting gnmi subscriber receives the fatal system-event via initial sync:\n' +
+                    '\n'.join(_format_gnmi_event(event_id, values) for event_id, values in sorted(fatal_events.items())))
 
 
 def _get_recent_events():

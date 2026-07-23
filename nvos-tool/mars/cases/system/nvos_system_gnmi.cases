@@ -127,4 +127,15 @@
     </cmd>
   </case>
 
+  <case>
+    <name> test_gnmi_events_subscription_across_server_restart </name>
+    <info> system-events subscription across a gnmi-server restart: live delivery, pre-restart subscriber after restart (NVBug 6504764), new-subscription initial sync </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_events_subscription.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnmi_events_subscription_across_server_restart --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>
