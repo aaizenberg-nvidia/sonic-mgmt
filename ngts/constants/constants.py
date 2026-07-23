@@ -278,6 +278,7 @@ class InfraConst:
     ALLURE_SERVER_PORT = ''
     ALLURE_SERVER_URL = 'https://{}'.format(ALLURE_SERVER_IP)
     ALLURE_REPORT_DIR = '/tmp/allure-results'
+    CASE_INCLUDE_EMPTY_ALLURE_STEPS_TMPL = '/tmp/case_include_empty_allure_steps_{}.txt'
     ENV_SESSION_ID = 'SESSION_ID'
     ENV_LOG_FOLDER = 'LOG_FOLDER'
     CASES_DUMPS_DIR = 'cases_dumps'
