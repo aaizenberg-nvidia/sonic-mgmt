@@ -107,6 +107,10 @@ def run_step(name) {
             print "SONiC developer branch, will skip NVOS BAT"
             set_bat_skip(name, NVOS_BAT)
         }
+        if (env.GERRIT_BRANCH.startsWith("DEV_nvos_sonic_rebase")){
+            print "NVOS+SONiC rebase dev branch, will skip ALL BAT gates (SONiC + NVOS)"
+            set_bat_skip(name, SONIC_CANONICAL_BAT + SONIC_COMMUNITY_BAT + NVOS_BAT)
+        }
 
         return true
     }
