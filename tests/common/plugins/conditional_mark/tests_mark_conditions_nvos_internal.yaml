@@ -601,7 +601,7 @@ tests_nvos/cluster/nmx_simulator_tests/test_simulated_cluster_partition.py:
       - "('juliet' not in testbed and 'rosalind' not in testbed)"
       - "'juliet-148' in testbed"
       - "'sws-rtf2-rosalind-198' in testbed"
-      - https://redmine.mellanox.com/issues/5149287
+      - ('juliet' in testbed and https://redmine.mellanox.com/issues/5170528)
 
 tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
   skip:
