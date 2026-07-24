@@ -25,6 +25,11 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
 )
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_trigger,
+    recover_nvl_link_health_prep,
+    verify_nvl_link_health_after_reboot,
+)
 from ngts.tools.test_utils import allure_utils as allure
 from retry.api import retry_call
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
@@ -60,10 +65,15 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
     system = System(None)
     expected_reason, expected_user, expected_reason_type = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    link_health_context = None
 
     try:
         with allure.step('Clear system events to remove older reboot system events'):
             system.events.action(ActionConsts.CLEAR)
+
+        link_health_context = prepare_nvl_link_health_before_trigger(
+            devices, engines.dut, test_name
+        )
 
         start_time = time.perf_counter()
 
@@ -106,7 +116,12 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
             with allure.independent_step("Verify reboot time is within expected range"):
                 OperationTime.verify_operation_time(duration, "reset bit", devices).verify_result()
 
+            verify_nvl_link_health_after_reboot(
+                link_health_context, devices, engines.dut, test_name
+            )
+
     finally:
+        recover_nvl_link_health_prep(link_health_context, devices, test_name)
         if not ping_device(engines.dut.ip):
             logger.info("system is off and will now remote reboot the switch")
             NvueGeneralCli(TestToolkit.engines.dut).remote_reboot_nvue(topology_obj)

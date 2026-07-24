@@ -13,10 +13,34 @@ from ngts.constants.constants import GnmiConsts
 from ngts.ngts_types import LinkDiagnosticT
 from ngts.nvos_constants.constants_nvos import (
     ApiType,
+    LinkHealthConsts,
     LinkTrainingConsts,
     MultiPlanarConsts,
     NvosConst,
     OutputFormat,
+)
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    clear_link_health_attention_on_port,
+    find_active_healthy_nvl_port,
+    find_n_eligible_nvl_ports,
+    induce_link_health_attention_first_capture,
+    is_gnmi_server_enabled,
+    is_link_health_feature_available,
+    is_link_health_supported,
+    is_port_ready_for_attention,
+    run_link_health_repeated_toggle_stress,
+    skip_if_link_health_feature_unavailable,
+    skip_if_link_health_not_supported,
+    trigger_link_health_attention,
+    try_build_gnmi_client,
+    verify_link_health_after_link_down,
+    verify_link_health_all_switch_endpoints,
+    verify_link_health_attention_on_port,
+    verify_link_health_attention_sticky_repeat_triggers,
+    verify_link_health_hidden_on_platform,
+    verify_link_health_summary_on_nvl_ports,
+    verify_link_health_up_with_gnmi,
+    wait_for_link_health_cli_state,
 )
 from ngts.tests_nvos.helpers.interfaces import interface_helpers
 from ngts.tests_nvos.helpers.interfaces.nvl_port.nvl6 import link_training_helpers
@@ -55,7 +79,7 @@ logger = logging.getLogger(__name__)
 @pytest.mark.air
 @pytest.mark.air_ci
 @pytest.mark.air_sanity
-def test_show_nvl_interface(devices):
+def test_show_nvl_interface(devices, random_api):
     """
     Show all NVL interfaces, verify at least one NVL port is link-up.
     """
@@ -78,6 +102,13 @@ def test_show_nvl_interface(devices):
             f"Expected at least one NVL port UP; states per port: {states}"
         )
         logger.info("NVL ports UP: %s (total %d)", up_ports, len(up_ports))
+
+    with allure.step("Verify link-health visibility matches platform (VR Rosalind / NVL-6 only)"):
+        dut_engine = TestToolkit.get_engine()
+        if is_link_health_supported(devices) and is_link_health_feature_available(dut_engine):
+            verify_link_health_summary_on_nvl_ports(devices, dut_engine)
+        elif devices.dut.is_nvl() or devices.dut.is_ib():
+            verify_link_health_hidden_on_platform(dut_engine)
 
 
 @pytest.mark.interface
@@ -255,11 +286,17 @@ def test_show_nvl_interface_commands(engines, devices, random_api, has_loopbox, 
     with allure_step("Clear counters and validate"):
         selected_port.interface.action_clear_counter_for_all_interfaces(engines.dut).verify_result()
 
+    with allure_step("Verify all switch link-health CLI endpoints on supported VR platform"):
+        if is_link_health_supported(devices) and is_link_health_feature_available(engines.dut):
+            verify_link_health_all_switch_endpoints(selected_port, engines.dut)
+        elif devices.dut.is_nvl() and not is_link_health_supported(devices):
+            verify_link_health_hidden_on_platform(engines.dut)
+
 
 @pytest.mark.interface
 @pytest.mark.simx
 @pytest.mark.nvl_ci
-def test_toggle_interface_state(test_name, devices, has_loopbox, standalone_system):
+def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, standalone_system):
     """
     Configure port interface state and verify the configuration applied successfully
     Relevant cli commands:
@@ -268,11 +305,12 @@ def test_toggle_interface_state(test_name, devices, has_loopbox, standalone_syst
 
     flow:
     1. Select a random port (state of which is up)
-    2. Set selected port state to 'down'
-    3. Verify the configuration applied by running "show" command
-    4. Set selected port state to 'up'
-    5. Wait until the port is up
-    6. Verify the configuration applied by running "show" command
+    2. On QM4, trigger attention and verify the CLI state
+    3. Admin down and verify link-health retains its pre-down state
+    4. Admin up and verify link-health returns to healthy
+
+    gNMI subscription/streaming is covered in
+    ``test_nvl_link_health_gnmi_subscribe_attention_down_up``.
     """
     port_init_state_restored = True
 
@@ -307,31 +345,179 @@ def test_toggle_interface_state(test_name, devices, has_loopbox, standalone_syst
                 continue
             port_type = 'fnm' if interface_type == 'fnm' else ''
             selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=NvosConsts.LINK_STATE_UP, requested_ports_type=port_type, interface_type=interface_type).get_returned_value()
-            TestToolkit.update_tested_ports([selected_port])
-            toggle_port_state(selected_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+            lifecycle_port = selected_port
+            TestToolkit.update_tested_ports([lifecycle_port])
+            dut_engine = TestToolkit.get_engine()
+            link_health_checks = (
+                is_link_health_supported(devices) and
+                is_link_health_feature_available(dut_engine)
+            )
+            attention_triggered = False
+            if link_health_checks:
+                attention_ready, attention_detail = is_port_ready_for_attention(lifecycle_port)
+                if not attention_ready:
+                    logger.info(
+                        f"{lifecycle_port.name} not eligible for attention ({attention_detail}); "
+                        "scanning for an Active + healthy NVL port"
+                    )
+                    active_candidates = RandomizationTool.select_random_ports(
+                        requested_ports_state=NvosConsts.LINK_STATE_UP,
+                        requested_ports_logical_state=IbInterfaceConsts.LINK_LOGICAL_PORT_STATE_ACTIVE,
+                        num_of_ports_to_select=0,
+                    ).returned_value or []
+                    attention_port = find_active_healthy_nvl_port(dut_engine, active_candidates)
+                    if attention_port is not None:
+                        lifecycle_port = attention_port
+                        TestToolkit.update_tested_ports([lifecycle_port])
+                attention_ready, _ = is_port_ready_for_attention(lifecycle_port)
+                if not attention_ready:
+                    logger.warning(
+                        "Skipping attention verification: no Active + healthy NVL port available "
+                        "on this setup; continuing with down/up flow on healthy baseline"
+                    )
+                else:
+                    with allure_step(
+                        f"Trigger link-health attention on {lifecycle_port.name} and verify CLI"
+                    ):
+                        attention_triggered = trigger_link_health_attention(lifecycle_port, dut_engine)
+                        if attention_triggered:
+                            wait_for_link_health_cli_state(
+                                lifecycle_port,
+                                LinkHealthConsts.STATE_ATTENTION,
+                            )
+                            verify_link_health_attention_on_port(lifecycle_port)
+                        else:
+                            logger.warning(
+                                f"Attention was not induced on {lifecycle_port.name}; "
+                                "continuing with down/up flow"
+                            )
+
+            toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
             logger.info("Sleeping for 15 seconds till toggle is reflected")
             time.sleep(15)
             port_init_state_restored = False
             output_dictionary = Tools.OutputParsingTool.parse_show_interface_link_output_to_dictionary(
-                selected_port.interface.link.show()).get_returned_value()
+                lifecycle_port.interface.link.show()).get_returned_value()
 
             Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
                                                               field_name=IbInterfaceConsts.LINK_STATE,
                                                               expected_value=NvosConsts.LINK_STATE_DOWN).verify_result()
 
-            toggle_port_state(selected_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+            if link_health_checks:
+                baseline_down_state = (
+                    LinkHealthConsts.STATE_ATTENTION
+                    if attention_triggered
+                    else LinkHealthConsts.STATE_HEALTHY
+                )
+                verify_link_health_after_link_down(lifecycle_port, baseline_down_state)
+
+            toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_UP, test_name, devices)
             logger.info("Sleeping for 15 seconds till toggle is reflected")
             time.sleep(15)
             port_init_state_restored = True
             output_dictionary = Tools.OutputParsingTool.parse_show_interface_link_output_to_dictionary(
-                selected_port.interface.link.show()).get_returned_value()
+                lifecycle_port.interface.link.show()).get_returned_value()
 
             Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
                                                               field_name=IbInterfaceConsts.LINK_STATE,
                                                               expected_value=NvosConsts.LINK_STATE_UP).verify_result()
+            if link_health_checks:
+                verify_link_health_up_with_gnmi(
+                    lifecycle_port,
+                    None,
+                    devices.dut.default_username,
+                    devices.dut.default_password,
+                )
     finally:
         if not port_init_state_restored:
-            toggle_port_state(selected_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+            toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+
+
+@pytest.mark.interface
+@pytest.mark.nvl_ci
+def test_link_health_attention_and_toggle_stress(test_name, devices, random_api):
+    """Exercise sticky attention on one port while repeatedly toggling another."""
+    skip_if_link_health_not_supported(devices)
+    dut_engine = TestToolkit.get_engine()
+    skip_if_link_health_feature_unavailable(devices, dut_engine)
+
+    candidates = RandomizationTool.select_random_ports(
+        requested_ports_state=NvosConsts.LINK_STATE_UP,
+        num_of_ports_to_select=0,
+    ).returned_value or []
+    eligible_ports = find_n_eligible_nvl_ports(dut_engine, candidates, count=2)
+    if len(eligible_ports) < 2:
+        pytest.skip(
+            'Need 2 distinct admin-up healthy NVL ports for combined stress '
+            '(attention + toggle)'
+        )
+    attention_port, toggle_port = eligible_ports[0], eligible_ports[1]
+    TestToolkit.update_tested_ports([attention_port, toggle_port])
+
+    gnmi_client = None
+    if is_gnmi_server_enabled(dut_engine):
+        gnmi_client = try_build_gnmi_client(
+            dut_engine.ip,
+            devices.dut.default_username,
+            devices.dut.default_password,
+        )
+
+    attention_needs_recovery = False
+
+    def _mark_attention_latched():
+        nonlocal attention_needs_recovery
+        attention_needs_recovery = True
+
+    try:
+        working_error_type, first_reason, first_since = induce_link_health_attention_first_capture(
+            attention_port,
+            dut_engine,
+            gnmi_client=gnmi_client,
+            username=devices.dut.default_username,
+            password=devices.dut.default_password,
+            on_attention_latched=_mark_attention_latched,
+        )
+        if working_error_type is None:
+            pytest.skip(
+                f'Could not induce attention on {attention_port.name}; '
+                'nothing was latched'
+            )
+
+        # Attention is latched from here on, so failures must fail the test
+        # rather than skip: the DUT is dirty and the result is meaningful.
+        assert verify_link_health_attention_sticky_repeat_triggers(
+            attention_port,
+            dut_engine,
+            working_error_type,
+            first_reason,
+            first_since,
+            gnmi_client=gnmi_client,
+            username=devices.dut.default_username,
+            password=devices.dut.default_password,
+        ), (
+            f'Repeat attention triggers did not complete on {attention_port.name} '
+            'after attention was already latched'
+        )
+
+        assert run_link_health_repeated_toggle_stress(
+            toggle_port,
+            test_name,
+            devices,
+            gnmi_client=gnmi_client,
+            username=devices.dut.default_username,
+            password=devices.dut.default_password,
+        ), f'Repeated toggle stress did not complete on {toggle_port.name}'
+    finally:
+        # Best-effort: toggle stress may have left the port admin-down if it
+        # failed mid-cycle; restore UP so subsequent tests are not polluted.
+        try:
+            toggle_port_state(toggle_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+        except Exception as exc:  # noqa: BLE001 - cleanup must not mask the test result
+            logger.warning(
+                f'Failed to restore admin-up on {toggle_port.name} after toggle stress: {exc!r}'
+            )
+        if attention_needs_recovery:
+            clear_link_health_attention_on_port(attention_port, devices, test_name)
 
 
 def _extract_link_up_ms(raw_value):

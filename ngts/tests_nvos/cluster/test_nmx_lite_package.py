@@ -3,6 +3,7 @@ import random
 import re
 import shlex
 import string
+import time
 
 import pytest
 import logging
@@ -10,7 +11,13 @@ from retry import retry
 from retry.api import retry_call
 from infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
-from ngts.nvos_constants.constants_nvos import ApiType, PeerPortConsts, LogComponentsConsts, HealthConsts
+from ngts.nvos_constants.constants_nvos import (
+    ApiType,
+    HealthConsts,
+    LinkHealthConsts,
+    LogComponentsConsts,
+    PeerPortConsts,
+)
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -24,6 +31,19 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, ClusterSimulation
+from ngts.tests_nvos.interfaces.nvl_port.helpers import toggle_port_state
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    _read_link_health_state,
+    _read_peer_port_link_health_state,
+    find_active_peer_switch_pair_for_attention,
+    is_link_health_feature_available,
+    is_link_health_supported,
+    trigger_link_health_attention_first,
+    verify_link_health_after_link_down,
+    verify_link_health_state_valid,
+    verify_peer_link_health_independent_of_switch_attention,
+    verify_peer_port_link_health_show,
+)
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -57,7 +77,7 @@ def start_cluster_and_sdn_fm_config(engines, setup_name):
 @pytest.mark.gpu_tel
 @pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
-def test_peer_port_show(engines, test_api, start_cluster_and_sdn_fm_config):
+def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_config):
 
     TestToolkit.tested_api = test_api
     peer_port = PeerPort(parent_obj=None)
@@ -75,6 +95,8 @@ def test_peer_port_show(engines, test_api, start_cluster_and_sdn_fm_config):
         for port in peer_ports:
             with allure.step(f"Validate show commands for Peer Port {port.peer_port_name}"):
                 helper_validate_peer_port_show(port)
+                if is_link_health_supported(devices) and is_link_health_feature_available(engines.dut):
+                    verify_peer_port_link_health_show(port)
 
 
 @pytest.mark.gpu_tel
@@ -338,6 +360,87 @@ def test_peer_port_disconnect(engines, test_api, start_cluster_and_sdn_fm_config
         peer_port_show = OutputParsingTool.parse_json_str_to_dictionary(
             random_peer_port.peer_port.show()).verify_result()
         helper_verify_peer_port_hostname(peer_port_show, random_peer_port.peer_port_name)
+
+
+@pytest.mark.gpu_tel
+def test_link_health_switch_state_vs_peer_status(engines, devices, test_name):
+    """Correlate switch-side down/attention behavior with the associated peer port.
+
+    Asserted semantics:
+        - switch admin down: the peer leaves the peer-port list, and comes back
+          when the switch port is brought up again.
+        - switch attention: the link stays up, so the peer stays in the list and
+          keeps its own state (``healthy`` or ``n/a``) - a switch-side latch must
+          never mirror onto the GPU peer path (PP-07, separate telemetry feeds).
+    """
+    dut_engine = engines.dut
+    if not (is_link_health_supported(devices) and is_link_health_feature_available(dut_engine)):
+        pytest.skip('Link-health feature not available on this platform')
+
+    peer_port = PeerPort(parent_obj=None)
+    peer_intf, switch_port = find_active_peer_switch_pair_for_attention(peer_port)
+    if peer_intf is None:
+        pytest.skip(
+            'No Active + healthy peer/switch pair available for switch<->peer correlation'
+        )
+    peer_name = peer_intf.peer_port_name
+
+    switch_down = False
+    switch_attention = False
+    try:
+        with allure.step(f'Baseline: switch {switch_port.name} and peer {peer_name}'):
+            sw_state, _ = _read_link_health_state(switch_port)
+            peer_state, _ = _read_peer_port_link_health_state(peer_intf)
+            verify_link_health_state_valid(peer_state, peer_name)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+            logger.info(
+                f'CORRELATION baseline: switch {switch_port.name}={sw_state!r}, '
+                f'peer {peer_name}={peer_state!r}'
+            )
+
+        with allure.step(
+            f'Switch {switch_port.name} admin down -> peer {peer_name} removed from peer-port list'
+        ):
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+            switch_down = True
+            time.sleep(15)
+            verify_link_health_after_link_down(switch_port, LinkHealthConsts.STATE_HEALTHY)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=False)
+            logger.info(
+                f'CORRELATION switch-down: switch {switch_port.name} is down -> '
+                f'peer {peer_name} removed from peer-port list'
+            )
+
+        with allure.step(f'Restore switch {switch_port.name} up -> peer {peer_name} re-appears'):
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+            switch_down = False
+            time.sleep(15)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+
+        with allure.step(
+            f'Switch {switch_port.name} attention -> observe peer {peer_name}'
+        ):
+            worked = trigger_link_health_attention_first(switch_port, dut_engine)
+            if worked is None:
+                pytest.skip(
+                    f'Could not induce switch-side attention on {switch_port.name}; '
+                    'cannot evaluate switch-attention vs peer correlation'
+                )
+            switch_attention = True
+            peer_state, peer_out = verify_peer_link_health_independent_of_switch_attention(
+                peer_intf, switch_port
+            )
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+            logger.info(
+                f'CORRELATION switch-attention: switch {switch_port.name} is attention, '
+                f'peer {peer_name} link-health={peer_state!r} (output={peer_out!r})'
+            )
+    finally:
+        with allure.step(f'Recover switch {switch_port.name} via down/up'):
+            if switch_attention or not switch_down:
+                toggle_port_state(switch_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+                time.sleep(10)
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_UP, test_name, devices)
 
 
 def helper_fae_peer_port_disable_enable(fae):

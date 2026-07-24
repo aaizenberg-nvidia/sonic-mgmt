@@ -48,6 +48,11 @@ from ngts.tests_nvos.system.helpers import (
     verify_control_plane_acl_bindings,
 )
 from ngts.nvos_constants.constants_nvos import OperationTimeConsts
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_upgrade,
+    recover_nvl_link_health_prep,
+    verify_nvl_link_health_after_upgrade,
+)
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaaServerInfo import ping_server
 
 from ngts.tests_nvos.constants import MINUTE
@@ -186,7 +191,7 @@ def test_show_system_image(original_version, engines, devices):
 @pytest.mark.system
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_downgrade_upgrade(release_name, random_api, original_version, devices, engines, downgrade_version_realpath,
-                           target_version_realpath, dut_ipv6_addr, ib_router, topology_obj):
+                           target_version_realpath, dut_ipv6_addr, ib_router, topology_obj, test_name):
     """
     Check the image rename cmd.
     Validate that install and delete commands will success with the new name
@@ -198,13 +203,16 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
     5. Install new image name , success
     6. Uninstall image
     7. Delete the new image name , success
+    8. REL-05/REL-06: link-health returns to healthy after upgrade
     """
     config_file_path = ''
     mtu_info = None
     json_acl_rules = None
     cp_acl_bindings = None
     acl_persist_mangle_state = None
+    link_health_context = None
     include_mtu_testing = getattr(devices.dut, 'supports_mtu_testing', False)
+
     if not downgrade_version_realpath:
         pytest.skip("Cannot run test because base_version parameter is missing from the setup file")
 
@@ -238,7 +246,7 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
         with allure.step('install the fetched image (after renamed back to original name)'):
             install_image_and_verify(orig_engine=orig_engine, image_name=fetched_image,
                                      original_images=original_images, system=system, release_name=release_name,
-                                     test_name='test_downgrade_upgrade',
+                                     test_name=test_name,
                                      devices=devices,
                                      operation_label=OperationTimeConsts.IMAGE_DOWNGRADE)
             verify_system_image_gnmi_matches_nvue(engines, devices, system)
@@ -274,13 +282,17 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
         with allure.step("Save control-plane ACL bindings baseline (nv show system control-plane acl)"):
             cp_acl_bindings = system_helpers.extract_control_plane_acl_bindings(
                 dut_engine=engines.dut, mangle_state=acl_persist_mangle_state)
-            logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
+            logger.info("Control-plane ACL bindings baseline: %s", cp_acl_bindings)
 
         logger.info("After replacing configuration file, system may ask for new password. Restoring password:")
         engines.dut.disconnect()
         engines.dut.run_cmd("true")
 
         run_pre_upgrade_steps(topology_obj, engines, ib_router)
+
+        link_health_context = prepare_nvl_link_health_before_upgrade(
+            devices, engines.dut, test_name
+        )
 
     finally:
         target_fetched_image = None
@@ -293,14 +305,21 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                                          image_name=target_fetched_image,
                                          original_images=original_images, system=system,
                                          release_name=release_name,
-                                         test_name='test_downgrade_upgrade',
+                                         test_name=test_name,
                                          devices=devices,
                                          operation_label=OperationTimeConsts.IMAGE_UPGRADE)
                 upgrade_succeeded = True
 
             with allure.step('Verify configuration preserved after upgrade'):
                 run_post_upgrade_cheks(topology_obj, engines, ib_router)
+
+            if upgrade_succeeded:
+                verify_nvl_link_health_after_upgrade(
+                    link_health_context, devices, engines.dut
+                )
         finally:
+            recover_nvl_link_health_prep(link_health_context, devices, test_name)
+
             with allure.step('cleanup test'):
                 cleanup_test(
                     system, original_images, original_image_partition,
@@ -309,7 +328,7 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                     orig_engine=orig_engine,
                     target_version_realpath=target_version_realpath,
                     release_name=release_name,
-                    test_name='test_downgrade_upgrade',
+                    test_name=test_name,
                     devices=devices,
                 )
 

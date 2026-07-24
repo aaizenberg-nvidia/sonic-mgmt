@@ -3032,6 +3032,41 @@ class PackageConsts:
     REMOTE_URL = 'remote-url'
 
 
+class LinkHealthConsts:
+    """NVLink link-health indication (QM4 / NVL-6 Rosalind only)."""
+    LINK = 'link'
+    HEALTH = 'health'
+    LINK_HEALTH = 'link-health'
+    STATE = 'state'
+    ATTENTION_TRIGGER_CODE = 'attention-trigger-code'
+    SINCE = 'since'
+    STATE_HEALTHY = 'healthy'
+    STATE_ATTENTION = 'attention'
+    STATE_NA = 'n/a'
+    VALID_STATES = frozenset({STATE_HEALTHY, STATE_ATTENTION, STATE_NA})
+    GNMI_PATH_STATE = 'infiniband/link-health/state'
+    GNMI_PATH_STATUS = 'infiniband/link-health/state/status'
+    GNMI_PATH_ATTENTION_TRIGGER_CODE = 'infiniband/link-health/state/attention-trigger-code'
+    GNMI_PATH_ATTENTION_SINCE = 'infiniband/link-health/state/attention-since'
+    GNMI_PREFIX_TEMPLATE = 'interfaces/interface[name={port_name}]'
+    GNMI_PEER_PREFIX_TEMPLATE = 'peer-port/interfaces/interface[name={peer_port_name}]'
+    GNMI_STATUS_UNSPECIFIED = 'UNSPECIFIED'
+    GNMI_STATUS_HEALTHY = 'HEALTHY'
+    GNMI_STATUS_UNHEALTHY = 'UNHEALTHY'
+    GNMI_VALID_STATUSES = frozenset({
+        GNMI_STATUS_UNSPECIFIED,
+        GNMI_STATUS_HEALTHY,
+        GNMI_STATUS_UNHEALTHY,
+    })
+    ATTENTION_POLL_TIMEOUT_SEC = 25
+    ATTENTION_POLL_INTERVAL_SEC = 2
+    ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_ATTENTION_CMD'
+    GPU_ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_GPU_ATTENTION_CMD'
+    GPU_LOCAL_PORT_MAP_ENV = 'NVOS_LINK_HEALTH_GPU_LOCAL_PORT_MAP'
+    COUNTERS_LINK_HEALTH_FIELD = 'link_health'
+    COUNTERS_ATTENTION_REASON_FIELD = 'attention_reason'
+
+
 class PeerPortConsts:
     GPU_TELEMETRY_SERVICE = "gpu-telemetry"
     NMX_T_LITE_SERVICE = "nmx-t-lite"
