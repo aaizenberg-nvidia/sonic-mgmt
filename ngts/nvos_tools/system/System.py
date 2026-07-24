@@ -97,7 +97,7 @@ class System(BaseComponent):
         self.asic_debug_config = AsicDebugConfig(self)
         self.cpu_debug_config = BaseComponent(self, path='/cpu-debug-config')
         self.bmc_debug_config = BaseComponent(self, path='/bmc-debug-config')
-        self.nv_bridge = BaseComponent(self, path='/nv-bridge')
+        self.nv_bridge = NvBridge(self)
         self.control_plane = ControlPlane(self)
         self.packages = Packages(self)
 
@@ -292,3 +292,33 @@ class WebServerAPI(BaseComponent):
 class Api(MTLSableServerResource):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/api')
+
+
+class NvBridge(BaseComponent):
+    """system/nv-bridge component (NVBridge / NVLink-over-IP resiliency)."""
+
+    SWITCH_OVER_ACTION = 'switch-over'
+    SWITCH_OVER_TARGET_KEY = 'node-type'
+    # Success marker every `nv action` prints; used so OpenAPI output validation is
+    # not vacuous (an empty expected_output matches any response, incl. errors).
+    ACTION_SUCCEEDED = 'Action succeeded'
+
+    def __init__(self, parent_obj=None):
+        BaseComponent.__init__(self, parent=parent_obj, path='/nv-bridge')
+
+    def action_switch_over(self, target, dut_engine=None, expected_output=None) -> ResultObj:
+        """``nv action switch-over system nv-bridge <target>`` via the active API.
+
+        Routes through BaseComponent.action so the call honors TestToolkit.tested_api,
+        exercising either the NVUE CLI or the OpenAPI REST endpoint.
+
+        expected_output defaults to the action success marker so a failed/error response
+        (e.g. nvb-s down) is correctly reported as a failed ResultObj on both APIs,
+        rather than passing vacuously on OpenAPI where '' matches any output.
+        """
+        return self.action(
+            self.SWITCH_OVER_ACTION,
+            main_param=(self.SWITCH_OVER_TARGET_KEY, target),
+            engine=dut_engine,
+            expected_output=expected_output or self.ACTION_SUCCEEDED,
+        )
