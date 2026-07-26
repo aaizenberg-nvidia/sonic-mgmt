@@ -468,9 +468,11 @@ class IbSwitch(BaseSwitch):
                                                        'system.profile']
         self.techsupport_etc_empty_files_to_ignore = ['ifstatelock', '.lock', 'base', 'tail', 'installed', 'rules.v4',
                                                       'rules.v6', 'gnmi-server_reconcile', 'lsb_release', 'usr.sbin.haveged',
-                                                      'nvidia_modprobe', '.placeholder', 'installed', '.pwd.lock',
+                                                      'nvidia_modprobe', '.placeholder', '.pwd.lock',
                                                       'verification_test', 'opasswd.old', 'opasswd', 'sbin.dhclient', 'reload.lock',
-                                                      'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable']
+                                                      'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable',
+                                                      'peer_telemetry_enable', '10-ztp-log-forwarding.conf',
+                                                      'accept_eula_version']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
         self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
