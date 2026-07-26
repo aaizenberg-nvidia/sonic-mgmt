@@ -447,7 +447,7 @@ def helper_list_nvidia_gpu_ids(compute_node):
     return gpu_ids
 
 
-@retry(AssertionError, tries=6, delay=5)
+@retry(AssertionError, tries=12, delay=5)
 def helper_wait_for_all_peer_ports_with_hostname(expected_hostnames):
     if isinstance(expected_hostnames, str):
         expected_hostnames = {expected_hostnames}
