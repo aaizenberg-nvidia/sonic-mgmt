@@ -3185,10 +3185,10 @@ class RosalindSwitch(RosalindSurrogateSwitch):
     def _init_constants(self):
         super()._init_constants()
         self.asic_type = NvosConst.NVL6
-        self.supported_nvl_speeds = ['200G', '328G', '345G', '360G', '378G', '400G']  # Rosalind supports all speeds
+        self.supported_nvl_speeds = ['200G', '328G']  # Only approved speeds.
         # MHz -> NVL link speeds allowed for that FAE core-clock (operational profile).
         self.fae_supported_core_clocks = {
-            755: ['400G', '360G', '328G'],
+            755: ['328G'],
             800: self.supported_nvl_speeds,
         }
         self.default_core_clock = 800
