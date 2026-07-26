@@ -435,6 +435,7 @@ class IbSwitch(BaseSwitch):
         self.primary_ipoib_interface = IbConsts.IPOIB_INT.format(self.asic_amount - 1)
         self.multi_asic_system = False
         self.multi_planar = False
+        self.port_range_group_separator = ''
         self.login_pattern = NvosConst.INSTALL_SUCCESS_PATTERN
         self.install_patterns = {self.login_pattern: 0, "NOS install successful": 1}
         self.ib_host_player = 'ha'
@@ -1206,7 +1207,8 @@ class BlackMambaDGXSwitch(BlackMambaSwitch):
 
     def _init_fan_list(self):
         super()._init_fan_list()
-        self.fan_list = list(set(self.fan_list) - {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"})
+        remove = {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"}
+        self.fan_list = [f for f in self.fan_list if f not in remove]
 
     def _init_led_list(self):
         super()._init_led_list()
@@ -1596,6 +1598,7 @@ class CrocodileSwitch(IbSwitch):
         self.unsupported_commands_list.extend(["nv show ib device ASIC3",
                                                "nv show ib device ASIC4"])
         self.memory_speed = 2667  # in MT/s
+        self.port_range_group_separator = ','
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
