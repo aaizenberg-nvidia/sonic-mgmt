@@ -337,6 +337,11 @@ class PeerTelemetryHealth:
     HEALTHY_VALUES = ("ok", "healthy", "up", "ready", "running", "200", "0")
     DEGRADED_VALUES = ("degraded", "unhealthy", "error", "down", "failed", "stale",
                        "fail", "not_ok", "unreachable")
+    # Classifications returned by helpers.classify_peer_health(); the *_VALUES tuples above
+    # are the raw STATE_DB spellings that map onto these.
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNKNOWN = "unknown"
 
 
 # gNMI uses octets, NVUE uses bytes; comparisons skip names a surface lacks.
@@ -382,6 +387,11 @@ NMXT_IB_CONTAINER = "nmx-t-ib.telemetry.telemetry"
 
 # NMX-T for IB serves the HCA cross-connect set (xcset) as CSV over a Unix socket.
 NMXT_XCSET_SOCKET = "/var/run/nmx-t/ib/telemetry.sock"
+
+
+# Lower-cased journal marker peer-telemetry logs (at error level) while it cannot reach the
+# nmx-t-ib sockets, e.g. "Connection error: GET ... on /var/run/nmx-t/ib/control.sock".
+NMXT_CONNECTION_ERROR_TOKEN = "connection error: get"
 
 
 NMXT_XCSET_ENDPOINT = "/csv/xcset/ib_nvos"

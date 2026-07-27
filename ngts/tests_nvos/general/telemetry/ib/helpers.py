@@ -60,6 +60,7 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     LINK_RECOVERY_POLL_SEC,
     LINK_RECOVERY_TIMEOUT_SEC,
     LINK_STATE_RECOVERY_LEAVES,
+    NMXT_CONNECTION_ERROR_TOKEN,
     NMXT_CONNECTOR_SOCKET,
     NMXT_CONTROL_SOCKET,
     NMXT_IB_CONTAINER,
@@ -1789,11 +1790,11 @@ def classify_peer_health(raw: Dict[str, str]) -> str:
         vals = list(raw.values())
     text = " ".join(str(v).strip().lower() for v in vals)
     if any(token in text for token in PeerTelemetryHealth.DEGRADED_VALUES):
-        return "degraded"
+        return PeerTelemetryHealth.DEGRADED
     tokens = set(text.split())
     if any(h in tokens or h == text.strip() for h in PeerTelemetryHealth.HEALTHY_VALUES):
-        return "healthy"
-    return "unknown"
+        return PeerTelemetryHealth.HEALTHY
+    return PeerTelemetryHealth.UNKNOWN
 
 
 def read_peer_telemetry_health(engines) -> Tuple[str, Dict[str, str]]:
@@ -2108,7 +2109,7 @@ def wait_for_peer_telemetry_healthy(
     bound = timeout_sec or (10 + PEER_TELEMETRY_SAMPLING_SEC * 5)
     deadline = time.time() + bound
     health, raw = read_peer_telemetry_health(engines)
-    while health != "healthy" and time.time() < deadline:
+    while health != PeerTelemetryHealth.HEALTHY and time.time() < deadline:
         time.sleep(min(5, max(1, bound // 10)))
         health, raw = read_peer_telemetry_health(engines)
     return health, raw
@@ -2127,6 +2128,30 @@ def wait_for_nmxt_ib_active(engines, timeout_sec: int = 120) -> bool:
             engines.dut.run_cmd(f"sudo systemctl unmask {NMXT_IB_SERVICE}")
         engines.dut.run_cmd(f"sudo systemctl start {NMXT_IB_SERVICE} 2>/dev/null")
         time.sleep(5)
+    return False
+
+
+def wait_for_nmxt_backend_reachable(engines, timeout_sec: int = 120, quiet_sec: int = 10) -> bool:
+    """Wait until nmx-t-ib is up and peer-telemetry has stopped logging backend connection errors.
+
+    ``systemctl start nmx-t-ib`` returns before the unit's sockets accept connections, and until
+    they do the daemon keeps logging ``Connection error: GET ... on /var/run/nmx-t/ib/*.sock`` at
+    error level. Callers restoring the backend use this to hold a LogAnalyzer ignore window open
+    until the recovery is genuinely quiet, so those expected errors are not attributed to the
+    post-recovery validation. Returns False if the unit does not reach active or the journal
+    does not go quiet within ``timeout_sec`` total (the whole call is bounded by it).
+    """
+    deadline = time.time() + timeout_sec
+    if not wait_for_nmxt_ib_active(engines, timeout_sec=timeout_sec):
+        return False
+    # Only probe while a FULL quiet window still fits: a truncated one would read a few
+    # error-free seconds as quiet and let the caller close its ignore window too early.
+    while deadline - time.time() >= quiet_sec:
+        since = dut_journal_since_marker(engines)
+        time.sleep(quiet_sec)
+        log = (read_gpu_telemetry_log(engines, since=since) or "").lower()
+        if NMXT_CONNECTION_ERROR_TOKEN not in log:
+            return True
     return False
 
 

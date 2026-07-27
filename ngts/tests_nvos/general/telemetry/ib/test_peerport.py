@@ -33,6 +33,7 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     PEER_PORT_SCHEMA_GROUPS,
     PEER_TELEMETRY_SAMPLING_SEC,
     PeerPortFields,
+    PeerTelemetryHealth,
     PeerType,
     SAMPLING_JITTER_TOLERANCE_PCT,
 )
@@ -98,6 +99,26 @@ def _enable_peer_port_for_hca(engines, **list_kwargs) -> Dict[str, Dict[str, str
     return rows
 
 
+def _recycle_peer_port_for_hca(engines, **list_kwargs) -> Dict[str, Dict[str, str]]:
+    """Enable peer-port from a disabled state (disabling first if needed) and return the HCA rows.
+
+    The daemon latches its 'backend unrecoverable' declaration for the lifetime of its
+    monitor thread: once declared, neither the backend coming back nor a later outage
+    re-arms it. Only the enable path, which starts the monitor thread, clears the latch.
+    Tests that assert on the declaration must therefore recycle the knob instead of
+    inheriting an enabled feature from whatever ran before them.
+    """
+    system = System()
+    state = str(system.peer_port.parse_show().get(NvuePaths.KEY_STATE, "")).lower()
+    if state == NvuePaths.STATE_ENABLED:
+        with allure.step("Disable peer-port so the enable below restarts the daemon's monitor thread"):
+            system.peer_port.unset(
+                op_param=NvuePaths.KEY_STATE, apply=True, ask_for_confirmation='-y',
+            ).verify_result()
+            _wait_for_peer_ports(engines, present=False)
+    return _enable_peer_port_for_hca(engines, **list_kwargs)
+
+
 _XCSET_PARSE_FAIL_TOKENS = ("malformed row", "csv parse failed", "parse error", "parse failed")
 
 
@@ -120,8 +141,8 @@ def _wait_for_xcset_parse_failure(engines, baseline: int,
 
 
 # NMX-T-for-IB outage: the daemon retries the backend a few times, then declares it
-# unrecoverable and intentionally drops the stale rows (dev decision, Ayal). Key off the
-# log wording rather than the attempt count so the check survives the count changing.
+# unrecoverable and keeps serving the last-good snapshot, flagged stale. Key off the log
+# wording rather than the attempt count so the check survives the count changing.
 NMXT_UNRECOVERABLE_TOKEN = "nmx-t backend unrecoverable after"
 NMXT_UNRECOVERABLE_DEADLINE_SEC = 3 * MINUTE
 
@@ -147,17 +168,6 @@ def _wait_for_nmxt_unrecoverable(engines, since: str,
             return True
         time.sleep(min(interval, 5))
     return False
-
-
-def _wait_for_hca_rows(engines, *, present: bool, deadline_sec: int) -> Dict[str, Dict[str, str]]:
-    """Poll the HCA peer-port rows until they are present / absent, or the deadline passes."""
-    interval = _peer_port_interval_sec()
-    deadline = time.time() + deadline_sec
-    rows = ibh.list_hca_peer_rows(engines)
-    while bool(rows) != present and time.time() < deadline:
-        time.sleep(min(interval, 5))
-        rows = ibh.list_hca_peer_rows(engines)
-    return rows
 
 
 def _require_hca_topology(setup_topology) -> List:
@@ -896,7 +906,7 @@ def test_peer_telemetry_health_steady_state_healthy(engines, devices, setup_topo
             "PEER_PORT_TELEMETRY_HEALTH is not present in STATE_DB; gpu-telemetry should "
             "publish an initial health state (HLD §6.1.2). Confirm the key with dev."
         )
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"Steady-state PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}); expected healthy."
         )
 
@@ -1042,7 +1052,7 @@ def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, set
         _enable_peer_port_for_hca(engines, tier=PeerPortFields.TIER_AGGREGATED)
         health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
         ibh.attach_dict("peer telemetry health before reboot", {"classification": health, "raw": raw})
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before reboot; "
             "expected healthy so the baseline rows come from a live xcset feed"
         )
@@ -1194,24 +1204,24 @@ def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology
 @pytest.mark.multiplanar
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
-    """NMX-T-for-IB outage: rows retained while transient, removed once deemed unrecoverable, restored on return."""
+    """NMX-T-for-IB outage: last-good rows retained while the backend is down, refreshed on its return."""
     _require_hca_topology(setup_topology)
-    _enable_peer_port_for_hca(engines)
+    _recycle_peer_port_for_hca(engines)
 
     with allure.step("Snapshot HCA rows and confirm health is healthy"):
         snapshot = ibh.list_hca_peer_rows(engines)
         assert snapshot, "No HCA peer-port rows in System DB (HCA feature build delivered?)"
         health, raw = ibh.read_peer_telemetry_health(engines)
         ibh.attach_dict("initial health", {"classification": health, "raw": raw})
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before the outage; "
             "expected healthy. Confirm the health key/values with dev (HLD §6.1.2)."
         )
 
     # Negative flow: while NMX-T-for-IB is down the daemon retries the backend and logs the
     # outage; once the failure is deemed persistent it logs "nmx-t backend unrecoverable
-    # after ..." (kept at error level by design) and intentionally drops the stale rows
-    # (dev decision, Ayal). Suppress LogAnalyzer over the whole deliberate outage window;
+    # after ..." (kept at error level by design) and goes on serving the last-good snapshot
+    # flagged stale. Suppress LogAnalyzer over the whole deliberate outage window;
     # LogAnalyzer stays active for the pre-outage setup above.
     with loganalyzer_ignore():
         with allure.step("Make NMX-T Lite unreachable"):
@@ -1223,47 +1233,82 @@ def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
         try:
             with allure.step("While the outage is still transient: last-good rows retained, health degraded"):
                 time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
+                # Sample rows, health and log before asserting: the three checks are
+                # independent facets of the same state, so one failing must not stop the
+                # others from being reported.
                 during = ibh.list_hca_peer_rows(engines)
                 ibh.attach_dict("rows during transient outage", during)
-                # Retention while transient: the row SET must still match the pre-outage snapshot.
-                assert set(during) == set(snapshot), (
-                    "HCA rows were added/dropped while the NMX-T Lite outage was still transient; "
-                    "the last-good rows must be retained until the failure is deemed persistent. "
-                    f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
-                )
                 health, raw = ibh.read_peer_telemetry_health(engines)
-                assert health == "degraded", (
-                    f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
-                )
                 log = ibh.read_gpu_telemetry_log(engines)
                 lowered = log.lower()
-                assert "unreachable" in lowered or "nmx" in lowered, (
-                    "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
-                )
 
-            with allure.step("Once the failure is deemed persistent: last-good rows are intentionally removed"):
-                # Dev decision (Ayal): after the backend is declared unrecoverable the daemon drops
-                # the stale rows instead of serving them forever. Key off the log wording (robust to
-                # the restart-attempt count changing), then require the rows to drain.
+                with allure.independent_step("Last-good rows are retained while the outage is transient"):
+                    # Retention while transient: the row SET must still match the pre-outage snapshot.
+                    assert set(during) == set(snapshot), (
+                        "HCA rows were added/dropped while the NMX-T Lite outage was still transient; "
+                        "the last-good rows must be retained until the failure is deemed persistent. "
+                        f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
+                    )
+                with allure.independent_step("Health is degraded while the outage is transient"):
+                    assert health == PeerTelemetryHealth.DEGRADED, (
+                        f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
+                    )
+                with allure.independent_step("The outage is reported in the peer-telemetry log"):
+                    assert "unreachable" in lowered or "nmx" in lowered, (
+                        "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
+                    )
+
+            with allure.step("Once the failure is deemed persistent: last-good rows are still retained"):
+                # The daemon gives up restarting the backend but keeps the last-good snapshot
+                # rather than blanking the listing, so consumers keep reading data flagged
+                # stale. Key off the log wording (robust to the restart-attempt count
+                # changing), then give the rows two more cycles to prove they are not drained.
                 assert _wait_for_nmxt_unrecoverable(engines, outage_since), (
                     "peer-telemetry never logged 'nmx-t backend unrecoverable after ...' during the "
                     f"outage (waited {NMXT_UNRECOVERABLE_DEADLINE_SEC}s); expected the daemon to declare "
                     "the NMX-T-for-IB failure persistent"
                 )
-                remaining = _wait_for_hca_rows(engines, present=False,
-                                               deadline_sec=2 * PEER_TELEMETRY_SAMPLING_SEC)
+                time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
+                # Retention and health are independent facets of the same post-declaration
+                # state, so sample both before asserting and report them separately.
+                remaining = ibh.list_hca_peer_rows(engines)
                 ibh.attach_dict("rows after persistence declared", remaining)
-                assert not remaining, (
-                    "HCA rows were still present after the NMX-T-for-IB failure was declared "
-                    "unrecoverable; expected the daemon to remove the stale rows. "
-                    f"remaining={sorted(remaining)!r}"
-                )
+                health, raw = ibh.read_peer_telemetry_health(engines)
+
+                with allure.independent_step("Last-good rows are retained after persistence is declared"):
+                    assert set(remaining) == set(snapshot), (
+                        "HCA rows changed after the NMX-T-for-IB failure was declared unrecoverable; "
+                        "the last-good snapshot must be retained for the whole outage. "
+                        f"before={sorted(snapshot)!r}, remaining={sorted(remaining)!r}"
+                    )
+                with allure.independent_step("Health is still degraded after persistence is declared"):
+                    assert health == PeerTelemetryHealth.DEGRADED, (
+                        f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after the failure was "
+                        "declared unrecoverable; expected degraded while the backend is still down"
+                    )
         finally:
             with allure.step("Restore NMX-T Lite"):
                 ibh.restore_nmxt_lite(engines)
+                # `systemctl start` returns before nmx-t-ib accepts connections, and the daemon
+                # keeps logging backend connection errors until it does. Stay inside the ignore
+                # window until the journal goes quiet, otherwise those tail-end outage errors
+                # land on the post-recovery validation and fail LogAnalyzer in teardown.
+                backend_quiet = ibh.wait_for_nmxt_backend_reachable(engines)
+                if not backend_quiet:
+                    ibh.attach_dict("journal tail while still not quiet",
+                                    {"peer_telemetry": ibh.read_gpu_telemetry_log(engines)})
 
-    # LogAnalyzer is re-enabled here (outside the ignore): recovery should be clean, so any
-    # unexpected error log during the post-restore validation is a real regression to catch.
+    # Verified here rather than in the finally above: raising from a finally would replace a
+    # failure raised by the outage checks and hide the real cause. Reaching this line means
+    # those checks passed, so a still-noisy backend is the only thing left to report.
+    assert backend_quiet, (
+        "nmx-t-ib did not come back and stop logging backend connection errors after "
+        "restore; the LogAnalyzer ignore window has now closed, so those expected outage "
+        "errors will also be attributed to the post-recovery validation"
+    )
+
+    # LogAnalyzer is re-enabled here (outside the ignore): recovery is quiet by this point, so
+    # any unexpected error log during the post-restore validation is a real regression to catch.
     with allure.step("After recovery: ingestion resumes and health is healthy again"):
         # Wait for the full pre-outage peer set to return, not just any row - a partial
         # re-ingestion would otherwise pass the "restored on return" claim. Size the
@@ -1282,7 +1327,7 @@ def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
             "HCA rows did not fully resume after NMX-T Lite was restored; "
             f"missing peers={sorted(still_missing)!r}, snapshot={sorted(snapshot)!r}"
         )
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
 
@@ -1310,7 +1355,7 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
             "PEER_PORT_TELEMETRY_HEALTH is not present in STATE_DB before injection; "
             "gpu-telemetry should publish an initial health state (FS §6.1.2)."
         )
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before injection; expected healthy"
         )
         parse_fail_baseline = _count_xcset_parse_failures(engines)
@@ -1354,7 +1399,7 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
 
             with allure.step("Health reflects the parse failure (FS §6.1.2: update health state -> degraded)"):
                 health, raw = ibh.read_peer_telemetry_health(engines)
-                assert health == "degraded", (
+                assert health == PeerTelemetryHealth.DEGRADED, (
                     f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the malformed "
                     "feed; FS §6.1.2 requires the daemon to update health state to degraded."
                 )
@@ -1371,7 +1416,7 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
         # Poll for health rather than a one-shot read: the classification can lag row
         # reappearance and pass through transient states during the daemon's warm-up.
         health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
 
@@ -1431,6 +1476,6 @@ def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, se
 
     with allure.step("PEER_PORT_TELEMETRY_HEALTH is healthy again after recovery"):
         health, raw = ibh.read_peer_telemetry_health(engines)
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after gpu-telemetry restart; expected healthy"
         )
