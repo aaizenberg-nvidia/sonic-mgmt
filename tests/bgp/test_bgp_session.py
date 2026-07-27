@@ -309,12 +309,12 @@ def test_bgp_session_interface_down(duthosts, enum_frontend_dut_hostname, fanout
             reboot_type = "warm"
         else:
             reboot_type = "cold"
-        # TODO: remove this override once warm reboot is supported on sn6600_ld
+        # TODO: remove this override once warm reboot is supported on sn6600_ld/sn6810_ld
         # (https://redmine.mellanox.com/issues/5154543).
         if reboot_type == "warm" \
-                and "sn6600_ld" in duthost.facts.get("platform", "") \
+                and "sn6" in duthost.facts.get("platform", "") \
                 and is_redmine_issue_active([5154543])[0]:
-            logger.info("Overriding warm reboot with cold reboot on sn6600_ld due to "
+            logger.info("Overriding warm reboot with cold reboot on sn6 due to "
                         "RM 5154543 (warm-reboot unsupported on this platform).")
             reboot_type = "cold"
         logger.info("Rebooting DUT {} with type {}".format(duthost.hostname, reboot_type))
