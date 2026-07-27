@@ -245,6 +245,7 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
 
             with allure.step('uninstall orig version'):
                 system.image.action_uninstall('force')
+                time.sleep(3)
             verify_system_image_gnmi_matches_nvue(engines, devices, system)
 
             with allure.step('run curl via ipv6, customer bug #4318552'):
