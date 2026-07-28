@@ -2353,3 +2353,30 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_set
+
+# NVOS 2026 sonic rebase: Benign boot-time kernel messages on every reboot - appear in syslog during the early boot window.
+# ref: https://nvbugspro.nvidia.com/bug/6444993 https://nvbugspro.nvidia.com/bug/6451858
+- Errors_list:
+    - '.*NOTICE kernel: \[.*\] Kernel command line: BOOT_IMAGE=.*'
+    - '.*WARNING kernel: \[.*\] x86/bugs: return thunk changed.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] busy detected; another entity is sending conflicting requests.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] failed to cache protocols.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] failed to create mailbox.*'
+    - '.*WARNING \(haveged\).*haveged\.service: Referenced but unset environment variable evaluates to an empty string: DAEMON_ARGS.*'
+    - '.*WARNING kernel: \[.*\] Could not retrieve perf counters.*'
+    - '.*WARNING kernel: \[.*\] dw-apb-uart.*forbid DMA for kernel console.*'
+    - '.*WARNING kernel: \[.*\] ipmi_si.*The BMC does not support clearing the recv irq bit, compensating.*'
+    - '.*WARNING kernel: \[.*\] ipmi_si.*Error clearing flags: c1.*'
+    - '.*WARNING kernel: \[.*\] nvme nvme\d+: using unchecked data buffer.*'
+    - '.*ERR sonic-db-cli: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*ERR sonic-cfggen: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*ERR python3: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*WARNING rsyslogd: omprog: program .* terminated; will be restarted.*'
+    - '.*WARNING rsyslogd: action .* suspended \(module ''omprog''\).*'
+    - '.*WARNING kernel: \[.*\] at24 .*: supply vcc not found, using dummy regulator.*'
+    - '.*ERR systemd-modules-load\[.*\]: Failed to find module ''i2c-mux-regmap''.*'
+    - '.*WARNING kernel: \[.*\] device-mapper: core: CONFIG_IMA_DISABLE_HTABLE is disabled.*'
+    - '.*WARNING systemd\[.*\]: .*/mgmtportsyncd\.service:\d+: Unknown key ''WantedBy'' in section \[Unit\], ignoring.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos
