@@ -783,13 +783,4 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     reason: "Tray admin state is only supported on VR200/Rosalind and later"
     conditions:
       - "'rosalind' not in testbed"
-
-tests_nvos/platform/test_install_platform_firmware.py::test_install_platform_firmware:
-  skip:
-    reason: '[NVOS] Bug SW #5169777: ASIC FW install (41_2018_0728) does not reach
-      "System is ready" | Assignee: Arnon Rubinstein'
-    conditions_logical_operator: and
-    conditions:
-    - '''rosalind'' in testbed'
-    - https://redmine.mellanox.com/issues/5169777
 ########################## NVOS IGNORE END ##########################
