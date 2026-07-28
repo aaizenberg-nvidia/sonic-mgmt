@@ -1155,6 +1155,7 @@ dhcp_relay:
     conditions_logical_operator: or
     conditions:
       - "'isolated' in topo_name"
+      - "'t0-d96-u30s2' in topo_name" # we define service ports/peer pors in this specific topology for cham6s BU/ES
       - "'bmc' in topo_type"
       - *lossyTopos
 
