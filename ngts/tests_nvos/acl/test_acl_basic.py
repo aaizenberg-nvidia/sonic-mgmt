@@ -1,5 +1,6 @@
 import logging
 import pytest
+import shlex
 import subprocess
 import time
 from retry import retry
@@ -16,6 +17,7 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_constants.constants_nvos import ApiType, AclConsts, OutputFormat, IpConsts
 from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
+from ngts.nvos_tools.system.System import System
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from scapy.layers.inet import IP, TCP, ICMP
 from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest
@@ -408,10 +410,12 @@ def test_acl_match_source_port(engines, random_api, topology_obj):
     2. send packet
     3. validate counter increased
     """
+    unset_default_control_plane_acls(engines)
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
     src_port_list = ['ANY', 'ssh', 1244]
     match_ip_port_test(engines, mgmt_port, 'ipv4', 'AA_TEST_ACL_SOURCE_PORT', src_port_list, engines.dut.ip, AclConsts.TCP_SOURCE_PORT, engines.sonic_mgmt)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -423,10 +427,12 @@ def test_acl_match_dest_port(engines, random_api, topology_obj):
     2. send packet
     3. validate counter increased
     """
+    unset_default_control_plane_acls(engines)
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
     dest_port_list = ['ANY', 'ssh', 1244]
     match_ip_port_test(engines, mgmt_port, 'ipv4', 'AA_TEST_ACL_DEST_PORT', dest_port_list, engines.sonic_mgmt.ip, AclConsts.TCP_DEST_PORT, engines.dut)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -503,6 +509,7 @@ def test_acl_match_tcp_flag_mask(engines, random_api, topology_obj):
     flag set, all others unset), which is unreliable in control-plane ACLs where the network stack
     may add additional flags to packets.
     """
+    unset_default_control_plane_acls(engines)
     acl_id = "AA_TEST_ACL_TCP_FLAG_MASK"
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
@@ -531,6 +538,7 @@ def test_acl_match_tcp_flag_mask(engines, random_api, topology_obj):
         validate_counters_after_traffic(engines.sonic_mgmt, AclConsts.INBOUND, mgmt_port, acl_id, rule_id, dest_addr,
                                         packet=packet)
         rule_id = str(int(rule_id) - 1)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -582,6 +590,7 @@ def test_acl_match_icmp_type(engines, random_api, topology_obj):
     Note: time-exceeded and dest-unreachable ICMP types require proper payload (original IP header + data)
     per RFC 792, otherwise they may be rejected by the network stack.
     """
+    unset_default_control_plane_acls(engines)
     acl_id = "AA_TEST_ACL_ICMP_TYPE"
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
@@ -607,6 +616,7 @@ def test_acl_match_icmp_type(engines, random_api, topology_obj):
         validate_counters_after_traffic(engines.sonic_mgmt, AclConsts.INBOUND, mgmt_port, acl_id, rule_id, dest_addr,
                                         packet=packet)
         rule_id = str(int(rule_id) - 1)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -650,6 +660,7 @@ def test_acl_match_mss(engines, random_api, topology_obj):
     2. send packet
     3. validate counter increased
     """
+    unset_default_control_plane_acls(engines)
     acl_id = "AA_TEST_ACL_MSS"
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
@@ -673,6 +684,7 @@ def test_acl_match_mss(engines, random_api, topology_obj):
                                                    mgmt_port, AclConsts.INBOUND, AclConsts.CONTROL_PLANE, acl_obj=acl_obj)
         validate_counters_after_traffic(engines.sonic_mgmt, AclConsts.INBOUND, mgmt_port, acl_id, rule_id, dest_addr,
                                         packet=packet)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -687,6 +699,7 @@ def test_acl_match_ecn(engines, random_api, topology_obj):
     Note: ECN flags and IP ECT values are tested with proper source IP and destination port
     to ensure packets reach the ACL layer correctly.
     """
+    unset_default_control_plane_acls(engines)
     acl_id = "AA_TEST_ACL_ECN"
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
@@ -721,6 +734,7 @@ def test_acl_match_ecn(engines, random_api, topology_obj):
             validate_counters_after_traffic(engines.sonic_mgmt, AclConsts.INBOUND, mgmt_port, acl_id, rule_id, dest_addr,
                                             packet=packet)
             rule_id = str(int(rule_id) - 1)
+    set_default_control_plane_acls(engines)
 
 
 @pytest.mark.acl
@@ -920,12 +934,40 @@ def dest_ip_test(engines, mgmt_port, acl_type, acl_id, dest_ip_list, ping_dest):
 
 
 def scapy_send_packet(engine, packet, interface=''):
-    cmd = f"send({packet})"
-    cmd_set = ["sudo scapy", cmd, "exit()"]
+    # The interactive scapy shell can echo its prompt before the send executes, so the session may be
+    # torn down with the packet never leaving. Send non-interactively and require scapy's confirmation.
+    # Packets may embed single quotes, e.g. TCP(options=[('MSS', 1500)]), so let shlex do the quoting
+    py_cmd = shlex.quote(f"from scapy.all import *; send({packet}, verbose=1)")
+    cmd = f"sudo python3 -c {py_cmd}"
     with allure.step(f"On {engine.ip}: sending with scapy {cmd}"):
-        ret = engine.run_cmd_set(cmd_set, validate=False, patterns_list=[">>>"])
-        if "Traceback" in ret:
-            raise Exception("scapy failed: " + ret)
+        ret = engine.run_cmd(cmd)
+        if "ModuleNotFoundError" in ret:
+            # scapy may only be installed in the virtualenv, which plain sudo does not inherit
+            ret = engine.run_cmd(f'sudo -E env "PATH=$PATH" python3 -c {py_cmd}')
+        if "Traceback" in ret or "Sent" not in ret:
+            raise Exception("scapy failed to send: " + ret)
+
+
+def unset_default_control_plane_acls(engines):
+    """Unset all system control-plane ACL bindings (dos / whitelist / outbound)."""
+    with allure.step("Unset default system control-plane ACLs"):
+        System().control_plane.acl.unset(apply=True).verify_result()
+
+
+def set_default_control_plane_acls(engines):
+    """Re-attach the default system control-plane ACL bindings by name."""
+    with allure.step("Set default system control-plane ACLs back"):
+        cp_acl = System().control_plane.acl
+        for acl_id in AclConsts.NEW_DEFAULT_ACLS:
+            # Loopback defaults are bound on interface lo, not system control-plane
+            if 'loopback' in acl_id:
+                continue
+            if 'outbound' in acl_id:
+                cp_acl.acl_id[acl_id].outbound.set()
+            else:
+                cp_acl.acl_id[acl_id].inbound.set()
+        SendCommandTool.execute_command(TestToolkit.GeneralApi[TestToolkit.tested_api].apply_config,
+                                        engines.dut, True).verify_result()
 
 
 def match_ip_port_test(engines, mgmt_port, acl_type, acl_id, port_list, dest_addr, port_direction, engine_send_packet):
