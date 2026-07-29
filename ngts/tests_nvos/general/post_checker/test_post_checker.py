@@ -22,9 +22,9 @@ from devts.infra.tools.connection_tools.serial_engine_factory import SerialEngin
 @pytest.mark.disable_loganalyzer
 @pytest.mark.no_log_test_wrapper
 @pytest.mark.no_cli_coverage_run
-def test_post_checker(engines, topology_obj,
+def test_post_checker(engines, topology_obj, skip_clear_config,
                       devices, default_config_yml_path, root_dir,
-                      dumps_folder, setup_name, security_post_checker):
+                      dumps_folder, setup_name, security_post_checker, is_ib_router):
     """
     Post checker flow:
         1. Check if ssh port is open and we can connect to it
@@ -49,9 +49,10 @@ def test_post_checker(engines, topology_obj,
             res_obj = DutUtilsTool.wait_for_nvos_to_become_functional(engines.dut)
 
             if res_obj.result:
-                with allure.step("Clear config"):
-                    clear_conf(engine=engines.dut, device=devices.dut,
-                               config_yml=default_config_yml_path, root_dir=root_dir)
+                if not skip_clear_config:
+                    with allure.step("Clear config"):
+                        clear_conf(engine=engines.dut, device=devices.dut,
+                                   config_yml=default_config_yml_path, root_dir=root_dir)
             else:
                 logging.info("Try to clear the config using serial console")
 
@@ -84,7 +85,7 @@ def test_post_checker(engines, topology_obj,
                         pytest.exit(f"System in fatal state, return code {FatalStateConsts.FATAL_STATE_RETURN_CODE}",
                                     returncode=FatalStateConsts.FATAL_STATE_RETURN_CODE)
 
-        if not security_post_checker:
+        if not security_post_checker and not is_ib_router:
             TrafficGeneratorTool.bring_up_traffic_containers(engines, setup_name)
 
     except BaseException as err:
