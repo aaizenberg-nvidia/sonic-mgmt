@@ -49,6 +49,7 @@ from ngts.scripts.sonic_deploy.sonic_only_methods import detect_asic_count, Soni
 from ngts.ngts_types import CleanUpT
 
 logger = logging.getLogger(__name__)
+_ANSI_COLOR = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 
 def _disable_logging_root_handlers():
@@ -709,6 +710,26 @@ def pytest_runtest_makereport(item: pytest.Item, call):
     # be "setup", "call", "teardown"
 
     setattr(item, "rep_" + rep.when, rep)
+
+
+@pytest.hookimpl(specname="pytest_runtest_makereport", trylast=True, hookwrapper=True)
+def pytest_sanitize_allure_logs():
+    """
+    Remove ANSI colors from captured logs before Allure attaches them.
+
+    Run as an inner hookwrapper so this cleanup happens before Allure's
+    pytest_runtest_makereport hook consumes the report sections.
+    """
+    outcome = yield
+    rep: pytest.TestReport = outcome.get_result()
+
+    if rep.when == 'teardown':
+        # NOTE: this is a workaround to sanitize the allure logs by removing ANSI colors
+        rep.sections[:] = [
+            (name, _ANSI_COLOR.sub('', content))
+            if name.startswith("Captured ") else (name, content)
+            for name, content in rep.sections
+        ]
 
 
 @pytest.fixture(scope='session')
