@@ -17,6 +17,7 @@ from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.HostMethods import HostMethods
 from ngts.nvos_constants.constants_nvos import NvosConst
 from ngts.scripts.code_coverage import coverage_helpers
+from ngts.scripts.code_coverage.configure_switch_before_code_coverage_nvos import HOST_SERVICES_FOR_COVERAGE
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.constants.constants import NvosCliTypes
@@ -201,7 +202,11 @@ def extract_python_coverage_for_nvos(dest: str, engines: EnginesT, cli_obj: Nvue
         coverage_file = get_python_coverage_file(cli_obj)
 
     with allure.step('Restart system services to get coverage for running services'):
-        engines.dut.run_cmd('sudo systemctl restart nvued.service')
+        for service in HOST_SERVICES_FOR_COVERAGE:
+            try:
+                engines.dut.run_cmd(f'sudo systemctl restart {service}.service')
+            except Exception as ex:
+                logger.warning(f'Failed to restart {service}.service: {ex}')
 
     with allure.step("Pre step - start dockers"):
         nvos_pre_step(engines.dut)
