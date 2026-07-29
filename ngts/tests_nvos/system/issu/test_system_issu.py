@@ -38,6 +38,7 @@ from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_config_utils import clear_conf
 from retry import retry
+from retry.api import retry_call
 from ngts.tests_nvos.platform.firmware_telemetry_helpers import (
     assert_gnmi_firmware_version_matches_nvue,
 )
@@ -962,6 +963,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         # traffic_start_time = time.time()
 
     with allure.step('Run show interface and save its output'):
+        time.sleep(30)
         interface_output = Tools.OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
             interface.show()).get_returned_value()
 
@@ -1057,6 +1059,31 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
                 target_version_num = target_version.split('/')[-1].replace('amd64-', '').replace('.bin', '')
                 assert system_version == target_version_num, (f'system image is: {system_version}, '
                                                               f'instead of {target_version_num}')
+
+                image_show = OutputParsingTool.parse_json_str_to_dictionary(
+                    system.image.show()).get_returned_value()
+
+                def _partition_build_id(slot):
+                    slot_val = image_show.get(slot)
+                    if isinstance(slot_val, dict):
+                        return slot_val.get(ImageConsts.BUILD_ID)
+                    return slot_val
+
+                partition2_build = _partition_build_id(ImageConsts.PARTITION2_IMG)
+                assert partition2_build == target_version_num, (
+                    f'partition2 build-id is {partition2_build}, expected {target_version_num} '
+                    f'(recent ISSU should land in partition2). Full image show: {image_show}')
+
+                current_val = image_show.get(ImageConsts.CURRENT_IMG)
+                next_val = image_show.get(ImageConsts.NEXT_IMG)
+                if current_val in ('1', '2'):
+                    assert current_val == '2' and next_val == '2', (
+                        f"After ISSU, current/next should point to partition2. Got "
+                        f"current={current_val}, next={next_val}")
+                else:
+                    assert current_val == target_version_num and next_val == target_version_num, (
+                        f"After ISSU, current/next build-id should equal {target_version_num}. Got "
+                        f"current={current_val}, next={next_val}")
 
             if fw_expected:
                 with (allure.step('Verify fw versions')):
