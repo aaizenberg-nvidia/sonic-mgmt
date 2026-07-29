@@ -658,9 +658,13 @@ tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
 
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4975521'
+    reason: 'Testcase skipped due to RM issues: https://redmine.mellanox.com/issues/4975521,
+      https://redmine.mellanox.com/issues/5158907 (rosalind only) - nmx-telemetry show
+      exposes controller-only log-stream and otlp fields'
+    conditions_logical_operator: or
     conditions:
       - https://redmine.mellanox.com/issues/4975521
+      - "https://redmine.mellanox.com/issues/5158907 and 'rosalind' in testbed"
 
 tests_nvos/cluster/test_sdn_cmd_run.py::test_sdn_get_cmd:
   skip:
