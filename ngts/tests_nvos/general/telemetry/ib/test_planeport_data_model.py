@@ -47,8 +47,8 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
 )
 from ngts.tests_nvos.system.gnmi.constants import (
     MAX_GNMI_SUBSCRIBERS,
+    STREAM_SUBSCRIBE_LOAD_WINDOW_SEC,
     STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
-    STREAM_SUBSCRIBE_WINDOW_SEC,
 )
 from ngts.tests_nvos.system.gnmi.helpers import (
     count_result_sets,
@@ -635,12 +635,12 @@ def test_gnmi_subscribe_many_planeport_paths(
     engines, devices, gnmi_client, setup_topology, topology_obj
 ):
     """
-    gNMI subscribe load: open MAX_GNMI_SUBSCRIBERS concurrent SAMPLE-mode STREAM subscribers
-    on the full per-plane counter-leaf path set of one Aport (plane-port enabled), stream for
-    STREAM_SUBSCRIBE_WINDOW_SEC seconds at a one-second sample interval, and assert each
-    subscriber both receives every subscribed path and observes more than one result-set
-    (roughly one per second). Path/field-name and result-set coverage only - counter values
-    are not asserted.
+    gNMI subscribe load: open MAX_GNMI_SUBSCRIBERS concurrent SAMPLE-mode STREAM
+    subscribers on the full per-plane counter-leaf path set of one Aport (plane-port enabled),
+    stream for STREAM_SUBSCRIBE_LOAD_WINDOW_SEC seconds at a one-second sample interval, and
+    assert each subscriber both receives every subscribed path and observes more than one
+    result-set (roughly one per second). Path/field-name and result-set coverage only - counter
+    values are not asserted.
     """
     # Gate on gNMI reachability: skip (not fail) when the server is down, so the leaf-presence
     # asserts below never produce misleading "missing fields" failures (gnmi guideline 2).
@@ -674,7 +674,7 @@ def test_gnmi_subscribe_many_planeport_paths(
             "leaves": leaves,
             "paths_per_subscriber": len(paths),
             "subscribers": MAX_GNMI_SUBSCRIBERS,
-            "window_sec": STREAM_SUBSCRIBE_WINDOW_SEC,
+            "window_sec": STREAM_SUBSCRIBE_LOAD_WINDOW_SEC,
             "sample_interval": STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
         },
     )
@@ -682,11 +682,12 @@ def test_gnmi_subscribe_many_planeport_paths(
         f"path build mismatch: {len(paths)} != {len(planes)} planes * {len(leaves)} leaves"
     )
 
-    # Open MAX_GNMI_SUBSCRIBERS concurrent SAMPLE-mode STREAM subscribers on the full set so
-    # each one streams for STREAM_SUBSCRIBE_WINDOW_SEC and gets a result-set every second
+    # The window is counted from launch, so it has to cover the server's serial registration of
+    # every subscription on top of the streaming time each subscriber is expected to get
     with allure.step(
-        f"Open {MAX_GNMI_SUBSCRIBERS} concurrent STREAM subscribers on {len(paths)} paths "
-        f"for {STREAM_SUBSCRIBE_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} sample interval"
+        f"Open {MAX_GNMI_SUBSCRIBERS} concurrent STREAM subscribers on {len(paths)} "
+        f"paths for {STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} "
+        f"sample interval"
     ):
         per_subscriber = run_concurrent_multi_path_stream_subscribers(
             engines=engines,
@@ -695,7 +696,7 @@ def test_gnmi_subscribe_many_planeport_paths(
             prefix="",
             paths=paths,
             num_subscribers=MAX_GNMI_SUBSCRIBERS,
-            window_sec=STREAM_SUBSCRIBE_WINDOW_SEC,
+            window_sec=STREAM_SUBSCRIBE_LOAD_WINDOW_SEC,
             username=gnmi_client.username,
             password=gnmi_client.password,
             sample_interval=STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
@@ -703,8 +704,26 @@ def test_gnmi_subscribe_many_planeport_paths(
 
     # Every subscriber session must have returned a result set
     assert len(per_subscriber) == MAX_GNMI_SUBSCRIBERS, (
-        f"expected {MAX_GNMI_SUBSCRIBERS} subscriber result-sets, got {len(per_subscriber)}"
+        f"expected {MAX_GNMI_SUBSCRIBERS} subscriber result-sets, "
+        f"got {len(per_subscriber)}"
     )
+
+    result_set_counts = [count_result_sets(notifications) for notifications in per_subscriber]
+    ibh.attach_dict(
+        "result-sets per subscriber",
+        {f"subscriber_{idx}": count for idx, count in enumerate(result_set_counts)},
+    )
+
+    # Checked before the leaf assertions below, so a subscription that never streamed is not
+    # reported as a plane-port missing its counter leaves
+    with allure.step("Verify every subscriber streamed at least one result-set"):
+        for sub_idx, count in enumerate(result_set_counts):
+            with allure.independent_step(f"subscriber {sub_idx}: streamed {count} result-sets"):
+                assert count > 0, (
+                    f"subscriber {sub_idx} received no gNMI notifications at all - its "
+                    f"subscription never streamed, so nothing can be concluded about the "
+                    f"leaves the plane-ports expose"
+                )
 
     # Assert each subscriber received every subscribed path (field names only)
     with allure.step("Verify every subscriber received all subscribed plane-port paths"):
@@ -719,22 +738,18 @@ def test_gnmi_subscribe_many_planeport_paths(
                         expected_leaves=leaves,
                     )
 
-    # Assert the subscription actually streamed: each subscriber must observe more than one
+    # Assert the subscription kept streaming: each subscriber must observe more than one
     # result-set over the window (SAMPLE mode at a one-second interval yields ~window_sec)
-    result_set_counts = [count_result_sets(notifications) for notifications in per_subscriber]
-    ibh.attach_dict(
-        "result-sets per subscriber",
-        {f"subscriber_{idx}": count for idx, count in enumerate(result_set_counts)},
-    )
     with allure.step("Verify every subscriber received more than one result-set"):
         for sub_idx, count in enumerate(result_set_counts):
             with allure.independent_step(
-                f"subscriber {sub_idx}: received {count} result-sets over {STREAM_SUBSCRIBE_WINDOW_SEC}s"
+                f"subscriber {sub_idx}: received {count} result-sets over "
+                f"{STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s"
             ):
                 assert count > 1, (
                     f"subscriber {sub_idx} expected more than one streamed result-set over "
-                    f"{STREAM_SUBSCRIBE_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} sample "
-                    f"interval, got {count}"
+                    f"{STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} "
+                    f"sample interval, got {count}"
                 )
 
 
