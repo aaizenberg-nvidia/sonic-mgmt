@@ -140,6 +140,7 @@ class BaseDevice(ABC):
 
     def _init_system_lists(self):
         self.user_fields = []
+        self.log_components_list = []
 
     def _init_fae_lists(self):
         pass

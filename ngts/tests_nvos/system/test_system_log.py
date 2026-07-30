@@ -470,7 +470,7 @@ def test_log_files_rotation_force(engines):
 @pytest.mark.system
 @pytest.mark.log
 @pytest.mark.simx
-def test_log_components(engines):
+def test_log_components(engines, devices):
     """
     Check all fields in components command, check all components can be set/unset with all log levels
 
@@ -481,7 +481,7 @@ def test_log_components(engines):
     """
 
     default_log_level_nvue = "info"
-    list_with_all_components = LogComponentsConsts.COMPONENTS_LIST
+    list_with_all_components = devices.dut.log_components_list
     list_with_all_log_levels = LogComponentsConsts.LOG_LEVEL_LIST
     with allure.step("Create System object"):
         system = System(None)

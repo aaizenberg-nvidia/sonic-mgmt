@@ -2562,7 +2562,6 @@ class LogComponentsConsts:
         "sai_api_switch",
         SYMMETRY_MANAGER,
         "syncd",
-        GPU_TELEMETRY,
         PEER_TELEMETRY,
     ]
     CRITICAL = "critical"
