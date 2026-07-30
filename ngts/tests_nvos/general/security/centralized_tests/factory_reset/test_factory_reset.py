@@ -93,6 +93,11 @@ CHECKERS_SKIP_RULES: dict[str, CheckerSkipRule] = {
     TPM_ATTESTATION: SkipCheckerBySetup(["gorilla"]),
     # SSH CERT AUTH not supported on juliet and rosalind
     SSH_CERT_AUTH: SkipCheckerBySetup(["juliet", "rosalind"], True),
+    # NV Bridge internal encryption is an NMX/cluster feature; standalone IB
+    # switches (croc QM3400, mamba QM3000) have no `system internal`, so
+    # system.internal is absent and the checker raises AttributeError. Skip it
+    # on those setups.
+    NV_BRIDGE_INTERNAL: SkipCheckerBySetup(["croc", "mamba"]),
 }
 
 NO_PARAMS_CHECKERS: dict[str, Generator[None, None, None]] = {

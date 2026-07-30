@@ -413,8 +413,10 @@ def test_lldp_disable_dhcp(engines, devices, serial_engine):
                 # real defect, not something to silently skip. If a port is
                 # intentionally disconnected on a platform, remove it from that
                 # platform's mgmt_ports list (see Devices/*.py) instead of tolerating
-                # it here.
-                assert LLDPTool.is_mgmt_port_carrier_up(serial_engine, interface_name), (
+                # it here. Polled rather than one-shot: the previous iteration's
+                # dhcp-client unset+apply bounces ALL mgmt ports (interfaces-config),
+                # so this port's carrier may still be recovering for up to ~18s.
+                assert LLDPTool.wait_mgmt_port_carrier_up(serial_engine, interface_name), (
                     f"{interface_name} is declared as a mgmt port but has no operational "
                     f"carrier (ifconfig RUNNING); lldpd will not transmit LLDP on it. If "
                     f"this port is intentionally disconnected on this platform, remove it from "

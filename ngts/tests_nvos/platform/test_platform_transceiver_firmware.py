@@ -252,28 +252,43 @@ def test_install_reset_transceiver_firmware_negative_flow(engines, test_api):
                 'transceiver_reset_relink', time.time() - relink_start, test_name)
 
     with allure.step("verify show commands after install"):
+        _wait_until_logical_state(
+            interface, show_interface_before_install[IbInterfaceConsts.LINK_LOGICAL_PORT_STATE])
         show_interface_after_install = OutputParsingTool.parse_json_str_to_dictionary(
             interface.link.show()).verify_result()
         output_after_install = OutputParsingTool.parse_json_str_to_dictionary(
             platform.transceiver.show(random_transceiver + ' firmware')).verify_result()
 
         # round-trip-latency and time-to-link-up are re-measured every training
-        # cycle and jitter across a reset; compare them with a +/-20% tolerance.
+        # cycle and jitter across a reset, so exclude both from the exact compare.
         volatile = {IbInterfaceConsts.LINK_ROUND_TRIP_LATENCY, IbInterfaceConsts.LINK_TO_LINK_UP}
         ValidationTool.compare_dictionaries(output_before_install, output_after_install).verify_result()
         ValidationTool.compare_dictionaries(
             {k: v for k, v in show_interface_before_install.items() if k not in volatile},
             {k: v for k, v in show_interface_after_install.items() if k not in volatile},
         ).verify_result()
-        for field in volatile:
-            before_raw = show_interface_before_install.get(field)
-            after_raw = show_interface_after_install.get(field)
-            assert before_raw is not None and after_raw is not None, \
-                f"{field}: before={before_raw!r} after={after_raw!r} (missing on one side — port likely not LinkUp)"
-            before = float(re.search(r'\d+', str(before_raw)).group())
-            after = float(re.search(r'\d+', str(after_raw)).group())
-            assert abs(after - before) <= before * 0.2, \
-                f"{field}: after={after_raw!r} vs before={before_raw!r} (>20% drift)"
+
+        # round-trip-latency is a stable physical property of the cable, so a
+        # real regression is caught with a +/-20% band around the baseline.
+        rtl = IbInterfaceConsts.LINK_ROUND_TRIP_LATENCY
+        before_rtl_raw = show_interface_before_install.get(rtl)
+        after_rtl_raw = show_interface_after_install.get(rtl)
+        assert before_rtl_raw is not None and after_rtl_raw is not None, \
+            f"{rtl}: before={before_rtl_raw!r} after={after_rtl_raw!r} (missing on one side — port likely not LinkUp)"
+        before_rtl = float(re.search(r'\d+', str(before_rtl_raw)).group())
+        after_rtl = float(re.search(r'\d+', str(after_rtl_raw)).group())
+        assert abs(after_rtl - before_rtl) <= before_rtl * 0.2, \
+            f"{rtl}: after={after_rtl_raw!r} vs before={before_rtl_raw!r} (>20% drift)"
+
+        # time-to-link-up is the training duration itself; it swings widely across
+        # a reset (SM timing / negotiation retries) so a baseline band is meaningless
+        # here — its regression is tracked via the transceiver_reset_relink metric.
+        # Only sanity-check the port reported a positive link-up time.
+        link_up_field = IbInterfaceConsts.LINK_TO_LINK_UP
+        after_link_up_raw = show_interface_after_install.get(link_up_field)
+        assert after_link_up_raw is not None, f"{link_up_field} missing after install — port likely not LinkUp"
+        assert float(re.search(r'\d+', str(after_link_up_raw)).group()) > 0, \
+            f"{link_up_field}: non-positive link-up time after install ({after_link_up_raw!r})"
 
 
 @pytest.mark.platform
@@ -330,6 +345,17 @@ def _wait_until_physical_linkup(interface):
     actual = show_interface_output[IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE]
     assert actual == IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE_LINK_UP, \
         f"physical-state is {actual}, expected LinkUp"
+
+
+@retry(Exception, tries=60, delay=1)
+def _wait_until_logical_state(interface, expected_logical_state):
+    """After a transceiver reset the physical link comes up first; the fabric SM
+    then walks the logical-state and speed / ib-speed only reappear once it settles.
+    Poll until logical-state matches the pre-reset baseline (not a hardcoded Active:
+    a port that was Initialize at baseline must not be forced to Active here)."""
+    show_interface_output = OutputParsingTool.parse_json_str_to_dictionary(interface.link.show()).verify_result()
+    ValidationTool.verify_field_value_in_output(
+        show_interface_output, IbInterfaceConsts.LINK_LOGICAL_PORT_STATE, expected_logical_state).verify_result()
 
 
 @retry(Exception, tries=60, delay=1)

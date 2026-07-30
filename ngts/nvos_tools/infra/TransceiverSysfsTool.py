@@ -21,7 +21,7 @@ NEGATIVE_CABLE_SPEED_CASES = [
     ("not-a-number", "N/A", "unparseable -> N/A + warning"),
     ("0x0", "N/A", "empty bitmask -> N/A (silent)"),
     ("0x80000000", "N/A", "only unknown bits -> N/A + warning"),
-    ("0x100001", "sdr", "known(SDR_1X)+unknown -> sdr + warning"),
+    ("0x401", "sdr", "known(SDR_1X)+unknown(0x400) -> sdr + warning"),
     ("0x7001000", "fdr,xdr", "real XDR cable (with unknown 0x4000000) -> fdr,xdr + warning"),
     ("0x3000000", "xdr", "XDR_1X|XDR_2X width collapse -> xdr"),
     ("0x81000000", "xdr", "known(XDR_1X)+unknown(0x80000000) -> xdr + warning"),

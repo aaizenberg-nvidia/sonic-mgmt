@@ -72,8 +72,8 @@ class File(BaseComponent):
             return SendCommandTool.execute_command(self._cli_wrapper.show_file, engine, self.file_name,
                                                    exit_cmd).get_returned_value()
 
-    def action_upload(self, upload_path) -> ResultObj:
-        return self.action(ActionConsts.UPLOAD, (ActionParamConsts.REMOTE_URL, upload_path))
+    def action_upload(self, upload_path, timeout=None) -> ResultObj:
+        return self.action(ActionConsts.UPLOAD, (ActionParamConsts.REMOTE_URL, upload_path), timeout=timeout)
 
     def action_delete(self, engine=None) -> ResultObj:
         return self.action(ActionConsts.DELETE, engine=engine)

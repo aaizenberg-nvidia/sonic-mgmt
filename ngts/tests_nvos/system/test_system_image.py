@@ -338,7 +338,8 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
 @pytest.mark.image
 @pytest.mark.system
 @pytest.mark.cumulus
-def test_system_image_upload(engines, release_name, random_api, original_version, devices, downgrade_version_realpath):
+def test_system_image_upload(engines, release_name, random_api, original_version, devices, downgrade_version_realpath,
+                             test_name):
     """
     Uploading image file to player and validate.
     1. Fetch random image
@@ -365,7 +366,12 @@ def test_system_image_upload(engines, release_name, random_api, original_version
             for protocol in upload_protocols:
                 with allure.step("Upload image to player with {} protocol".format(protocol)):
                     upload_path = uri_builders[protocol](player, f'/tmp/{image_name}')
-                    image_file.action_upload(upload_path).verify_result()
+                    upload_start = time.time()
+                    try:
+                        image_file.action_upload(upload_path, timeout=5 * MINUTE).verify_result()
+                    finally:
+                        OperationTime.save_manual_operation_duration_to_db(
+                            f'image_upload_{protocol}', time.time() - upload_start, test_name)
 
                 with allure.step("Validate file was uploaded to player and delete it"):
                     assert player.run_cmd(

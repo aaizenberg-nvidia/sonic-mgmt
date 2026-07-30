@@ -41,7 +41,7 @@ from ngts.tests_nvos.general.security.helpers import (
 from ngts.tests_nvos.system.gnmi.conftest import gnmi_certs, scp_player
 from ngts.tests_nvos.system.gnmi.constants import CERTIFICATE, GnmiMode
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient, GnmicCmdBuilder
-from ngts.tests_nvos.system.gnmi.helpers import build_gnmic_cmd_and_verify
+from ngts.tests_nvos.system.gnmi.helpers import build_gnmic_cmd_and_verify, wait_for_gnmi_ready
 from ngts.tests_nvos.system.gnmi.test_gnmi_cert import (
     read_process_for_specified_time,
     validate_gnmi_streaming_output,
@@ -879,6 +879,7 @@ def check_spiffe_positive(
                     )
     if verify_auth:
         with allure.step("verify spiffe auth works"):
+            wait_for_gnmi_ready(engines)
             cases: List[Case] = [
                 Case(
                     f"no creds + {setup.cert_spif_of_user1_1.info}",
