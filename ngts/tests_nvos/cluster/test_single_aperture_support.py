@@ -98,8 +98,11 @@ def test_update_maintenance_state_up(engines, devices, random_api, get_chassis_i
         trays_output = OutputParsingTool.parse_show_output_to_dict(
             sdn.trays.show()).get_returned_value()
         tray_ids = list(trays_output.keys())
-        # Only include trays whose slot is not in a partition-bound GPU otherwise will fail with NMX_ST_RESOURCE_IN_USE
-        remote_tray_ids = _filter_trays_not_in_partition(
+        # Compute trays accept maintenance changes only after the tray_admin_state-style
+        # preconditioning (GPU reset/fabric discovery + partition deletion); hit cold they
+        # fail with NMX_ST_RESOURCE_BAD (computes undiscovered) or NMX_ST_RESOURCE_IN_USE
+        # (partition-bound). This test skips that dance and keeps to switch trays.
+        remote_tray_ids = _filter_switch_tray_candidates(
             [tray_id for tray_id in tray_ids if str(tray_id) != str(slot_number)], sdn)
         if remote_tray_ids:
             remote_tray_id = random.choice(remote_tray_ids)
@@ -154,9 +157,24 @@ def test_error_flow_single_aperture_support(engines, devices, random_api, get_ch
             ClusterTools.validate_cluster_enabled(cluster, output_format)
 
 
-def _filter_trays_not_in_partition(tray_ids, sdn):
-    """Drop trays whose slot has partition-bound GPUs (uuid != 0)."""
-    in_use_slots = set()
+def _filter_switch_tray_candidates(tray_ids, sdn):
+    """Drop trays whose slot holds GPUs (compute trays).
+
+    Partition locations enumerate GPU locations (<rack>.<slot>.<unit>.<gpu>), so any
+    slot that appears there is a compute tray. Compute trays are valid maintenance
+    targets only after the preconditioning the tray_admin_state suite does (GPU
+    reset / fabric discovery + partition deletion); without it the update fails with
+    NMX_ST_RESOURCE_BAD when the computes are not discovered by the fabric, or
+    NMX_ST_RESOURCE_IN_USE when their GPUs are partition-bound. Compute-tray
+    maintenance coverage lives in tray_admin_state; this test keeps to switch trays,
+    regardless of whether the GPUs are currently registered (uuid == 0 or not).
+
+    If no partition locations are visible, switch trays cannot be told apart from
+    compute trays - return no candidates so the caller skips the optional
+    remote-tray step.
+    """
+    gpu_slots = set()
+    found_locations = False
     partition_output = OutputParsingTool.parse_show_output_to_dict(
         sdn.partition.show(output_format=OutputFormat.json)).get_returned_value()
     for partition_id in partition_output:
@@ -165,16 +183,19 @@ def _filter_trays_not_in_partition(tray_ids, sdn):
         ).get_returned_value()
         if 'locations' not in per_partition_output:
             continue
-        for uuid, location in ClusterTools.get_partition_uuid_location_map(per_partition_output):
-            if str(uuid) == "0":
-                continue
+        for _uuid, location in ClusterTools.get_partition_uuid_location_map(per_partition_output):
             location_parts = str(location).split('.')
             if len(location_parts) >= 2:
-                in_use_slots.add(location_parts[1])
+                found_locations = True
+                gpu_slots.add(location_parts[1])
+    if not found_locations:
+        logger.info("No partition GPU locations visible - cannot tell switch trays from compute trays, "
+                    "skipping remote tray candidates")
+        return []
     filtered_tray_ids = []
     for tray_id in tray_ids:
         tray_str = str(tray_id)
         slot = tray_str.split('.')[1] if '.' in tray_str else tray_str
-        if slot not in in_use_slots:
+        if slot not in gpu_slots:
             filtered_tray_ids.append(tray_id)
     return filtered_tray_ids
