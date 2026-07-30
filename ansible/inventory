@@ -698,6 +698,10 @@ rosalind-nvos-2166 ansible_host=rosalind-nvos-2166  sonic_version=v2  sonic_hwsk
 rosalind-mec-2164-ptf-any ansible_host=rosalind-mec-2164  sonic_version=v2  sonic_hwsku=ACS-N6100_LD            serial_console="ssh -l rcon:7001 10.220.15.232" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=CC:30:89:00:B0:3E serial=MT2619601XQX model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2619601XQX', '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'CC:30:89:00:B0:3E', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
 rosalind-mec-2164 ansible_host=rosalind-mec-2164  sonic_version=v2  sonic_hwsku=ACS-N6100_LD             serial_console="ssh -l rcon:7001 10.220.15.232" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=CC:30:89:00:B0:3E serial=MT2619601XQX model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2619601XQX, '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'CC:30:89:00:B0:3E', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
 
+# NVOS testbed rosalind-mec-2165 topologies
+rosalind-mec-2165-ptf-any ansible_host=rosalind-mec-2165  sonic_version=v2  sonic_hwsku=ACS-N6100_LD            serial_console="ssh -l rcon:7004 10.193.67.96" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=EC:86:C4:A7:A9:46 serial=MT2626604GJ4 model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2626604GJ4', '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'EC:86:C4:A7:A9:46', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
+rosalind-mec-2165 ansible_host=rosalind-mec-2165  sonic_version=v2  sonic_hwsku=ACS-N6100_LD             serial_console="ssh -l rcon:7004 10.193.67.96" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=EC:86:C4:A7:A9:46 serial=MT2626604GJ4 model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2626604GJ4', '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'EC:86:C4:A7:A9:46', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
+
 # NVOS testbed rosalind-nvos-2182 topologies
 rosalind-nvos-2182-ptf-any ansible_host=rosalind-nvos-2182  sonic_version=v2  sonic_hwsku=ACS-N6100_LD            serial_console="ssh -l rcon:7002 10.220.15.232" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=08:20:e7:b5:45:e2 serial=MT2552606L8X model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2552606L8X', '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'08:20:e7:b5:45:e2', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
 rosalind-nvos-2182 ansible_host=rosalind-nvos-2182  sonic_version=v2  sonic_hwsku=ACS-N6100_LD             serial_console="ssh -l rcon:7002 10.220.15.232" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=08:20:e7:b5:45:e2 serial=MT2552606L8X model=N6100_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n6100_ld-r0', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'n6100_ld', '0x23': u'MT2552606L8X', '0x21': u'n6100_ld', '0x26': u'17', '0x24': u'08:20:e7:b5:45:e2', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
@@ -2544,6 +2548,9 @@ rosalind-nvos-2166
 
 rosalind-nvos-2164-ptf-any
 rosalind-nvos-2164
+
+rosalind-mec-2165-ptf-any
+rosalind-mec-2165
 
 rosalind-nvos-2182-ptf-any
 rosalind-nvos-2182
