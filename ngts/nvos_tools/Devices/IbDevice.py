@@ -17,6 +17,7 @@ from ngts.nvos_constants.constants_nvos import (
     HealthConsts,
     IbConsts,
     ImageConsts,
+    LogComponentsConsts,
     MultiPlanarConsts,
     NvosConst,
     OperationTimeConsts,
@@ -305,7 +306,9 @@ class IbSwitch(BaseSwitch):
         self.led_list = ['FAN1', 'FAN2', 'FAN3', 'FAN4', 'FAN5', 'FAN6', "PSU_STATUS", "STATUS", "UID"]
 
     def _init_system_lists(self):
+        super()._init_system_lists()
         self.user_fields = ['admin', 'monitor']
+        self.log_components_list = LogComponentsConsts.COMPONENTS_LIST
 
     def _init_security_lists(self):
         super()._init_security_lists()

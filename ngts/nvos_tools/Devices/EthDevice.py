@@ -334,6 +334,7 @@ class EthSwitch(BaseSwitch):
                              "TEMPERATURE": self.temperature_sensors}
 
     def _init_system_lists(self):
+        super()._init_system_lists()
         self.user_fields = ['root', 'cumulus']
 
     def _init_security_lists(self):
