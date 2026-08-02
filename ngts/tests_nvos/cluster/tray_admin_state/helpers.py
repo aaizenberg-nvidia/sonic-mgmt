@@ -26,12 +26,12 @@ TRAY_MAINTENANCE_SUMMARY_BUG_ID = 5065628
 TRAY_PORT_STATE_SETTLE_SECONDS = 7
 TRAY_PORT_STATE_SETTLE_SECONDS_BUG_OPEN = 60
 
-# Bug SW #5074491: switch link is not restored from disabled to active when a tray
+# Bug SW #5189276: switch link is not restored from disabled to active when a tray
 # admin-state down->up (or down->diag) is performed while the link was disabled.
 # The compute GPU reset (nvidia-smi -r) re-links the PHYs and works around this, so the
 # reset on a tray *leaving* 'down' is only needed while this bug is open. Once it is
 # fixed, the reset becomes unnecessary and is skipped.
-SWITCH_LINK_RESTORE_BUG_ID = 5074491
+SWITCH_LINK_RESTORE_BUG_ID = 5189276
 
 # NMX topology JSON keys
 TOPO_DEVICE_INFO = 'deviceTopoInfo'
@@ -254,7 +254,7 @@ def reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test
     """
     Reset compute GPUs when a compute tray is about to leave 'down' (down->up or down->diag).
 
-    This reset is a workaround for bug SW #5074491 (switch link not restored from disabled
+    This reset is a workaround for bug SW #5189276 (switch link not restored from disabled
     to active when down->up/diag is performed while the link was disabled). It only applies
     while that bug is open: if the bug is no longer active, the reset is skipped.
 

@@ -9,6 +9,7 @@ from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import FWRecoveryConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.tests_nvos.helpers.interfaces.link_state_helpers import get_all_interfaces_with_transceivers
 from ngts.tools.test_utils.allure_utils import step as allure_step
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
@@ -74,7 +75,7 @@ def select_random_nvl_port_name(devices, prefix=None):
 
 def skip_if_no_trunk_links(devices):
     if isinstance(devices.dut, JulietSwitch):
-        has_any_connected_transceivers = bool(ClusterTools.get_all_interfaces_with_transceivers(devices))
+        has_any_connected_transceivers = bool(get_all_interfaces_with_transceivers(devices))
         if isinstance(devices.dut, JulietNonScaleoutSwitch) or not has_any_connected_transceivers:
             pytest.skip("Skipping test - no connected trunk ports")
 

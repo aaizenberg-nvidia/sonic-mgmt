@@ -47,14 +47,15 @@ def start_cluster_and_sdn_fm_config(engines, setup_name):
 
     finally:
         with allure.step("Reset sdn fm config"):
-            with allure.step("Disable cluster"):
-                ClusterTools.stop_cluster(cluster, engine=engines.dut)
-
             with allure.step("Reset sdn factory default"):
                 ClusterTools.reset_sdn_factory_default_and_wait_for_restart(Sdn(), cluster, engine=engines.dut)
 
+            with allure.step("Disable cluster"):
+                ClusterTools.stop_cluster(cluster, engine=engines.dut)
+
 
 @pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 def test_peer_port_show(engines, test_api, start_cluster_and_sdn_fm_config):
 
@@ -77,6 +78,7 @@ def test_peer_port_show(engines, test_api, start_cluster_and_sdn_fm_config):
 
 
 @pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 def test_peer_port_hostname_change(engines, test_api, setup_name, start_cluster_and_sdn_fm_config):
     TestToolkit.tested_api = test_api
@@ -294,6 +296,7 @@ def test_gpu_telemetry_log_level_set(engines, test_api):
 
 
 @pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 def test_peer_port_disconnect(engines, test_api, start_cluster_and_sdn_fm_config):
 

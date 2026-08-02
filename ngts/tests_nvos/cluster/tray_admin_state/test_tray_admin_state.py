@@ -195,7 +195,7 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
 
         # -- Set tray to DIAG: ports should come back up, maintenance-state should be 'diag' --
         # Current state is 'down'. Reset compute GPUs to re-link PHYs before leaving 'down'
-        # (workaround for bug SW #5074491); skipped automatically once that bug is fixed.
+        # (workaround for bug SW #5189276); skipped automatically once that bug is fixed.
         reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'diag'"):
             sdn.trays.action_update_maintenance_state(
@@ -224,7 +224,7 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
             verify_tray_state(sdn, selected_tray, random_state)
 
             # If the tray is currently 'down', reset compute GPUs to re-link PHYs BEFORE
-            # restoring (down->up) — workaround for bug SW #5074491; skipped once it is fixed.
+            # restoring (down->up) — workaround for bug SW #5189276; skipped once it is fixed.
             if random_state == 'down':
                 reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
             sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()

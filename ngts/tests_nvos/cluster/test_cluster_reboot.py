@@ -19,7 +19,15 @@ from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from retry.api import retry_call
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
-from ngts.tests_nvos.cluster.tray_admin_state.helpers import is_rtf_compute_tray_scenario, delete_sdn_partitions_before_compute_tray_test
+from ngts.tests_nvos.helpers.interfaces.link_state_helpers import verify_interface_up
+from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
+    is_rtf_compute_tray_scenario,
+    is_compute_tray,
+    delete_sdn_partitions_before_compute_tray_test,
+    get_acp_ports_for_tray,
+    verify_affected_ports_state,
+    reset_compute_gpus_leaving_down,
+)
 
 logger = logging.getLogger()
 
@@ -47,6 +55,11 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
     sdn = Sdn()
     output_format = OutputFormat.json
     TestToolkit.tested_api = test_api
+    tray_state_set = False
+    selected_tray = None
+    affected_acps = []
+    compute_tray_under_test = False
+    tray_non_default = None
     try:
         logger.info("Setting cluster state to enabled")
         ClusterTools.start_cluster(cluster, setup_name, output_format, engine=engines.dut, devices=devices)
@@ -66,7 +79,7 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             with allure.step("Verify LIDs bigger than 0 prior to reboot"):
                 ClusterTools.verify_lid_value(devices, engine=engines.dut)
             with allure.step("Verify links Active prior to reboot"):
-                ClusterTools.verify_interface_up(devices, has_loopbox, setup_name, engine=engines.dut)
+                verify_interface_up(devices, has_loopbox, setup_name, engine=engines.dut)
 
         uuid = location = partition_to_remove_from = None
         if not standalone_system:
@@ -83,7 +96,6 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 assert uuid not in default_partition_uuids and location not in default_partition_locations, \
                     f"uuid {uuid} still appears in default partition {ClusterConsts.DEFAULT_PARTITION_ID} although it was moved to {ClusterConsts.EMPTY_PARTITION_ID}, See current uuids: {default_partition_uuids}"
 
-        tray_state_set = False
         partition_deletion_flag = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
             with allure.step("Set tray maintenance-state to non-default before reboot"):
@@ -94,14 +106,19 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                     if location and location.split('.')[1] == selected_tray:
                         selected_tray = tray_ids[-1]  # Since we know that the first and the last tray are compute nodes, take the last tray in case the first tray will not work
                     local_switch_slot = str(chassis_info.get('slot-number'))
+                    compute_tray_under_test = is_compute_tray(
+                        selected_tray, local_switch_slot, tray_topology_config)
                     partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
                     if partition_deletion_flag:
                         delete_sdn_partitions_before_compute_tray_test(sdn, excluded_partitions=[ClusterConsts.EMPTY_PARTITION_ID])
+                    affected_acps = get_acp_ports_for_tray(
+                        engines, sdn, devices, selected_tray, local_switch_slot, tray_topology_config)
                     tray_non_default = random.choice(['down', 'diag'])
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
                     tray_state_set = True
-                    logger.info(f"Set tray {selected_tray} to '{tray_non_default}' before reboot")
+                    logger.info(f"Set tray {selected_tray} to '{tray_non_default}' before reboot, "
+                                f"affecting {len(affected_acps)} acp ports")
 
         with allure.step('Run nv action reboot system'):
             result_obj, duration = OperationTime.save_duration('reboot', '', test_name, system.reboot.action_reboot)
@@ -118,8 +135,17 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
         if has_loopbox or not standalone_system:
             with allure.step("Verify LIDs bigger than 0 after reboot"):
                 ClusterTools.verify_lid_value(devices, engine=engines.dut)
-            with allure.step("Verify links Active after reboot"):
-                ClusterTools.verify_interface_up(devices, has_loopbox, setup_name, engine=engines.dut)
+            with allure.step("Verify links state after reboot"):
+                if tray_state_set:
+                    # down->down/down, diag->up/diag
+                    expected_link_state = 'down' if tray_non_default == 'down' else 'up'
+                    with allure.step(f"Verify all {len(affected_acps)} ports of tray {selected_tray}: "
+                                     f"link={expected_link_state}, maintenance={tray_non_default}"):
+                        verify_affected_ports_state(affected_acps, expected_link_state=expected_link_state,
+                                                    expected_maintenance_state=tray_non_default)
+                else:
+                    with allure.step("Verify links are active"):
+                        verify_interface_up(devices, has_loopbox, setup_name, engine=engines.dut)
 
         cluster_reboot_extra_time = 60
         # Reboot time when cluster is enabled is longer than when cluster is disabled, so we add extra time to the threshold
@@ -146,9 +172,6 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 assert actual_tray_state == tray_non_default, (
                     f"Tray {selected_tray}: expected '{tray_non_default}' after reboot, got '{actual_tray_state}'")
 
-            with allure.step(f"Restore tray {selected_tray} to default"):
-                sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
-
         if not standalone_system:
             output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
                                                                  output_format=output_format).get_returned_value()
@@ -167,6 +190,13 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 assert location not in original_locations, f"location {location} was not deleted from {partition_to_remove_from} although it was removed with no-reroute. See current locations: {original_locations}"
 
     finally:
+        if tray_state_set:
+            # Leaving 'down' needs a compute GPU reset to re-link PHYs, otherwise the tray's
+            # ports stay disabled after the restore (bug SW #5189276).
+            if tray_non_default == 'down':
+                reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
+            with allure.step(f"Restore tray {selected_tray} to default"):
+                sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
         if not standalone_system:
             with allure.step("Running sdn factory reset"):
                 ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
