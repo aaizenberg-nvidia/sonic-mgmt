@@ -722,4 +722,16 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     conditions:
       - "'rosalind' not in testbed"
 
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_set_unset_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_forced_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
 ########################## NVOS IGNORE END ##########################
