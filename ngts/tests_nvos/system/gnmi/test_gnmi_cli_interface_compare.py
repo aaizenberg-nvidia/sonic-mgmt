@@ -141,6 +141,17 @@ def adjust_speed(value):
     return 'SPEED_UNKNOWN' if value == '' else value.replace('G', '')
 
 
+def adjust_ib_speed(value):
+    if value == '':
+        return 'SPEED_UNKNOWN'
+    # Bug #5073236 (design): 'nv show interface' reports e.g. 'xdr' for ib-speed while the gNMI
+    # subscription returns 'SPEED_XDR'. While the bug is open, align the CLI value to the gNMI
+    # 'SPEED_<UPPER>' form so the comparison passes; once fixed (gNMI emits 'xdr'), the plain form matches.
+    if is_bug_active(5073236):
+        return 'SPEED_' + value.replace('G', '').upper()
+    return value.replace('G', '')
+
+
 def adjust_supported_speeds(value):
     speeds_list = value.split(',')
     tmp_list = [IbInterfaceConsts.SPEED_LIST[speed].replace('G', '') for speed in speeds_list]
@@ -171,7 +182,7 @@ def adjust_supported_lanes(value):
 # Mapping cli-attributes to their corresponding adjustment functions
 attribute_adjustments = {
     IbInterfaceConsts.LINK_SPEED: adjust_speed,
-    IbInterfaceConsts.LINK_IB_SPEED: adjust_speed,
+    IbInterfaceConsts.LINK_IB_SPEED: adjust_ib_speed,
     IbInterfaceConsts.LINK_SUPPORTED_SPEEDS: adjust_speed,
     IbInterfaceConsts.LINK_SUPPORTED_IB_SPEEDS: adjust_supported_speeds,
     IbInterfaceConsts.LINK_AUTO_NEGOTIATE: adjust_auto_negotiate,

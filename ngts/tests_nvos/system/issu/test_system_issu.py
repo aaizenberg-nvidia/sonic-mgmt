@@ -1285,9 +1285,11 @@ def wait_for_image_status_update(system, status):
 
 def set_opensm_response_status(dut_engine, dut_device, value):
     for asic_num in range(dut_device.asic_amount):
+        # force=True: this deliberately pre-seeds/clears the request-issu table before
+        # NVOS ISSU orchestration has created it, so bypass the hset existence guard.
         DatabaseTool.sonic_db_cli_hset(
             dut_engine, f'asic{asic_num}', db_name=DatabaseConst.STATE_DB_NAME,
-            db_config=IssuConsts.DB_REQUEST_ISSU, param=IssuConsts.DB_STATUS, value=value)
+            db_config=IssuConsts.DB_REQUEST_ISSU, param=IssuConsts.DB_STATUS, value=value, force=True)
 
 
 def run_install_system_image_issu(dut_engine, dut_device, recovery_engine, image_filename, param_value, should_succeed):
