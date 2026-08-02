@@ -8,7 +8,7 @@ from ngts.nvos_constants.constants_nvos import ConfState
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, TxBwLossMonitorConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, IbInterfaceConsts, TxBwLossMonitorConsts
 from ngts.tests_nvos.interfaces.nvl_port.helpers import skip_if_no_access_links
 from ngts.tests_nvos.interfaces.zombie_link import get_zombie_link_manager
 from ngts.tools.test_utils import allure_utils as allure
@@ -363,6 +363,16 @@ def test_tx_bw_loss_monitor_fnm_port(engines, devices, random_api, zombie_link_m
     with allure.step("Select a random FNM port"):
         fnm_port_name = RandomizationTool.select_random_value(fnm_ports).get_returned_value()
         selected_port = Fae(port_name=fnm_port_name)
+
+    with allure.step(f"Verify FNM port {fnm_port_name} is link-up before exercising the monitor"):
+        # The tx-bandwidth-loss monitor reports 'N/A' when the port is not up, so
+        # the monitor-status assertions below are meaningless on a down FNM port.
+        # Gate on the real precondition (link state) rather than the monitor itself.
+        link_state = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+            selected_port.port.interface.link.show()).get_returned_value().get(IbInterfaceConsts.LINK_STATE)
+        if link_state != NvosConsts.LINK_STATE_UP:
+            pytest.skip(f"FNM port {fnm_port_name} is not up (state={link_state}); "
+                        "tx-bw-loss monitor is N/A - skipping")
 
     monitor = _get_monitor(selected_port)
 
