@@ -511,13 +511,6 @@ ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
     - https://redmine.mellanox.com/issues/4543350
     - '''juliet'' in testbed'
 
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_phy_recovery_attributes:
-  skip:
-    reason: 'Feature in not fully supported, remove ignore once support is applied.
-      (If Rosalind-Surrogate: test will not be supported for QTM3)'
-    conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
-
 tests_nvos/platform/test_platform_asic_power_telemetry.py::test_platform_asic_power_telemetry_default_fields_values:
   skip:
     reason: '[NVOS - Design] Bug SW #4718752: [Telemetry][Rosalind] Missed ''nv show
@@ -608,12 +601,6 @@ tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
     - '''juliet-52'' not in testbed'
 
 tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_trunk_ports:
-  skip:
-    reason: serdes-eq-mode is not supported on Rosalind systems
-    conditions:
-    - '''rosalind'' in testbed'
-
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_access_ports:
   skip:
     reason: serdes-eq-mode is not supported on Rosalind systems
     conditions:

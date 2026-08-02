@@ -219,15 +219,15 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
     original_speed = getattr(devices.dut, 'access_port_speed', '400G')
 
     candidates = [s for s in candidates if s != original_speed]
+    port_obj = Port(f'acp1-{len(port_names)}')
     if not candidates:
         if required:
-            pytest.skip(f"No speed change possible (current: {original_speed}, excluded: {exclude_speeds})")
-        return None
+            logger.error(f"No speed change possible (current: {original_speed}, excluded: {exclude_speeds})")
+        return (original_speed, port_obj, original_speed, port_names)
 
     new_speed = random.choice(candidates)
 
     with allure.step(f"Set all access ports to {new_speed}"):
-        port_obj = Port(f'acp1-{len(port_names)}')
         port_obj.interface.link.set(
             op_param_name='speed', op_param_value=new_speed,
             ask_for_confirmation=True, apply=True
