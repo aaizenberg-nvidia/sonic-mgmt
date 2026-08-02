@@ -659,6 +659,7 @@
   - '.*ERR health-statsd#health_history: PSU\d\/FAN: direction exhaust is not aligned with fan1 direction intake.*'
   - '.*ERR health-statsd#health_history: FAN\d\/\d: direction intake is not aligned with fan1 direction exhaust.*'
   - '.*ERR pmon#thermalctld: Thermal sysfs \/run\/hw-management\/thermal\/.* does not exis.*'
+  - '.*ERR health-statsd#health_history: .*: Sensor temperature is not available.*'
   Conditions:
   - Affected_test_cases:
     - tests/nightly/new_hw_thermal_control/test_new_hw_tc_algorithm.py::TestNewTc::test_sensor_errors

@@ -986,6 +986,7 @@ def install_image_and_verify(
     devices: DevicesT | None = None,
     *,
     operation_label: str = OperationTimeConsts.IMAGE_INSTALL,
+    strict_partition_check: bool = True,
 ) -> None:
     with allure.step("Installing image {}".format(image_name)):
         new_engine = LinuxSshEngine(
@@ -1020,29 +1021,51 @@ def install_image_and_verify(
 
     with allure.step("Verify installed image"):
         time.sleep(5)
+        verify_installed_image(system, image_name, strict_partition_check=strict_partition_check)
 
-        image_output = system.image.get_image_field_values()
-        image_name = normalize_image_name(image_name)
-        res_obj = ValidationTool.verify_expected_output(system.image.show(), ImageConsts.BUILD_ID)
-        res_obj.ignore_result()
-        _, _, partition_id, _ = get_image_data(system)
-        if res_obj.result:  # temp solution until 3000 GA
-            with allure.step(f"Verify image was installed properly on {partition_id}"):
-                assert image_output[partition_id][ImageConsts.BUILD_ID] == image_name, \
-                    f"{image_name} was expected to be installed on {partition_id} but it failed"
 
-            with allure.step("Verify current and next fields point to new image"):
-                num = "1" if partition_id == ImageConsts.PARTITION1_IMG else "2"
-                assert image_output[ImageConsts.NEXT_IMG] == image_output[ImageConsts.CURRENT_IMG] == num, \
-                    "Next image is not the current as expected in default settings."
-        else:
-            with allure.step(f"Verify image was installed properly on {partition_id}"):
-                assert image_output[partition_id] == image_name, \
-                    f"{image_name} was expected to be installed on {partition_id} but it failed"
+def verify_installed_image(system, image_name, strict_partition_check=True):
+    """Verify a freshly installed image is reflected correctly in 'nv show system image'.
 
-            with allure.step("Verify current and next fields point to new image"):
-                assert image_output[ImageConsts.CURRENT_IMG] == image_name, \
-                    "Current image is not as expected in default settings."
+    Expected post-install state (regardless of which partition the install ran from):
+    the new image always lands on partition2, the previous image is kept on partition1,
+    and both 'current' and 'next' point to partition 2.
+
+    :param strict_partition_check: when True (primary install path), a newly installed image
+        that did not land on partition2 fails the test. When False (restore/cleanup path,
+        where a raise would interrupt the remaining cleanup), the violation is only logged
+        as a possible bug and reported as a failed Allure step.
+    """
+    image_output = system.image.get_image_field_values()
+    image_name = normalize_image_name(image_name)
+    _, _, partition_id, _ = get_image_data(system)
+
+    with allure.step(f"Verify image was installed properly on {partition_id}"):
+        ValidationTool.verify_field_value_in_output(
+            image_output[partition_id], ImageConsts.BUILD_ID, image_name).verify_result()
+
+    with allure.step("Verify current and next fields point to new image"):
+        num = "1" if partition_id == ImageConsts.PARTITION1_IMG else "2"
+        ValidationTool.verify_field_value_in_output(image_output, ImageConsts.CURRENT_IMG, num).verify_result()
+        ValidationTool.verify_field_value_in_output(image_output, ImageConsts.NEXT_IMG, num).verify_result()
+
+    # A newly installed image must always land on partition2 (current/next = 2).
+    # On the primary install path this fails the test so a wrong-partition product bug is
+    # not silently missed on an otherwise-green run. On the restore/cleanup path
+    # (strict_partition_check=False) a raise here would interrupt the remaining cleanup, so
+    # the violation is only logged as a possible bug and reported as a failed Allure step.
+    if strict_partition_check:
+        with allure.step("Verify newly installed image landed on partition2"):
+            ValidationTool.compare_values(partition_id, ImageConsts.PARTITION2_IMG).verify_result()
+    else:
+        try:
+            with allure.step("Verify newly installed image landed on partition2 (non-fatal)"):
+                ValidationTool.compare_values(partition_id, ImageConsts.PARTITION2_IMG).verify_result()
+        except AssertionError:
+            logger.error(
+                f"*** POSSIBLE BUG *** A newly installed image must always land on "
+                f"{ImageConsts.PARTITION2_IMG} (current/next = 2), but the active partition "
+                f"after install is {partition_id}. Full image output: {image_output}")
 
 
 def get_list_of_directories(current_installed_img, starts_with=None):
@@ -1143,6 +1166,7 @@ def _restore_original_image(
                 test_name=test_name,
                 devices=devices,
                 operation_label=OperationTimeConsts.IMAGE_UPGRADE,
+                strict_partition_check=False,  # restore path: don't abort remaining cleanup
             )
         return
 
@@ -1154,6 +1178,10 @@ def _restore_original_image(
 
     with allure.step('restore original dut engine'):
         TestToolkit.engines.dut = orig_engine or TestToolkit.engines.dut
+
+    with allure.step("Verify original image is running after boot-next restore"):
+        running_image = _get_running_image(system)
+        ValidationTool.compare_values(running_image, expected_image).verify_result()
 
 
 def cleanup_test(
