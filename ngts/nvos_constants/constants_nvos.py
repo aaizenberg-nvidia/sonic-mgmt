@@ -2283,7 +2283,7 @@ class HealthConsts:
     MONITOR_LIST = "monitor-list"
     HEALTH_FIRST_FILE = "health_history"
     HEALTH_SECOND_FILE = "health_history.1"
-    HEALTH_MONITOR_CONFIG_FILE_PATH = "/usr/share/sonic/device/x86_64-nvidia_{}-r0/system_health_monitoring_config.json"
+    HEALTH_MONITOR_CONFIG_FILE_PATH = "/usr/share/sonic/device/{}/system_health_monitoring_config.json"
     ISSUE = "issue"
     ISSUES = "issues"
     ASIC_HEALTH_ISSUE = "ASIC-HEALTH"
