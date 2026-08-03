@@ -1,8 +1,10 @@
+import logging
 import os
 import random
 import string
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import CacertType
 from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner
@@ -17,9 +19,17 @@ from ngts.tests_nvos.helpers.general_helpers import generate_rand_str
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import generate_scp_uri_using_player
 
+logger = logging.getLogger(__name__)
 
-def set_new_random_users(num_users: int, role: str, apply=False) -> List[UserInfo]:
+
+def set_new_random_users(num_users: int, role: str, apply=False, engine=None) -> List[UserInfo]:
+    """Create random local AAA users.
+
+    ``engine`` should be the caller's DUT engine (e.g. ``engines.dut``). Falls back to
+    ``TestToolkit.get_engine()`` only for legacy call sites / session fixtures.
+    """
     system = System()
+    dut_engine = engine if engine is not None else TestToolkit.get_engine()
     users = []
     with allure.step(f'set {num_users} new random local {role} users'):
         for _ in range(num_users):
@@ -27,8 +37,47 @@ def set_new_random_users(num_users: int, role: str, apply=False) -> List[UserInf
             users.append(UserInfo(username, password, role))
     if apply:
         with allure.step('apply users'):
-            system._general_cli_wrapper.apply_config(TestToolkit.engines.dut, verify_execution=True)
+            system._general_cli_wrapper.apply_config(dut_engine, verify_execution=True)
     return users
+
+
+def cleanup_aaa_users(users: Optional[List[UserInfo]], engine=None) -> None:
+    """Best-effort batch removal of AAA users created by SPIFFE/gNMI setup.
+
+    Stages all unsets with ``apply=False``, then applies once. On apply failure,
+    detaches the pending revision so staged deletes cannot poison later tests.
+    Empty/no-diff applies are skipped via ``skip_no_config_diff_err``.
+
+    Prefer passing ``engine`` (e.g. ``engines.dut``). Falls back to
+    ``TestToolkit.get_engine()`` only for session-scoped cleanup without an engines fixture.
+    """
+    if not users:
+        return
+    system = System()
+    dut_engine = engine if engine is not None else TestToolkit.get_engine()
+    cleanup_staged = False
+    with allure.step('cleanup AAA users created by test setup'):
+        for user in users:
+            with allure.step(f'unset user {user.username}'):
+                try:
+                    system.aaa.user.user_id[user.username].unset(apply=False).verify_result()
+                    cleanup_staged = True
+                except Exception as error:
+                    logger.warning('Failed to unset AAA user "%s": %s', user.username, error)
+        if not cleanup_staged:
+            return
+        with allure.step('apply AAA user cleanup'):
+            try:
+                system._general_cli_wrapper.apply_config(
+                    dut_engine, verify_execution=True, skip_no_config_diff_err=True)
+            except Exception as error:
+                logger.warning('Failed to apply AAA user cleanup: %s', error)
+                with allure.step('detach pending AAA cleanup revision after apply failure'):
+                    try:
+                        NvueGeneralCli.detach_config(dut_engine)
+                    except Exception as detach_error:
+                        logger.warning(
+                            'Failed to detach pending AAA cleanup revision: %s', detach_error)
 
 
 def add_etc_host_mapping_to_dn(dn, address, cmd_runner=None):
