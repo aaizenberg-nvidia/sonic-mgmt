@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import base64
 import logging
 import random
 import pytest
@@ -404,13 +405,7 @@ def test_system_stats_performance(engines: EnginesT, devices: DevicesT, test_api
                                             save_config, TestToolkit.engines.dut).verify_result()
 
         with allure.step("Create category internal file with old samples"):
-            file_path = StatsConsts.OLD_SAMPLES_PATH + name + '.csv'
-            player_engine.upload_file_using_scp(dest_username=devices.dut.default_username,
-                                                dest_password=devices.dut.default_password,
-                                                dest_folder=StatsConsts.INTERNAL_PATH,
-                                                dest_ip=engines.dut.ip,
-                                                local_file_path=file_path)
-            engine.run_cmd("sudo cp /tmp/{}.csv /var/stats".format(name))
+            create_old_samples_internal_file(engine, name)
 
         with allure.step("Perform system reboot"):
             system.reboot.action_reboot(params='force').verify_result()
@@ -524,6 +519,11 @@ def test_stats_reliability(engines: EnginesT, devices: DevicesT, test_api: str):
             engine.run_cmd("sudo systemctl restart stats-reportd")
             with allure.step("Wait 15 seconds..."):
                 time.sleep(StatsConsts.SLEEP_15_SECONDS)
+            # Remove stale rotated <cat>.csv.old files: they survive the stats-reportd restart
+            # and are legitimate rotation artifacts, but an unlisted <cat>.csv.old (fan/power/
+            # temperature/... rotate depending on timing) trips the "extra files" assertion.
+            # Clear them so the check validates only the freshly-regenerated base <cat>.csv files.
+            engine.run_cmd("sudo rm -f /var/stats/*.old")
             check_category_internal_files_exist(engine, category_list)
 
         with allure.step("Perform system reboot"):
@@ -1059,6 +1059,59 @@ def check_category_internal_files_exist(engine: ProxySshEngine, category_list: l
             extra.remove(allowed_extra_file)
 
     assert not extra, f"Unexpected extra files found: {extra}"
+
+
+def create_old_samples_internal_file(engine: ProxySshEngine, name: str, num_samples: int = 5) -> None:
+    """Seed the internal /var/stats/<name>.csv with old-dated samples that match the DUT's
+    own column schema, so the retention/cleanup check has stale rows to purge.
+
+    The schema is derived from the DUT's current internal file (its header is written as soon
+    as the category is enabled) rather than uploaded from a static fixture whose column layout
+    drifts per-platform (e.g. a 2-PSU jaguar file vs an 8-PSU switch) and produces a ragged CSV
+    that crashes the timestamp parser. Only the timestamp column matters to the cleanup check,
+    so data columns get a benign placeholder; the timestamps are set far in the past.
+    """
+    internal_file = "/var/stats/{}.csv".format(name)
+
+    # Restart stats-reportd so it re-initializes and writes the category header promptly
+    # (~5s); otherwise the internal file only appears after a full sampling interval (up to
+    # 1 min) and the read below would race ahead of it.
+    engine.run_cmd("sudo systemctl restart stats-reportd")
+    header_block = ""
+    for _ in range(10):
+        header_block = engine.run_cmd("sudo cat {} 2>/dev/null".format(internal_file))
+        if header_block.strip():
+            break
+        time.sleep(3)
+    assert header_block.strip(), \
+        "internal stats file {} was not created after restarting stats-reportd".format(internal_file)
+
+    # Keep the comment block (incl. its blank lines) up to and including the CSV column-header
+    # line — the first non-comment, non-blank line (e.g. "Timestamp,PSU 1 Voltage [V],...").
+    header_lines = []
+    column_header = None
+    for line in header_block.splitlines():
+        header_lines.append(line)
+        if line.startswith('#') or not line.strip():
+            continue
+        column_header = line
+        break
+    assert column_header, "no CSV column header found in {}".format(internal_file)
+    num_columns = len(column_header.split(','))
+
+    # Build old-dated rows matching the schema: past timestamp + placeholder data columns.
+    old_base = datetime(2023, 5, 10, 16, 23, 18)
+    placeholder = ','.join(['0'] * (num_columns - 1))
+    old_rows = [
+        "{},{}".format((old_base + timedelta(minutes=i)).strftime(StatsConsts.TIMESTAMP_FORMAT),
+                       placeholder)
+        for i in range(num_samples)
+    ]
+
+    content = '\n'.join(header_lines + old_rows) + '\n'
+    # base64 round-trip avoids all shell quoting/newline issues when writing the file back.
+    encoded = base64.b64encode(content.encode()).decode()
+    engine.run_cmd("echo '{}' | base64 -d | sudo tee {} > /dev/null".format(encoded, internal_file))
 
 
 def validate_upload_stats_file(engines: EnginesT, system: System, file: str, delete: bool = True) -> None:

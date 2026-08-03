@@ -446,6 +446,7 @@ class IbSwitch(BaseSwitch):
         self.mst_dev_name = ('/dev/mst/mt54002_pciconf0')
         self.category_list = ['temperature', 'cpu', 'disk', 'power', 'fan', 'mgmt-interface', 'voltage']
         self.category_disk_interval_default = '30'
+        self.category_temperature_interval_default = '1'
         self.system_profile_default_values = ['enabled', '2048', 'disabled', 'disabled', '1']
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/crocodile_versions.json"
         self.erot_fw_image_info = self.ErotFirmwareImagesTestConsts(
@@ -528,7 +529,8 @@ class IbSwitch(BaseSwitch):
             StatsConsts.STATE: StatsConsts.State.DISABLED.value
         }
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: {**self.category_default_disabled_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -537,7 +539,8 @@ class IbSwitch(BaseSwitch):
             self.category_list[6]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: {**self.category_default_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
