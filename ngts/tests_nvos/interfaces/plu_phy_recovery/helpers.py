@@ -5,7 +5,7 @@ Reusable helper functions for PLU PHY recovery tests.
 Works on all port types (sw and acl).
 
 Functions:
-    - Port Selection: get_all_ports_range
+    - Port Selection: get_all_ports_ranges, select_random_xdr_up_port
     - Recovery Actions: trigger_recovery_go_once
     - Configuration: apply_mode, apply_mode_if_needed, apply_timeout,
                      verify_config, unset_config, cleanup_phy_recovery_config
@@ -13,16 +13,19 @@ Functions:
 """
 
 import logging
+import random
 import time
 from typing import Dict, List, Optional
 
 from retry.api import retry_call
 
 from ngts.nvos_constants.constants_nvos import ApiType, ConfState, NvosConst
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port, PortRequirements
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
@@ -92,6 +95,79 @@ def get_all_ports_ranges() -> List[str]:
         return ranges
 
 
+def _connection_mode_from_interface_entry(port_entry) -> Optional[str]:
+    """Return ``connection-mode`` from one ``nv show interface`` port entry."""
+    if not isinstance(port_entry, dict):
+        return None
+    link = port_entry.get(IbInterfaceConsts.LINK)
+    if isinstance(link, dict) and IbInterfaceConsts.LINK_CONNECTION_MODE in link:
+        return link.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
+    return port_entry.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
+
+
+def get_port_connection_mode(port: Port) -> Optional[str]:
+    """
+    Return link connection-mode for a port (e.g. ``xdr``, ``ndr``).
+
+    Reads ``nv show interface <port> link`` / equivalent and returns
+    ``connection-mode`` from the link output.
+    """
+    link_output = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+        port.interface.link.show()
+    ).get_returned_value()
+    return link_output.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
+
+
+def select_random_xdr_up_port() -> ResultObj:
+    """
+    Select a random LINK-UP port whose ``connection-mode`` is ``xdr``.
+
+    PLU logic-relock / phy-recovery is XDR-scoped; NDR UP ports can leave
+    applied!=operational and should not be used for positive tests.
+
+    Returns:
+        ResultObj with a Port in ``returned_value`` on success, or
+        ``result=False`` when no UP XDR ports are available.
+    """
+    with allure.step(
+        f"Select a random UP port with connection-mode {IbInterfaceConsts.XDR}"
+    ):
+        port_result = RandomizationTool.select_random_ports(
+            requested_ports_state=NvosConsts.LINK_STATE_UP,
+            num_of_ports_to_select=0,
+        )
+        if not port_result.result:
+            return port_result
+
+        up_ports = port_result.get_returned_value()
+        # One aggregate show for all connection-mode values (avoid per-port show).
+        interfaces = OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
+            Port.show_interface()
+        ).get_returned_value()
+        xdr_ports = [
+            port
+            for port in up_ports
+            if _connection_mode_from_interface_entry(interfaces.get(port.name)) ==
+            IbInterfaceConsts.XDR
+        ]
+
+        if not xdr_ports:
+            return ResultObj(
+                False,
+                info=(
+                    f"No UP ports with connection-mode {IbInterfaceConsts.XDR} "
+                    f"(checked {len(up_ports)} UP port(s))"
+                ),
+            )
+
+        selected_port = random.choice(xdr_ports)
+        logger.info(
+            f"Selected XDR UP port for phy-recovery: {selected_port.name} "
+            f"({len(xdr_ports)}/{len(up_ports)} UP ports are xdr)"
+        )
+        return ResultObj(True, returned_value=selected_port)
+
+
 # =============================================================================
 # Recovery Action Helpers
 # =============================================================================
@@ -125,6 +201,31 @@ def trigger_recovery_go_once(port_name: str) -> ResultObj:
 # Validation Helpers
 # =============================================================================
 
+def get_platform_default_config() -> Dict[str, str]:
+    """
+    Factory default logic-relock config of the DUT.
+
+    Factory defaults are platform specific - BlackMamba ships with
+    logic-relock-mode=enabled/timeout=100 - so use the values published by the
+    device, falling back to disabled/0.
+
+    Returns:
+        Dictionary of mode/timeout expected on an unconfigured port.
+    """
+    dut = TestToolkit.devices and TestToolkit.get_device()
+    return (
+        getattr(dut, "default_phy_recovery_dict", PhyRecoveryConfig.DEFAULT_CONFIG)
+        if dut else PhyRecoveryConfig.DEFAULT_CONFIG
+    )
+
+
+def get_platform_default_mode() -> str:
+    """Operational logic-relock-mode an unconfigured (fw-default) port falls back to."""
+    return get_platform_default_config().get(
+        PhyRecoveryConfig.MODE, PhyRecoveryConfig.DISABLED
+    )
+
+
 def validate_mode_set(selected_port, mode: str, timeout: Optional[int] = None):
     """
     Validate PHY recovery mode (logic-relock) is applied to the selected port.
@@ -142,8 +243,9 @@ def validate_mode_set(selected_port, mode: str, timeout: Optional[int] = None):
             selected_port.port.interface.link.phy_recovery.show()
         ).get_returned_value()
 
-        # fw-default maps to disabled operationally
-        expected_mode = PhyRecoveryConfig.DISABLED if mode == PhyRecoveryConfig.FW_DEFAULT else mode
+        # fw-default falls back to the platform factory default, which is enabled
+        # on some platforms (BlackMamba) rather than disabled.
+        expected_mode = get_platform_default_mode() if mode == PhyRecoveryConfig.FW_DEFAULT else mode
         actual_mode = output.get(PhyRecoveryConfig.MODE)
         ValidationTool.compare_values(actual_mode, expected_mode).verify_result()
 
@@ -156,7 +258,9 @@ def validate_default_config(selected_port):
     """
     Validate PHY recovery configuration has default values.
 
-    Defaults: logic-relock-mode=disabled, logic-relock-timeout=0
+    Factory defaults are platform specific - BlackMamba ships with
+    logic-relock-mode=enabled/timeout=100 - so the expected values come from
+    the device when it publishes them, falling back to disabled/0.
 
     Args:
         selected_port: Fae port object
@@ -165,17 +269,18 @@ def validate_default_config(selected_port):
         AssertionError: If validation fails
     """
     with allure.step("Check default config (logic-relock)"):
+        expected_config = get_platform_default_config()
         output_fae_port = OutputParsingTool.parse_json_str_to_dictionary(
             selected_port.port.interface.link.phy_recovery.show()
         ).get_returned_value()
 
         filtered_out = {
             key: value for key, value in output_fae_port.items()
-            if key in PhyRecoveryConfig.DEFAULT_CONFIG
+            if key in expected_config
         }
         ValidationTool.compare_dictionaries(
             filtered_out,
-            PhyRecoveryConfig.DEFAULT_CONFIG
+            expected_config
         ).verify_result()
 
 
@@ -310,14 +415,16 @@ def apply_mode_if_needed(fae_port, mode: str) -> bool:
     """
     current_mode = get_current_mode(fae_port)
 
-    # fw-default maps to disabled operationally
+    # fw-default falls back to the platform factory default, which is enabled
+    # on some platforms (BlackMamba) rather than disabled.
+    platform_default_mode = get_platform_default_mode()
     effective_current = (
-        PhyRecoveryConfig.DISABLED
+        platform_default_mode
         if current_mode == PhyRecoveryConfig.FW_DEFAULT
         else current_mode
     )
     effective_target = (
-        PhyRecoveryConfig.DISABLED
+        platform_default_mode
         if mode == PhyRecoveryConfig.FW_DEFAULT
         else mode
     )

@@ -32,6 +32,9 @@ from ngts.nvos_tools.acl.rule import RuleID
 logger = logging.getLogger(__name__)
 
 SLEEP_TIME = 5
+# 'nv config apply' returns before acltool clears the unset ACL's iptables rules, so a removed
+# deny rule can keep dropping traffic for a short window after the removal is reported as done.
+ACL_REMOVAL_SETTLE_TIME = 2
 IPV6_ADDR = "2001:db8:abcd:0012:0000:0000:0000:00ef"
 
 RULE_CONFIG_FUNCTION: dict[str, Callable[[RuleID, str], None]] = {
@@ -235,6 +238,9 @@ def test_acl_order(engines: EnginesT, random_api: str, topology_obj: TopologyT):
         assert acl_id_1 not in acl_output.keys(), 'Got unexpected acl output after acl removal'
         interface_acl_output = mgmt_port.interface.acl.parse_show()
         assert acl_id_1 not in interface_acl_output.keys(), 'Got unexpected mgmt interface acl output after acl removal'
+
+    with allure.step(f"Wait {ACL_REMOVAL_SETTLE_TIME}s for {acl_id_1} rules to be cleared from iptables"):
+        time.sleep(ACL_REMOVAL_SETTLE_TIME)
 
     with allure.step("Validate new ACL rule order"):
         rule_packets_before = get_rule_packets(mgmt_port, acl_id_2)

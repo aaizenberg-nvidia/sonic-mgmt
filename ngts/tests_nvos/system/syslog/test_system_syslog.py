@@ -1730,6 +1730,7 @@ def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=
         program_flag = f' --tag {program}' if program else ''
         extra_flags = protocol_flag + priority_flag + port_flag + program_flag
         logger_cmd = f'logger {extra_flags} "{msg}"'
+        time.sleep(3)  # wait for rsyslogd reload after nv config apply (NVBug 6213076)
         TestToolkit.engines.dut.run_cmd(logger_cmd)
         with sudo_scope_if(TestToolkit.devices.dut.is_eth()):
             TestToolkit.engines.dut.run_cmd('tail -10 /var/log/syslog')

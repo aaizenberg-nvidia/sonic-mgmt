@@ -25,6 +25,7 @@ import random
 import pytest
 
 from ngts.nvos_constants.constants_nvos import ActionConsts, LogsSources
+from ngts.nvos_tools.Devices.IbDevice import RosalindSurrogateSwitch
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.Fae import Fae
@@ -55,9 +56,24 @@ from ngts.tests_nvos.interfaces.plu_phy_recovery.helpers import (
     verify_config,
     unset_config_all,
     cleanup_phy_recovery_config,
+    select_random_xdr_up_port,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def skip_if_logic_relock_unsupported(devices):
+    """
+    logic-relock-mode is not in the phy-recovery NVUE schema on Rosalind/Portia
+    (croc/mamba/taipan/juliet only). Skip the whole module there even if MARS
+    .db ignore is missing.
+    """
+    if isinstance(devices.dut, RosalindSurrogateSwitch):
+        pytest.skip(
+            "logic-relock-mode / PLU phy-recovery not supported on Rosalind/Portia "
+            f"(dut={type(devices.dut).__name__})"
+        )
 
 
 # =============================================================================
@@ -103,7 +119,7 @@ def test_plu_phy_recovery_go_once(engines, devices, random_api):
     Command: nv action start fae interface <port> link phy-recovery
 
     Steps:
-        1. Select a random port in LINK-UP state.
+        1. Select a random UP port with connection-mode xdr.
         2. Set logic-relock-mode to enabled if not already enabled.
         3. Verify mode is enabled on the port.
         4. Record initial recovery counters (total-successful-recovery-events,
@@ -116,15 +132,13 @@ def test_plu_phy_recovery_go_once(engines, devices, random_api):
 
     system = System()
 
-    with allure.step("Select a random port in LINK-UP state"):
-        port_result = RandomizationTool.select_random_port(
-            requested_ports_state=NvosConsts.LINK_STATE_UP,
-        )
+    with allure.step("Select a random UP port with connection-mode xdr"):
+        port_result = select_random_xdr_up_port()
         if not port_result.result:
             port_result.ignore_result()
-            pytest.skip(f"Skipping test - no ports in UP state: {port_result.info}")
+            pytest.skip(f"Skipping test - no UP XDR ports: {port_result.info}")
         selected_port = port_result.get_returned_value()
-        logger.info(f"Selected port for go-once test: {selected_port.name}")
+        logger.info(f"Selected XDR port for go-once test: {selected_port.name}")
 
     fae_port = Fae(port_name=selected_port.name)
 
