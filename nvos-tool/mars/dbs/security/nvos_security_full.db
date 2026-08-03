@@ -98,6 +98,9 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_certificates.cases </cases>
     </test>
     <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_cert_expiry_alert.cases </cases>
+    </test>
+    <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_api.cases </cases>
     </test>
 	<test>

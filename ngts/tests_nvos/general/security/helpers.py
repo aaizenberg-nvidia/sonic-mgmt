@@ -92,7 +92,12 @@ def remove_etc_host_mapping_to_dn(dn, cmd_runner=None):
     cmd_runner.run_cmd(cmd)
 
 
-def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostname, dut_ip=None, create_chain: bool = False) -> Dict[str, CertInfo]:
+def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostname, dut_ip=None,
+                           create_chain: bool = False, expiration_days: Optional[int] = None) -> Dict[str, CertInfo]:
+    """Generate leaf certs under ``dest_dir``.
+
+    :param expiration_days: when set, leaf validity is that many days (CA stays long-lived).
+    """
     certs_info: Dict[str, CertInfo] = {}
 
     with allure.step('arrange test certs'):
@@ -106,7 +111,8 @@ def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostnam
                     rand_pass = ''.join([random.choice(string.ascii_lowercase + '0123456789') for _ in range(10)])
                     cert_info = CertInfo(
                         name=cert_name,
-                        info='cert for test',
+                        info=('cert for test' if expiration_days is None
+                              else f'cert for test (valid for {expiration_days} day(s))'),
                         private=os.path.join(cert_dir, 'cert.key'),
                         public=os.path.join(cert_dir, 'cert.pem'),
                         p12_bundle=os.path.join(cert_dir, 'cert.p12'),
@@ -133,8 +139,10 @@ def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostnam
                         CertificateGenerator().generate_cert_chain(cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
                                                                    cert_dir, 'rCA', cert_info.p12_password)
                     else:
-                        CertificateGenerator().generate_cert(cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
-                                                             cert_dir, 'ca', cert_info.p12_password)
+                        CertificateGenerator().generate_cert(
+                            cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
+                            cert_dir, 'ca', cert_info.p12_password,
+                            expiration_days=expiration_days)
         with allure.step('chmod 777'):
             CmdRunner().run_cmd(f'chmod -R 777 {dest_dir}')
 

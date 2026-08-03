@@ -464,7 +464,7 @@ def test_local_cert_generated_after_timezone_change(engines, dut_hostname):
     client_timezone = 'America/Los_Angeles'
 
     with allure.step('clear existing certs'):
-        clear_existing_certs()
+        clear_existing_certs(engines)
     with allure.step('change timezone'):
         system = System()
         system.datetime.set('timezone', client_timezone, apply=True).verify_result()

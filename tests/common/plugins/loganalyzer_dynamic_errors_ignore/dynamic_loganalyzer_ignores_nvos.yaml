@@ -2382,3 +2382,14 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_negative
+
+# certificate expiry monitoring: the scheduler WARNING/ERROR alerts are the expected result of these
+# tests. The alerts are emitted asynchronously, so they can land outside a loganalyzer_ignore() window.
+# Restricted to the 'cert-expiry-*' certificates these tests generate, so real expiry-monitoring
+# problems on other certificates are still reported.
+- Errors_list:
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expires\b.*'
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expired\b.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/security/certificate/test_cert_expiry_alert.py
