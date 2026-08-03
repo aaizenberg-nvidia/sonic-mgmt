@@ -8,7 +8,7 @@ class ImaConsts:
     DISABLED = 'disabled'
     DEFAULT_STATE = DISABLED
     APPLY_REBOOT_WARNING = (
-        'WARNING: IMA state change takes effect only after saving the '
+        'Warning: IMA state change takes effect only after saving the '
         'configuration (nv config save) and rebooting the system'
     )
 
