@@ -36,8 +36,14 @@ GNMI_PAM_BAD_PLAIN_LAUNCH_JOIN_SLACK_SEC = 90
 GNMI_PAM_BAD_PLAIN_THREAD_MIN_BEFORE_GOOD = 10
 # Timeout waiting for that readiness gate in ``_plain_bad_gnmi_background_start_and_wait_ready``.
 GNMI_PAM_BAD_PLAIN_READY_WAIT_SEC = 30.0
-# Delay between transient-error retries in ``_gnmic_capabilities_mtls_spiffe_success``.
+# ``_gnmic_capabilities_mtls_spiffe_success`` (DDoS/slot tests): independent of
+# ``RECONNECT_CAPABILITIES_*`` so tuning post-restart reconnect does not retime these probes.
+GNMI_PAM_SPIFFE_CAPABILITIES_MAX_WAIT_SEC = 15
+GNMI_PAM_SPIFFE_CAPABILITIES_RETRY_INTERVAL_SEC = 2
+GNMI_PAM_SPIFFE_CAPABILITIES_MAX_ATTEMPTS = 5
 GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC = 1.0
+# Bounded SIGTERM→SIGKILL wait when tearing down test-owned gnmic processes.
+GNMI_PAM_GNMIC_TERMINATE_TIMEOUT_SEC = 5.0
 
 # gNMI server DDoS/rate-limit: requests per minute threshold; exceeding it yields local_rate_limited
 GNMI_RATE_LIMIT_REQ_PER_MIN = 60

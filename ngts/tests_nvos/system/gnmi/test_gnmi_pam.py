@@ -1,11 +1,13 @@
 import logging
+import os
 import random
 import shlex
+import signal
 import subprocess
 import threading
 import time
 from subprocess import Popen
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import pytest
 
@@ -24,9 +26,9 @@ from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaa
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer0
 from ngts.tests_nvos.general.security.test_aaa_ldap.ldap_servers_info import LdapServersP3
-from ngts.tests_nvos.helpers.general_helpers import run_cmd
 from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.constants import SecurityMode
-from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.test_api_mtls_spiffe_id import TestSetup, setup_test
+from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.test_api_mtls_spiffe_id import (
+    TestSetup, setup_test, spiffe_setup_users)
 from ngts.tests_nvos.general.security.certificate.CertInfo import CertInfo
 from ngts.tests_nvos.general.security.gnmi_server.mtls.spiffe_id.conftest import cleanup_spiffe_gnmi
 from ngts.tests_nvos.general.security.gnmi_server.mtls.spiffe_id.test_gnmi_server_spiffe_id import setup_gnmi_security_mode
@@ -34,13 +36,17 @@ from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient, GnmicCmdBuilder
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GNMI_INVALID_AUTH_CLIENT_PASSWORD, GNMI_INVALID_AUTH_CLIENT_USERNAME, \
     GNMI_PAM_BAD_PLAIN_LAUNCH_JOIN_SLACK_SEC, GNMI_PAM_BAD_PLAIN_READY_WAIT_SEC, GNMI_PAM_BAD_PLAIN_THREAD_MIN_BEFORE_GOOD, \
     GNMI_PAM_DUT_TCP_WAIT_POLL_SEC, GNMI_PAM_DUT_TCP_WAIT_TIMEOUT_SEC, \
-    GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC, \
+    GNMI_PAM_GNMIC_TERMINATE_TIMEOUT_SEC, \
+    GNMI_PAM_SPIFFE_CAPABILITIES_MAX_ATTEMPTS, GNMI_PAM_SPIFFE_CAPABILITIES_MAX_WAIT_SEC, \
+    GNMI_PAM_SPIFFE_CAPABILITIES_RETRY_INTERVAL_SEC, GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC, \
     MAX_GNMI_BAD_SUBSCRIBERS, MAX_GNMI_SUBSCRIBERS, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import verify_gnmi_client, change_interface_description, \
-    verify_msg_in_out_or_err, verify_msg_not_in_out_or_err
+    verify_msg_in_out_or_err, verify_msg_not_in_out_or_err, gnmi_response_overloaded
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import wait_for_ldap_nvued_restart_workaround
 from ngts.tools.test_utils.switch_recovery import generate_strong_password
+
+logger = logging.getLogger(__name__)
 
 
 def _count_established_gnmi_tcp_on_dut(dut_engine, port: str = GnmiConsts.GNMI_DEFAULT_PORT) -> int:
@@ -110,15 +116,21 @@ def _start_invalid_gnmi_stream_clients_background(
         started_clients_threshold: int = 1,
         inter_client_delay_sec: float = 0.0,
         max_subscribers: int = MAX_GNMI_SUBSCRIBERS,
-) -> List[Popen]:
+        processes: Optional[List[Popen]] = None,
+        gnmi_client: Optional[GnmiClient] = None,
+) -> Tuple[List[Popen], GnmiClient]:
     """Run ``max_subscribers`` long-lived gnmic subscribe (stream) sessions with bad creds (background).
 
     ``GnmiMode.ONCE`` is not valid here: ``gnmic_subscribe_interface_and_keep_session_alive`` passes
     ``keep_session_alive=True``, and ``GnmiClient.gnmic_subscribe`` only allows STREAM or POLL in that case.
+
+    Appends each ``Popen`` to ``processes`` as it starts (so teardown can kill partial launches).
+    Returns ``(processes, gnmi_client)`` — callers must keep ``gnmi_client`` alive until after
+    ``_terminate_gnmic_processes``; otherwise ``CmdRunner.__del__`` kills the subscribers early.
     """
-    invalid_client = GnmiClient(
+    invalid_client = gnmi_client or GnmiClient(
         dut_ip, GnmiConsts.GNMI_DEFAULT_PORT, GNMI_INVALID_AUTH_CLIENT_USERNAME, GNMI_INVALID_AUTH_CLIENT_PASSWORD)
-    processes: List[Popen] = []
+    processes = processes if processes is not None else []
     started_clients_threshold = max(1, min(started_clients_threshold, max_subscribers))
     for i in range(max_subscribers):
         with allure.step(f'run invalid gnmi client #{i}'):
@@ -133,7 +145,7 @@ def _start_invalid_gnmi_stream_clients_background(
                 started_clients_evt.set()
             if inter_client_delay_sec > 0:
                 time.sleep(inter_client_delay_sec)
-    return processes
+    return processes, invalid_client
 
 
 class PlainBadGnmiBackground(NamedTuple):
@@ -145,6 +157,8 @@ class PlainBadGnmiBackground(NamedTuple):
     min_before_good: int
     max_bad_subscribers: int
     processes: List[Popen]
+    # Keep GnmiClient (and its CmdRunner) alive until after explicit process termination.
+    gnmi_client: GnmiClient
 
 
 def _plain_bad_gnmi_clients_background_thread(
@@ -163,21 +177,31 @@ def _plain_bad_gnmi_clients_background_thread(
     started_evt = threading.Event()
     min_before_good = min(GNMI_PAM_BAD_PLAIN_THREAD_MIN_BEFORE_GOOD, max_bad_subscribers)
     join_timeout_sec = float(GNMI_PAM_BAD_PLAIN_LAUNCH_JOIN_SLACK_SEC) + float(max_bad_subscribers)
+    # Create the client in the parent so its CmdRunner outlives the launcher thread; otherwise
+    # CmdRunner.__del__ kills every subscriber as soon as the thread function returns.
+    gnmi_client = GnmiClient(
+        dut_ip, GnmiConsts.GNMI_DEFAULT_PORT, GNMI_INVALID_AUTH_CLIENT_USERNAME, GNMI_INVALID_AUTH_CLIENT_PASSWORD)
 
     def _launch_bad_clients() -> None:
-        launched = _start_invalid_gnmi_stream_clients_background(
-            dut_ip,
-            interface_name,
-            started_clients_evt=started_evt,
-            started_clients_threshold=min_before_good,
-            inter_client_delay_sec=0.0,
-            max_subscribers=max_bad_subscribers,
-        )
-        processes.clear()
-        processes.extend(launched)
+        try:
+            _start_invalid_gnmi_stream_clients_background(
+                dut_ip,
+                interface_name,
+                started_clients_evt=started_evt,
+                started_clients_threshold=min_before_good,
+                inter_client_delay_sec=0.0,
+                max_subscribers=max_bad_subscribers,
+                processes=processes,
+                gnmi_client=gnmi_client,
+            )
+        except Exception as error:
+            # Leave started_evt alone so wait_ready fails if the gate never tripped; partial
+            # Popen handles remain in ``processes`` for ``_plain_bad_gnmi_background_cleanup``.
+            logger.warning('plain bad gnmi launcher stopped early: %s', error)
 
     thread = threading.Thread(target=_launch_bad_clients, daemon=True)
-    return PlainBadGnmiBackground(thread, started_evt, join_timeout_sec, min_before_good, max_bad_subscribers, processes)
+    return PlainBadGnmiBackground(
+        thread, started_evt, join_timeout_sec, min_before_good, max_bad_subscribers, processes, gnmi_client)
 
 
 def _plain_bad_gnmi_background_start_and_wait_ready(
@@ -203,16 +227,59 @@ def _plain_bad_gnmi_background_join_and_assert_done(bad_bg: PlainBadGnmiBackgrou
     assert len(bad_bg.processes) == bad_bg.max_bad_subscribers
 
 
+def _plain_bad_gnmi_background_cleanup(bad_bg: PlainBadGnmiBackground) -> None:
+    """Wait for the launcher to stop adding clients, then terminate everything it started."""
+    bad_bg.thread.join(timeout=bad_bg.join_timeout_sec)
+    if bad_bg.thread.is_alive():
+        logger.warning('plain bad gnmi launcher still alive after %ss; terminating known processes',
+                       bad_bg.join_timeout_sec)
+    _terminate_gnmic_processes(bad_bg.processes)
+
+
+def _terminate_gnmic_processes(
+        processes: List[Popen],
+        timeout_sec: float = GNMI_PAM_GNMIC_TERMINATE_TIMEOUT_SEC,
+) -> None:
+    """Best-effort SIGTERM→SIGKILL termination of only the gnmic processes started by the current test."""
+    for process in list(processes):
+        try:
+            if process.poll() is not None:
+                continue
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            try:
+                process.wait(timeout=timeout_sec)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=timeout_sec)
+                except subprocess.TimeoutExpired:
+                    logger.warning('gnmic process pid=%s did not exit after SIGKILL', process.pid)
+        except Exception as error:
+            logger.warning('Failed to terminate test gnmic process pid=%s: %s', getattr(process, 'pid', '?'), error)
+
+
 def _start_invalid_gnmi_mtls_stream_clients_background(
         dut_ip: str,
         interface_name: str,
         tls_ca: CertInfo,
         client_cert: CertInfo,
         max_subscribers: int = MAX_GNMI_BAD_SUBSCRIBERS,
-) -> List[Popen]:
-    """Long-lived STREAM subscribers with valid mTLS but invalid username/password (background)."""
+        processes: Optional[List[Popen]] = None,
+) -> Tuple[List[Popen], CmdRunner]:
+    """Long-lived STREAM subscribers with valid mTLS but invalid username/password (background).
+
+    Appends each ``Popen`` to ``processes`` as it starts (so teardown can kill partial launches).
+    Returns ``(processes, cmd_runner)`` — callers must keep ``cmd_runner`` alive until after
+    ``_terminate_gnmic_processes``; otherwise ``CmdRunner.__del__`` kills every live process at GC.
+    """
     cmd_runner = CmdRunner('gnmi_mtls_invalid_stream_clients', 5, True)
-    processes: List[Popen] = []
+    processes = processes if processes is not None else []
     for i in range(max_subscribers):
         gnmic_cmd = (
             GnmicCmdBuilder(host=dut_ip, port=int(GnmiConsts.GNMI_DEFAULT_PORT))
@@ -226,7 +293,7 @@ def _start_invalid_gnmi_mtls_stream_clients_background(
         with allure.step(f'run invalid gnmi mTLS client #{i}: {gnmic_cmd}'):
             _, _, proc = cmd_runner.run_cmd_in_process(gnmic_cmd, keep_process_alive=True)
             processes.append(proc)
-    return processes
+    return processes, cmd_runner
 
 
 def _gnmic_capabilities_mtls_spiffe_argv(dut_ip: str, tls_ca: CertInfo, client_cert: CertInfo) -> List[str]:
@@ -246,12 +313,19 @@ def _gnmic_capabilities_mtls_spiffe_success(
         dut_ip: str,
         tls_ca: CertInfo,
         client_cert: CertInfo,
-        timeout_sec: int = 45,
+        timeout_sec: int = GNMI_PAM_SPIFFE_CAPABILITIES_MAX_WAIT_SEC,
+        max_attempts: int = GNMI_PAM_SPIFFE_CAPABILITIES_MAX_ATTEMPTS,
 ) -> None:
-    """Run ``gnmic capabilities`` with mTLS SPIFFE and tolerate transient transport races."""
+    """
+    Run ``gnmic capabilities`` with mTLS SPIFFE and tolerate a small number of transient races.
+
+    Retries transport races (EOF / Unavailable / refused) and brief overload back-pressure for at most
+    ``max_attempts`` (bounded wall ``timeout_sec``). Bound is intentional: these DDoS/slot tests prove
+    SPIFFE clients are not starved — an unbounded "eventually succeeds" window would invert that.
+    """
     gnmic_argv = _gnmic_capabilities_mtls_spiffe_argv(dut_ip, tls_ca, client_cert)
     gnmic_cmd_log = ' '.join(shlex.quote(a) for a in gnmic_argv)
-    transient_markers = (
+    transport_transient_markers = (
         'error reading server preface: EOF',
         'rpc error: code = Unavailable',
         'connection error: desc =',
@@ -261,12 +335,12 @@ def _gnmic_capabilities_mtls_spiffe_success(
     attempt = 0
     out, err = '', ''
     result = None
-    while True:
+    while attempt < max_attempts:
         attempt += 1
         remaining_sec = timeout_sec - (time.monotonic() - start)
         if remaining_sec <= 0:
             break
-        with allure.step(f'run gnmic capabilities mTLS SPIFFE (attempt {attempt}): {gnmic_cmd_log}'):
+        with allure.step(f'run gnmic capabilities mTLS SPIFFE (attempt {attempt}/{max_attempts}): {gnmic_cmd_log}'):
             result = subprocess.run(
                 gnmic_argv,
                 capture_output=True,
@@ -277,14 +351,22 @@ def _gnmic_capabilities_mtls_spiffe_success(
         if result.returncode == 0:
             break
         combined = (out or '') + (err or '')
-        is_transient = any(marker in combined for marker in transient_markers)
-        if not is_transient:
+        is_transport_transient = any(marker in combined for marker in transport_transient_markers)
+        is_overload = gnmi_response_overloaded(out, err)
+        if not (is_transport_transient or is_overload):
             break
-        time.sleep(GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC)
+        if attempt >= max_attempts:
+            break
+        sleep_sec = (
+            GNMI_PAM_SPIFFE_CAPABILITIES_RETRY_INTERVAL_SEC if is_overload
+            else GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC
+        )
+        time.sleep(min(sleep_sec, max(0.0, remaining_sec)))
 
     rc = result.returncode if result is not None else 'n/a'
     assert result is not None and result.returncode == 0, (
-        f'gnmic capabilities failed after {attempt} attempt(s) rc={rc} out={out!r} err={err!r}'
+        f'gnmic capabilities failed after {attempt} attempt(s) (max {max_attempts}) '
+        f'rc={rc} out={out!r} err={err!r}'
     )
     # Strict: success output must not contain any gnmic failure signature (including literal ``rpc error``).
     for err_msg in GnmicErr.ALL_ERRS:
@@ -310,13 +392,6 @@ def aaa_users(engines, cleanup_after_aaa) -> Dict[str, UserInfo]:
             System().aaa.authentication.set(AuthConsts.FAILTHROUGH, AaaConsts.ENABLED, apply=True).verify_result()
     return {RemoteAaaType.TACACS: tac_server.users[0], RemoteAaaType.LDAP: ldap_server.users[0],
             RemoteAaaType.RADIUS: rad_server.users[0], }  # servers config cleared in clear_conf hook func
-
-
-@pytest.fixture()
-def killall_gnmic():
-    run_cmd('killall gnmic', validate=False)
-    yield
-    run_cmd('killall gnmic', validate=False)
 
 
 @pytest.mark.system
@@ -490,7 +565,7 @@ def test_gnmi_auth_existing_streamed_session(engines, local_adminuser):
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_auth_failing_clients_ddos(engines, local_adminuser, killall_gnmic):
+def test_gnmi_auth_failing_clients_ddos(engines, local_adminuser):
     """
     verify that gnmi accepts a valid client after at least one failing-auth TCP session has closed on the DUT
 
@@ -503,27 +578,31 @@ def test_gnmi_auth_failing_clients_ddos(engines, local_adminuser, killall_gnmic)
     selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
     invalid_clients: List[Popen] = []
 
-    with allure.step(f'run {MAX_GNMI_SUBSCRIBERS} gnmi clients with bad creds in background'):
-        # Hold Popen refs so background gnmic processes are not gc'd mid-test.
-        invalid_clients = _start_invalid_gnmi_stream_clients_background(
-            engines.dut.ip, selected_port.name, max_subscribers=MAX_GNMI_SUBSCRIBERS)
-    with allure.step(
-            'wait on DUT until at least one established TCP connection on gNMI port has closed '
-            f'(from a peak of at least {MAX_GNMI_SUBSCRIBERS})'):
-        _wait_until_at_least_one_gnmi_tcp_connection_closed_on_dut(engines.dut)
-    with allure.step('run gnmi client with valid creds'):
-        out, err = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, local_adminuser.username,
-                              local_adminuser.password).gnmic_capabilities(skip_cert_verify=True,
-                                                                           wait_till_done=True)
-    with allure.step('expect success'):
-        for err_msg in GnmicErr.ALL_ERRS:
-            with allure.independent_step(f'verify no error msg: "{err_msg}"'):
-                verify_msg_not_in_out_or_err(err_msg, out, err)
+    try:
+        with allure.step(f'run {MAX_GNMI_SUBSCRIBERS} gnmi clients with bad creds in background'):
+            # Hold the GnmiClient for the whole test: CmdRunner.__del__ kills its live processes.
+            invalid_clients, _gnmi_client_owner = _start_invalid_gnmi_stream_clients_background(
+                engines.dut.ip, selected_port.name, max_subscribers=MAX_GNMI_SUBSCRIBERS,
+                processes=invalid_clients)
+        with allure.step(
+                'wait on DUT until at least one established TCP connection on gNMI port has closed '
+                f'(from a peak of at least {MAX_GNMI_SUBSCRIBERS})'):
+            _wait_until_at_least_one_gnmi_tcp_connection_closed_on_dut(engines.dut)
+        with allure.step('run gnmi client with valid creds'):
+            out, err = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, local_adminuser.username,
+                                  local_adminuser.password).gnmic_capabilities(skip_cert_verify=True,
+                                                                               wait_till_done=True)
+        with allure.step('expect success'):
+            for err_msg in GnmicErr.ALL_ERRS:
+                with allure.independent_step(f'verify no error msg: "{err_msg}"'):
+                    verify_msg_not_in_out_or_err(err_msg, out, err)
+    finally:
+        _terminate_gnmic_processes(invalid_clients)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected(engines, local_adminuser, killall_gnmic):
+def test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected(engines, local_adminuser):
     """
     verify that while all subscriber slots are consumed by failing-auth gnmi clients, a valid client cannot connect
 
@@ -535,18 +614,19 @@ def test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected(engines, 
 
     bad_bg = _plain_bad_gnmi_clients_background_thread(
         engines.dut.ip, selected_port.name, max_bad_subscribers=MAX_GNMI_BAD_SUBSCRIBERS)
-    with allure.step('start bad creds clients in background thread'):
-        _plain_bad_gnmi_background_start_and_wait_ready(bad_bg)
     try:
+        with allure.step('start bad creds clients in background thread'):
+            _plain_bad_gnmi_background_start_and_wait_ready(bad_bg)
         with allure.step('run gnmi client with valid creds while bad clients are launching/running'):
             out, err = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, local_adminuser.username,
                                   local_adminuser.password).gnmic_capabilities(skip_cert_verify=True,
                                                                                wait_till_done=True)
         with allure.step('expect failure'):
             _verify_capabilities_failed_when_slots_busy(out, err)
-    finally:
         with allure.step('wait for bad clients launch thread to finish'):
             _plain_bad_gnmi_background_join_and_assert_done(bad_bg)
+    finally:
+        _plain_bad_gnmi_background_cleanup(bad_bg)
 
 
 @pytest.mark.system
@@ -554,7 +634,7 @@ def test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected(engines, 
 @pytest.mark.security
 @pytest.mark.mtls
 def test_gnmi_auth_failing_plain_clients_ddos_mtls_spiffe_valid_client_succeeds(
-        engines, dut_hostname, scp_player, killall_gnmic):
+        engines, dut_hostname, scp_player):
     """
     Verify that with gNMI ``mTLS`` + SPIFFE enabled, a valid SPIFFE client can run ``capabilities`` while
     ``MAX_GNMI_BAD_SUBSCRIBERS`` background clients repeatedly attempt subscribe with invalid username/password
@@ -564,31 +644,33 @@ def test_gnmi_auth_failing_plain_clients_ddos_mtls_spiffe_valid_client_succeeds(
     1. Build SPIFFE test setup and configure gNMI security mode to ``mTLS``.
     2. Start ``MAX_GNMI_BAD_SUBSCRIBERS`` invalid plain ``gnmic`` clients on a background thread (gated start count).
     3. Run SPIFFE ``gnmic capabilities`` while bad clients still launch; expect success.
-    4. Join launcher thread; cleanup SPIFFE/mTLS in outer ``finally``.
+    4. Join launcher thread; cleanup SPIFFE/mTLS (including AAA users) in outer ``finally``.
     """
-    setup: TestSetup = setup_test(dut_hostname, engines, scp_player, cert_name_prefix='gnmi-pam-mtls-ddos')
-    selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
-    bad_bg = _plain_bad_gnmi_clients_background_thread(
-        engines.dut.ip, selected_port.name, max_bad_subscribers=MAX_GNMI_BAD_SUBSCRIBERS)
+    setup: Optional[TestSetup] = None
     try:
+        setup = setup_test(dut_hostname, engines, scp_player, cert_name_prefix='gnmi-pam-mtls-ddos')
+        selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
+        bad_bg = _plain_bad_gnmi_clients_background_thread(
+            engines.dut.ip, selected_port.name, max_bad_subscribers=MAX_GNMI_BAD_SUBSCRIBERS)
         with allure.step('configure gNMI mTLS + SPIFFE (users, certs, gnmi-server)'):
             setup_gnmi_security_mode(SecurityMode.MTLS, setup.server_cert, setup.server_ca)
-        with allure.step(
-                f'start {MAX_GNMI_BAD_SUBSCRIBERS} invalid plain gnmi clients in background thread '
-                f'(after {bad_bg.min_before_good} started, run foreground request)'):
-            _plain_bad_gnmi_background_start_and_wait_ready(bad_bg)
         try:
+            with allure.step(
+                    f'start {MAX_GNMI_BAD_SUBSCRIBERS} invalid plain gnmi clients in background thread '
+                    f'(after {bad_bg.min_before_good} started, run foreground request)'):
+                _plain_bad_gnmi_background_start_and_wait_ready(bad_bg)
             with allure.step('run one valid SPIFFE gnmic capabilities request while bad clients launch'):
                 _gnmic_capabilities_mtls_spiffe_success(
                     engines.dut.ip,
                     setup.server_cert,
                     setup.cert_spif_of_user1_1,
                 )
-        finally:
             with allure.step('wait for bad clients launch thread to finish'):
                 _plain_bad_gnmi_background_join_and_assert_done(bad_bg)
+        finally:
+            _plain_bad_gnmi_background_cleanup(bad_bg)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
 
 @pytest.mark.system
@@ -596,7 +678,7 @@ def test_gnmi_auth_failing_plain_clients_ddos_mtls_spiffe_valid_client_succeeds(
 @pytest.mark.security
 @pytest.mark.mtls
 def test_gnmi_auth_failing_clients_exhaust_slots_mtls_spiffe_valid_client_succeeds(
-        engines, dut_hostname, scp_player, killall_gnmic):
+        engines, dut_hostname, scp_player):
     """
     Verify that with gNMI ``mTLS`` + SPIFFE auth enabled, a valid SPIFFE client is still accepted even when
     ``MAX_GNMI_BAD_SUBSCRIBERS`` background clients continuously attempt subscribe with wrong username/password.
@@ -617,21 +699,25 @@ def test_gnmi_auth_failing_clients_exhaust_slots_mtls_spiffe_valid_client_succee
        - trusted server CA,
        - SPIFFE-bound client cert (no password auth expected).
     6. Verify the foreground request returns success and does not contain any ``GnmicErr`` signatures.
-    7. Always run SPIFFE/mTLS cleanup in ``finally`` to leave the DUT state clean.
+    7. Always run SPIFFE/mTLS cleanup (including AAA users) in ``finally`` to leave the DUT state clean.
     """
-    setup: TestSetup = setup_test(dut_hostname, engines, scp_player, cert_name_prefix='gnmi-pam-mtls-slots')
-    selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
+    setup: Optional[TestSetup] = None
+    invalid_clients: List[Popen] = []
     try:
+        setup = setup_test(dut_hostname, engines, scp_player, cert_name_prefix='gnmi-pam-mtls-slots')
+        selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
         with allure.step('configure gNMI mTLS + SPIFFE (users, certs, gnmi-server)'):
             setup_gnmi_security_mode(SecurityMode.MTLS, setup.server_cert, setup.server_ca)
         with allure.step(
                 f'run {MAX_GNMI_BAD_SUBSCRIBERS} gnmic STREAM clients: valid mTLS, invalid user/password (background)'):
-            _start_invalid_gnmi_mtls_stream_clients_background(
+            # Hold the CmdRunner for the whole test: its __del__ kills every live process.
+            invalid_clients, _mtls_cmd_runner = _start_invalid_gnmi_mtls_stream_clients_background(
                 engines.dut.ip,
                 selected_port.name,
                 setup.server_cert,
                 setup.cert_no_spif,
                 max_subscribers=MAX_GNMI_BAD_SUBSCRIBERS,
+                processes=invalid_clients,
             )
         with allure.step('run gnmic capabilities as SPIFFE user1 (no password) while background clients run'):
             _gnmic_capabilities_mtls_spiffe_success(
@@ -640,4 +726,7 @@ def test_gnmi_auth_failing_clients_exhaust_slots_mtls_spiffe_valid_client_succee
                 setup.cert_spif_of_user1_1,
             )
     finally:
-        cleanup_spiffe_gnmi()
+        try:
+            _terminate_gnmic_processes(invalid_clients)
+        finally:
+            cleanup_spiffe_gnmi(spiffe_setup_users(setup))
