@@ -162,20 +162,38 @@ class Repo:
             if _CHERRY_PICK_MERGE in std_err_msg:
                 return (True, _CHERRY_PICK_STATUS_EMPTY)
             return (False, std_err_msg)
-        # remove existing Change-Id
-        change_id_search_pattern = r"Change-Id: I[0-9a-f]{40}"
-        # get the last commit message
+        # remove existing Change-Id (any format)
         last_commit_msg = subprocess.check_output("git log -1 --pretty=%B", shell=True, cwd=self.dir).decode()
-        if re.search(change_id_search_pattern, last_commit_msg):
-            last_commit_msg = re.sub(change_id_search_pattern, "", last_commit_msg)
-        # if cherry-pick is a success, we need add new changeId
-        # but the commit message may contain single quote, so we need to escape it
+        last_commit_msg = re.sub(r"\n?Change-Id:[^\n]+", "", last_commit_msg)
+        last_commit_msg = last_commit_msg.rstrip() + "\n"
         last_commit_msg = last_commit_msg.replace("'", "'\\''")
         process = subprocess.run(f"git commit --amend -m '{last_commit_msg}'",
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            shell=True, cwd=self.dir)
         if process.returncode != 0:
             return (False, f"unable to generate changeId: {process.stderr.decode()}")
+        # verify Change-Id is at the end of commit message and fix if not
+        last_commit_msg = subprocess.check_output(
+            "git log -1 --pretty=%B", shell=True, cwd=self.dir
+        ).decode()
+        change_id_match = re.search(r'Change-Id:\s*\S+', last_commit_msg)
+        if change_id_match:
+            change_id_line = change_id_match.group(0)
+            # footer = last paragraph of the commit message, separated from the
+            # body by a blank line (per git/Gerrit trailer convention)
+            paragraphs = [p for p in last_commit_msg.rstrip('\n').split('\n\n') if p.strip()]
+            in_footer = bool(paragraphs) and change_id_line in paragraphs[-1]
+            if not in_footer:
+                fixed_msg = re.sub(r'\n?' + re.escape(change_id_line) + r'\n?', '\n', last_commit_msg)
+                fixed_msg = fixed_msg.rstrip() + '\n\n' + change_id_line + '\n'
+                fixed_msg = fixed_msg.replace("'", "'\\''")
+                process = subprocess.run(
+                    f"git commit --amend -m '{fixed_msg}'",
+                    shell=True, cwd=self.dir,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                if process.returncode != 0:
+                    return (False, f"unable to fix Change-Id position: {process.stderr.decode()}")
         return (True, _CHERRY_PICK_STATUS_SUCCESS)
 
     def cherry_pick_commits(self, commits: list[GitCommit])->tuple[bool, bool, list[GitCommit]]:
