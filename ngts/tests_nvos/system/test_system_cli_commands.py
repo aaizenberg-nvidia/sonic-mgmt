@@ -138,9 +138,7 @@ def test_set_inactivity_timeout(engines, devices, topology_obj, test_name):
         ssh_output = OutputParsingTool.parse_json_str_to_dictionary(system.ssh_server.show()).get_returned_value()
         ValidationTool.verify_field_value_in_output(ssh_output, SystemConsts.SSH_CONFIG_INACTIVE_TIMEOUT, '1') \
             .verify_result()
-        serial_output = OutputParsingTool.parse_json_str_to_dictionary(system.system_cli.show()) \
-            .get_returned_value()
-        ValidationTool.verify_field_value_in_output(serial_output, SystemConsts.CLI_INACTIVE_TIMEOUT, '1').verify_result()
+        retry_call(_verify_cli_inactive_timeout, [system, '1'], exceptions=AssertionError, tries=10, delay=2)
 
     with allure.step("Open new ssh and serial connection"):
         logger.info("Open new ssh and serial connection")
@@ -186,10 +184,8 @@ def test_set_inactivity_timeout(engines, devices, topology_obj, test_name):
             ssh_output = OutputParsingTool.parse_json_str_to_dictionary(system.ssh_server.show()).get_returned_value()
             ValidationTool.verify_field_value_in_output(ssh_output, SystemConsts.SSH_CONFIG_INACTIVE_TIMEOUT, SystemConsts.SSH_CONFIG_DEFAULT_INACTIVE_TIMEOUT)\
                 .verify_result()
-            serial_output = OutputParsingTool.parse_json_str_to_dictionary(system.system_cli.show()) \
-                .get_returned_value()
-            logging.info(serial_output)
-            ValidationTool.verify_field_value_in_output(serial_output, SystemConsts.CLI_INACTIVE_TIMEOUT, SystemConsts.CLI_DEFAULT_INACTIVE_TIMEOUT).verify_result()
+            retry_call(_verify_cli_inactive_timeout, [system, SystemConsts.CLI_DEFAULT_INACTIVE_TIMEOUT],
+                       exceptions=AssertionError, tries=10, delay=2)
 
 
 @pytest.mark.checklist
@@ -264,3 +260,18 @@ def _assert_number_of_users_disconnected(engines, users_num):
     current_users = _get_users_num(engines)
     output = ValidationTool.compare_values(current_users, users_num).get_returned_value()
     return output
+
+
+def _verify_cli_inactive_timeout(system, expected_value):
+    """Poll 'nv show system cli' until inactive-timeout reflects the expected value.
+
+    'nv show system cli' can keep serving the previous (default) value for ~0.5-2s after
+    'nv config apply' returns, even though the config is already applied - the parallel
+    'nv show system ssh-server' value reflects immediately. Re-read until it converges
+    instead of asserting on a single immediate read (raises AssertionError to trigger retry).
+    """
+    serial_output = OutputParsingTool.parse_json_str_to_dictionary(system.system_cli.show()) \
+        .get_returned_value()
+    logging.info(serial_output)
+    ValidationTool.verify_field_value_in_output(serial_output, SystemConsts.CLI_INACTIVE_TIMEOUT,
+                                                expected_value).verify_result()
