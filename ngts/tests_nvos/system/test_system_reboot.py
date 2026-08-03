@@ -84,13 +84,13 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
             with allure.independent_step("Check system reboot reason output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
-                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output, ["gentime", "reason", "user"]).verify_result()
+                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output, ["gentime", "reason", "user", "reason-type"]).verify_result()
 
             with allure.independent_step("Check system reboot history output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.history.show()).get_returned_value()
                 if output and len(output.keys()) > 0:
                     ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output[list(output.keys())[0]],
-                                                                                      ["gentime", "reason", "user"]).verify_result()
+                                                                                      ["gentime", "reason", "user", "reason-type"]).verify_result()
 
             with allure.independent_step("Check reboot cause"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
