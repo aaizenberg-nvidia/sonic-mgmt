@@ -83,8 +83,10 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
             initial_config_contents[file_type] = engines.dut.run_cmd("sudo cat {}".format(file_path))
 
         with allure.step("Change initial content"):
+            chassis_sn = ClusterTools.get_chassis_sn()
             for file_type in config_files_paths.keys():
-                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=config_files_paths[file_type])
+                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                    file_path=config_files_paths[file_type], chassis_sn=chassis_sn)
                 engines.dut.run_cmd(edit_cmd)
 
         with allure.step("Install modified configurations"):

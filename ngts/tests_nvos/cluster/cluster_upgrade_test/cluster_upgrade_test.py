@@ -98,6 +98,7 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
 
             with allure.step('Upload initial configurations'):
                 # Only iterate over file types that actually exist on this device
+                chassis_sn = ClusterTools.get_chassis_sn()
                 for file_type in config_files_paths.keys():
                     app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
                     sdn.config.apps.app_name[app].type.file_type[file_type].files.file_name[
@@ -112,7 +113,8 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
                     dummy_file_path = ClusterConsts.INITIAL_CONFIGURATIONS_PATH + '/' + file_name
                     engines.sonic_mgmt.run_cmd("sudo cp {} {}".format(initial_configs_paths_to_restore[file_type], dummy_file_path))
                     uploaded_files.append(ClusterConsts.INITIAL_CONFIGURATIONS_PATH + '/' + file_name)
-                    edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=dummy_file_path)
+                    edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                        file_path=dummy_file_path, chassis_sn=chassis_sn)
                     engines.sonic_mgmt.run_cmd(edit_cmd)
                     path_to_config[file_type] = dummy_file_path
                     config_file_name[file_type] = file_name
@@ -135,7 +137,7 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
                     if file_type == 'chassis_mapping' and is_bug_active(4222718):
                         continue
                     assert set(current_config_content.split('\n')) == set(expected_config_content.split('\n')), f"Config file was not loaded properly. Expected content {expected_config_content}, Actual content: {current_config_content}"
-                    if ClusterConsts.CONFIG_FILES_CHANGE[file_type] != 'true':
+                    if ClusterTools.config_edit_expected_to_change(file_type, initial_config_contents[file_type]):
                         if set(current_config_content.split('\n')) == set((initial_config_contents[file_type]).split('\n')):
                             non_preserved_configs.append(f"Configuration was restored to initial state and not saved during upgrade. init: {initial_config_contents[file_type]}, \ncurrent{current_config_content}")
                 assert not non_preserved_configs, "\n\n".join(non_preserved_configs)
@@ -200,6 +202,11 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
                 current_installed_config_path = output[installed_file]['path']
                 current_config_content = engines.dut.run_cmd("sudo cat {}".format(current_installed_config_path))
                 expected_config_content = engines.sonic_mgmt.run_cmd("sudo cat {}".format(path_to_config[file_type]))
+                # only meaningful when the guarded edit actually injected the marker line
+                if not ClusterTools.config_edit_expected_to_change(file_type, initial_config_contents[file_type]):
+                    continue
+                if file_type == 'chassis_mapping' and is_bug_active(4222718):
+                    continue
                 assert ClusterConsts.EXPECTED_LINE_TO_BE_PRESERVED_AFTER_UPGRADE[file_type] in current_config_content, \
                     f"Config file was not loaded properly. Expected content {expected_config_content}, Actual content: " \
                     f"{current_config_content}. \n " \
@@ -227,7 +234,14 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
         else:
             with allure.step("Install initial configurations"):
                 # Only iterate over file types that were actually saved
+                skipped_empty_restores = False
                 for file_type in initial_configs_paths_to_restore.keys():
+                    if not initial_config_contents.get(file_type, '').strip():
+                        # nmx-c rejects installing empty config files (bug 6447101) - the empty
+                        # initial state is restored by sdn factory reset instead
+                        logger.info(f"Skipping restore of {file_type}: initial file was empty")
+                        skipped_empty_restores = True
+                        continue
                     app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
                     sdn.config.apps.app_name[app].type.file_type[file_type].action_fetch_sdn(initial_configs_paths_to_restore[file_type])
                     conf_file_name = initial_configs_paths_to_restore[file_type].split('/')[-1]
@@ -245,6 +259,12 @@ def test_upgrade_with_nmx_enabled(test_api, devices, topology_obj, setup_name, e
                             engines.sonic_mgmt.run_cmd(f"sudo rm -rf {initial_configs_paths_to_restore[file_type]}")
                 for file_path in uploaded_files:
                     engines.sonic_mgmt.run_cmd(f"sudo rm -f {file_path}")
+
+            if standalone_system and skipped_empty_restores:
+                # on standalone the factory reset at the top of the teardown did not run, and the
+                # empty initial files could not be reinstalled - restore them via sdn factory reset
+                with allure.step("Running sdn factory reset to restore empty initial config files"):
+                    ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
 
             with allure.step("Restore log level"):
                 for app in devices.dut.expected_cluster_apps:

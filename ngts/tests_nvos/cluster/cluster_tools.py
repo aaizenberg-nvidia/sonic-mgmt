@@ -12,7 +12,7 @@ import time
 import re
 
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
-from ngts.nvos_constants.constants_nvos import IbConsts, OutputFormat, SystemConsts
+from ngts.nvos_constants.constants_nvos import ChassisLocationConsts, IbConsts, OutputFormat, SystemConsts
 from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
@@ -21,6 +21,7 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.tests_nvos.helpers import redmine_helpers
 from ngts.tests_nvos.helpers.interfaces.link_state_helpers import verify_interface_up
@@ -34,6 +35,43 @@ logger = logging.getLogger(__name__)
 
 
 class ClusterTools:
+
+    # Well-formed 13-char serial for standalone trays whose EEPROM reports chassis-sn 'N/A'.
+    # On such 1-rack systems chassis_mapping is not consumed and GFM is non-operational anyway
+    # (bug 4207869), so a synthetic serial only needs to satisfy the file-format validation.
+    # TODO: confirm with the nmx-c team that this is acceptable on N/A-serial standalone trays.
+    STANDALONE_FALLBACK_CHASSIS_SN = '1234567890123'
+
+    @staticmethod
+    def get_chassis_sn():
+        """
+        Real chassis S/N from 'nv show platform chassis-location'. Used to build a valid
+        chassis_mapping line ('chassisId1 <sn>') - a fake S/N keeps GFM from going operational.
+        Falls back to a well-formed synthetic serial when the tray reports 'N/A' (plain standalone).
+        """
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            Platform().chassis_location.show()).get_returned_value()
+        chassis_sn = output.get(ChassisLocationConsts.CHAS_SN)
+        if not chassis_sn or chassis_sn == ChassisLocationConsts.NA:
+            return ClusterTools.STANDALONE_FALLBACK_CHASSIS_SN
+        return chassis_sn
+
+    @staticmethod
+    def config_edit_expected_to_change(file_type, initial_content):
+        """
+        Whether CONFIG_FILES_CHANGE[file_type] is expected to actually modify the file.
+        The rdm/chassis edits are guarded appends that intentionally no-op when the file already
+        carries the section/entries (real clusters generate them populated), so the
+        'content changed vs initial' assertions must not run for those cases.
+        """
+        if ClusterConsts.CONFIG_FILES_CHANGE[file_type] == 'true':
+            return False
+        initial = initial_content or ''
+        if file_type == 'chassis_mapping':
+            return 'chassisId' not in initial
+        if file_type == 'rdm_config':
+            return '[rdm]' not in initial
+        return True
 
     @staticmethod
     def stop_start_app(cluster, engine, devices, has_loopbox, setup_name, standalone_system):

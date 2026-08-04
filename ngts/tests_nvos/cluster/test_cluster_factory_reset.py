@@ -392,6 +392,10 @@ def test_cluster_factory_reset_keep_all_config(engines, dut_engines, devices, te
                 ClusterTools.verify_log_level(log_level, app, output_format, cluster, engine=engines.dut)
             # Not expecting content to change.
             for file_type in initial_config_contents.keys():
+                # transform only where the guarded edit actually modified the file - on files that
+                # already carried the injected section the edit no-ops and initial stays as-is
+                if not ClusterTools.config_edit_expected_to_change(file_type, initial_config_contents[file_type]):
+                    continue
                 transformation_fn = ClusterConsts.CONFIG_FILES_CONTENT_CHANGE.get(file_type, lambda x: x)
                 initial_config_contents[file_type] = transformation_fn(initial_config_contents[file_type])
 
@@ -504,6 +508,7 @@ def reset_factory_pre_steps(engines, devices, test_api, cluster, current_time, s
     uploaded_files = []
 
     # Only iterate over file types that actually exist on this device
+    chassis_sn = ClusterTools.get_chassis_sn()
     for file_type in config_files_paths.keys():
         app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
         sdn.config.apps.app_name[app].type.file_type[file_type].files.file_name[
@@ -518,7 +523,8 @@ def reset_factory_pre_steps(engines, devices, test_api, cluster, current_time, s
         engines.sonic_mgmt.run_cmd("sudo cp {} {}".format(initial_configs_paths_to_restore[file_type], dummy_file_path))
         uploaded_files.append(ClusterConsts.INITIAL_CONFIGURATIONS_PATH + '/' + file_name)
         with allure.step("Change initial content"):
-            edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=dummy_file_path)
+            edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                file_path=dummy_file_path, chassis_sn=chassis_sn)
             engines.sonic_mgmt.run_cmd(edit_cmd)
         path_to_config[file_type] = dummy_file_path
         config_file_name[file_type] = file_name
@@ -576,7 +582,9 @@ def rotate_logs(system):
 
 
 def _filter_config_lines(content, file_type):
-    lines = set(content.split('\n'))
+    # drop empty/whitespace-only lines so trailing-newline artifacts (cat vs netmiko prompt
+    # stripping vs the CONFIG_FILES_CONTENT_CHANGE transformations) never fail the comparison
+    lines = {line.strip() for line in content.split('\n') if line.strip()}
     if file_type == 'fm_config':
         lines = {line for line in lines if not line.startswith('LOG_LEVEL=') and
                  not line.startswith('GFM_WAIT_TIMEOUT_SEC=')}
