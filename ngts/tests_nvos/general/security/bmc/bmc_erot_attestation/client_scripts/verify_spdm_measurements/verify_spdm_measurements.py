@@ -13,6 +13,13 @@ from ngts.tests_nvos.general.security.bmc.bmc_erot_attestation.client_scripts.ve
     step
 
 CLIENT_VERIFICATION_ERR = 'client verification failed'
+SPDM_1_2_VERSION = 0x12
+SPDM_1_2_SIGNING_PREFIX = b'dmtf-spdm-v1.2.*' * 4
+SPDM_MEASUREMENTS_SIGNING_CONTEXT = b'responder-measurements signing'
+SPDM_SIGNING_CONTEXT_SIZE = 100
+# ECDSA-P384 signing uses SHA-384 even when HashingAlgorithm is SHA-512
+# (SHA-512 applies to measurement digests, not the signature transcript hash).
+SIGNING_HASH = hashlib.sha384
 
 
 def load_measurements(filename, output=False):
@@ -37,15 +44,26 @@ def measurements_sig_verify(measurements, public_key):
     message = measurements.get_signed_content()
     sig = measurements.get_signature()
 
-    verifier = ecdsa.VerifyingKey.from_string(public_key, curve=ecdsa.curves.NIST384p)
+    if measurements.spdm_version >= SPDM_1_2_VERSION:
+        zero_pad_size = (
+            SPDM_SIGNING_CONTEXT_SIZE -
+            len(SPDM_1_2_SIGNING_PREFIX) -
+            1 -
+            len(SPDM_MEASUREMENTS_SIGNING_CONTEXT)
+        )
+        assert zero_pad_size >= 0, f'SPDM 1.2 signing-context padding is negative ({zero_pad_size})'
+        signing_context = (
+            SPDM_1_2_SIGNING_PREFIX +
+            b'\0' +
+            b'\0' * zero_pad_size +
+            SPDM_MEASUREMENTS_SIGNING_CONTEXT
+        )
+        assert len(signing_context) == SPDM_SIGNING_CONTEXT_SIZE, (
+            f'SPDM 1.2 signing context length {len(signing_context)} != {SPDM_SIGNING_CONTEXT_SIZE}')
+        message = signing_context + SIGNING_HASH(message).digest()
 
-    verifier.verify(sig, message, hashlib.sha384)
-    # try:
-    #     verifier.verify(sig, message, hashlib.sha384)
-    #     return True
-    # except ecdsa.BadSignatureError:
-    #     return False
-    # return False
+    verifier = ecdsa.VerifyingKey.from_string(public_key, curve=ecdsa.curves.NIST384p)
+    verifier.verify(sig, message, SIGNING_HASH)
 
 
 def load_pubkey(filename):

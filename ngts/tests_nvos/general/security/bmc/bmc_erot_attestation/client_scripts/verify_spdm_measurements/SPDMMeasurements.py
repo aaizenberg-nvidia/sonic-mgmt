@@ -41,6 +41,7 @@ SPDM_GET_MEASUREMENTS = 0xe0
 SPDM_MEASUREMENTS = 0x60
 
 # SPDM Constants
+SUPPORTED_SPDM_VERSIONS = (0x11, 0x12)
 SPDM_ECDSA_P384_SIG_BYTE_SZ = 96
 SPDM_NONCE_BYTE_SZ = 32
 SPDM_OPAQUE_LEN_BYTE_SZ = 2
@@ -158,15 +159,42 @@ class SPDMMeasurements:
             with open(mfile, 'r') as f:
                 self.data = bytearray(base64.b64decode(f.read()))
         self.measurements = {}
+        self.spdm_version = None
+
+    def _find_measurements_request_offset(self):
+        """Locate GET_MEASUREMENTS in the transcript (SPDM 1.2 may prepend VCA)."""
+        request_size = sizeof(SPDM_GET_MEASUREMENTS_REQUEST)
+        response_header_size = sizeof(SPDM_MEASUREMENTS_RESPONSE_HEADER)
+        last_candidate = len(self.data) - request_size - response_header_size
+
+        for offset in range(max(0, last_candidate + 1)):
+            request = SPDM_MESSAGE_HEADER.from_buffer(self.data, offset)
+            if (
+                request.SPDMVersion not in SUPPORTED_SPDM_VERSIONS or
+                request.RequestResponseCode != SPDM_GET_MEASUREMENTS or
+                not request.Param1 & SPDM_GET_MEASUREMENTS_ATTRIBUTES_SIGNATURE_REQUESTED
+            ):
+                continue
+
+            response_offset = offset + request_size
+            response = SPDM_MESSAGE_HEADER.from_buffer(self.data, response_offset)
+            if (
+                response.SPDMVersion == request.SPDMVersion and
+                response.RequestResponseCode == SPDM_MEASUREMENTS
+            ):
+                return offset
+
+        raise ValueError('Unable to locate SPDM measurements request')
 
     def parse(self):
-        offset = 0
+        offset = self._find_measurements_request_offset()
         msghdr = SPDM_MESSAGE_HEADER.from_buffer(self.data, offset)
-        if msghdr.SPDMVersion != 0x11 or msghdr.RequestResponseCode != SPDM_GET_MEASUREMENTS:
-            raise Exception('Unable to parse SPDM measurements request')
+        if msghdr.SPDMVersion not in SUPPORTED_SPDM_VERSIONS:
+            raise ValueError('Unable to parse SPDM measurements request')
+        self.spdm_version = msghdr.SPDMVersion
 
         if not msghdr.Param1 & SPDM_GET_MEASUREMENTS_ATTRIBUTES_SIGNATURE_REQUESTED:
-            raise Exception('Requested measurements were not signed!')
+            raise ValueError('Requested measurements were not signed!')
 
         msgsize = sizeof(SPDM_GET_MEASUREMENTS_REQUEST)
         hdrsize = sizeof(SPDM_MESSAGE_HEADER)
@@ -175,8 +203,8 @@ class SPDMMeasurements:
         offset += (msgsize - hdrsize)
 
         msghdr = SPDM_MESSAGE_HEADER.from_buffer(self.data, offset)
-        if msghdr.SPDMVersion != 0x11 or msghdr.RequestResponseCode != SPDM_MEASUREMENTS:
-            raise Exception('Unable to parse SPDM measurements response')
+        if msghdr.SPDMVersion != self.spdm_version or msghdr.RequestResponseCode != SPDM_MEASUREMENTS:
+            raise ValueError('Unable to parse SPDM measurements response')
 
         resphdr = SPDM_MEASUREMENTS_RESPONSE_HEADER.from_buffer(self.data, offset)
         num_measurement_blocks = resphdr.NumBlocks
