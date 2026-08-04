@@ -5,7 +5,6 @@ import time
 from typing import Dict
 
 import pytest
-import requests
 
 from ngts.nvos_constants.constants_nvos import ApiType, PlatformConsts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
@@ -103,17 +102,13 @@ def _firmware_install_test(devices, platform: Platform, image_details, engines, 
                 result.verify_duration(devices.dut.expected_operation_durations['install cpld'])
 
             if has_refresh_image:
-                try:
-                    with allure.step(f"Installing REFRESH image (and rebooting) {refresh_filename}"):
-                        result_obj = platform.firmware.cpld.files.file_name[refresh_filename].action_file_install_with_reboot(
-                            device=devices.dut, topology_obj=topology_obj)
-                        result_obj.verify_result()
-
-                except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
-                    logger.info(f"GET request failed as expected because of switch reboot")
-                    reboot_params = RebootParams(topology_obj=topology_obj)
-                    DutUtilsTool.wait_on_system_reboot(
-                        engines.dut, reboot_params=reboot_params, device=devices.dut)
+                with allure.step(f"Installing REFRESH image (and rebooting) {refresh_filename}"):
+                    reboot_params = RebootParams(
+                        topology_obj=topology_obj,
+                        wait_time_before_reboot=devices.dut.wait_before_reboot_single_fw_install)
+                    platform.firmware.cpld.files.file_name[refresh_filename].cpld_refresh_install(
+                        reboot_params=reboot_params, device=devices.dut, engine=engines.dut,
+                        force=True).verify_result()
             else:
                 recover_dut_with_remote_reboot(topology_obj, engines)
 
