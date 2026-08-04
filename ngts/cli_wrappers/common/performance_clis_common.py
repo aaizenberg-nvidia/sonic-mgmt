@@ -264,6 +264,36 @@ class PerformanceCommon:
         """
         pass
 
+    def wait_for_leaf_routes(self, conf_args=None, expected_count=None, timeout=120):
+        """
+        Wait for the leaf scenario's per-port host routes to reach the routing table.
+
+        Implemented for Cumulus only. DVS programs its forwarding through the SDK as part of
+        applying the configuration, so there is no separate route-installation step to wait on.
+        """
+        pass
+
+    def get_leaf_dip_list(self, dut_configuration: dict, conf_args: dict) -> list:
+        """
+        Returns the downstream (spine to host) destination IPs used by the leaf scenario.
+
+        DVS and SONiC publish one destination per DUT right port under
+        "right_side_ports_to_ip_dict", so the default simply forwards those values. Cumulus
+        overrides this hook because the same key there holds the far-side loopback that traffic
+        entering the right side targets, which is the opposite meaning.
+
+        Args:
+            dut_configuration (dict): Device configuration as returned by get_device_configuration.
+            conf_args (dict): Test configuration arguments.
+
+        Returns:
+            list: One destination IP per DUT right port.
+
+        Raises:
+            KeyError: If the device configuration carries no "right_side_ports_to_ip_dict" entry.
+        """
+        return list(dut_configuration["right_side_ports_to_ip_dict"].values())
+
     def logrotate(self, daemon=''):
         '''
         This method is optional for dvs and sonic but mandatory for cumulus

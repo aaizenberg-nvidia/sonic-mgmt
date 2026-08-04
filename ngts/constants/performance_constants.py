@@ -301,6 +301,10 @@ class PerfConsts:
     ADAPTIVE_ROUTING_DISABLED = 0
     IP_PROTOCOL_UDP = "UDP"
     IP_PROTOCOL_TCP = "TCP"
+    # Single-family selectors for traffic_helpers.generate_ip_address_list, which also accepts
+    # "dual" to return both families at once.
+    IP_MODE_V4 = "v4"
+    IP_MODE_V6 = "v6"
 
     # Counters
     COUNTERS = [
@@ -641,6 +645,53 @@ class SPCXRAConsts:
     PACKET_NUM_800G_x1 = {"SPC4": 20, "SPC5": 20, "SPC6": 30}
     PACKET_NUM_800G_x2 = PACKET_NUM_800G_x1
     PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS = {"SPC4": 72, "SPC5": 72, "SPC6": 108}
+
+    # Downstream (spine -> host) destination IPs for the leaf scenario, one address per DUT right port.
+    # These mirror the DVS reference literals in
+    # performance_config_templates/spcx_ra/dvs/dut.jinja ("dip_left_to_right" and the base of
+    # "right_side_ports_to_ip_dict"); keep both in sync if either side moves.
+    # The range sits outside every subnet the SPCX-RA topology advertises, so a destination without a
+    # per-port route is dropped by the DUT instead of silently falling back to the BGP ECMP group.
+    LEAF_DIP_BASE_IPV4 = "10.0.1.0"
+    LEAF_DIP_BASE_IPV6 = "192:168:5:1:1:1:2:0"
+    LEAF_DIP_STEP = 1
+
+    # Ceiling on the packets resident in the loop at once, (ports x packets-per-port). Only a
+    # backstop: the schedule is sized from chip_dict's calibrated per-port count, which is what
+    # tracked the healthy runs - 30 packets at 800G, 12 at 400G, 9 at 200G. 4096 is the level the
+    # pre-schedule pattern staged at 4 lanes/sub-port, and that ran at 0.655 of line rate with
+    # egress occupancy nineteen times its threshold, so treat it as a level reached in practice
+    # rather than one known to be healthy.
+    LEAF_RESIDENT_PACKET_BUDGET = 4096
+    # Largest fraction of the destination list a single port may be assigned. Below 1 so that
+    # per-port destination sets can actually differ - at the full list every port would be
+    # identical and the schedule would degenerate back into a synchronised sweep.
+    LEAF_PORT_SET_DIVISOR = 2
+    # Fixed seed for the per-port destination draw, so a throughput change between two runs is a
+    # real regression rather than a different random sample.
+    LEAF_SCHEDULE_SEED = "spcx_ra_leaf"
+
+    # Wait for the leaf host routes to reach the routing table before traffic starts. Neighbour
+    # resolution is a separate event, so waiting on it alone lets traffic begin while the routes
+    # those neighbours serve are still missing.
+    LEAF_ROUTE_TIMEOUT = 120
+    LEAF_ROUTE_POLL_INTERVAL = 5
+    # The route wait above reads the kernel table; switchd offloads to the ASIC afterwards with no
+    # readiness signal to poll, so traffic must not start the moment the kernel routes appear.
+    LEAF_FORWARDING_SETTLE_SECONDS = 60
+    # Settle time after traffic starts, before the traffic validator takes its first reading. The
+    # leaf pattern opens with a burst as the queues fill, and the validator's first counters sample
+    # is a read-and-clear of everything since traffic began, so waiting here puts the whole burst
+    # into the sample the leaf validation already discards instead of leaving its tail to land in
+    # the second one. Traffic keeps running throughout, so the measured load is unchanged.
+    LEAF_TRAFFIC_SETTLE_SECONDS = 30
+    # Port readiness budgets for the leaf re-apply only. "nv config replace" bounces every link, and
+    # a host route stays out of the kernel while the interface behind its nexthop is down, so the
+    # leaf run waits far longer than the shared defaults for links to train. Admin state follows the
+    # configuration within seconds, so a port still admin down well before the oper budget expires
+    # is a configuration problem rather than a slow link, and is worth failing on sooner.
+    LEAF_PORT_ADMIN_UP_TIMEOUT = 180
+    LEAF_PORT_OPER_UP_TIMEOUT = 180
 
 
 class MongoDbConsts:

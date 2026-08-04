@@ -4,6 +4,10 @@
 {% set split_right = parameter_dict.split_right %}
 {% set total_ports = parameter_dict.total_ports %}
 {% set two_sided_ar = parameter_dict.two_sided_ar | string %}
+{# The SPCX-RA suites reuse two_sided_ar as the leaf-run selector: it is False only for the leaf
+   scenario. Despite the name it no longer gates adaptive routing, which is enabled on every swp
+   in both modes; it selects whether the downstream side is pinned per port or left to ECMP. #}
+{% set is_leaf_mode = two_sided_ar == 'False' %}
 {% set pre_left = cumulus_ports_match_requested_split(left_lldp_ports, split_left) %}
 {% set pre_right = cumulus_ports_match_requested_split(right_lldp_ports, split_right) %}
 {% set _ = validate_no_unsupported_service_port_split(left_lldp_ports, split_left, "SPX-RA DUT left ports") %}
@@ -110,11 +114,15 @@
         ipv6:
           address:
             {{ right_address_list["v6"][ipidx] }}/120 : {}
-        {% if two_sided_ar=='True' %}
+        {# Emitted in both modes on purpose. In leaf mode the per-port host routes below give the
+           right side a single nexthop each, so there is no ECMP group here for adaptive routing to
+           act on and this setting is inert. Emitting it anyway keeps the right-side interface
+           stanzas identical between the two-sided and leaf configurations, so the leaf
+           "nv config replace" leaves those interfaces alone instead of reconfiguring all of them
+           and stranding their static routes on the ones that do not come back. #}
         router:
           adaptive-routing:
             state: enabled
-        {% endif %}
         type: swp
     {% endfor %}
     qos:
@@ -183,6 +191,42 @@
     vrf:
       default:
         router:
+          {% if is_leaf_mode %}
+          {# One host route per right port, each with a single nexthop, so longest-prefix match
+             resolves every downstream destination to exactly one egress interface. Without these,
+             a covering prefix learned over BGP resolves the same destinations to an ECMP group and
+             sprays them across all right ports.
+             The destinations use the same bases and step as NvuePerformanceCli.get_leaf_dip_list,
+             so the routed set matches the generated set, and no speaker in this topology advertises
+             that range, so a destination that loses its route is dropped rather than silently
+             resolving through BGP. Both families are emitted regardless of the tested one; the
+             unused one is never hit.
+             Destinations are indexed by position among the configured ports, never by position in
+             the full pre-exclusion list. Unlike the link addresses above, no second device derives
+             these, so an excluded port needs no gap reserved for it: the routed set stays the first
+             N addresses, which is what the Python side generates from the same N. The nexthop keeps
+             the full index, since that address belongs to the peer on that wire. #}
+          {% set leaf_dips = generate_ip_address_list(parameter_dict.leaf_dip_base_v4,
+                                                      parameter_dict.leaf_dip_base_v6,
+                                                      step_v4=parameter_dict.leaf_dip_step,
+                                                      step_v6=parameter_dict.leaf_dip_step,
+                                                      mode="dual",
+                                                      number_of_address=right_ports|length) %}
+          static:
+            {% for port in right_ports %}
+            {% if ps_active %}{% set nhidx = list_index(right_ports_full, port) %}{% else %}{% set nhidx = loop.index0 %}{% endif %}
+            {{ leaf_dips["v4"][loop.index0] }}/32:
+              address-family: ipv4-unicast
+              via:
+                {{ right_bgp_neighbors["v4"][nhidx] }}:
+                  type: ipv4-address
+            {{ leaf_dips["v6"][loop.index0] }}/128:
+              address-family: ipv6-unicast
+              via:
+                {{ right_bgp_neighbors["v6"][nhidx] }}:
+                  type: ipv6-address
+            {% endfor %}
+          {% endif %}
           bgp:
             address-family:
               ipv4-unicast:

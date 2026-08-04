@@ -201,7 +201,6 @@ class TestSRv6Base:
                 stop_traffic(self.players)
                 end_time = time.time()
                 duration = end_time - start_time
-                time.sleep(10)
             with allure.step(f"validate trimmed untrimmed dropped percentages"):
                 if len(ingress_ports) == MRCConsts.INCAST_VALUE_WITH_TRIMMING_DROP:
                     self.cli_object.performance.validate_ets(egress_port, MRCConsts.ETS_TC_LIST, violations_list)
@@ -405,6 +404,7 @@ class TestSRv6Base:
         return bw_threshold
 
     def validate_trimmed_untrimmed_dropped_percentages(self, test_name, egress_ports, trimming_queue, drop_queues, violations_list, pairing_df=None, duration=None):
+        time.sleep(10)
         trimmed_untrimmed_dropped_percentages = self.cli_object.trimming.validate_trimmed_untrimmed_dropped_percentages(egress_ports, trimming_queue=trimming_queue,
                                                                                                                         drop_queues=drop_queues,
                                                                                                                         violations_list=violations_list,

@@ -14,7 +14,8 @@ from collections import defaultdict
 from devts.infra.tools.exceptions.test_issue import TestIssue
 from devts.infra.tools.exceptions.real_issue import RealIssue
 from ngts.constants.constants import BugHandlerConst, ResultUploaderConst
-from ngts.constants.performance_constants import MongoDbConsts, PerfConsts, Cl_Consts, ValidationConsts
+from ngts.constants.performance_constants import (MongoDbConsts, PerfConsts, Cl_Consts, ValidationConsts,
+                                                  SPCXRAConsts)
 from ngts.cli_wrappers.common.performance_clis_common import PerformanceCommon
 from ngts.helpers.performance.nvue_port_count import (get_nvue_data_physical_ports_count,
                                                       get_nvue_expected_nexthops)
@@ -398,7 +399,7 @@ class NvuePerformanceCli(PerformanceCommon):
         scenario = self._perf_scenario or (self._perf_conf_args or {}).get("scenario")
         return scenario == "srv6"
 
-    def wait_for_all_swp_ports_admin_up(self, timeout=180, interval=10):
+    def wait_for_all_swp_ports_admin_up(self, timeout=15, interval=10):
         """Wait until all non-bonus switch ports shown by NVUE are admin up.
 
         Polls ``nv show interface`` every ``interval`` seconds. Raises ``TestIssue`` after
@@ -409,7 +410,7 @@ class NvuePerformanceCli(PerformanceCommon):
         self._wait_for_swp_ports_ready(bonus_parent_ports, require_oper_up=False,
                                        timeout=timeout, interval=interval, state_label="admin")
 
-    def wait_for_all_swp_ports_oper_up(self, timeout=180, interval=10):
+    def wait_for_all_swp_ports_oper_up(self, timeout=45, interval=10):
         """Wait until all non-bonus switch ports shown by NVUE are admin and oper up.
 
         Polls ``nv show interface`` every ``interval`` seconds. Raises ``TestIssue`` after
@@ -823,7 +824,7 @@ class NvuePerformanceCli(PerformanceCommon):
                 logging.warning(f"[{self.dut_alias}] Skipping validator port-selection config "
                                 f"(left={len(left)} right={len(right)} speed={speed_g}).")
                 return
-            conf = {"port_groups": {"left_ports": left, "right_Ports": right}, "speed": speed_g}
+            conf = {"port_groups": {"left_ports": left, "right_ports": right}, "speed": speed_g}
             payload = json.dumps(conf)
             self.execute_cmd(f"printf '%s' '{payload}' | sudo tee {path} > /dev/null")
             logging.info(f"[{self.dut_alias}] Wrote validator port-selection config {path}: "
@@ -1218,6 +1219,12 @@ class NvuePerformanceCli(PerformanceCommon):
             "link_phy_speed": conf_args.get("link_phy_speed"),
             "dut_left_ports_num": conf_args.get("dut_left_ports_num"),
             "chip_type": chip_type,
+            # Leaf-scenario downstream destinations. dut.yaml.jinja derives one address per right
+            # port from these and pairs it with that port's BGP neighbour as the static-route
+            # nexthop, using the same generator as get_leaf_dip_list so both stay on one formula.
+            "leaf_dip_base_v4": SPCXRAConsts.LEAF_DIP_BASE_IPV4,
+            "leaf_dip_base_v6": SPCXRAConsts.LEAF_DIP_BASE_IPV6,
+            "leaf_dip_step": SPCXRAConsts.LEAF_DIP_STEP,
         }
         outputText = jinja_template.render(parameter_dict=parameter_dict)
         try:
@@ -1261,6 +1268,84 @@ class NvuePerformanceCli(PerformanceCommon):
             else:
                 ports_to_ip_dict[port] = f"{ip_prefix}.{ip_prefix}.{ip_prefix}.{index + 1}"
         return ports_to_ip_dict
+
+    def get_leaf_dip_list(self, dut_configuration: dict, conf_args: dict) -> list:
+        """
+        Builds the downstream (spine to host) destination IPs for the Cumulus leaf scenario.
+
+        One destination per DUT right port, drawn from a range that no SPCX-RA BGP speaker
+        advertises. A destination without a matching per-port static route is therefore dropped by
+        the DUT rather than silently falling back to the BGP ECMP group. dut.yaml.jinja emits those
+        static routes from the same generator, bases and step, which keeps both sides on one formula.
+
+        Args:
+            dut_configuration (dict): Device configuration as returned by get_device_configuration.
+            conf_args (dict): Test configuration arguments, must carry "is_ipv6".
+
+        Returns:
+            list: One destination IP per DUT right port.
+
+        Raises:
+            KeyError: If dut_configuration carries no "right_side_ports_to_ip_dict" entry, or
+                conf_args carries no "is_ipv6" entry.
+        """
+        port_count = len(dut_configuration["right_side_ports_to_ip_dict"])
+        mode = PerfConsts.IP_MODE_V6 if conf_args["is_ipv6"] else PerfConsts.IP_MODE_V4
+        logging.debug(f"Building {port_count} leaf DIPs in {mode} mode for {self.dut_alias}")
+        return generate_ip_address_list(address_start_v4=SPCXRAConsts.LEAF_DIP_BASE_IPV4,
+                                        address_start_v6=SPCXRAConsts.LEAF_DIP_BASE_IPV6,
+                                        step_v4=SPCXRAConsts.LEAF_DIP_STEP,
+                                        step_v6=SPCXRAConsts.LEAF_DIP_STEP,
+                                        number_of_address=port_count, mode=mode)
+
+    def wait_for_leaf_routes(self, conf_args=None, expected_count=None, timeout=None):
+        """
+        Waits until the leaf scenario's per-port host routes are present in the routing table.
+
+        The leaf downstream is forwarded by one host route per DUT right port. Traffic that starts
+        before those are programmed has no correct egress, which is what puts loopback_filter and
+        discard counters on the opening validation sample of every leaf run.
+        wait_for_nexthop_resolution covers the neighbours these routes point at, which resolve
+        earlier and independently, so it does not stand in for this.
+
+        Args:
+            conf_args (dict): Test configuration arguments, must carry "is_ipv6".
+            expected_count (int): Host routes expected, one per DUT right port.
+            timeout (int): Seconds to wait. Defaults to SPCXRAConsts.LEAF_ROUTE_TIMEOUT.
+
+        Returns:
+            bool: True once at least expected_count routes are present.
+
+        Raises:
+            RealIssue: If the routes are still missing when the timeout expires.
+        """
+        if not expected_count:
+            logging.warning(f"[{self.dut_alias}] No leaf route count expected, skipping the wait")
+            return True
+        timeout = SPCXRAConsts.LEAF_ROUTE_TIMEOUT if timeout is None else timeout
+        is_v6 = conf_args["is_ipv6"]
+        base = SPCXRAConsts.LEAF_DIP_BASE_IPV6 if is_v6 else SPCXRAConsts.LEAF_DIP_BASE_IPV4
+        # The destinations run from the base upwards, so they share everything but the last field.
+        # That holds while the count stays inside one field, which it does at every supported lane
+        # count (256 addresses fill 10.0.1.0/24 and ...2:0 through ...2:ff exactly).
+        separator = ":" if is_v6 else "."
+        prefix = base.rsplit(separator, 1)[0] + separator
+        show_cmd = "ip -6 route show" if is_v6 else "ip route show"
+        # wc -l rather than grep -c so an empty table returns 0 instead of a non-zero exit status.
+        count_cmd = f"{show_cmd} | grep '^{prefix}' | wc -l"
+        remaining, route_count = timeout, 0
+        while remaining > 0:
+            route_count = int(self.execute_cmd(count_cmd))
+            if route_count >= expected_count:
+                logging.info(f"[{self.dut_alias}] Leaf host routes programmed: {route_count} "
+                             f"under {prefix} after {timeout - remaining}s")
+                return True
+            logging.info(f"[{self.dut_alias}] Waiting for leaf host routes under {prefix}: "
+                         f"{route_count} of {expected_count}")
+            sleep(SPCXRAConsts.LEAF_ROUTE_POLL_INTERVAL)
+            remaining -= SPCXRAConsts.LEAF_ROUTE_POLL_INTERVAL
+        raise RealIssue(f"Leaf host routes not programmed on {self.dut_alias} after {timeout}s | "
+                        f"expected {expected_count} routes under {prefix}, found {route_count}")
 
     def get_dut_system_information(self, session_id, setup_name):
         """

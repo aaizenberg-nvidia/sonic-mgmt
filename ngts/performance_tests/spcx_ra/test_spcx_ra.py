@@ -23,6 +23,7 @@ import functools
 import logging
 import random
 from dataclasses import dataclass, field
+from time import sleep
 from typing import ClassVar, Dict, Optional
 
 import allure
@@ -47,7 +48,7 @@ from ngts.helpers.performance.performance_setup_helpers import (
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
-    TESTS_SCENARIO, compute_flap_validation_overrides, get_spcx_ra_leaf_traffic)
+    TESTS_SCENARIO, compute_flap_validation_overrides, get_leaf_scenario_traffic)
 
 logger = logging.getLogger()
 
@@ -65,8 +66,8 @@ FLAP_SCENARIO_NAMES = ["port_hiccup", "port_repeated_toggle", "toggle_multiple_p
 # breakout, and SDK ``ports_split(split_to=N)`` is relative to current ports.
 CHIP_DEFAULT_SPLIT: Dict[str, int] = {"SPC4": 1, "SPC5": 1, "SPC6": 2}
 
-
 # ======================================================== configuration model
+
 
 @dataclass(frozen=True)
 class ChipBandwidth:
@@ -401,7 +402,6 @@ class _SpcXRATestBase:
             bw_threshold=self.CONFIG.ibm_bandwidth_threshold(self.chip_type),
             skip_first_counters_iteration=True)
 
-    @pytest.mark.skip(reason="Temporarily skipping this test case")
     @allure.description('AR enabled on one side (leaf scenario). Verify port utilization.')
     @_with_lanes_allure_title
     def test_ar_perf_max_bandwidth_leaf(self, request):
@@ -422,7 +422,7 @@ class _SpcXRATestBase:
                 with allure.step("Create incremental dips on the spine traffic generator"):
                     configure_incremental_dips_on_tg(
                         self.players, players_aliases=[PerfConsts.LEFT_TG_ALIAS])
-            leaf_traffic_jsons = get_spcx_ra_leaf_traffic(
+            leaf_traffic_jsons = get_leaf_scenario_traffic(
                 self.players, self.conf_args,
                 use_incremental_dips=self.conf_args["use_incremental_dips"],
                 incremental_dip_num_packets=self.CONFIG.chip_dict[self.chip_type].traffic_packets_per_port)
@@ -431,6 +431,7 @@ class _SpcXRATestBase:
                 run_traffic(self.players, self.scenario, leaf_traffic_jsons)
 
             self._wait_for_nexthop_resolution()
+            self._settle_leaf_traffic()
             self._validate(test_name, packet_size, skip_first_counters_iteration=True)
         finally:
             self._restore_two_sided_ar()
@@ -538,17 +539,109 @@ class _SpcXRATestBase:
     def _apply_ar_mode(self, *, two_sided: bool) -> None:
         """Re-apply the DUT test configuration with the given AR mode.
 
-        Mutates ``self.conf_args['two_sided_ar']`` in place, restores the
-        DUT-side players to the saved baseline, and re-applies the test
-        configuration. Used by :meth:`_reconfigure_as_one_sided_ar` and
+        Mutates ``self.conf_args['two_sided_ar']`` in place, then re-applies the
+        test configuration on the DUT, re-selects the custom AR profile that the
+        replace discarded, and waits for forwarding to be ready before
+        returning. Used by :meth:`_reconfigure_as_one_sided_ar` and
         :meth:`_restore_two_sided_ar`.
+
+        Cumulus skips the baseline restore. ``apply_configuration_file`` ends in ``nv config
+        replace``, which swaps the whole configuration, so restoring first only reverts the
+        breakout and bounces every link. Both are actively harmful here: the configuration is
+        rendered from a live LLDP read taken before the replace, so the bounce is what let an
+        incomplete port list into the render, and reverting the breakout leaves the DUT at the
+        chip default while the generators keep their split, so no link can come back at all.
+
+        Off Cumulus the restore is load-bearing and stays. Applying there runs an SDK test that
+        programs the ASIC incrementally, and restarting the simulator is the only way to undo it.
         """
         self.conf_args["two_sided_ar"] = two_sided
-        restore_basic_configuration(
-            players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES)
+        if not isinstance(self.cli_object, NvueCli):
+            restore_basic_configuration(
+                players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES)
         apply_test_configuration(
             players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES,
             scenario=self.scenario, conf_args=self.conf_args)
+        if not two_sided:
+            self._wait_for_leaf_ports_ready()
+        self._reapply_ar_profile()
+        self._wait_for_nexthop_resolution()
+        if not two_sided:
+            self._wait_for_leaf_routes()
+            sleep(SPCXRAConsts.LEAF_FORWARDING_SETTLE_SECONDS)
+
+    def _wait_for_leaf_ports_ready(self) -> None:
+        """
+        Waits for every DUT port to return after the leaf configuration replace.
+
+        A host route stays out of the kernel while the interface behind its nexthop is down, so the
+        leaf downstream cannot be complete until the links are back. The shared wrapper defaults are
+        sized for the one-off setup apply; this asks for a much longer budget because the leaf
+        re-apply bounces every link mid-session. Passed explicitly so no other scenario is affected.
+        Inert off Cumulus, where no link bounce is involved.
+        """
+        if not isinstance(self.cli_object, NvueCli):
+            return
+        admin_timeout = SPCXRAConsts.LEAF_PORT_ADMIN_UP_TIMEOUT
+        oper_timeout = SPCXRAConsts.LEAF_PORT_OPER_UP_TIMEOUT
+        with allure.step(f"Wait up to {admin_timeout}s for admin up and "
+                         f"{oper_timeout}s for oper up on the DUT ports"):
+            self.cli_object.performance.wait_for_all_swp_ports_admin_up(timeout=admin_timeout)
+            self.cli_object.performance.wait_for_all_swp_ports_oper_up(timeout=oper_timeout)
+
+    def _settle_leaf_traffic(self) -> None:
+        """
+        Lets the leaf traffic reach steady state before the validator takes its first reading.
+
+        Traffic keeps running throughout, so the offered load is unchanged; only the moment the
+        validator first reads moves. That matters because its opening counters sample is a
+        read-and-clear of everything since traffic began, and the leaf validation discards that
+        sample. Waiting here puts the whole start-up burst inside it, rather than leaving the tail
+        to surface as pause frames and discards in the second sample.
+        """
+        settle_seconds = SPCXRAConsts.LEAF_TRAFFIC_SETTLE_SECONDS
+        with allure.step(f"Settle {settle_seconds}s of traffic before validating"):
+            logger.info(f"Settling {settle_seconds}s so the opening traffic burst lands in the "
+                        f"discarded first counters sample")
+            sleep(settle_seconds)
+
+    def _wait_for_leaf_routes(self) -> None:
+        """
+        Waits for the leaf downstream host routes to be programmed before traffic starts.
+
+        One route per DUT right port, so the expected count comes from the live port list rather
+        than from lane arithmetic. Inert off Cumulus, where forwarding is programmed as part of
+        applying the configuration.
+        """
+        with allure.step("Wait for the leaf host routes to be programmed"):
+            self.cli_object.performance.wait_for_leaf_routes(
+                conf_args=self.conf_args,
+                expected_count=self._lldp_port_counts().get("right_ports", 0))
+
+    def _lldp_port_counts(self) -> Dict[str, int]:
+        """
+        Returns the DUT's per-side port counts as LLDP currently reports them.
+
+        Returns:
+            dict: Port count per side, for example {"left_ports": 64, "right_ports": 64}.
+        """
+        ports = self.cli_object.performance.get_right_left_ports_dict()
+        return {side: len(port_list) for side, port_list in ports.items()}
+
+    def _reapply_ar_profile(self) -> None:
+        """
+        Re-select the custom AR profile after a configuration replace.
+
+        ``set_ibm`` writes the AR thresholds to
+        ``/etc/cumulus/switchd.d/ar_profile_custom.conf`` and selects them through an NVUE
+        ``router adaptive-routing profile`` setting. The file survives ``nv config replace`` but the
+        selection does not, and the DUT template never renders it, so without this the run would
+        continue on the default profile with the threshold file orphaned. Calling ``set_ibm`` keeps
+        the threshold values defined in one place. No-op on DVS, which does not implement it.
+        """
+        with allure.step("Re-apply the AR profile discarded by the configuration replace"):
+            self.cli_object.performance.set_ibm(
+                self.scenario, self.conf_args, self.chip_type)
 
     def _validate(self, test_name: str, packet_size: int, *,
                   bw_threshold=SPCXRAConsts.DUT_TX_UTIL_AUTO_TH_DICT,

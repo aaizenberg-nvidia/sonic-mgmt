@@ -19,14 +19,17 @@ dependency on the dataclass.
 import copy
 import logging
 import os
+import random
+from collections import Counter
 from typing import Dict, Iterable, List, Tuple
 
 import allure
 import pytest
 
+from devts.infra.tools.exceptions.test_issue import TestIssue
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.constants.constants import BugHandlerConst, InfraConst
-from ngts.constants.performance_constants import MongoDbConsts, PerfConsts
+from ngts.constants.performance_constants import MongoDbConsts, PerfConsts, SPCXRAConsts
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.performance.performance_setup_helpers import (
@@ -373,6 +376,298 @@ def get_spine_to_leaf_incremental_dip_stream(players, spine_tg, conf_args, traff
         spine_tg, traffic_parameters, stream_name, ip_protocol=ip_protocol)
     create_json_traffic_file_with_stream_list(
         spine_tg, traffic_parameters, json_path, [stream])
+
+
+def get_leaf_scenario_traffic(players, conf_args, template_suite="traffic_packets_json_files",
+                              use_incremental_dips=False, incremental_dip_num_packets=None):
+    """
+    Builds the traffic JSON files for the leaf scenario.
+
+    Deliberately separate from get_spcx_ra_leaf_traffic: that helper is shared with the Alibaba AR
+    and 400G-to-200G suites. This one asks the NOS for its
+    own downstream destination set through performance.get_leaf_dip_list, DVS and SONiC keep
+    using the destinations they already publish while Cumulus supplies per-port routed ones.
+
+    Only Cumulus gets the scheduled downstream pattern. DVS already meets the leaf bar with the
+    one-stream-per-destination pattern it has always used, so it keeps that path byte for byte.
+
+    Args:
+        players (dict): Test players mapping.
+        conf_args (dict): Configuration arguments dictionary.
+        template_suite (str): Directory holding the traffic JSON templates.
+        use_incremental_dips (bool): Let the TG increment the destination per packet instead of
+            emitting one stream per destination.
+        incremental_dip_num_packets (int): Packets per port when incrementing on the TG. Defaults to
+            the number of leaf destinations when None.
+
+    Returns:
+        dict: Traffic JSON path per player alias.
+    """
+    is_nvue_dut = isinstance(players[PerfConsts.DUT_ALIAS]['cli'], NvueCli)
+    if not is_nvue_dut and not use_incremental_dips:
+        conf_args["left_num_packets"] = 1
+    traffic_jsons = {}
+    pkt_size = PerfConsts.PACKET_SIZE_LIST[0]
+    for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
+        player_cli_obj = players[player_alias]['cli']
+        json_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests", template_suite,
+                                 TESTS_SCENARIO,
+                                 f"{player_alias}_{TESTS_SCENARIO.replace('/', '_')}_{pkt_size}.json")
+        traffic_parameters = player_cli_obj.performance.get_traffic_parameters(
+            scenario=TESTS_SCENARIO, conf_args=conf_args)
+        if player_alias == conf_args["host"]:
+            create_json_traffic_file(
+                player_alias=player_alias, traffic_parameters=traffic_parameters,
+                json_path=json_path)
+        elif use_incremental_dips:
+            build_leaf_dip_incremental_stream(
+                players, player_alias, conf_args, traffic_parameters, json_path,
+                num_packets=incremental_dip_num_packets)
+        elif is_nvue_dut:
+            build_leaf_scheduled_stream_list(
+                players, player_alias, conf_args, traffic_parameters, json_path)
+        else:
+            get_spine_to_leaf_stream_list(
+                players, player_alias, conf_args, traffic_parameters, json_path)
+        traffic_jsons[player_alias] = json_path
+    return traffic_jsons
+
+
+def build_leaf_scheduled_stream_list(players, spine_tg, conf_args, traffic_parameters, json_path,
+                                     ip_protocol=PerfConsts.IP_PROTOCOL_UDP):
+    """
+    Builds the downstream leaf traffic from a per-port destination schedule.
+
+    Each ingress port is given its own scattered subset of the destination list. Destinations are
+    what pick the egress side here, by longest-prefix match onto one right port each, so the
+    schedule decides how the load divides: a right port carries exactly the packets addressed to
+    its destination. The pattern this replaces listed every TG port on every stream and staged 64
+    packets per port to do it, which ran at 0.655 of line rate with egress occupancy nineteen
+    times its threshold.
+
+    Args:
+        players (dict): Test players mapping.
+        spine_tg (str): Spine traffic-generator alias (left_tg in leaf scenarios).
+        conf_args (dict): Configuration arguments dictionary.
+        traffic_parameters (dict): Traffic parameters from get_traffic_parameters.
+        json_path (str): Output path for the traffic JSON file.
+        ip_protocol (str): IP protocol constant, UDP by default.
+
+    Raises:
+        TestIssue: If the DUT resolves no leaf destination IPs, or the TG exposes no traffic ports.
+    """
+    leaf_dst_ips = _resolve_leaf_dip_list(players, spine_tg, conf_args)
+    tg_ports = list(traffic_parameters["ports"])
+    if not tg_ports:
+        raise TestIssue(f"No traffic ports resolved for {spine_tg} | "
+                        f"expected one per DUT left port, got {tg_ports}")
+    set_size, packets_per_stream = _resolve_leaf_schedule_shape(
+        len(tg_ports), len(leaf_dst_ips), int(traffic_parameters["num_packets"]))
+    port_schedules = build_leaf_dip_schedule(len(tg_ports), len(leaf_dst_ips), set_size)
+    logger.info(f"Scheduling leaf traffic on {spine_tg} | {len(tg_ports)} ports x {set_size} "
+                f"destinations x {packets_per_stream} packets, drawn from {len(leaf_dst_ips)} "
+                f"destinations, {len(tg_ports) * set_size * packets_per_stream} packets resident")
+    _log_leaf_schedule_spread(port_schedules, len(leaf_dst_ips), spine_tg)
+    traffic_parameters["num_packets"] = packets_per_stream
+    stream_list = []
+    for slot in range(set_size):
+        for port_index, tg_port in enumerate(tg_ports):
+            dst_ip = leaf_dst_ips[port_schedules[port_index][slot]]
+            traffic_parameters["ports"] = [tg_port]
+            traffic_parameters["IP"]["dst"] = dst_ip
+            stream = create_json_traffic_stream(
+                spine_tg, traffic_parameters, f"spine_to_leaf_p{tg_port}_s{slot}_ip_{dst_ip}",
+                ip_protocol=ip_protocol)
+            stream_list.append(_shrink_stream_payload(stream, spine_tg))
+    traffic_parameters["ports"] = tg_ports
+    create_json_traffic_file_with_stream_list(
+        spine_tg, traffic_parameters, json_path, stream_list)
+
+
+def build_leaf_dip_schedule(port_count, dip_count, set_size,
+                            seed=SPCXRAConsts.LEAF_SCHEDULE_SEED):
+    """
+    Assigns every traffic-generator port its own scattered subset of the destination list.
+
+    Built as a Latin rectangle: one random permutation of the destinations, read at a different
+    random offset for each slot. Slots carry no timing meaning, since the generator recirculates
+    packets through the mac loopback and nothing preserves the order they were written in, so
+    what the fabric sees is only the multiset of resident packets. Making every slot a
+    permutation is the arithmetic that pins that multiset down: a destination appears once per
+    slot, so exactly set_size times overall, and every right-side port ends up carrying the same
+    share. Drawing each port an independent subset covers the range just as well but is even only
+    on average, and its realised draw left some destinations used up to 5.6 times more often than
+    others, which caps the rate at whichever right port drew the most.
+
+    Two properties follow from the two random inputs. The permutation decides which destination
+    sits at each position, so the values a port ends up with are scattered over the whole range
+    rather than a contiguous block. The offsets are distinct, so a port never lands on the same
+    position twice and its destinations are all different.
+
+    Args:
+        port_count (int): Number of traffic-generator ports.
+        dip_count (int): Number of leaf destination IPs.
+        set_size (int): Destinations assigned to each port.
+        seed (str): Seed for the draw. Fixed by default, so two runs schedule identically and a
+            throughput difference is a real regression rather than a different sample.
+
+    Returns:
+        list: One list of destination indices per port, each holding set_size distinct entries.
+    """
+    generator = random.Random(seed)
+    dip_order = list(range(dip_count))
+    generator.shuffle(dip_order)
+    slot_offsets = generator.sample(range(dip_count), set_size)
+    return [[dip_order[(port_index + offset) % dip_count] for offset in slot_offsets]
+            for port_index in range(port_count)]
+
+
+def _log_leaf_schedule_spread(port_schedules, dip_count, spine_tg):
+    """
+    Reports how evenly the schedule spreads packets over the right-side ports.
+
+    The schedule is deterministic for a fixed seed, but port counts come from a live LLDP read,
+    so an unexpected topology can still produce an uneven schedule. Logging the spread makes that
+    visible in the run rather than only in offline analysis. The per-slot repeat count is a check
+    on the construction, not a fan-in the fabric ever sees: slots are a way of laying the schedule
+    out, and the loopback reorders the packets regardless.
+
+    Args:
+        port_schedules (list): Per-port destination index lists.
+        dip_count (int): Number of leaf destination IPs.
+        spine_tg (str): Spine traffic-generator alias, for log context.
+    """
+    usage = Counter(index for schedule in port_schedules for index in schedule)
+    worst_slot_repeat = max(
+        Counter(schedule[slot] for schedule in port_schedules).most_common(1)[0][1]
+        for slot in range(len(port_schedules[0])))
+    least_used, most_used = min(usage.values()), max(usage.values())
+    logger.info(f"Leaf schedule spread on {spine_tg} | {len(usage)}/{dip_count} destinations "
+                f"covered, each used {least_used}-{most_used} times, at most "
+                f"{worst_slot_repeat} repeats within a slot")
+    if most_used > least_used:
+        logger.warning(f"Leaf schedule is uneven on {spine_tg} | busiest destination is used "
+                       f"{most_used / least_used:.2f}x the quietest, so its right port carries "
+                       f"that much more traffic and caps the aggregate rate")
+
+
+def _resolve_leaf_schedule_shape(port_count, dip_count, calibrated_packets):
+    """
+    Derives how many destinations each port gets and how many packets each of those carries.
+
+    Packets per port follow the chip's calibrated count rather than whatever the resident-packet
+    budget would allow, because exceeding the calibration collapses the lossless class. Measured
+    at 2 lanes per sub-port, 32 packets per port against a calibration of 12 drove average egress
+    occupancy to 3570 against a 400 threshold, with pause frames and discards sustained across
+    every sample; 1 lane at 16 against a calibration of 9 degraded from the second sample onwards;
+    4 lanes at 32 against a calibration of 30 stayed at 30 and stayed clean. The budget is only a
+    ceiling now, not the thing that sizes the schedule.
+
+    Destinations per port are capped below the destination count so per-port sets can differ, so a
+    chip calibrated for more packets than that cap sends several packets per destination instead.
+    That keeps packets per port at or under the calibration, never above it.
+
+    Args:
+        port_count (int): Number of traffic-generator ports.
+        dip_count (int): Number of leaf destination IPs.
+        calibrated_packets (int): The chip's calibrated packets per port, both target and cap.
+
+    Returns:
+        tuple: (destinations per port, packets per destination).
+
+    Raises:
+        TestIssue: If no shape fits the destination list or the resident-packet budget.
+    """
+    budget = SPCXRAConsts.LEAF_RESIDENT_PACKET_BUDGET
+    set_size = min(calibrated_packets, dip_count // SPCXRAConsts.LEAF_PORT_SET_DIVISOR)
+    if set_size < 1:
+        raise TestIssue(f"Cannot schedule leaf traffic | {port_count} ports over {dip_count} "
+                        f"destinations at {calibrated_packets} packets per port leaves no room")
+    packets_per_stream = max(1, calibrated_packets // set_size)
+    resident = port_count * set_size * packets_per_stream
+    if resident > budget:
+        raise TestIssue(f"Leaf schedule exceeds the generator budget | {port_count} ports x "
+                        f"{set_size} destinations x {packets_per_stream} packets = {resident} "
+                        f"resident, budget={budget}, calibrated at {calibrated_packets} per port")
+    return set_size, packets_per_stream
+
+
+def _shrink_stream_payload(stream, payload_seed):
+    """
+    Reduces a stream's Raw payload to the seed string the generator expands it from.
+
+    create_json_traffic_stream stores the payload already expanded to the full packet size, which
+    across a few thousand scheduled streams makes the traffic JSON tens of megabytes. The
+    generator's validate_raw_layer repeats the seed back up to packet_size using the same formula,
+    so the packet on the wire is byte for byte the same.
+
+    Args:
+        stream (dict): Stream dictionary from create_json_traffic_stream.
+        payload_seed (str): String the payload was expanded from, the player alias.
+
+    Returns:
+        dict: The same stream, with its Raw payload reduced to the seed.
+    """
+    raw_header = stream.get("headers", {}).get("Raw")
+    if raw_header is not None:
+        raw_header["load"] = payload_seed
+    return stream
+
+
+def build_leaf_dip_incremental_stream(players, spine_tg, conf_args, traffic_parameters, json_path,
+                                      ip_protocol=PerfConsts.IP_PROTOCOL_UDP, num_packets=None):
+    """
+    Builds a single downstream stream whose destination the TG increments per packet.
+
+    Args:
+        players (dict): Test players mapping.
+        spine_tg (str): Spine traffic-generator alias (left_tg in leaf scenarios).
+        conf_args (dict): Configuration arguments dictionary.
+        traffic_parameters (dict): Traffic parameters from get_traffic_parameters.
+        json_path (str): Output path for the traffic JSON file.
+        ip_protocol (str): IP protocol constant, UDP by default.
+        num_packets (int): Packets per port. Defaults to the number of leaf destinations when None.
+
+    Raises:
+        TestIssue: If the DUT resolves no leaf destination IPs.
+    """
+    leaf_dst_ips = _resolve_leaf_dip_list(players, spine_tg, conf_args)
+    start_dip = leaf_dst_ips[0]
+    traffic_parameters["IP"]["dst"] = start_dip
+    traffic_parameters["num_packets"] = (num_packets if num_packets is not None
+                                         else len(leaf_dst_ips))
+    logger.info(f"Building incremental leaf stream on {spine_tg} starting at {start_dip}")
+    stream = create_json_traffic_stream(
+        spine_tg, traffic_parameters, f"spine_to_leaf_incremental_dip_{start_dip}",
+        ip_protocol=ip_protocol)
+    create_json_traffic_file_with_stream_list(
+        spine_tg, traffic_parameters, json_path, [stream])
+
+
+def _resolve_leaf_dip_list(players, spine_tg, conf_args):
+    """
+    Resolves the NOS-specific downstream destination IPs for the leaf scenario.
+
+    Args:
+        players (dict): Test players mapping.
+        spine_tg (str): Spine traffic-generator alias, used for error context only.
+        conf_args (dict): Configuration arguments dictionary.
+
+    Returns:
+        list: One destination IP per DUT right port.
+
+    Raises:
+        TestIssue: If the DUT resolves no leaf destination IPs.
+    """
+    dut_cli = players['dut']['cli']
+    dut_configuration = dut_cli.performance.get_device_configuration(conf_args=conf_args)
+    leaf_dst_ips = dut_cli.performance.get_leaf_dip_list(dut_configuration, conf_args)
+    if not leaf_dst_ips:
+        raise TestIssue(f"No leaf destination IPs resolved for {spine_tg} | "
+                        f"expected one per DUT right port, got {leaf_dst_ips}")
+    logger.debug(f"Resolved {len(leaf_dst_ips)} leaf destinations | "
+                 f"first={leaf_dst_ips[0]}, last={leaf_dst_ips[-1]}")
+    return leaf_dst_ips
 
 
 # ------------------------------------------------- link-flap validation helpers
