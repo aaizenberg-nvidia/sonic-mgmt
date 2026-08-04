@@ -147,46 +147,51 @@ def test_asic_debug_config_negative(engines, devices, nv_command):
         4. Download yaml config with wrong version
         5. Check logs
         6. Check health status is OK
+        7. Unset asic-debug-config, reboot system, check config not applied
     """
     system = nv_command.system
     fae_system = nv_command.fae.system
+    try:
+        with allure.step("Download negative not a yaml config file"):
+            _download_asic_debug_config(system, SystemConsts.NOT_YAML_ASIC_DEBUG_CONFIG,
+                                        expected_output='no asic-debug-config section found in script', should_succeed=False)
 
-    with allure.step("Download negative not a yaml config file"):
-        _download_asic_debug_config(system, SystemConsts.NOT_YAML_ASIC_DEBUG_CONFIG,
-                                    expected_output='no asic-debug-config section found in script', should_succeed=False)
+        with allure.step("Download yaml config file without any fields, values inside"):
+            _download_asic_debug_config(system, SystemConsts.YAML_WITHOUT_FIELDS,
+                                        expected_output='no asic-debug-config section found in script', should_succeed=False)
 
-    with allure.step("Download yaml config file without any fields, values inside"):
-        _download_asic_debug_config(system, SystemConsts.YAML_WITHOUT_FIELDS,
-                                    expected_output='no asic-debug-config section found in script', should_succeed=False)
+        with allure.step("Download yaml config file with wrong register"):
+            _download_asic_debug_config(system, SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER)
 
-    with allure.step("Download yaml config file with wrong register"):
-        _download_asic_debug_config(system, SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER)
+        with allure.step("Run asic-debug-config with wrong register"):
+            fae_system.asic_debug_config.action(ActionConsts.RUN,
+                                                additional_params={'files': f'{SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER}'})
 
-    with allure.step("Run asic-debug-config with wrong register"):
-        fae_system.asic_debug_config.action(ActionConsts.RUN,
+        with allure.step("Verify asic-debug-config failed"):
+            _wait_asic_debug_config_status_changed(system, SystemConsts.STATUS_ASIC_DEBUG_CONFIG, SystemConsts.FAILED_STATUS_ASIC_DEBUG_CONFIG)
+
+        with allure.step("Cleanup for asic debug config"):
+            system.asic_debug_config.action(ActionConsts.DELETE,
                                             additional_params={'files': f'{SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER}'})
 
-    with allure.step("Verify asic-debug-config failed"):
-        _wait_asic_debug_config_status_changed(system, SystemConsts.STATUS_ASIC_DEBUG_CONFIG, SystemConsts.FAILED_STATUS_ASIC_DEBUG_CONFIG)
+            output_dictionary = OutputParsingTool.parse_json_str_to_dictionary(
+                system.asic_debug_config.show('files')).get_returned_value()
+            assert SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER not in output_dictionary, 'config file not deleted'
 
-    with allure.step("Cleanup for asic debug config"):
-        system.asic_debug_config.action(ActionConsts.DELETE,
-                                        additional_params={'files': f'{SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER}'})
+        with allure.step("Download yaml config file without any fields, values inside"):
+            _download_asic_debug_config(system, SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_VERSION,
+                                        expected_output='is not compatible with script version', should_succeed=False)
 
-        output_dictionary = OutputParsingTool.parse_json_str_to_dictionary(
-            system.asic_debug_config.show('files')).get_returned_value()
-        assert SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_REGISTER not in output_dictionary, 'config file not deleted'
+        with allure.step("Check logs"):
+            show_output = system.log.file.show_log(param="| grep asic-debug-config")
+            ValidationTool.verify_expected_output(show_output, SystemConsts.ASIC_DEBUG_CONFIG_ERROR).verify_result()
 
-    with allure.step("Download yaml config file without any fields, values inside"):
-        _download_asic_debug_config(system, SystemConsts.FAIL_ASIC_DEBUG_CONFIG_WRONG_VERSION,
-                                    expected_output='is not compatible with script version', should_succeed=False)
-
-    with allure.step("Check logs"):
-        show_output = system.log.file.show_log(param="| grep asic-debug-config")
-        ValidationTool.verify_expected_output(show_output, SystemConsts.ASIC_DEBUG_CONFIG_ERROR).verify_result()
-
-    with allure.step("Check system status is OK"):
-        system.validate_health_status(HealthConsts.OK)
+        with allure.step("Check system status is OK"):
+            system.validate_health_status(HealthConsts.OK)
+    finally:
+        # 'current' and 'status' keep describing the failed run until reboot, so the following tests
+        # must not inherit them
+        _unset_asic_debug_config_and_reboot(system, engines)
 
 
 @pytest.mark.asic_debug_config
@@ -485,6 +490,24 @@ def _download_run_simulate_pgrss_trap(engine, argument='', script=SystemConsts.S
 def _download_asic_debug_config(system, yaml='', expected_output='', should_succeed=True):
     path = f'{SystemConsts.VERIFICATION_ASIC_DEBUG_PATH}/{yaml}'
     system.asic_debug_config.action_fetch(path).verify_result(should_succeed=should_succeed, expected_value=expected_output)
+
+
+def _unset_asic_debug_config_and_reboot(system, engines):
+    with allure.step("Unset asic-debug-config, reboot system, check config not applied"):
+        with allure.step("Unset asic debug config"):
+            system.asic_debug_config.unset()
+            TestToolkit.GeneralApi[TestToolkit.tested_api].apply_config(engines.dut)
+            TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
+
+        with allure.step("Perform system reboot"):
+            system.reboot.action_reboot(params='force').verify_result()
+
+        with allure.step("Check config not applied after reboot"):
+            output_dictionary = OutputParsingTool.parse_json_str_to_dictionary(
+                system.asic_debug_config.show()).get_returned_value()
+            ValidationTool.validate_fields_values_in_output(SystemConsts.DEFAUL_ASIC_DEBUG_CONFIG_DEFAULT_VALUES.keys(),
+                                                            SystemConsts.DEFAUL_ASIC_DEBUG_CONFIG_DEFAULT_VALUES.values(),
+                                                            output_dictionary).verify_result()
 
 
 def _validate_log_file(engines, string_to_validate=''):
