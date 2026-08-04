@@ -606,10 +606,13 @@ def bug_handler_wrapper(analyzers, duthosts, la_results):
         original_handlers = logging.getLogger().handlers[:]
         original_level = logging.getLogger().level
         logging.getLogger().handlers = []
-        bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1080)
-        # restore original logging handlers and level
-        logging.getLogger().handlers = original_handlers
-        logging.getLogger().setLevel(original_level)
+        try:
+            bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1080)
+        finally:
+            # restore original logging handlers and level, even if the bug
+            # handler raised, otherwise the rest of the session logs nowhere
+            logging.getLogger().handlers = original_handlers
+            logging.getLogger().setLevel(original_level)
         for node in bh_results.keys():
             if 'failed' in bh_results[node]:
                 logging.error(f'Failed to run bug handler on {node}')
