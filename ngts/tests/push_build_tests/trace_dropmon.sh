@@ -38,4 +38,4 @@ kprobe:net_dm_hw_trap_packet_probe {
 }
 EOF
 # stdbuf -oL => line-buffered so the log updates live under redirection.
-exec stdbuf -oL bpftrace "${BT}" >> "${LOG}" 2>&1
+exec stdbuf -oL bpftrace "${BT}" > "${LOG}" 2>&1
