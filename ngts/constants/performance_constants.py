@@ -684,7 +684,7 @@ class SPCXRAConsts:
     # is a read-and-clear of everything since traffic began, so waiting here puts the whole burst
     # into the sample the leaf validation already discards instead of leaving its tail to land in
     # the second one. Traffic keeps running throughout, so the measured load is unchanged.
-    LEAF_TRAFFIC_SETTLE_SECONDS = 30
+    LEAF_TRAFFIC_SETTLE_SECONDS = 60
     # Port readiness budgets for the leaf re-apply only. "nv config replace" bounces every link, and
     # a host route stays out of the kernel while the interface behind its nexthop is down, so the
     # leaf run waits far longer than the shared defaults for links to train. Admin state follows the
