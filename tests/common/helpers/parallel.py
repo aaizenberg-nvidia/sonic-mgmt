@@ -1,4 +1,3 @@
-import ansible
 import datetime
 import logging
 import math
@@ -9,12 +8,13 @@ import tempfile
 import threading
 import time
 import traceback
-from multiprocessing import Process, Manager, Pipe, TimeoutError
+from multiprocessing import Manager, Pipe, Process, TimeoutError
 from multiprocessing.pool import ThreadPool
-from ansible.executor.process.worker import WorkerProcess
 
+from ansible.executor.process.worker import WorkerProcess
 from psutil import wait_procs
 
+import ansible
 from tests.common.helpers.assertions import pytest_assert as pt_assert
 
 logger = logging.getLogger(__name__)
@@ -106,24 +106,33 @@ class SonicProcess(Process):
 
     # for wait_procs
     def wait(self, timeout):
+        # Pipe() holds ~64KB and the child blocks once it fills, so drain here while it
+        # is still writing. Reading only after join() would deadlock a child sending a
+        # larger payload, and the parent would wait out its whole timeout.
+        self._read_exception()
         return self.join(timeout=timeout)
 
     # for wait_procs
     def is_running(self):
         return self.is_alive()
 
+    def _read_exception(self, final=False):
+        """Read exception data once and close parent-side pipe."""
+        if self._exception_read:
+            return
+        try:
+            if self._pconn.poll():
+                self._exception = self._pconn.recv()
+            elif not final:
+                return  # nothing sent yet, retry on the next wait()
+        except (EOFError, OSError):
+            pass
+        self._pconn.close()
+        self._exception_read = True
+
     @property
     def exception(self):
-        """Read exception data once and close parent-side pipe."""
-        if not self._exception_read:
-            try:
-                if self._pconn.poll():
-                    self._exception = self._pconn.recv()
-            except (EOFError, OSError):
-                pass
-            finally:
-                self._pconn.close()
-                self._exception_read = True
+        self._read_exception(final=True)
         return self._exception
 
 
