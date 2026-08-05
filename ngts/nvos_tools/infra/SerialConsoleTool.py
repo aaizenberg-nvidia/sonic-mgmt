@@ -90,6 +90,10 @@ class SerialConsoleTool:
             serial_engine.run_cmd(new_password, cls.RETYPE_NEW_PASSWORD_PATTERN, 10)
         with allure.step(f'retype new password: {new_password}'):
             serial_engine.run_cmd(new_password, cls.APPLIED_PATTERN)
+        with allure.step('wait for shell prompt after password change'):
+            # login flushes TTY input between the password change and spawning the
+            # shell - anything sent before the prompt appears is silently discarded
+            serial_engine.run_cmd('', cls.SHELL_PROMPT_PATTERNS)
         if restore_password:
             cls.restore_password_to_default(serial_engine)
             return serial_engine.password
