@@ -2083,6 +2083,7 @@ class RebootConsts:
     PSU_OFF = "psu-off"
     REBOOT_REASON_POWER_CYCLE = 'Power Cycle'
     REBOOT_REASON_RESET_BIT = "System reset"
+    REBOOT_REASON_TYPE_CRITICAL_ERROR = "critical-error"
     REMOTE_REBOOT = "remote-reboot"
     INSTALL_FW = "install-fw"
     RESET_BIT = "reset_bit"
