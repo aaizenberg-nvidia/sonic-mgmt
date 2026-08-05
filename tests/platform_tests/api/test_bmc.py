@@ -14,6 +14,7 @@ from tests.common.helpers.platform_api import bmc
 from tests.common.platform.device_utils import platform_api_conn, start_platform_api_service    # noqa: F401
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from .platform_api_test_base import PlatformApiTestBase
+from tests.platform_tests.conftest import extract_fw_data
 from tests.common.helpers.firmware_helper import (
     show_firmware, FW_TYPE_UPDATE, PLATFORM_COMP_PATH_TEMPLATE,
     get_bmc_firmware_list, get_bmc_ip
@@ -344,6 +345,14 @@ class TestBMCApi(PlatformApiTestBase):
         if not bmc.is_bmc_exists(duthost):
             pytest.skip("BMC is not present, skipping BMC platform API tests")
 
+    @pytest.fixture(scope="class")
+    def bmc_fw_pkg(self, fw_pkg_name, skip_if_no_bmc):
+        """Load BMC firmware package only after BMC presence is confirmed."""
+        if fw_pkg_name is None:
+            pytest.skip("No fw package specified.")
+
+        yield extract_fw_data(fw_pkg_name)
+
     @pytest.fixture(autouse=True)
     def prepare_param(self, creds):
         self.bmc_root_user = creds['sonic_bmc_root_user']
@@ -474,7 +483,7 @@ class TestBMCApi(PlatformApiTestBase):
             logger.info(f"Writing updated 'platform_components.json' to localhost: {local_comp_file_path}")
             with open(local_comp_file_path, 'w') as comp_file:
                 json.dump(json_data, comp_file, indent=4)
-                logger.info(f"Updated 'platform_components.json':\n{json.dumps(json_data, indent=4)}")
+                logger.info("Updated 'platform_components.json':\n%s", json.dumps(json_data, indent=4))
 
             logger.info(f"Copying 'platform_components.json' to {duthost.hostname}: {remote_comp_file_path}")
             duthost.copy(src=local_comp_file_path, dest=remote_comp_file_path)
@@ -681,8 +690,8 @@ class TestBMCApi(PlatformApiTestBase):
         pytest_assert(duthost.command(
             f"ls -l {bmc_dump_path}")["rc"] == 0, f"BMC dump file not found: {bmc_dump_path}")
 
-    def test_bmc_firmware_update(self, duthosts, enum_rand_one_per_hwsku_hostname, fw_pkg, bmc_firmware_command_type,
-                                 backup_platform_file, bmc_ip, recover_bmc_firmware, request, creds):
+    def test_bmc_firmware_update(self, duthosts, enum_rand_one_per_hwsku_hostname, bmc_fw_pkg,
+                                 bmc_firmware_command_type, backup_platform_file, bmc_ip, recover_bmc_firmware, request):
         """
         Test BMC firmware update with platform API and CLI
 
@@ -707,6 +716,7 @@ class TestBMCApi(PlatformApiTestBase):
         runs (install/update) complete.
         """
         duthost = duthosts[enum_rand_one_per_hwsku_hostname]
+        fw_pkg = bmc_fw_pkg
         bmc_version_origin = _get_bmc_version(duthost)
         logger.info(f"BMC version origin: {bmc_version_origin}")
         logger.info(f"Testing with command type: {bmc_firmware_command_type}")
@@ -714,8 +724,8 @@ class TestBMCApi(PlatformApiTestBase):
         chassis = list(show_firmware(duthost)["chassis"].keys())[0]
         logger.info(f"Chassis: {chassis}")
         bmc_fw_list = get_bmc_firmware_list(fw_pkg, chassis, duthost, bmc_ip,
-                                            creds['sonic_bmc_root_user'],
-                                            creds['sonic_bmc_root_password'])
+                                            self.bmc_root_user,
+                                            self.bmc_root_password)
         fw_version_old = bmc_fw_list[OLD_BMC_VERSION_IDX]["version"]
 
         # Pick the other version so we always test an actual firmware change.
@@ -811,7 +821,7 @@ class TestBMCApi(PlatformApiTestBase):
                         f"response: {sessions_result['stdout']}")
                 member_session_ids = self._extract_ids_from_members(sessions_data)
                 pytest_assert(session_id in member_session_ids,
-                              f"Session {session_id} not found in Members: {member_session_ids}")
+                              "Session {} not present in Members: {}".format(session_id, member_session_ids))
 
             with allure.step("Create event subscription"):
                 subscription_data = json.dumps({"Destination": "https://example.com/events", "Protocol": "Redfish"})
