@@ -9,7 +9,7 @@ import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
 
-from ngts.nvos_constants.constants_nvos import SystemConsts
+from ngts.nvos_constants.constants_nvos import ClusterApps, SystemConsts
 from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.nvos_tools.nmx.Cluster import Cluster
@@ -25,10 +25,13 @@ from ngts.tests_nvos.general.security.crl.helpers import (
     BridgeSystemInternalCrlValidator,
 )
 from ngts.tests_nvos.general.security.helpers import (
+    cleanup_certs_for_tests,
     generate_certs,
     get_test_certs_dir_location,
     import_crl_safely,
+    setup_certs_for_tests,
 )
+from ngts.tests_nvos.general.security.nmx_cert.helpers import restore_cluster_app_manager_state
 from ngts.tests_nvos.general.security.nv_bridge.helpers import (
     BridgeCrlCerts,
     BridgeSpiffeCerts,
@@ -411,6 +414,52 @@ def disable_cluster(setup_name):
     with allure.step("ensure cluster is disabled after the test"):
         if is_cluster_enabled():
             cluster_tools.stop_cluster(cluster)
+
+
+@pytest.fixture(scope="function")
+def import_manager_certs(engines, dut_hostname, devices, enable_cluster):
+    """Import NMX manager certs; restore managers/logstream then delete certs on teardown.
+
+    Depends on ``enable_cluster`` so teardown runs while the cluster is still up
+    (``enable_cluster`` stops the cluster afterward). That keeps manager/logstream
+    restore reachable and lets cert/CA delete succeed after unbind.
+    """
+    scp_player = get_scp_player(engines)
+    certs_location, certs = setup_certs_for_tests(
+        "bridge_manager_certs",
+        ["nmx-c-manager-cert", "nmx-t-manager-cert"],
+        engines,
+        dut_hostname,
+        import_to_dut=True,
+        scp_player=scp_player,
+        dut_ip=engines.dut.ip,
+        import_cas=True,
+    )
+    manager_certs = {
+        ClusterApps.NMX_CONTROLLER: certs[0],
+        ClusterApps.NMX_TELEMETRY: certs[1],
+    }
+    yield manager_certs
+    with allure.step("restore manager/cross-func config and cleanup certs"):
+        cluster = Cluster()
+        try:
+            cluster.apps.app_name[ClusterApps.NMX_CONTROLLER].logstream.action_restore_cluster_log_stream().verify_result()
+        except Exception as e:
+            logger.warning("Failed to restore NMX-C log stream: %s", e)
+        for app_name in devices.dut.expected_cluster_apps:
+            try:
+                manager = cluster.apps.app_name[app_name].manager
+                restore_cluster_app_manager_state(manager)
+                manager.encryption.action_restore().verify_result()
+                manager.certificate.action_restore().verify_result()
+                manager.ca_certificate.action_restore().verify_result()
+            except Exception as e:
+                logger.warning("Failed to restore %s manager config: %s", app_name, e)
+        try:
+            cleanup_certs_for_tests(certs_location, certs, cas=certs)
+        except Exception as e:
+            # Best-effort: leave a clear warning rather than aborting the rest of teardown.
+            logger.warning("Failed to cleanup manager certificates: %s", e)
 
 
 @pytest.fixture

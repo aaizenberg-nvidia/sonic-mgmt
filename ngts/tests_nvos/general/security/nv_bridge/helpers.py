@@ -50,6 +50,7 @@ from ngts.tests_nvos.general.security.nmx_cert.constants import (
     SYSTEM_INTERNAL_JSON_PATH,
     ClusterInternalJsonFields,
     Defaults,
+    EncryptionMode,
     FieldsInShowOf,
     SystemInternalJsonFields,
 )
@@ -810,3 +811,50 @@ def nv_bridge_internal_factory_reset_no_params_check():
 
     with allure.step("verify NV Bridge internal config wiped after factory reset"):
         verify_system_internal_has_empty_defaults()
+
+
+BRIDGE_CROSS_FUNC_REBOOT_SETTLE_TIME = 60
+
+
+def update_cluster_internal_encryption(
+    cluster: Cluster,
+    app_name: str,
+    encryption_mode: str,
+    engine: LinuxSshEngine,
+) -> None:
+    """Update cluster app internal encryption and wait for the app to settle."""
+    app = cluster.apps.app_name[app_name]
+    app.internal.encryption.action_update(encryption_mode, dut_engine=engine).verify_result()
+    wait_for_cluster_app_update(cluster, engine)
+
+
+def configure_bridge_internal_mtls(
+    system: System,
+    cluster: Cluster,
+    app_name: str,
+    bridge_cert: CertInfo,
+    engine: LinuxSshEngine,
+) -> None:
+    """Bind system/cluster internal certs, enable mTLS, and reset the app connection."""
+    app = cluster.apps.app_name[app_name]
+    with allure.step("Configure system + cluster internal mTLS"):
+        system.internal.certificate.action_update(bridge_cert.name).verify_result()
+        system.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
+        app.internal.certificate.action_update(bridge_cert.name).verify_result()
+        app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
+        system.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
+        update_cluster_internal_encryption(cluster, app_name, EncryptionMode.MTLS, engine)
+        reset_cluster_app(cluster, app_name, engine)
+    verify_system_internal_show(
+        expect_cert=bridge_cert.name,
+        expect_cacert=bridge_cert.cacert_name,
+        expect_encryption=EncryptionMode.MTLS,
+        dut_engine=engine,
+    )
+    verify_cluster_app_internal_show(
+        app_name,
+        expect_cert=bridge_cert.name,
+        expect_cacert=bridge_cert.cacert_name,
+        expect_encryption=EncryptionMode.MTLS,
+        dut_engine=engine,
+    )
