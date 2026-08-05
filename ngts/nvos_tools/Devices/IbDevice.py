@@ -502,7 +502,8 @@ class IbSwitch(BaseSwitch):
             RebootConsts.PSU_OFF: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
         # Reset-bit reboot trigger, shared by all IB switches (Taipan, Crocodile, ...).
         # Subclasses can override or clear it if their platform doesn't support it.
@@ -1855,7 +1856,8 @@ class JulietSwitch(NvLinkSwitch):
         self.supported_nvl_speeds = ['200G', '400G']
         self.category_list = ['temperature', 'cpu', 'disk', 'fan', 'mgmt-interface', 'voltage']
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: {**self.category_default_disabled_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -1863,7 +1865,8 @@ class JulietSwitch(NvLinkSwitch):
             self.category_list[5]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: {**self.category_default_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
@@ -1958,7 +1961,8 @@ class JulietSwitch(NvLinkSwitch):
             RebootConsts.POWER_BUTTON: (SystemConsts.REBOOT_REASON_POWER_BUTTON, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
 
         self.power_cycle_type = 'juliet-power-cycle'
@@ -2490,7 +2494,8 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
-            self.category_list[4]: self.category_default_disabled_dict,
+            self.category_list[4]: {**self.category_default_disabled_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
@@ -2498,7 +2503,8 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
-            self.category_list[4]: self.category_default_dict,
+            self.category_list[4]: {**self.category_default_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[5]: self.category_default_dict,
         }
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/juliet_gb300_versions.json"
@@ -2819,7 +2825,8 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                 FW_COMPONENT_BIOS,
                                 FW_COMPONENT_EROT]
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: {**self.category_default_disabled_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -2827,7 +2834,8 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: {**self.category_default_dict,
+                                    StatsConsts.INTERVAL: self.category_temperature_interval_default},
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
