@@ -2157,6 +2157,18 @@
         - tests_nvos/system/test_system_factory_reset.py
         - tests_nvos/cluster/test_cluster_factory_reset.py
 
+# NVOS: Expected syncd/SDK logs during switch teardown (factory-reset / port-split / asic-health-fatal).
+#       Benign - SAI "remove switch is not implemented" plus CoS module already gone on teardown. NVBug 5849348.
+- Errors_list:
+    - '.*ERR syncd-ibv\d+#SDK: \[COS\.ERR\] Failed to unregister CoS module LAG global advisor, error: Entry Not Found.*'
+    - '.*ERR syncd-ibv\d+#SDK: :- processOidRemove: remove switch is not implemented, FIXME.*'
+    - '.*ERR syncd-ibv\d+#SDK: :- run: Runtime error: :- processOidRemove: remove switch is not implemented, FIXME.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/system/test_system_factory_reset.py
+        - tests_nvos/interfaces/test_port_split.py
+        - tests_nvos/system/test_system_health.py::test_asic_health_fatal_state_marks_all_unhealthy
+
 # NVOS: Expected logs during ztp negative tests
 - Errors_list:
     - '.*provisioning-script: Error.*'
