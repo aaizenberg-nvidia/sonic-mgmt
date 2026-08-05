@@ -41,8 +41,8 @@ class Configurations:
         "10.7.148.249": ['sw61p1', 'sw67p1'],
 
         # Black Mamba DGX
-        "10.7.145.81": ['sw1p1', 'sw2p1'],
-        "10.7.145.82": ['sw1p1', 'sw2p1'],
+        "10.7.145.81": ['sw5p1', 'sw21p1'],
+        "10.7.145.82": ['sw5p1', 'sw21p1'],
 
         # Crocodile
         "10.7.148.94": ['swA1p1', 'swA2p1'],
