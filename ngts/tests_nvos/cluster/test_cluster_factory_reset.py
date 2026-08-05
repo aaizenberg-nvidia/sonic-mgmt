@@ -22,7 +22,11 @@ from ngts.tests_nvos.system.factory_reset.helpers import add_verification_data, 
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
-from ngts.tests_nvos.cluster.tray_admin_state.helpers import is_rtf_compute_tray_scenario, delete_sdn_partitions_before_compute_tray_test
+from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
+    is_rtf_compute_tray_scenario,
+    delete_sdn_partitions_before_compute_tray_test,
+    restore_tray_cleanup,
+)
 
 logger = logging.getLogger()
 
@@ -65,6 +69,9 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
                         op_param_value=dscp_value, apply=True)
 
         tray_state_set = False
+        tray_non_default = None
+        selected_tray = None
+        tray_at_default = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
             with allure.step("Set tray maintenance-state to non-default before factory reset"):
                 trays_output = OutputParsingTool.parse_show_output_to_dict(sdn.trays.show()).get_returned_value()
@@ -138,8 +145,15 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
                 actual_tray_state = tray_output.get(ClusterConsts.MAINTENANCE_STATE)
                 assert actual_tray_state == 'up', (
                     f"Tray {selected_tray}: expected 'up' after factory reset, got '{actual_tray_state}'")
+                tray_at_default = True
 
     finally:
+        if tray_state_set:
+            # Factory reset should already put tray to 'up'; restore only if that did not happen.
+            # GPU reset still needed when pre-reset state was 'down'.
+            restore_tray_cleanup(
+                sdn, selected_tray, setup_name, cluster,
+                restore=not tray_at_default, reset_gpu=(tray_non_default == 'down'))
         if interface_wa_called:
             try:
                 next(interfaces_wa)

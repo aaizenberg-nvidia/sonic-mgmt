@@ -26,13 +26,6 @@ TRAY_MAINTENANCE_SUMMARY_BUG_ID = 5065628
 TRAY_PORT_STATE_SETTLE_SECONDS = 7
 TRAY_PORT_STATE_SETTLE_SECONDS_BUG_OPEN = 60
 
-# Bug SW #5189276: switch link is not restored from disabled to active when a tray
-# admin-state down->up (or down->diag) is performed while the link was disabled.
-# The compute GPU reset (nvidia-smi -r) re-links the PHYs and works around this, so the
-# reset on a tray *leaving* 'down' is only needed while this bug is open. Once it is
-# fixed, the reset becomes unnecessary and is skipped.
-SWITCH_LINK_RESTORE_BUG_ID = 5189276
-
 # NMX topology JSON keys
 TOPO_DEVICE_INFO = 'deviceTopoInfo'
 TOPO_GPU_INFO = 'gpuTopoInfo'
@@ -127,13 +120,6 @@ def eligible_trays_for_maintenance_change(tray_ids, local_switch_slot, tray_topo
     return list(tray_ids)
 
 
-def pick_tray_for_maintenance_change(tray_ids, local_switch_slot, tray_topology_config):
-    """Random tray ID subject to eligible_trays_for_maintenance_change rules."""
-    eligible = eligible_trays_for_maintenance_change(
-        tray_ids, local_switch_slot, tray_topology_config)
-    return random.choice(eligible)
-
-
 def pick_two_trays_for_independence_test(tray_ids, local_switch_slot, tray_topology_config):
     """Pick two distinct trays; on single-switch + compute setups, both are compute trays."""
     eligible = eligible_trays_for_maintenance_change(
@@ -224,9 +210,16 @@ def reset_all_compute_node_gpus(setup_name, cluster=None):
     """
     Reset GPUs on every host listed in RegressionConfigurations.compute_nodes_per_system.
 
-    Product behavior: a compute GPU reset (nvidia-smi -r) is needed to re-link PHYs when
-    a tray leaves 'down' (down->diag or down->up). It does nothing useful while the tray
-    stays 'down', so call it only after moving the tray off 'down'.
+    After tray maintenance-state 'down' (switch or compute tray), reset is required when
+    leaving 'down'.
+
+    Why (switch tray): multi-switch designs assume at least one switch tray remains active
+    so inband connectivity to all GPUs is preserved. RTF has a *single* switch tray, so
+    taking it 'down' severs every plane to the compute tray(s) at once (same ASICs).
+
+    Why (compute tray): putting the compute tray 'down' similarly cuts the inband path to
+    its GPUs — there is no alternate plane to send Hello / recover those links without a
+    GPU reset after leaving 'down'.
 
     If `cluster` is provided, waits for NMX (controller/telemetry/nmx-c) to recover after
     the reset before returning.
@@ -248,31 +241,6 @@ def reset_all_compute_node_gpus(setup_name, cluster=None):
         ClusterTools.reboot_compute_nodes_gpus(setup_name)
     if cluster is not None:
         wait_for_nmx_apps_healthy_after_gpu_reset(cluster)
-
-
-def reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test):
-    """
-    Reset compute GPUs when a compute tray is about to leave 'down' (down->up or down->diag).
-
-    This reset is a workaround for bug SW #5189276 (switch link not restored from disabled
-    to active when down->up/diag is performed while the link was disabled). It only applies
-    while that bug is open: if the bug is no longer active, the reset is skipped.
-
-    Note: this gating is ONLY for the 'leaving down' reset. The reset done BEFORE moving a
-    compute tray *to* 'down' is a separate requirement (NMX_ST_RESOURCE_IN_USE: GPUs must
-    free NVLink resources first) and is not gated by this bug.
-    """
-    if not compute_tray_under_test:
-        return
-    if not is_bug_active(SWITCH_LINK_RESTORE_BUG_ID):
-        logger.info(
-            "Bug %s not active — skipping compute GPU reset on tray leaving 'down'",
-            SWITCH_LINK_RESTORE_BUG_ID)
-        return
-    logger.info(
-        "Bug %s active — resetting compute GPUs to re-link PHYs on tray leaving 'down'",
-        SWITCH_LINK_RESTORE_BUG_ID)
-    reset_all_compute_node_gpus(setup_name, cluster)
 
 
 def get_all_trays(sdn):
@@ -303,9 +271,28 @@ def verify_tray_state(sdn, tray_id, expected_state):
             f"Tray {tray_id} in aggregated output: expected {expected_state}, got {actual_in_all}")
 
 
-def restore_tray_cleanup(sdn, tray_id):
-    """Restore tray to default state. Raises on failure to prevent polluting next tests."""
-    sdn.trays.action_restore_maintenance_state(tray_id=tray_id)
+def restore_tray_cleanup(sdn, tray_id, setup_name, cluster, restore=True, reset_gpu=False):
+    """
+    Optionally restore tray to default and/or reset compute GPUs (cleanup helper).
+
+    restore: if True, run action_restore_maintenance_state (skip when factory reset
+    already returned the tray to default).
+    reset_gpu: if True, reset compute GPUs after restore. Moving from down to up is not
+    enough — 'down' severs inband paths and nvidia-smi -r is needed so links recover:
+
+    - Switch tray (RTF): design assume at least one switch tray remains active for
+      inband connectivity to all GPUs. This setup has a *single* switch tray, so every
+      plane to the compute tray(s) traverses the same ASICs and is severed at once —
+      NMX fails with "failed to find an active link to send Hello Message".
+    - Compute tray: 'down' cuts the inband path to that tray's GPUs; there is no
+      alternate way to send Hello / recover those links without a GPU reset.
+    """
+    if restore:
+        with allure.step(f"Restore tray {tray_id} maintenance state to default"):
+            sdn.trays.action_restore_maintenance_state(tray_id=tray_id).verify_result()
+    if reset_gpu:
+        with allure.step(f"Reset compute GPUs after tray {tray_id} restore"):
+            reset_all_compute_node_gpus(setup_name, cluster)
 
 
 def wait_for_tray_port_state_settle(expected_maintenance_state):

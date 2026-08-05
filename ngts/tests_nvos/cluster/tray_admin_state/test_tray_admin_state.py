@@ -23,10 +23,8 @@ from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
     get_tray,
     is_compute_tray,
     is_rtf_compute_tray_scenario,
-    pick_tray_for_maintenance_change,
     pick_two_trays_for_independence_test,
     reset_all_compute_node_gpus,
-    reset_compute_gpus_leaving_down,
     restore_tray_cleanup,
     verify_affected_ports_state,
     verify_tray_state,
@@ -127,15 +125,14 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
     Also verify behaviour when local port admin state is down.
 
     Tray selection (tray_topology_config):
-    - switch_nodes==1 (RTF): never the lone switch tray; compute trays only.
+    - Any tray from 'nv show sdn trays' (switch or compute), including the lone switch on RTF.
     - compute_nodes==0 (simx): any tray; no NMX topology gpuTopoInfo parsing.
 
     RTF compute tray precondition:
     - Delete all SDN partitions (e.g. default 32766) before maintenance-state changes.
 
-    Compute tray recovery (any lab with compute_nodes > 0):
-    - After tray 'down', run nvidia-smi -r on all hosts in compute_nodes_per_system
-      before diag/up/restore (whole-tray down leaves PHYs down without GPU reset).
+    After tray 'down' (switch or compute):
+    - Run nvidia-smi -r on all hosts in compute_nodes_per_system before diag/up/restore.
 
     Port verification (after settle: 60s if bug 5065628 open, else 7s):
     - Local switch tray: all acp ports.
@@ -153,8 +150,7 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
         pytest.skip("No trays in 'nv show sdn trays' — enable cluster and check fm_config")
 
     local_switch_slot = str(chassis_info.get('slot-number'))
-    selected_tray = pick_tray_for_maintenance_change(
-        tray_ids, local_switch_slot, tray_topology_config)
+    selected_tray = random.choice(tray_ids)
     is_switch_tray = (selected_tray == local_switch_slot)
     tray_type = "switch" if is_switch_tray else "compute"
     logger.info(
@@ -178,10 +174,14 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
     # Pick one port for the admin-state override test (single-port test at the end)
     override_test_port = Port(random.choice(affected_acps))
 
+    # GPU reset in finally only if we entered 'down' and have not yet recovered from it.
+    needs_gpu_reset = False
     try:
         # Compute tray about to go 'down': the GPUs still hold NVLink resources, so NMX-C
         # rejects the maintenance change with NMX_ST_RESOURCE_IN_USE. Reset the GPUs first
         # to free those resources before requesting 'down'.
+        # compute_tray_under_test only: NMX_ST_RESOURCE_IN_USE is for compute trays on
+        # 'down'; switch trays are not subject to that error.
         if compute_tray_under_test:
             reset_all_compute_node_gpus(setup_name, cluster)
 
@@ -189,17 +189,16 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'down'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state='down').verify_result()
+        needs_gpu_reset = True
         verify_tray_state(sdn, selected_tray, 'down')
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=down, maintenance=down"):
             verify_affected_ports_state(affected_acps, expected_link_state='down', expected_maintenance_state='down')
-
-        # -- Set tray to DIAG: ports should come back up, maintenance-state should be 'diag' --
-        # Current state is 'down'. Reset compute GPUs to re-link PHYs before leaving 'down'
-        # (workaround for bug SW #5189276); skipped automatically once that bug is fixed.
-        reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'diag'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state='diag').verify_result()
+        # 'down' severs all inband paths to GPUs; reset is needed to go back to 'up'.
+        reset_all_compute_node_gpus(setup_name, cluster)
+        needs_gpu_reset = False
         verify_tray_state(sdn, selected_tray, 'diag')
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=up, maintenance=diag"):
             verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='diag')
@@ -217,18 +216,21 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
         with allure.step(f"Set tray {selected_tray} to '{random_state}' then restore"):
             # Same as the first 'down': free GPU NVLink resources before a compute tray
             # goes 'down', else NMX-C returns NMX_ST_RESOURCE_IN_USE.
+            # compute_tray_under_test only: that error is for compute trays on 'down'/'diag'.
             if compute_tray_under_test and random_state == 'down':
                 reset_all_compute_node_gpus(setup_name, cluster)
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state=random_state).verify_result()
+            if random_state == 'down':
+                needs_gpu_reset = True
             verify_tray_state(sdn, selected_tray, random_state)
 
-            # If the tray is currently 'down', reset compute GPUs to re-link PHYs BEFORE
-            # restoring (down->up) — workaround for bug SW #5189276; skipped once it is fixed.
-            if random_state == 'down':
-                reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
             sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
             verify_tray_state(sdn, selected_tray, DEFAULT_TRAY_STATE)
+            # 'down' severs all inband paths to GPUs; reset is needed to go back to 'up'.
+            if random_state == 'down':
+                reset_all_compute_node_gpus(setup_name, cluster)
+                needs_gpu_reset = False
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=up, maintenance=up after restore"):
             verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='up')
 
@@ -254,9 +256,7 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
                 sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
 
     finally:
-        if compute_tray_under_test:
-            reset_all_compute_node_gpus(setup_name, cluster)
-        restore_tray_cleanup(sdn, selected_tray)
+        restore_tray_cleanup(sdn, selected_tray, setup_name, cluster, reset_gpu=needs_gpu_reset)
         # We destructively deleted the default SDN partition (32766) as a precondition.
         # Restore it the same way the dedicated partition test does: an SDN factory reset
         # makes NMX-C recreate the default partition (test_cluster_partition.py:86-101).
@@ -296,13 +296,9 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
     state_b = random.choice(VALID_TRAY_STATES)
     logger.info(f"Tray A={tray_a} -> {state_a}, Tray B={tray_b} -> {state_b}")
 
-    # A compute tray about to go 'down' still holds GPU NVLink resources -> NMX-C returns
-    # NMX_ST_RESOURCE_IN_USE. Reset GPUs first when either target tray is a compute tray
-    # heading 'down'. (reset_all_compute_node_gpus resets all compute nodes, so once is enough.)
-    needs_gpu_reset = (
-        (state_a == 'down' and is_compute_tray(tray_a, local_switch_slot, tray_topology_config)) or
-        (state_b == 'down' and is_compute_tray(tray_b, local_switch_slot, tray_topology_config)))
-    if needs_gpu_reset:
+    # Free GPU NVLink resources before a tray goes 'down', else NMX-C may return
+    # NMX_ST_RESOURCE_IN_USE. (reset_all_compute_node_gpus resets all compute nodes.)
+    if state_a == 'down' or state_b == 'down':
         reset_all_compute_node_gpus(setup_name, cluster)
 
     try:
@@ -323,12 +319,11 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
 
     finally:
         with allure.step("Restore both trays"):
-            if (state_a == 'down' or state_b == 'down') and (
-                    is_compute_tray(tray_a, local_switch_slot, tray_topology_config) or
-                    is_compute_tray(tray_b, local_switch_slot, tray_topology_config)):
-                reset_all_compute_node_gpus(setup_name, cluster)
-            sdn.trays.action_restore_maintenance_state(tray_id=tray_a)
-            sdn.trays.action_restore_maintenance_state(tray_id=tray_b)
+            reset_gpu = (state_a == 'down' or state_b == 'down')
+            try:
+                restore_tray_cleanup(sdn, tray_a, setup_name, cluster)
+            finally:
+                restore_tray_cleanup(sdn, tray_b, setup_name, cluster, reset_gpu=reset_gpu)
 
         with allure.step("Verify both trays restored to default"):
             verify_tray_state(sdn, tray_a, DEFAULT_TRAY_STATE)

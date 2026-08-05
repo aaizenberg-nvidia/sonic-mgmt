@@ -22,11 +22,10 @@ from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.helpers.interfaces.link_state_helpers import verify_interface_up
 from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
     is_rtf_compute_tray_scenario,
-    is_compute_tray,
     delete_sdn_partitions_before_compute_tray_test,
     get_acp_ports_for_tray,
     verify_affected_ports_state,
-    reset_compute_gpus_leaving_down,
+    restore_tray_cleanup,
 )
 
 logger = logging.getLogger()
@@ -58,7 +57,6 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
     tray_state_set = False
     selected_tray = None
     affected_acps = []
-    compute_tray_under_test = False
     tray_non_default = None
     try:
         logger.info("Setting cluster state to enabled")
@@ -106,8 +104,6 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                     if location and location.split('.')[1] == selected_tray:
                         selected_tray = tray_ids[-1]  # Since we know that the first and the last tray are compute nodes, take the last tray in case the first tray will not work
                     local_switch_slot = str(chassis_info.get('slot-number'))
-                    compute_tray_under_test = is_compute_tray(
-                        selected_tray, local_switch_slot, tray_topology_config)
                     partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
                     if partition_deletion_flag:
                         delete_sdn_partitions_before_compute_tray_test(sdn, excluded_partitions=[ClusterConsts.EMPTY_PARTITION_ID])
@@ -191,12 +187,7 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
 
     finally:
         if tray_state_set:
-            # Leaving 'down' needs a compute GPU reset to re-link PHYs, otherwise the tray's
-            # ports stay disabled after the restore (bug SW #5189276).
-            if tray_non_default == 'down':
-                reset_compute_gpus_leaving_down(setup_name, cluster, compute_tray_under_test)
-            with allure.step(f"Restore tray {selected_tray} to default"):
-                sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
+            restore_tray_cleanup(sdn, selected_tray, setup_name, cluster, reset_gpu=(tray_non_default == 'down'))
         if not standalone_system:
             with allure.step("Running sdn factory reset"):
                 ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
