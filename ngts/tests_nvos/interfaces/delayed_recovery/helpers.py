@@ -1,9 +1,12 @@
+import pytest
+
 from ngts.cli_wrappers.nvue import nvue_general_clis as gen_clis
 from ngts.nvos_constants.constants_nvos import ConfState
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, InternalNvosConsts
 from ngts.nvos_tools.infra import NvosTestToolkit as TestToolkit
 import ngts.nvos_tools.infra.Tools as Tools
 from ngts.nvos_tools.infra.Fae import Fae
+from ngts.nvos_tools.infra.RegressionConfigurations import RegressionLinks
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.interfaces.nvl_port import helpers as nvl_helpers
 from ngts.ngts_types import DevicesT, EnginesT
@@ -75,11 +78,23 @@ def delayed_recovery_expected(applied, operational):
     }
 
 
-def get_connected_ports(devices: DevicesT, engines: EnginesT):
+def get_connected_ports(devices: DevicesT, engines: EnginesT, setup_name: str):
     with allure.step("find connected ports"):
         if devices.dut.switch_type.lower() == "nvl":
             selected_port, selected_peer_port = (
                 Fae(port_name=port) for port in nvl_helpers.get_linked_ports_pair(devices, engines)
             )
+        else:
+            # On IB (XDR) switches the connected pair is a loopback link (two switch ports
+            # cabled to each other) taken from the setup connectivity map. peer-side force
+            # scenarios need both ends of one link, and no-force scenarios are unaffected by
+            # a loopback pair because peer-state-force defaults to enabled on both ends.
+            loopback_ports = RegressionLinks.get_filtered_ports_list(setup_name, is_loopback=True)
+            if not loopback_ports:
+                pytest.skip(
+                    f"delayed-recovery peer tests need a connected switch-switch (loopback) port "
+                    f"pair; none found for setup {setup_name}")
+            port_name, peer_name = next(iter(loopback_ports.items()))
+            selected_port, selected_peer_port = Fae(port_name=port_name), Fae(port_name=peer_name)
 
         return selected_port, selected_peer_port

@@ -78,14 +78,14 @@ def test_delayed_recovery_default_values(engines, devices, topology_obj):
 
 
 @pytest.mark.phy
-def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, register_cleanup):
+def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, register_cleanup, setup_name):
     """
     Test flow:
         1. pick connected switch-switch ports
         2. verify no-force delayed recovery scenarios
     """
     with allure.step("get connected ports (peer ports)"):
-        selected_port, selected_peer_port = get_connected_ports(devices, engines)
+        selected_port, selected_peer_port = get_connected_ports(devices, engines, setup_name)
         delayed_recovery_ports = (selected_port, selected_peer_port)
         register_cleanup(lambda: unset_delayed_recovery(delayed_recovery_ports))
 
@@ -193,7 +193,7 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
 
 
 @pytest.mark.phy
-def test_delayed_recovery_forced_values(engines, devices, topology_obj, register_cleanup):
+def test_delayed_recovery_forced_values(engines, devices, topology_obj, register_cleanup, setup_name):
     """
     Test flow:
         1. pick connected switch-switch ports
@@ -201,7 +201,7 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
         3. verify forced operational values on both ports
     """
     with allure.step("get connected ports (peer ports)"):
-        selected_port, selected_peer_port = get_connected_ports(devices, engines)
+        selected_port, selected_peer_port = get_connected_ports(devices, engines, setup_name)
         delayed_recovery_ports = (selected_port, selected_peer_port)
         register_cleanup(lambda: unset_delayed_recovery(delayed_recovery_ports))
 
