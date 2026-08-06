@@ -204,10 +204,13 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
         A (new_speed, port_obj, original_speed, port_names) tuple for restore_nvl_speed,
         or None if no change was made.
     """
-    supported_speeds = getattr(devices.dut, 'supported_nvl_speeds', [])
+    if hasattr(devices.dut, 'get_configurable_nvl_speeds'):
+        supported_speeds = devices.dut.get_configurable_nvl_speeds()
+    else:
+        supported_speeds = getattr(devices.dut, 'supported_nvl_speeds', [])
     if not supported_speeds:
         if required:
-            pytest.skip("No supported_nvl_speeds available on device")
+            pytest.skip("No configurable NVL speeds available on device")
         return None
 
     candidates = [s for s in supported_speeds if s not in (exclude_speeds or [])]

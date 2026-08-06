@@ -728,6 +728,16 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
     4. Unset all ports speed.
     5. Verify the default value (400G) is restored.
     """
+    configurable_speeds = (
+        devices.dut.get_configurable_nvl_speeds()
+        if hasattr(devices.dut, 'get_configurable_nvl_speeds')
+        else getattr(devices.dut, 'supported_nvl_speeds', [])
+    )
+    if IbInterfaceConsts.XDR_SLOW_SPEED not in configurable_speeds:
+        pytest.skip(
+            f"{IbInterfaceConsts.XDR_SLOW_SPEED} not configurable on this device "
+            f"(configurable_nvl_speeds={configurable_speeds})")
+
     with allure.step(f"Select {devices.dut.nvl_port_type} ports"):
         port_names = [port.name for port in RandomizationTool.select_random_ports(requested_ports_type=devices.dut.nvl_port_type, num_of_ports_to_select=0).get_returned_value() if port.name.startswith(prefix)]
         up_ports = [Port(port_name) for port_name in port_names]
@@ -1103,7 +1113,12 @@ def test_nvl_speed_configuration(engines, devices, random_api, has_loopbox, stan
     if not getattr(devices.dut, 'supported_nvl_speeds', None):
         pytest.skip("No supported_nvl_speeds available on device")
 
-    available_speeds = [s for s in devices.dut.supported_nvl_speeds if s != '200G']
+    configurable_speeds = (
+        devices.dut.get_configurable_nvl_speeds()
+        if hasattr(devices.dut, 'get_configurable_nvl_speeds')
+        else devices.dut.supported_nvl_speeds
+    )
+    available_speeds = [s for s in configurable_speeds if s != IbInterfaceConsts.XDR_SLOW_SPEED]
     if not available_speeds:
         pytest.skip("No non-200G speeds available for testing")
 

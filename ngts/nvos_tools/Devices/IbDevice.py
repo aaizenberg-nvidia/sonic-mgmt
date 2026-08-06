@@ -1762,6 +1762,16 @@ class NvLinkSwitch(IbSwitch):
                          switch_class=NvosConst.JULIET_SWITCH)
         self.supports_mtu_testing = False
 
+    def get_configurable_nvl_speeds(self):
+        """
+        NVL speeds safe to configure in tests.
+
+        Defaults to supported_nvl_speeds (what the DUT advertises). Platforms that
+        advertise a speed but cannot safely configure it without extra setup should
+        override this (see RosalindRTF).
+        """
+        return list(getattr(self, 'supported_nvl_speeds', []))
+
     def _init_interface_lists(self):
         super()._init_interface_lists()
         self.mgmt_ports = ['eth0', 'eth1']
@@ -3756,10 +3766,10 @@ class RosalindRTF(RosalindSwitch):
     def __init__(self):
         super().__init__(asic_amount=4)
 
-    def _init_constants(self):
-        super()._init_constants()
-        # RosalindRTF will support 200G - GPU configuration is needed
-        self.supported_nvl_speeds.remove('200G')
+    def get_configurable_nvl_speeds(self):
+        # DUT still advertises 200G in supported_nvl_speeds, but configuring it on RTF
+        # needs GPU-side setup — exclude from speed-change tests.
+        return [s for s in self.supported_nvl_speeds if s != IbInterfaceConsts.XDR_SLOW_SPEED]
 
 
 # -------------------------- PortiaSimx Switch ----------------------------
