@@ -33,7 +33,7 @@ from ngts.helpers.general_helper import get_all_setups, get_dut_cli_objs_from_to
 from ngts.helpers.sonic_branch_helper import get_sonic_branch, update_branch_in_topology, update_sanitizer_in_topology, \
     get_sonic_image
 from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
-from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool, DOCA_OPEN_SM_PATH, SM_MASTER_OPEN_SM_PATH
+from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool, DOCA_OPEN_SM_PATH, STOCK_OPEN_SM_PATH
 from ngts.tests.nightly.app_extension.app_extension_helper import APP_INFO, get_app_repository
 from ngts.tools.allure_report.allure_report_attacher import add_fixture_end_tag, add_fixture_name, \
     clean_stored_cmds_with_fixture_scope, update_fixture_scope_list, enable_record_cmds
@@ -456,7 +456,7 @@ def configure_opensm_path(doca_traffic_system):
     Configure OpenSmTool.OPENSM_PATH based on whether this is a doca traffic system.
     This runs automatically at the beginning of the test session.
     """
-    OpenSmTool.set_opensm_path(DOCA_OPEN_SM_PATH if doca_traffic_system else SM_MASTER_OPEN_SM_PATH)
+    OpenSmTool.set_opensm_path(DOCA_OPEN_SM_PATH if doca_traffic_system else STOCK_OPEN_SM_PATH)
 
 
 @pytest.fixture(scope='session')
