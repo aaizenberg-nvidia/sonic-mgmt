@@ -1651,6 +1651,9 @@ def configure_srv6_loop_break_acl(duthost, egress_ports):
 
     duthost.shell(f"sonic-cfggen -w -j {dut_json_path}")
 
+    # Remove the DUT-side JSON; sonic-cfggen has already loaded it into CONFIG_DB.
+    duthost.shell(f"rm -f {dut_json_path}")
+
     # Verify the ACL table and rule were actually installed - silent apply failures
     # would let the bounce loop run unchecked and inflate egress queue counters.
     table_output = duthost.shell("show acl table")["stdout"]
