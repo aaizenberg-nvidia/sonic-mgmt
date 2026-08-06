@@ -172,9 +172,10 @@ class TestLinkLocalIPacket:
     def get_downlink_router_mac(duthost, member_iface, default_router_mac):
         config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
         vlan_member = config_facts.get('VLAN_MEMBER') or {}
+        vlan_facts = config_facts.get('VLAN') or {}
         for vlan_interface, vlan_members in vlan_member.items():
             if member_iface in vlan_members:
-                vlan = config_facts['VLAN'][vlan_interface]
+                vlan = vlan_facts.get(vlan_interface) or {}
                 return vlan.get('mac', default_router_mac)
         return default_router_mac
 
@@ -441,7 +442,7 @@ class TestLinkLocalIPacket:
         rx_err = int(rif_counter_out[rif_rx_ifaces]["rx_err"].replace(",", "")) \
             if rif_support and rif_rx_ifaces else 0
         pytest_assert(max(rx_drp, rx_err) <= PKT_NUM_ZERO,
-                      f"Dropped packets in rx: rx_drp={rx_drp}, rx_err={rx_err}; expected both <= {PKT_NUM_ZERO}")
+                      f"Dropped packets in rx: rx_drp={rx_drp}, rx_err={rx_err}, expected both <= {PKT_NUM_ZERO}")
 
         # Match packets by PTF Validation
         match_cnt = testutils.count_matched_packets_all_ports(ptfadapter, exp_pkt, ports=list(out_ptf_indices))
