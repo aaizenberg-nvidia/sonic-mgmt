@@ -1683,9 +1683,9 @@ tests/nightly/lag/test_lag.py::test_lags_scale:
 
 platform_tests/test_reboot.py::test_warm_reboot:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 fib/test_fib.py::test_nvgre_hash[ipv6:
   skip:
@@ -1695,15 +1695,15 @@ fib/test_fib.py::test_nvgre_hash[ipv6:
 
 bgp/test_bgp_slb.py::test_bgp_slb_neighbor_persistence_across_advanced_reboot[fast:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5042499 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5042499 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5042499 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5042499 and 'sn6' in platform"
 
 bgp/test_bgp_slb.py::test_bgp_slb_neighbor_persistence_across_advanced_reboot[warm:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 system_health/test_system_health.py::test_service_checker_with_process_exit:
   xfail:
@@ -1727,30 +1727,30 @@ system_health/test_system_status.py::test_system_is_running:
     conditions:
     - "https://github.com/sonic-net/sonic-buildimage/issues/19879 and 'simx' in platform"
 
-########################## IGNORE WARM REBOOT ON SN6600_LD START ##########################
+########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) START ##########################
 arp/test_wr_arp.py:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 bgp/test_bgp_aggregate_address_resilience.py::test_aggregate_persists_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 gnmi/test_gnoi_system_reboot.py::test_gnoi_system_reboot_warm:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 mvrf/test_mgmtvrf.py::TestReboot::test_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 pfcwd/test_pfcwd_timer_accuracy.py::TestPfcwdAllTimer::test_pfcwd_timer_accuracy:
   xfail:
@@ -1760,9 +1760,9 @@ pfcwd/test_pfcwd_timer_accuracy.py::TestPfcwdAllTimer::test_pfcwd_timer_accuracy
 
 pfcwd/test_pfcwd_warm_reboot.py:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_fast_reboot:
   xfail:
@@ -1772,80 +1772,80 @@ platform_tests/test_advanced_reboot.py::test_fast_reboot:
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot_mac_jump:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot_sad:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_cancelled_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_cont_warm_reboot.py::test_continuous_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_ecmp_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_ipv6_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 sflow/test_sflow.py::TestReboot::testWarmreboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_multi_hop_upgrade_path.py::test_multi_hop_warm_upgrade_sad_path:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_upgrade_path.py::test_warm_upgrade_sad_path:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_warmboot_data_consistency.py::test_warmboot_data_consistency:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 vrf/test_vrf.py::TestVrfWarmReboot::test_vrf_system_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
-########################## IGNORE WARM REBOOT ON SN6600_LD END ##########################
+########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) END ##########################
