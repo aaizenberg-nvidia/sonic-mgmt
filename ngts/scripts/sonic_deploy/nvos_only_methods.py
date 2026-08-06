@@ -155,6 +155,12 @@ class NvosInstallationSteps:
             NvosInstallationSteps.verify_config_after_upgrade(config_file_path, dut_engine)
 
         with allure.step('Clear tested configuration for the tests'):
+            with allure.step("Perform factory reset"):
+                system.factory_default.action_reset(
+                    engine=dut_engine,
+                    device=dut_device,
+                    operation=dut_device.reset_factory,
+                ).verify_result()
             dut_device.clear_config(dut_engine=dut_engine, default_yml_path=None, root_dir=root_dir)
             NvueGeneralCli.show_config(dut_engine)
 
