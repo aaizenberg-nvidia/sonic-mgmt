@@ -8,6 +8,7 @@ Sources:
 """
 
 from collections import namedtuple
+from decimal import Decimal
 from enum import Enum
 
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
@@ -306,31 +307,6 @@ class PeerPortFields:
     SWITCH_PORT_ALIAS_FIELD = "switch_port_alias"
 
 
-PEER_PORT_COUNTER_FIELDS = [
-    "in-bytes", "in-pkts", "in-drops", "in-errors",
-    "out-bytes", "out-pkts", "out-drops", "out-errors",
-    "in-unicast-pkts", "in-multicast-pkts",
-    "out-unicast-pkts", "out-multicast-pkts",
-    "buffer-overrun-errors", "out-wait",
-]
-
-
-PEER_PORT_BER_FIELDS = ["raw-ber", "effective-ber", "symbol-ber"]
-
-
-PEER_PORT_PLR_FIELDS = [
-    "plr-rcv-codes", "plr-rcv-codes-err", "plr-rcv-uncorrectable-code",
-    "plr-xmit-codes", "plr-xmit-retry-codes", "plr-xmit-retry-events",
-    "plr-sync-events",
-]
-
-
-PEER_PORT_PLANE_FIELDS = [
-    "associated-switch-port", "plane-index",
-    "switch-ib-port-index", "switch-ib-port-name",
-]
-
-
 class PeerTelemetryHealth:
     """PEER_PORT_TELEMETRY_HEALTH|global status fields and healthy/degraded synonyms."""
     HEALTH_FIELD = "status"
@@ -364,14 +340,112 @@ PEER_PORT_DB_ADDITIVE_FIELDS = [
 ]
 
 
-# Canonical (API) additive counter -> COUNTERS_DB SAI field (bytes/octets share).
-PEER_PORT_API_TO_DB_FIELD = {
+# `nv show peer-port <id> counters` leaf -> COUNTERS_DB SAI field. The two drop
+# counters are the only ones the daemon writes without the SAI_ prefix.
+PEER_PORT_COUNTERS_TO_DB_FIELD = {
     "in-pkts": "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT",
     "out-pkts": "SAI_PORT_STAT_INFINIBAND_IF_OUT_PKTS_EXT",
-    "in-octets": "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT",
-    "out-octets": "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT",
     "in-bytes": "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT",
     "out-bytes": "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT",
+    "in-unicast-pkts": "SAI_PORT_STAT_INFINIBAND_UNICAST_RCV_PKTS",
+    "out-unicast-pkts": "SAI_PORT_STAT_INFINIBAND_UNICAST_XMT_PKTS",
+    "in-multicast-pkts": "SAI_PORT_STAT_INFINIBAND_MULTICAST_RCV_PKTS",
+    "out-multicast-pkts": "SAI_PORT_STAT_INFINIBAND_MULTICAST_XMT_PKTS",
+    "in-drops": "PORT_STAT_INFINIBAND_TOTAL_IN_DROPS",
+    "out-drops": "PORT_STAT_INFINIBAND_TOTAL_OUT_DROPS",
+    "in-errors": "SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F",
+    "out-errors": "SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F",
+    "out-wait": "SAI_PORT_STAT_INFINIBAND_IF_OUT_WAIT",
+    "buffer-overrun-errors": "SAI_PORT_STAT_INFINIBAND_EXCESSIVE_BUFFER_OVERRUN_EXT",
+}
+
+
+# `nv show peer-port <id> counters link` leaf -> COUNTERS_DB SAI field.
+PEER_PORT_COUNTERS_LINK_TO_DB_FIELD = {
+    "carrier-down-count": "SAI_PORT_STAT_INFINIBAND_LINK_DOWNED_EXT",
+    "error-recovery": "SAI_PORT_STAT_INFINIBAND_ERROR_RECOVERY_EXT",
+    "local-integrity-errors": "SAI_PORT_STAT_INFINIBAND_LOCAL_LINK_INTEGRITY_ERR_EXT",
+    "port-rcv-constraint-errors": "SAI_PORT_STAT_INFINIBAND_RX_CONSTRAINTS_ERR_EXT",
+    "port-rcv-remote-physical-errors": "SAI_PORT_STAT_INFINIBAND_RCV_REMOTE_PHY_ERR_EXT",
+    "port-rcv-switch-relay-errors": "SAI_PORT_STAT_INFINIBAND_RCV_SWITCH_RELAY_ERR_EXT",
+}
+
+
+# `nv show peer-port <id> link phy detail` leaf -> COUNTERS_DB SAI field. NVUE spells the
+# PLR leaves `plr-xmit-*` / `plr-rcv-codes-err` (matching the local interface tree) while the
+# DB uses `PLR_XMT_*` and the gNMI model uses `plr-rcv-code-err`; the gNMI divergence is
+# inherited from the interface tree (dev-confirmed), so keep one spelling per surface.
+PEER_PORT_PHY_DETAIL_TO_DB_FIELD = {
+    "plr-rcv-codes": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_CODES",
+    "plr-rcv-codes-err": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_CODES_ERR",
+    "plr-rcv-uncorrectable-code": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_UNCORRECTABLE_CODE",
+    "plr-xmit-codes": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_CODES",
+    "plr-xmit-retry-codes": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_RETRY_CODES",
+    "plr-xmit-retry-events": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_RETRY_EVENTS",
+    "plr-sync-events": "SAI_PORT_STAT_INFINIBAND_PLR_SYNC_EVENTS",
+    "plr-codes-loss": "SAI_PORT_STAT_INFINIBAND_PLR_CODES_LOSS",
+    "rq-general-error": "SAI_PORT_STAT_INFINIBAND_RQ_GENERAL_ERROR",
+    "sync-header-error-counter": "SAI_PORT_STAT_INFINIBAND_SYNC_HEADER_ERR_COUNTER",
+}
+
+
+# `nv show peer-port <id> link phy health` counter leaf -> COUNTERS_DB SAI field.
+PEER_PORT_PHY_HEALTH_TO_DB_FIELD = {
+    "effective-errors": "SAI_PORT_STAT_INFINIBAND_EFFECTIVE_ERR",
+    "symbol-errors": "SAI_PORT_STAT_INFINIBAND_SYMBOL_ERR",
+    "phy-received-bits": "SAI_PORT_STAT_INFINIBAND_PHY_RECEIVED_BITS",
+}
+
+
+# BER leaves of `link phy health`. The DB stores them as strings and the surfaces do not
+# normalize the formatting (an interface reports `15E-255` for the peer's `1.5e-254`, and a
+# peer renders `7e-08` as `0.00000007`), so these are compared as parsed decimals, never as
+# strings.
+PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD = {
+    "raw-ber": "SAI_PORT_STAT_INFINIBAND_RAW_BER_STRING",
+    "effective-ber": "SAI_PORT_STAT_INFINIBAND_EFFECTIVE_BER_STRING",
+    "symbol-ber": "SAI_PORT_STAT_INFINIBAND_SYMBOL_BER_STRING",
+}
+
+
+# The firmware rounds BER to a single significant digit, so one error arriving between the
+# NVUE read and the DB read steps the value (`7e-08` -> `1e-07`) far beyond any percentage
+# tolerance. A BER pair is therefore required to stay within a decade, which still catches the
+# mismatches worth catching: a wrong DB field, a missing scale factor, or a floor value shown
+# against a real one. Anything under the floor is the "no errors" sentinel, which one surface
+# may render as `1.5e-254` and another as `0`.
+PEER_PORT_BER_MAX_RATIO = Decimal(10)
+PEER_PORT_BER_ZERO_FLOOR = Decimal("1e-100")
+
+
+# Per-histogram-bucket COUNTERS_DB field template (per-lane templates live with the lane
+# leaf specs). The DB carries a lane field only for the operational lanes, so a peer
+# narrower than PEER_PORT_LANE_COUNT renders the remaining lanes as null.
+PEER_PORT_HISTOGRAM_DB_FMT = "SAI_PORT_STAT_INFINIBAND_RS_HIST_{bucket}"
+PEER_PORT_LANE_COUNT = 8
+PEER_PORT_HISTOGRAM_BUCKET_COUNT = 16
+
+
+# `link` speed / width against the DB's operational speed (Mb/s) and lane count.
+PEER_PORT_SPEED_LEAF = "speed"
+PEER_PORT_WIDTH_LEAF = "width"
+PEER_PORT_SPEED_DB_FIELD = "SAI_PORT_STAT_INFINIBAND_SPEED_OPER_BY_LANES"
+PEER_PORT_LANES_DB_FIELD = "SAI_PORT_STAT_INFINIBAND_LANES_OPER"
+PEER_PORT_SPEED_MBPS_PER_GBPS = 1000
+
+
+# `plr-bw-loss-percent` is derived from `plr-codes-loss` (dev-confirmed), not ingested.
+PEER_PORT_PLR_BW_LOSS_LEAF = "plr-bw-loss-percent"
+PEER_PORT_PLR_CODES_LOSS_LEAF = "plr-codes-loss"
+PEER_PORT_PLR_BW_LOSS_DIVISOR = 1e8
+
+
+# Canonical (API) additive counter -> COUNTERS_DB SAI field. gNMI spells the byte
+# counters `in-octets` / `out-octets` where NVUE says `in-bytes` / `out-bytes`.
+PEER_PORT_API_TO_DB_FIELD = {
+    **PEER_PORT_COUNTERS_TO_DB_FIELD,
+    "in-octets": PEER_PORT_COUNTERS_TO_DB_FIELD["in-bytes"],
+    "out-octets": PEER_PORT_COUNTERS_TO_DB_FIELD["out-bytes"],
 }
 
 
@@ -488,10 +562,9 @@ PEER_PORT_SCHEMA_GROUPS = [
             "port-guid": _S,
             "peer-component": _S,
         },
-        # TODO(peer-port): node-description not yet exposed over gNMI (gNMI-gap bug);
         # peer-component is outside the phase1-003 reduced drop (dev-confirmed,
         # off-spreadsheet) - comes in the later Arch-agreed xPath drop.
-        pending=frozenset({"node-description", "peer-component"}),
+        pending=frozenset({"peer-component"}),
     ),
     SchemaGroup(
         "peer-port-state-counters",
@@ -519,8 +592,6 @@ PEER_PORT_SCHEMA_GROUPS = [
         {
             "lid": _U,
         },
-        # TODO(peer-port): infiniband/state/lid not yet exposed over gNMI (gNMI-gap bug).
-        pending=frozenset({"lid"}),
     ),
     SchemaGroup(
         "peer-port-infiniband-port-counters",
@@ -713,3 +784,151 @@ PEER_PORT_LIST_SCHEMA_GROUPS = [
         False,
     ),
 ]
+
+
+class PeerPortNvueSub:
+    """`nv show peer-port <peer-port-id> <sub>` sub-commands (ROOT is the bare show)."""
+    ROOT = ""
+    COUNTERS = "counters"
+    COUNTERS_IB = "counters ib"
+    COUNTERS_IB_DROPS = "counters ib drops"
+    COUNTERS_IB_ERRORS = "counters ib errors"
+    COUNTERS_LINK = "counters link"
+    LINK = "link"
+    LINK_PHY = "link phy"
+    LINK_PHY_DETAIL = "link phy detail"
+    LINK_PHY_HEALTH = "link phy health"
+    LINK_PHY_HEALTH_HISTOGRAM = "link phy health histogram"
+
+
+class PeerPortTargetRole:
+    """Tier of a peer-port picked as a show-surface target."""
+    AGGREGATED = "hca-peer"
+    PLANE = "plane-peer"
+
+
+class PeerPortContainer:
+    """Child container names nested inside a `nv show peer-port` payload."""
+    COUNTERS = "counters"
+    IB = "ib"
+    LINK = "link"
+    DROPS = "drops"
+    ERRORS = "errors"
+    PHY = "phy"
+    DETAIL = "detail"
+    HEALTH = "health"
+    LANE = "lane"
+    HISTOGRAM_BUCKETS = "rs-fec-corrected-errors"
+
+
+# IB drop / error counters are reported per direction. A direction the peer does not
+# report renders as PEER_PORT_DIRECTION_NA, and these counters are hardcoded rather than
+# ingested (dev-confirmed, same behavior as the local interface tree), so they carry no
+# COUNTERS_DB field and are never DB-compared.
+PEER_PORT_DIRECTION_NA = "n/a"
+PEER_PORT_IB_DIRECTION_LEAVES = {"receive": _C, "transmit": _C}
+PEER_PORT_IB_DROP_COUNTERS = frozenset({"qp1-drops"})
+PEER_PORT_IB_ERROR_COUNTERS = frozenset({"icrc-errors", "symbol-errors", "tx-parity-errors"})
+
+
+PEER_PORT_ROOT_LEAVES = {
+    "peer-port-name": _S,
+    "node-guid": _S,
+    "port-guid": _S,
+    "host-name": _S,
+    "hca-node-description": _S,
+    "hca-ib-port": _U,
+    "hca-port-index": _U,
+    "associated-switch-port": _S,
+    "associated-switch-tray-number": _U,
+    "associated-switch-asic-in-tray": _U,
+    "chassis-sn": _S,
+}
+
+
+# A plane row renders every root leaf above except these two, even though its COUNTERS_DB row
+# populates both (`peer_port_name`, `hca_ib_port`) and the aggregated row shows them. Tolerated
+# on plane rows only, so the aggregated contract stays strict.
+PEER_PORT_PLANE_ROOT_PENDING_LEAVES = frozenset({"peer-port-name", "hca-ib-port"})
+
+
+PEER_PORT_LINK_LEAVES = {
+    "logical-state": _S,
+    "physical-state": _S,
+    PEER_PORT_SPEED_LEAF: _S,
+    PEER_PORT_WIDTH_LEAF: _S,
+}
+
+
+PEER_PORT_PHY_DETAIL_LEAVES = {
+    "phy-manager-state": _S,
+    "profile-fec-in-use": _S,
+    PEER_PORT_PLR_BW_LOSS_LEAF: _D,
+    **{leaf: _C for leaf in PEER_PORT_PHY_DETAIL_TO_DB_FIELD},
+}
+
+
+PEER_PORT_PHY_HEALTH_LEAVES = {
+    "time-since-last-clear-min": _D,
+    **{leaf: _C for leaf in PEER_PORT_PHY_HEALTH_TO_DB_FIELD},
+    **{leaf: _D for leaf in PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD},
+}
+
+
+# Per-lane leaf -> (GnmiTypeKind, COUNTERS_DB field template).
+PEER_PORT_LANE_LEAF_SPECS = {
+    "phy-raw-errors": (_C, "SAI_PORT_STAT_INFINIBAND_RAW_ERR_LANE_{lane}"),
+    "raw-ber": (_D, "SAI_PORT_STAT_INFINIBAND_RAW_BER_STRING_LANE_{lane}"),
+}
+
+
+PEER_PORT_LANE_LEAVES = {leaf: spec[0] for leaf, spec in PEER_PORT_LANE_LEAF_SPECS.items()}
+
+
+PEER_PORT_HISTOGRAM_LEAF = "count"
+
+
+# One `nv show peer-port <id> <sub>` node of the show surface:
+#   sub:            PeerPortNvueSub value (the sub-command to run)
+#   containers:     child container names the payload must expose
+#   leaves:         {leaf: GnmiTypeKind} carried directly by this node
+#   member_leaves:  {leaf: GnmiTypeKind} every container in `containers` must carry
+NvueShowNode = namedtuple(
+    "NvueShowNode", ["sub", "containers", "leaves", "member_leaves"], defaults=({},)
+)
+
+
+# The complete NVUE peer-port show surface. `nv show peer-port <id> -h` exposes only
+# `counters` and `link`, and the bare show renders identity plus `counters` (no link
+# subtree), so this list is the whole contract.
+PEER_PORT_NVUE_SHOW_NODES = [
+    NvueShowNode(PeerPortNvueSub.ROOT, frozenset({PeerPortContainer.COUNTERS}), PEER_PORT_ROOT_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS,
+                 frozenset({PeerPortContainer.IB, PeerPortContainer.LINK}),
+                 {leaf: _C for leaf in PEER_PORT_COUNTERS_TO_DB_FIELD}),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB,
+                 frozenset({PeerPortContainer.DROPS, PeerPortContainer.ERRORS}), {}),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB_DROPS, PEER_PORT_IB_DROP_COUNTERS, {},
+                 PEER_PORT_IB_DIRECTION_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB_ERRORS, PEER_PORT_IB_ERROR_COUNTERS, {},
+                 PEER_PORT_IB_DIRECTION_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_LINK, frozenset(),
+                 {leaf: _C for leaf in PEER_PORT_COUNTERS_LINK_TO_DB_FIELD}),
+    NvueShowNode(PeerPortNvueSub.LINK, frozenset({PeerPortContainer.PHY}), PEER_PORT_LINK_LEAVES),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY,
+                 frozenset({PeerPortContainer.DETAIL, PeerPortContainer.HEALTH}), {}),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_DETAIL, frozenset(), PEER_PORT_PHY_DETAIL_LEAVES),
+    # `link phy health` renders the `lane` list inline but not the histogram: that subtree
+    # shows up only in the parent `link` payload and under its own sub-command.
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_HEALTH,
+                 frozenset({PeerPortContainer.LANE}),
+                 PEER_PORT_PHY_HEALTH_LEAVES),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_HEALTH_HISTOGRAM,
+                 frozenset({PeerPortContainer.HISTOGRAM_BUCKETS}), {}),
+]
+
+
+# One NVUE leaf paired with the COUNTERS_DB field that backs it:
+#   kind: GnmiTypeKind.COUNTER compares within sampling tolerance, GnmiTypeKind.DECIMAL
+#         only requires both sides to parse (a sampled ratio can move between reads)
+PeerPortDbPair = namedtuple("PeerPortDbPair", ["label", "cli_value", "db_field", "kind"])

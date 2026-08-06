@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import pytest
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
@@ -18,21 +19,18 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     ALL_APIS,
     API_GNMIC,
     API_NVUE_CLI,
-    GnmiTypeKind,
     GnmiYangPaths,
     NMXT_IB_SERVICE,
     NvuePaths,
     PEER_PORT_ADDITIVE_FIELDS,
     PEER_PORT_API_TO_DB_FIELD,
-    PEER_PORT_BER_FIELDS,
-    PEER_PORT_COUNTER_FIELDS,
     PEER_PORT_DB_ADDITIVE_FIELDS,
     PEER_PORT_LIST_SCHEMA_GROUPS,
-    PEER_PORT_PLANE_FIELDS,
-    PEER_PORT_PLR_FIELDS,
+    PEER_PORT_NVUE_SHOW_NODES,
     PEER_PORT_SCHEMA_GROUPS,
     PEER_TELEMETRY_SAMPLING_SEC,
     PeerPortFields,
+    PeerPortNvueSub,
     PeerTelemetryHealth,
     PeerType,
     SAMPLING_JITTER_TOLERANCE_PCT,
@@ -355,14 +353,6 @@ def _live_nvue_peers(engines) -> Dict[str, Dict[str, str]]:
     return peers
 
 
-# (family-id, leaf list, expected type, raw-subtree accessor name).
-_NVUE_FAMILY_SPECS = [
-    ("counters", PEER_PORT_COUNTER_FIELDS, GnmiTypeKind.COUNTER, "counters"),
-    ("ber", PEER_PORT_BER_FIELDS, GnmiTypeKind.DECIMAL, "phy"),
-    ("plr", PEER_PORT_PLR_FIELDS, GnmiTypeKind.UINT, "phy"),
-]
-
-
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
@@ -386,39 +376,101 @@ def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.parametrize("family", _NVUE_FAMILY_SPECS, ids=lambda f: f[0])
-def test_peer_port_nvue_fields_present_and_typed(engines, devices, setup_topology, family):
-    """Each documented NVUE peer-port family is present and correctly typed on every live peer."""
-    fam_id, fields, kind, subtree = family
-    peers = _live_nvue_peers(engines)
-    problems: List[str] = []
+def test_peer_port_nvue_show_surface(engines, devices, setup_topology):
+    """Every `nv show peer-port <id>` sub-command exposes its documented containers and typed leaves.
 
-    for pid in sorted(peers):
-        if subtree == "counters":
-            sub = ibh.peer_port_counters(ibh.nvue_show_peer_port_raw(engines, pid))
-        else:
-            sub = ibh.peer_port_phy(ibh.nvue_peer_port_phy_raw(engines, pid))
-        ibh.attach_dict(f"{fam_id} {pid}", sub)
-        sub_ci = {k.lower(): v for k, v in sub.items()}
-        for leaf in fields:
-            if leaf.lower() not in sub_ci:
-                problems.append(f"[{pid}] missing {fam_id} leaf {leaf!r}")
-                continue
-            err = ibh.gnmi_typecheck(kind, sub_ci[leaf.lower()])
-            if err:
-                problems.append(f"[{pid}] {fam_id} leaf {leaf!r}: {err}")
+    Each node is read with its own sub-command rather than by flattening a parent payload, so a
+    sub-command that does not resolve is a failure instead of an incidentally-covered leaf.
+    """
+    _enable_peer_port(engines)
+    targets = ibh.select_nvue_peer_port_targets(engines)
 
-    assert not problems, (
-        f"NVUE peer-port {fam_id} sweep found {len(problems)} problem(s):\n  " +
-        "\n  ".join(problems)
-    )
+    with allure.step(f"Walk the peer-port show surface on {len(targets)} peer(s)"):
+        for role, pid in targets:
+            for node in PEER_PORT_NVUE_SHOW_NODES:
+                cmd = f"nv show peer-port {pid} {node.sub}".strip()
+                with allure.independent_step(f"Verify {role} `{cmd}`"):
+                    body = ibh.nvue_peer_port_show(engines, pid, node.sub)
+                    ibh.attach_dict(cmd, body)
+                    ResultObj(
+                        bool(body),
+                        f"`{cmd}` returned no data",
+                        issue_type=IssueType.PossibleBug,
+                    ).verify_result()
+                    problems = ibh.peer_port_show_problems(body, node, role=role)
+                    ResultObj(
+                        not problems,
+                        f"`{cmd}` has {len(problems)} contract problem(s):\n  " +
+                        "\n  ".join(problems),
+                        issue_type=IssueType.PossibleBug,
+                    ).verify_result()
+
+
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+def test_peer_port_nvue_matches_system_db(engines, devices, setup_topology):
+    """Every NVUE peer-port leaf backed by COUNTERS_DB agrees with the ingested row."""
+    _enable_peer_port(engines)
+    targets = ibh.select_nvue_peer_port_targets(engines)
+
+    for role, pid in targets:
+        with allure.step(f"Compare {role} {pid} NVUE leaves against its COUNTERS_DB row"):
+            db_row = ibh.read_peer_port_row(engines, pid)
+            ibh.attach_dict(f"COUNTERS_DB row {pid}", db_row)
+            ResultObj(
+                bool(db_row),
+                f"No COUNTERS_DB PEER_COUNTERS row for peer-port {pid!r}, so nothing to compare",
+                issue_type=IssueType.PossibleBug,
+            ).verify_result()
+
+            pairs = ibh.peer_port_db_comparison_pairs(engines, pid)
+            ibh.attach_dict(f"{pid} NVUE-to-DB pairs",
+                            {pair.label: [pair.cli_value, pair.db_field] for pair in pairs})
+            problems, compared = ibh.peer_port_db_pair_problems(pairs, db_row)
+
+            with allure.independent_step(f"Verify {compared} DB-backed leaf value(s) of {pid}"):
+                ResultObj(
+                    not problems,
+                    f"{pid} disagrees with its COUNTERS_DB row in {len(problems)} place(s):\n  " +
+                    "\n  ".join(problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} exposes DB-backed leaves at all"):
+                ResultObj(
+                    compared > 0,
+                    f"{pid} exposed no DB-backed leaf out of {len(pairs)} mapped one(s)",
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} link speed and width match the DB row"):
+                link_problems = ibh.peer_port_link_db_problems(
+                    ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK), db_row)
+                ResultObj(
+                    not link_problems,
+                    f"{pid} link attributes disagree with the DB row:\n  " +
+                    "\n  ".join(link_problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} derives plr-bw-loss-percent from plr-codes-loss"):
+                plr_problems = ibh.peer_port_plr_bw_loss_problems(
+                    ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK_PHY_DETAIL))
+                ResultObj(
+                    not plr_problems,
+                    f"{pid} PLR bandwidth-loss derivation problems:\n  " +
+                    "\n  ".join(plr_problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
 
 
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
-    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's."""
+    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's.
+
+    Plane rows are siblings of the aggregated row rather than a nested subtree (by design), so
+    the fan-out is verified across the listing.
+    """
     peers = _live_nvue_peers(engines)
     all_ids = set(peers)
     problems: List[str] = []
@@ -441,18 +493,6 @@ def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
                 problems.append(
                     f"[{pid}] plane peer {plane_id!r} switch-port {plane_sw!r} is not under "
                     f"aggregated switch-port {peer_sw!r}"
-                )
-
-        raw = ibh.nvue_show_peer_port_raw(engines, pid)
-        for plane_id, pf in sorted(ibh.peer_port_planes(raw).items()):
-            for leaf in PEER_PORT_PLANE_FIELDS:
-                if leaf not in pf:
-                    problems.append(f"[{pid}] nested plane {plane_id} missing leaf {leaf!r}")
-            plane_sw = str(pf.get("associated-switch-port", "")).strip()
-            if peer_sw and plane_sw and not plane_sw.startswith(peer_sw):
-                problems.append(
-                    f"[{pid}] nested plane {plane_id} switch-port {plane_sw!r} is not under "
-                    f"the peer switch-port {peer_sw!r}"
                 )
 
     assert not problems, (
@@ -935,8 +975,6 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
     _enable_peer_port(engines)
     targets = _select_peer_port_targets(gnmi_client)
     problems: List[str] = []
-    # `pending` leaves (known build gap): tolerated-missing but still type-checked.
-    pending = {leaf.lower() for leaf in getattr(group, "pending", frozenset())}
 
     # A peer that doesn't implement this container (an FNM-connected HCA with no
     # transceiver/component, or a plane leg whose link is down) answers the subscribe
@@ -960,26 +998,12 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
                     raise
                 exposed += 1
                 ibh.attach_dict(f"{group.group_id} {role} {pid}", payload)
-                payload_ci = {k.lower(): v for k, v in payload.items()}
-                for leaf, kind in group.leaves.items():
-                    if leaf.lower() not in payload_ci:
-                        if leaf.lower() in pending:
-                            logger.info(
-                                "[%s %s] pending leaf %r absent under %s (known build gap, tolerated)",
-                                role, pid, leaf, prefix,
-                            )
-                            continue
-                        problems.append(f"[{role} {pid}] missing leaf {leaf!r} under {prefix}")
-                        continue
-                    if leaf.lower() in pending:
-                        logger.warning(
-                            "[%s %s] pending leaf %r is now exposed under %s - drop it from "
-                            "the group's `pending` set so the sweep enforces it again",
-                            role, pid, leaf, prefix,
-                        )
-                    err = ibh.gnmi_typecheck(kind, payload_ci[leaf.lower()])
-                    if err:
-                        problems.append(f"[{role} {pid}] leaf {leaf!r}: {err}")
+                # `pending` leaves (known build gap) are tolerated-missing but still typed.
+                problems += [
+                    f"[{role} {pid}] {problem}"
+                    for problem in ibh.leaf_problems(
+                        payload, group.leaves, tolerated_missing=group.pending, where=prefix)
+                ]
 
     if exposed == 0:
         pytest.skip(
@@ -1018,16 +1042,10 @@ def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, g
                     )
                     continue
                 for member_key, leaves in members.items():
-                    for leaf, kind in group.leaves.items():
-                        present = next((v for k, v in leaves.items() if k.lower() == leaf.lower()), None)
-                        if present is None:
-                            problems.append(
-                                f"[{role} {pid}] member [{member_key}] missing leaf {leaf!r} under {prefix}"
-                            )
-                            continue
-                        err = ibh.gnmi_typecheck(kind, present)
-                        if err:
-                            problems.append(f"[{role} {pid}] member [{member_key}] leaf {leaf!r}: {err}")
+                    problems += [
+                        f"[{role} {pid}] member [{member_key}] {problem}"
+                        for problem in ibh.leaf_problems(leaves, group.leaves, where=prefix)
+                    ]
 
     assert not problems, (
         f"peer-port gNMI list-subtree sweep for {group.group_id!r} found "
