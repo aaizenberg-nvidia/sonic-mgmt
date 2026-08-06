@@ -61,22 +61,23 @@ def test_show_system_web_server_api_conns(engines):
 
     try:
 
-        with allure_step('Run show system api connections command and verify that each field has a positive value'):
+        with allure_step('Run show system api connections command and verify each field is non-negative'):
             ext_api_conn_output = OutputParsingTool.parse_json_str_to_dictionary(
                 system.web_server_api.connections.show()).get_returned_value()
-            accepted = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_ACCEPTED]).strip())
+            # JSON -o json returns ints; older text paths may return strings — accept both.
+            accepted = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_ACCEPTED])
             assert accepted >= 0, 'Number of Accepted connections({val}) is negative'.format(val=accepted)
-            active = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_ACTIVE]).strip())
+            active = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_ACTIVE])
             assert active >= 0, 'Number of Active connections({val}) is negative'.format(val=active)
-            handled = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_HANDLED]).strip())
+            handled = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_HANDLED])
             assert handled >= 0, 'Number of Handled connections({val}) is negative'.format(val=handled)
-            reading = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_READING]).strip())
+            reading = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_READING])
             assert reading >= 0, 'Number of Reading connections({val}) is negative'.format(val=reading)
-            request = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_REQUEST]).strip())
+            request = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_REQUEST])
             assert request >= 0, 'Number of Request connections({val}) is negative'.format(val=request)
-            waiting = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_WAITING]).strip())
+            waiting = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_WAITING])
             assert waiting >= 0, 'Number of Waiting connections({val}) is negative'.format(val=waiting)
-            writing = int((ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_WRITING]).strip())
+            writing = int(ext_api_conn_output[SystemConsts.EXTERNAL_API_CONN_WRITING])
             assert writing >= 0, 'Number of Writing connections({val}) is negative'.format(val=writing)
 
     finally:
