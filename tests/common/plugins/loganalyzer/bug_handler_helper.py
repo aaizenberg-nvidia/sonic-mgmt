@@ -628,22 +628,22 @@ def bug_handler_wrapper(analyzers, duthosts, la_results):
         if "failed" in la_result:
             logging.error(f'Failed to run log analyzer on {node}')
             return
+    original_handlers = logging.getLogger().handlers[:]
+    original_level = logging.getLogger().level
     try:
         # clear files from previous run
         clear_files(os.environ.get(InfraConst.ENV_SESSION_ID, 'unknown_session_id'))
         # run bug handler in seperated step to decouple from analyze_logs
-        # save original logging handlers and level
-        original_handlers = logging.getLogger().handlers[:]
-        original_level = logging.getLogger().level
         logging.getLogger().handlers = []
         bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1080)
+        failed_nodes = [node for node, result in bh_results.items()
+                        if isinstance(result, dict) and 'failed' in result]
+        if failed_nodes:
+            raise RuntimeError(f"Bug handler failed or timed out on: {failed_nodes}")
+    finally:
         # restore original logging handlers and level
         logging.getLogger().handlers = original_handlers
         logging.getLogger().setLevel(original_level)
-        for node in bh_results.keys():
-            if 'failed' in bh_results[node]:
-                logging.error(f'Failed to run bug handler on {node}')
-    finally:
         # always attach allure log for bug handler results
         for duthost in duthosts:
             log_file = LOG_ANALYZER_LOG_FILE.format(duthost.hostname)

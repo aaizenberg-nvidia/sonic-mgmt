@@ -307,6 +307,38 @@ def bug_handler_wrapper_err_msg(conf_path: str, redmine_project: str, branch: st
     return bug_handler_file_result, runtime_secs
 
 
+def _collect_tech_support_for_ticket(bug_handler_params):
+    """Collect techsupport and enforce Redmine size limits. Raises on failure."""
+    tar_file_path_list = get_tech_support_from_switch(bug_handler_params)
+    # Note: Executed commands are now included directly in the ticket description via get_nvue_additional_info
+    # No longer attaching the commands file separately
+    return [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
+
+
+def _upload_tech_support_attachments(redmine_project, ticket_id, tar_file_path_list):
+    """Upload techsupport attachments to an existing ticket. Raises on failure."""
+    upload_script = BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT.get(
+        redmine_project, BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT["default"])
+    upload_cmd = (f"env LOG_FORMAT_JSON=1 {upload_script} --bug_id {ticket_id} "
+                  f"--attachments {' '.join(tar_file_path_list)}")
+    logger.info(f"Running uploading attachment command: {upload_cmd}")
+    upload_attachment_output = subprocess.run(upload_cmd, shell=True, capture_output=True)
+    upload_stdout, upload_error = upload_attachment_output.stdout, upload_attachment_output.stderr
+    logger.info(upload_stdout)
+
+    if not upload_error:
+        try:
+            upload_attachment_result = json.loads(upload_stdout)
+            if "error" in upload_attachment_result:
+                upload_error = str(upload_attachment_result)
+        except Exception as e:
+            upload_error = ExceptionTool.format_exception(e)
+    if upload_error:
+        err_msg = f"Failed to upload dump to ticket {ticket_id}: {upload_error}"
+        logger.error(err_msg)
+        raise RuntimeError(err_msg)
+
+
 def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: str, yaml_parsed_file: str,
                                  user: str, bug_handler_path: str, bug_handler_action: dict = {},
                                  bug_handler_params: dict = {}) -> tuple[dict, float]:
@@ -325,6 +357,8 @@ def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: s
     update_only = not bug_handler_action["create"] and bug_handler_action["update"]
     update_only_mode = '--update_only' if update_only else ''
     cli_type = bug_handler_params.get("cli_type", '')
+    # Initialized here so NVUE (and Sonic skip/no-action) still have a defined list for upload below.
+    tar_file_path_list = []
     if cli_type == "Sonic":
 
         start_time = time.perf_counter()
@@ -346,6 +380,14 @@ def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: s
                 # pass case if there's existing ticket
                 if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
                     bug_handler_file_result["status"] = "done"
+
+        if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
+            try:
+                tar_file_path_list = _collect_tech_support_for_ticket(bug_handler_params)
+            except Exception as e:
+                err_msg = f"Techsupport collection failed; refusing to open/update ticket: {e}"
+                logger.error(err_msg)
+                raise RuntimeError(err_msg) from e
 
     if not bug_handler_no_action or cli_type != "Sonic":
         bug_handler_cmd = f"env LOG_FORMAT_JSON=1 {bug_handler_path} --cfg {conf_path} --project {redmine_project} " \
@@ -373,27 +415,14 @@ def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: s
     if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
         ticket_id = get_ticket_id(bug_handler_file_result)
         logger.info(f"the RM ticket id is: {ticket_id}")
-        tar_file_path_list = get_tech_support_from_switch(bug_handler_params)
-        # Note: Executed commands are now included directly in the ticket description via get_nvue_additional_info
-        # No longer attaching the commands file separately
-        tar_file_path_list = [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
-        upload_script = BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT["default"])
-        upload_cmd = f"env LOG_FORMAT_JSON=1 {upload_script} --bug_id {ticket_id}  --attachments {' '.join(tar_file_path_list)}"
-        logger.info(f"Running uploading attachment command: {upload_cmd}")
-        upload_attachment_output = subprocess.run(upload_cmd, shell=True, capture_output=True)
-        upload_attachment_output, upload_error = upload_attachment_output.stdout, upload_attachment_output.stderr
-        logger.info(upload_attachment_output)
-
-        if not upload_error:
+        if not tar_file_path_list:
             try:
-                upload_attachment_result = json.loads(upload_attachment_output)
-                if "error" in upload_attachment_result:
-                    upload_error = str(upload_attachment_result)
+                tar_file_path_list = _collect_tech_support_for_ticket(bug_handler_params)
             except Exception as e:
-                upload_error = ExceptionTool.format_exception(e)
-        if upload_error:
-            logger.error(f"Failed to upload the file: {upload_error}")
-
+                err_msg = (f"Techsupport collection failed after ticket {ticket_id} was opened: {e}")
+                logger.error(err_msg)
+                raise RuntimeError(err_msg) from e
+        _upload_tech_support_attachments(redmine_project, ticket_id, tar_file_path_list)
         bug_handler_file_result["file_name"] = ",".join(tar_file_path_list)
     return bug_handler_file_result, runtime_secs
 
