@@ -1390,7 +1390,9 @@ class AppExtensionInstallationConstants:
 class PlayersAliases:
     Aliases_list = ['sl']
     SL = 'sl'
-    duts_list = ['dut', 'dut-b', 'left-tg', 'right-tg', 'dpu0', 'dpu1', 'dpu2', 'dpu3']
+    # Multi-DUT setups name their extra switches dut2..dut9 in Noga (an NVLink full rack holds 9 switches)
+    multi_duts_list = [f'dut{index}' for index in range(2, 10)]
+    duts_list = ['dut', 'dut-b'] + multi_duts_list + ['left-tg', 'right-tg', 'dpu0', 'dpu1', 'dpu2', 'dpu3']
     fanouts_list = ['fanout']
 
 
@@ -1923,7 +1925,6 @@ class DoroceConsts:
     ALLOWED_PERCENTAGE_DEVIATION = 2
 
 
-SETUPS_WITH_NON_DEFAULT_PTF = ['r-bobcat-01', 'bobcat-1254', 'bobcat-1240', 'mtvr-bobcat-04']
 FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE = "/tmp/file_include_failed_sanity_checker_case.txt"
 INSTALLED_DPUS = '/root/mars/workspace/sonic-mgmt/installed_dpus'
 
@@ -1957,7 +1958,7 @@ class WJHConsts:
 
 
 class FanoutVersionConsts:
-    EXPECTED_MLNX_VERSION = ["3.10.4206", "3.10.4302"]
+    EXPECTED_MLNX_VERSION = ["3.10.4206", "3.10.4302", "3.10.4602"]
     EXPECTED_SONIC_VERSION_LIST = ["202511_RC.119-8bde1a082_Internal", "202511_RC.129-48da86131_Internal", "202605_RC.48-89ab9327d9_Internal"]
 
 

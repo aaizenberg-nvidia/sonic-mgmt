@@ -95,6 +95,14 @@ def duthosts(ansible_adhoc, topology_obj, request):
                             NvosCliTypes.NvueCliTypes:
                         logger.info(f'Ignore when NVOS dut is down')
                         continue
+                    elif isinstance(err, KeyError) and dut in PlayersAliases.multi_duts_list and dut_hostname in err.args:
+                        # A multi-dut setup can hold switches that were never added to the ansible inventory,
+                        # since until dut2..dut9 were supported only the primary dut was ever looked up there.
+                        # Skip them instead of failing the session - the cost is no syslog analysis on that switch.
+                        logger.warning(f'"{dut_hostname}" ({dut}) is missing from the ansible inventory, so it is '
+                                       f'excluded from loganalyzer. To analyze its syslog as well, add a host entry '
+                                       f'for "{dut_hostname}" to sonic-mgmt/ansible/inventory')
+                        continue
                     elif (isinstance(err, AnsibleConnectionFailure) or isinstance(err, KeyError)) and 'dpu' in dut_hostname:
                         logger.info(f'Ignore the DPUs on smart switch setup if the ansible host is not available')
                         continue
