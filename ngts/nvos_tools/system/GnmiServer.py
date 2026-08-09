@@ -64,6 +64,7 @@ class Status(BaseComponent):
 class GnmiServer(_GnmiConfigSettlingMixin, MTLSableServerResource):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/gnmi-server')
+        self.status = Status(self)
 
     def enable_gnmi_server(self, apply=True):
         return self.set(GnmiConsts.GNMI_STATE_FIELD, GnmiConsts.GNMI_STATE_ENABLED, apply=apply)

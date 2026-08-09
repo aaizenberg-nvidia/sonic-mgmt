@@ -19,6 +19,7 @@ from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.nvos_tools.system.Aaa import Aaa
+from ngts.nvos_tools.system.AsicDebugConfig import AsicDebugConfig
 from ngts.nvos_tools.system.Config import Config
 from ngts.nvos_tools.system.ControlPlane import ControlPlane
 from ngts.nvos_tools.system.Debug_log import DebugLog
@@ -40,6 +41,7 @@ from ngts.nvos_tools.system.SshServer import SshServer
 from ngts.nvos_tools.system.SnmpServer import SnmpServer
 from ngts.nvos_tools.system.Stats import Stats
 from ngts.nvos_tools.system.Syslog import Syslog
+from ngts.nvos_tools.system.SystemInternal import SystemInternal
 from ngts.nvos_tools.system.Techsupport import TechSupport
 from ngts.nvos_tools.system.Telemetry import Telemetry
 from ngts.nvos_tools.system.Version import Version
@@ -93,7 +95,8 @@ class System(BaseComponent):
         self.disk = Disk(self)
         self.memory = BaseComponent(self, path='/memory')
         self.cpu = BaseComponent(self, path='/cpu')
-        self.asic_debug_config = BaseComponent(self, path='/asic-debug-config')
+        self.internal = SystemInternal(self)
+        self.asic_debug_config = AsicDebugConfig(self)
         self.cpu_debug_config = BaseComponent(self, path='/cpu-debug-config')
         self.bmc_debug_config = BaseComponent(self, path='/bmc-debug-config')
         self.nv_bridge = BaseComponent(self, path='/nv-bridge')
