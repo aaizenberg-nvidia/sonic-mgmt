@@ -143,8 +143,8 @@ def test_save_reboot(engines, devices):
         if fec_capable:
             selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).get_returned_value()
             fec_mode = LinkDetectionConsts.FEC_MODE_DOUBLE
-            with allure.step("Set the fec mode to {} for the selected port {}".format(fec_mode, selected_port.name)):
-                selected_port.interface.link.set(op_param_name=LinkDetectionConsts.FEC_MODE, op_param_value=fec_mode).\
+            with allure.step("Set the fec mode to {} for the selected port {} - and apply".format(fec_mode, selected_port.name)):
+                selected_port.interface.link.set(op_param_name=LinkDetectionConsts.FEC_MODE, op_param_value=fec_mode, apply=True, ask_for_confirmation=True).\
                     verify_result()
 
         with allure.step("Update the health component unhealthy counters"):
