@@ -3005,14 +3005,10 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                           "nv show platform environment psu",
                                           "nv show system profile",
                                           "nv show sdn transceivers",
-                                          # delayed-recovery only supported on croc+mamba
-                                          "nv set fae interface {port} link delayed-recovery",
                                           "nv set fae interface {port} link phy-recovery logic-relock-mode",
                                           "nv set fae interface {port} link phy-recovery logic-relock-timeout",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-mode",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-timeout",
-                                          # link-training only supported on juliet
-                                          "nv set fae interface {port} link link-training",
                                           "nv set fae interface {port} link low-power state",
                                           "nv unset fae interface {port} link low-power state"]
 
