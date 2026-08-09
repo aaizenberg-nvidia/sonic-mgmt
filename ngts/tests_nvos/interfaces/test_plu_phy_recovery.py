@@ -27,7 +27,7 @@ import pytest
 from ngts.nvos_constants.constants_nvos import ActionConsts, LogsSources
 from ngts.nvos_tools.Devices.IbDevice import RosalindSurrogateSwitch
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
@@ -56,7 +56,6 @@ from ngts.tests_nvos.interfaces.plu_phy_recovery.helpers import (
     verify_config,
     unset_config_all,
     cleanup_phy_recovery_config,
-    select_random_xdr_up_port,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,11 +131,17 @@ def test_plu_phy_recovery_go_once(engines, devices, random_api):
 
     system = System()
 
-    with allure.step("Select a random UP port with connection-mode xdr"):
-        port_result = select_random_xdr_up_port()
+    with allure.step(f"Select a random UP port with ib-speed {IbInterfaceConsts.XDR}"):
+        port_result = RandomizationTool.select_random_port(
+            requested_ports_state=NvosConsts.LINK_STATE_UP,
+            requested_ib_speed=IbInterfaceConsts.XDR
+        )
         if not port_result.result:
             port_result.ignore_result()
-            pytest.skip(f"Skipping test - no UP XDR ports: {port_result.info}")
+            pytest.skip(
+                f"Skipping test - no UP port reports ib-speed {IbInterfaceConsts.XDR} "
+                f"(logic-relock is XDR-scoped): {port_result.info}"
+            )
         selected_port = port_result.get_returned_value()
         logger.info(f"Selected XDR port for go-once test: {selected_port.name}")
 

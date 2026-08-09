@@ -5,7 +5,7 @@ Reusable helper functions for PLU PHY recovery tests.
 Works on all port types (sw and acl).
 
 Functions:
-    - Port Selection: get_all_ports_ranges, select_random_xdr_up_port
+    - Port Selection: get_all_ports_ranges
     - Recovery Actions: trigger_recovery_go_once
     - Configuration: apply_mode, apply_mode_if_needed, apply_timeout,
                      verify_config, unset_config, cleanup_phy_recovery_config
@@ -13,19 +13,17 @@ Functions:
 """
 
 import logging
-import random
 import time
 from typing import Dict, List, Optional
 
 from retry.api import retry_call
 
 from ngts.nvos_constants.constants_nvos import ApiType, ConfState, NvosConst
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port, PortRequirements
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
@@ -95,16 +93,6 @@ def get_all_ports_ranges() -> List[str]:
         return ranges
 
 
-def _connection_mode_from_interface_entry(port_entry) -> Optional[str]:
-    """Return ``connection-mode`` from one ``nv show interface`` port entry."""
-    if not isinstance(port_entry, dict):
-        return None
-    link = port_entry.get(IbInterfaceConsts.LINK)
-    if isinstance(link, dict) and IbInterfaceConsts.LINK_CONNECTION_MODE in link:
-        return link.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
-    return port_entry.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
-
-
 def get_port_connection_mode(port: Port) -> Optional[str]:
     """
     Return link connection-mode for a port (e.g. ``xdr``, ``ndr``).
@@ -116,56 +104,6 @@ def get_port_connection_mode(port: Port) -> Optional[str]:
         port.interface.link.show()
     ).get_returned_value()
     return link_output.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
-
-
-def select_random_xdr_up_port() -> ResultObj:
-    """
-    Select a random LINK-UP port whose ``connection-mode`` is ``xdr``.
-
-    PLU logic-relock / phy-recovery is XDR-scoped; NDR UP ports can leave
-    applied!=operational and should not be used for positive tests.
-
-    Returns:
-        ResultObj with a Port in ``returned_value`` on success, or
-        ``result=False`` when no UP XDR ports are available.
-    """
-    with allure.step(
-        f"Select a random UP port with connection-mode {IbInterfaceConsts.XDR}"
-    ):
-        port_result = RandomizationTool.select_random_ports(
-            requested_ports_state=NvosConsts.LINK_STATE_UP,
-            num_of_ports_to_select=0,
-        )
-        if not port_result.result:
-            return port_result
-
-        up_ports = port_result.get_returned_value()
-        # One aggregate show for all connection-mode values (avoid per-port show).
-        interfaces = OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
-            Port.show_interface()
-        ).get_returned_value()
-        xdr_ports = [
-            port
-            for port in up_ports
-            if _connection_mode_from_interface_entry(interfaces.get(port.name)) ==
-            IbInterfaceConsts.XDR
-        ]
-
-        if not xdr_ports:
-            return ResultObj(
-                False,
-                info=(
-                    f"No UP ports with connection-mode {IbInterfaceConsts.XDR} "
-                    f"(checked {len(up_ports)} UP port(s))"
-                ),
-            )
-
-        selected_port = random.choice(xdr_ports)
-        logger.info(
-            f"Selected XDR UP port for phy-recovery: {selected_port.name} "
-            f"({len(xdr_ports)}/{len(up_ports)} UP ports are xdr)"
-        )
-        return ResultObj(True, returned_value=selected_port)
 
 
 # =============================================================================
