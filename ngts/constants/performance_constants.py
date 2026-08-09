@@ -107,9 +107,9 @@ class PerfConsts:
     PERF_SETUP_DUT_ALIASES = [DUT_ALIAS]
     ECN_CAPABLE_TRANSPORT = 1
     # Sample Parameters
-    # DISABLE_HFT_ON_SPC6: temporary workaround for RM #5165343. Remove once resolved.
+    # DISABLE_HFT_ON_SPC6: temporary workaround for RM #5165344. Remove once resolved.
     DISABLE_HFT_ENV_VAR = "DISABLE_HFT"
-    DISABLE_HFT = "True" if is_redmine_issue_active([5165343])[0] else "False"
+    DISABLE_HFT = "True" if is_redmine_issue_active([5165344])[0] else "False"
     SAMPLES_PARAMS = {
         "SAMPLE_DURATION": 30,
         "BW_SAMPLE_DELAY": 5,
