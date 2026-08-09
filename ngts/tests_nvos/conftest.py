@@ -77,6 +77,7 @@ logger = logging.getLogger()
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
     re.compile(r".*ib3: multicast join failed for.*, status -\d+"),
+    re.compile(r".*RAS: Correctable Errors collector initialized.*"),
 ]
 
 pytest_plugins = [
