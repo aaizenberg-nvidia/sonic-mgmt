@@ -2160,7 +2160,7 @@
 # NVOS: Expected syncd/SDK logs during switch teardown (factory-reset / port-split / asic-health-fatal).
 #       Benign - SAI "remove switch is not implemented" plus CoS module already gone on teardown. NVBug 5849348.
 - Errors_list:
-    - '.*ERR syncd-ibv\d+#SDK: \[COS\.ERR\] Failed to unregister CoS module LAG global advisor, error: Entry Not Found.*'
+    - '.*ERR syncd-ibv\d+#SDK: \[COS\.ERR\].*Failed to unregister CoS module LAG global advisor, error: Entry Not Found.*'
     - '.*ERR syncd-ibv\d+#SDK: :- processOidRemove: remove switch is not implemented, FIXME.*'
     - '.*ERR syncd-ibv\d+#SDK: :- run: Runtime error: :- processOidRemove: remove switch is not implemented, FIXME.*'
   Conditions:
