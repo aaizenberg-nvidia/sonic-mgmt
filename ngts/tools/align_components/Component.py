@@ -55,8 +55,9 @@ class BmcComponent(Component):
 
     def get_installed_version(self) -> str:
         respond = self.rf_api.get_query(f'{RedfishCollection.FIRMWARE_INVENTORY}/{self.comp_mapping[self.name]}')
-        version = respond['Version']
-        return version
+        if 'Version' not in respond:
+            raise RuntimeError(f"'Version' missing for {self.name}. Response: {respond}")
+        return respond['Version']
 
     def update(self) -> bool:
         print(
