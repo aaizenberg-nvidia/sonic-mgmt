@@ -11826,6 +11826,104 @@
   inv_name: lab
   comment: Mellanox MTR testbed
 
+- conf-name: r-salamandra-spc6-09-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-09
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-06-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-06
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-08-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-08
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-03-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-03
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-05-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-05
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-04-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-04
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
+- conf-name: r-salamandra-spc6-07-ptf-any
+  group-name: ptf-any
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip:
+  ptf_ipv6:
+  server:
+  vm_base:
+  dut:
+    - r-salamandra-spc6-07
+  inv_name: lab
+  comment: SPC6 Salamandra BMC test switch
+
 - conf-name: salamandra-chipless-109-ptf-any
   group-name: vm-t1
   topo: ptf-any

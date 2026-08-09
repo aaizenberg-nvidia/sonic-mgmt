@@ -120,19 +120,29 @@ class BmcCliTool:
                 parts.append(f"--{key} {shlex.quote(str(value))}")
         return " ".join(parts)
 
-    def run(self, subcmd, validate=False, **kwargs):
+    def run(self, subcmd, validate=False, *, ssh_timeout: int | None = None, **kwargs):
         """Run a bmc-cli subcommand and return its output.
 
         ``validate`` is False by default and passed explicitly rather than left
         to the engine: the negative tests drive bmc-cli into its error paths and
         assert on the returned text, which only works while a non-zero exit
         returns instead of raising. Pass True to make failures raise.
+
+        ``ssh_timeout`` bounds the devts SSH read, which is a different thing from
+        any ``--timeout`` flag bmc-cli itself takes: that flag only ever reaches the
+        remote tool, so a transport that wedges before bmc-cli can answer leaves the
+        engine waiting on its own default (10000s, and ``retry_run=True`` means up to
+        three of those). Keyword-only so it cannot be mistaken for a bmc-cli flag, and
+        opt-in rather than defaulted because ``collect-all``, ``sensor-dump`` and the
+        attestation subcommands are legitimately slow -- a blanket cap would make
+        working calls flaky.
         """
         self._ensure_auth()
         flags = self._format_flags(kwargs)
         cmd = f"sudo {BMC_CLI} {self._auth} {subcmd} {flags}".strip()
+        run_kwargs = {} if ssh_timeout is None else {"timeout": ssh_timeout}
         with allure.step(self._step_title("bmc-cli", cmd)):
-            return self.engine.run_cmd(cmd, validate=validate)
+            return self.engine.run_cmd(cmd, validate=validate, **run_kwargs)
 
     def build_cmd(self, subcmd) -> str:
         """Return the full ``bmc-cli ... <subcmd>`` string without executing it.
