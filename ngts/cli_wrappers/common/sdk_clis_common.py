@@ -39,9 +39,35 @@ class SdkCliCommon():
         return kernel_version
 
     def get_latest_sdk_version(self, cur_sdk_version, sdk_branch):
+        """Resolve the latest SDK version published under the branch lastrc DEBS folder.
+
+        Looks up ``lastrc_{sdk_branch}/DEBS``, finds a kernel folder matching the DUT
+        kernel, and extracts the SDK version from the ``sys-sdk-git`` deb filename.
+        Returns ``cur_sdk_version`` when no matching kernel folder is found.
+
+        Args:
+            cur_sdk_version (str): SDK version currently installed on the DUT, used as
+                the fallback when no matching kernel package is available.
+            sdk_branch (str): SDK branch name used to build the lastrc DEBS path
+                (e.g. ``sx_sdk_4_10_1000``).
+
+        Returns:
+            str: Latest SDK version parsed from the matching deb, or ``cur_sdk_version``
+            if no DUT-kernel match exists.
+
+        Raises:
+            FileNotFoundError: If the lastrc DEBS directory does not exist.
+            IndexError: If no ``sys-sdk-git`` deb is present under the matched kernel folder.
+            AttributeError: If the deb filename does not match the expected version pattern.
+        """
         dut_kernel_version = self.get_kernel_version()
         deb_file_path = os.path.join(PerfConsts.LATEST_SDK_DEB_DIR_TEMPLATE.format(SDK_BRANCH=sdk_branch))
+        logger.info(
+            f"Looking up latest SDK version under '{deb_file_path}' "
+            f"for DUT kernel '{dut_kernel_version}' (current SDK version: '{cur_sdk_version}')"
+        )
         available_kernel_versions = os.listdir(deb_file_path)
+        logger.info(f"Available kernel folders in lastrc DEBS: {sorted(available_kernel_versions)}")
 
         deb_kernel_version = None
         for kernel_version in available_kernel_versions:
@@ -50,16 +76,83 @@ class SdkCliCommon():
                 deb_kernel_version = kernel_version
                 break
         if not deb_kernel_version:
-            logger.warning(f"No matching kernel version found for {dut_kernel_version}")
+            logger.warning(
+                f"No matching kernel version found for '{dut_kernel_version}' "
+                f"under lastrc DEBS; keeping current SDK version '{cur_sdk_version}'"
+            )
             return cur_sdk_version
+        logger.info(f"Matched DUT kernel '{dut_kernel_version}' to DEBS folder '{deb_kernel_version}'")
         files_available_in_deb_dir = glob.glob(os.path.join(deb_file_path, PerfConsts.LATEST_SDK_DEB_FILE_TEMPLATE))
+        logger.info(f"sys-sdk-git packages found under '{deb_file_path}': {files_available_in_deb_dir}")
         sdk_version = re.search(r"sys-sdk-git_1.mlnx.(\d+.\d+.\d+.*\d*)_", files_available_in_deb_dir[0]).group(1)
 
         if sdk_version.count('.') == 3:
             last_dot_index = sdk_version.rfind('.')
             sdk_version = sdk_version[:last_dot_index] + '-' + sdk_version[last_dot_index + 1:]
 
+        logger.info(f"Resolved latest SDK version '{sdk_version}' from '{files_available_in_deb_dir[0]}'")
         return sdk_version
+
+    def get_latest_sdk_version_or_current(self, cur_sdk_version, sdk_branch):
+        """Resolve the latest SDK version, keeping the DUT version when resolution fails.
+
+        The lastrc release folder for a branch is not always published (or is pruned),
+        so upgrading to the latest deb is best effort and must never fail the flow.
+        """
+        try:
+            logger.info(
+                f"About to get latest SDK version for branch '{sdk_branch}' "
+                f"and current SDK version '{cur_sdk_version}'"
+            )
+            latest_sdk_version = self.get_latest_sdk_version(cur_sdk_version=cur_sdk_version,
+                                                             sdk_branch=sdk_branch)
+            logger.info(f"Latest SDK version resolved successfully with version '{latest_sdk_version}'")
+        except Exception as err:
+            logger.warning(
+                f"Could not resolve latest SDK version for branch '{sdk_branch}' ({err}); "
+                f"continuing with the SDK version installed on the DUT: {cur_sdk_version}"
+            )
+            return cur_sdk_version
+
+        if latest_sdk_version != cur_sdk_version:
+            logger.info(f"Using latest SDK version {latest_sdk_version} instead of {cur_sdk_version}")
+        return latest_sdk_version
+
+    def resolve_sdk_version_and_branch_for_traffic_generator(self, latest_version=True):
+        """Resolve the SDK version and branch used to install the traffic generator.
+
+        Reads the DUT SDK version and branch, optionally upgrading to the latest
+        published version for that branch when ``latest_version`` is True.
+
+        Args:
+            latest_version (bool): Whether to attempt resolving the latest SDK version
+                for the DUT branch.
+
+        Returns:
+            tuple[str, str]: Selected ``(sdk_version, sdk_branch)``.
+        """
+        logger.info(
+            f"resolve_sdk_version_and_branch_for_traffic_generator called with "
+            f"latest_version={latest_version}"
+        )
+        sdk_version = self.get_sdk_version()
+        sdk_branch = self.get_sdk_branch(sdk_version)
+        logger.info(
+            f"Preparing traffic generator installation with DUT SDK version "
+            f"'{sdk_version}' from branch '{sdk_branch}'"
+        )
+        if latest_version:
+            dut_sdk_version = sdk_version
+            logger.info(f"Attempting to resolve the latest SDK version for branch '{sdk_branch}'")
+            sdk_version = self.get_latest_sdk_version_or_current(cur_sdk_version=sdk_version,
+                                                                 sdk_branch=sdk_branch)
+            logger.info(
+                f"SDK version selected for traffic generator installation: '{sdk_version}' "
+                f"(DUT version: '{dut_sdk_version}')"
+            )
+        else:
+            logger.info(f"Latest SDK lookup disabled; using DUT SDK version '{sdk_version}'")
+        return sdk_version, sdk_branch
 
     @staticmethod
     def _kernel_dir_sort_key(kernel_dir):

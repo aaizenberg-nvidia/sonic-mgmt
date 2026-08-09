@@ -2213,7 +2213,7 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             for sub_key in sub_keys:
                 self.engine.run_cmd(f'sudo sonic-db-cli CONFIG_DB HDEL "{key}" "{sub_key}"')
 
-    def install_traffic_generator(self, latest_version=True, cli_type=CliType.SONIC):
+    def install_traffic_generator(self, latest_version=False, cli_type=CliType.SONIC):
         """
         Function verifies the traffic generator is functional post deploy on SONiC OS
 
@@ -2224,12 +2224,11 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         :return: None
         """
         with allure.step('Get SDK_VER git'):
-            sdk_version = self.get_sdk_version()
-            sdk_branch = self.get_sdk_branch(sdk_version)
-            if latest_version:
-                sdk_version = self.get_latest_sdk_version(cur_sdk_version=sdk_version, sdk_branch=sdk_branch)
-            docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
+            sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
+                latest_version=latest_version)
             sdk_deb_path = self.resolve_sdk_git_deb_path(sdk_version, cli_type=cli_type)
+            logger.info(f"Resolved SDK package for traffic generator installation: '{sdk_deb_path}'")
+            docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
             sdk_deb_dir = os.path.dirname(sdk_deb_path)
             sdk_deb_file = os.path.basename(sdk_deb_path)
             sdk_dev_deb_file = sdk_deb_file.replace('sys-sdk-git', 'sys-sdk').replace('_amd64.deb', '_amd64-dev.deb')

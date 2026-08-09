@@ -37,11 +37,8 @@ class CumulusGeneralCli(NvueGeneralCli):
         :return: None
         """
         with allure.step('Get SDK_VER git'):
-            sdk_version = self.get_sdk_version()
-            sdk_branch = self.get_sdk_branch(sdk_version)
-            if latest_version:
-                sdk_version = self.get_latest_sdk_version(cur_sdk_version=sdk_version, sdk_branch=sdk_branch)
-
+            sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
+                latest_version=latest_version)
             deb_file_path = self.resolve_sdk_git_deb_path(sdk_version)
             self.engine.copy_file(source_file=f'{deb_file_path}',
                                   dest_file=f'{PerfConsts.SDK_DEB_FILE_TEMPLATE.format(SDK_VERSION=sdk_version)}',

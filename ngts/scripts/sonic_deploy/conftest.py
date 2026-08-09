@@ -6,6 +6,7 @@ Defines the methods and fixtures which will be used by pytest
 
 """
 
+import argparse
 import pytest
 import logging
 import re
@@ -14,6 +15,38 @@ import os
 from ngts.constants.constants import MarsConstants
 
 logger = logging.getLogger()
+
+SDK_SOURCE_OPTIONS = {
+    "latest": "Resolve the newest published SDK package for the DUT SDK branch "
+              "(lastrc DEBS lookup).",
+    "image": "Use the SDK version already installed on the DUT/image; skip the "
+             "latest-SDK lookup.",
+}
+
+
+def _parse_sdk_source(value):
+    """Validate ``--sdk_source`` and return a normalized option name.
+
+    Args:
+        value (str): User-provided ``--sdk_source`` value.
+
+    Returns:
+        str: ``'latest'`` or ``'image'``.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` is not one of the supported options.
+    """
+    if value in SDK_SOURCE_OPTIONS:
+        return value
+
+    options_help = "\n".join(
+        f"  {name}: {description}" for name, description in SDK_SOURCE_OPTIONS.items()
+    )
+    raise argparse.ArgumentTypeError(
+        f"Invalid --sdk_source={value!r}. Supported values: {', '.join(SDK_SOURCE_OPTIONS)}.\n"
+        f"Options:\n{options_help}\n"
+        f"If omitted, the platform default is used (SONiC: latest, Cumulus: image)."
+    )
 
 
 def pytest_addoption(parser):
@@ -122,6 +155,21 @@ def pytest_addoption(parser):
     logger.info('Parsing neighbor_mode')
     parser.addoption("--neighbor_mode", action="store", default="",
                      help="Neighbor mode to use for the dual-tor deployment")
+    logger.info('Parsing sdk_source')
+    parser.addoption(
+        "--sdk_source",
+        action="store",
+        default=None,
+        type=_parse_sdk_source,
+        metavar="{latest,image}",
+        help=(
+            "Where to take the SDK package from for traffic generator installation. "
+            "Supported values: "
+            "'latest' - resolve the newest published SDK for the DUT branch; "
+            "'image' - use the SDK version from the installed DUT/image. "
+            "If omitted, use the platform default (SONiC: latest, Cumulus: image)."
+        ),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -456,3 +504,22 @@ def neighbor_mode(request):
     :return: neighbor mode; empty string when not provided
     """
     return request.config.getoption('--neighbor_mode')
+
+
+@pytest.fixture(scope="module")
+def sdk_source(request):
+    """
+    Where to take the SDK package from for traffic generator installation.
+
+    Controlled by ``--sdk_source``:
+
+    - ``latest``: resolve the newest published SDK package for the DUT branch.
+    - ``image``: use the SDK version already installed on the DUT/image.
+    - omitted: keep the platform default (SONiC: latest, Cumulus: image).
+
+    Invalid values raise an argparse error that lists the supported options.
+
+    Returns:
+        str | None: ``'latest'`` or ``'image'`` when set; otherwise ``None``.
+    """
+    return request.config.getoption('--sdk_source')

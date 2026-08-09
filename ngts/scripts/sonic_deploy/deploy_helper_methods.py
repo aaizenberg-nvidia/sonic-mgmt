@@ -60,7 +60,8 @@ class DeploymentContext:
                  verify_secure_boot, chip_type, destination_hwsku, show_setup_versions,
                  serial_log_analyzers, fanout_target_version, request, is_air,
                  deploy_testbed_in_parallel=False, deploy_image_only=False, deploy_chipless=False,
-                 deploy_sequential=False, base_version_bmc="", neighbor_mode=""):
+                 deploy_sequential=False, base_version_bmc="", neighbor_mode="",
+                 sdk_source=None):
         """
         Initialize DeploymentContext with all parameters.
 
@@ -106,6 +107,7 @@ class DeploymentContext:
         self.deploy_sequential = deploy_sequential
         self.base_version_bmc = base_version_bmc
         self.neighbor_mode = neighbor_mode
+        self.sdk_source = sdk_source
         # True when a BMC image is provided and BMC installation should run
         self.deploy_bmc = bool(base_version_bmc)
         # True when a switch base/target image is provided and switch deployment should run
@@ -613,7 +615,8 @@ class DeployMultiNosHelper:
             GeneralCliCommon(engine).uninstall_os_flow(current_os, target_cli_type, chip_type)
 
     @staticmethod
-    def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False):
+    def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False,
+                                          sdk_source=None):
         for dut in duts:
             data_query = json.loads('{ "update": { "CLI_TYPE": "' + target_cli_type +
                                     '", "TYPE": "' + CliType.NOS_TO_TYPE_DICT[target_cli_type] +
@@ -625,7 +628,11 @@ class DeployMultiNosHelper:
             upload_data_to_noga(data_query)
         DeployMultiNosHelper._remove_noga_cache()
         if is_performance:
-            DeployMultiNosHelper.multi_nos_install_traffic_generator(duts, deploy_sequential=deploy_sequential)
+            DeployMultiNosHelper.multi_nos_install_traffic_generator(
+                duts,
+                deploy_sequential=deploy_sequential,
+                sdk_source=sdk_source
+            )
 
     @staticmethod
     def _remove_noga_cache():
@@ -640,12 +647,19 @@ class DeployMultiNosHelper:
             logger.warning(f"Failed to remove Noga cache {NOGA_CACHE_FILE}: {e}")
 
     @staticmethod
-    def multi_nos_install_traffic_generator(duts, deploy_sequential=False):
+    def multi_nos_install_traffic_generator(duts, deploy_sequential=False, sdk_source=None):
+        install_kwargs = {}
+        if sdk_source is not None:
+            install_kwargs['latest_version'] = sdk_source == "latest"
+            logger.info(
+                f"Traffic generator SDK source from pytest args: '{sdk_source}' "
+                f"(latest_version={install_kwargs['latest_version']})"
+            )
         if deploy_sequential:
             for dut in duts:
                 cli_obj = dut['cli_obj']
                 with allure.step('Install traffic generator on switch: {}'.format(dut['dut_name'])):
-                    cli_obj.install_traffic_generator()
+                    cli_obj.install_traffic_generator(**install_kwargs)
         else:
             install_threads = []
             executor = concurrent.futures.ThreadPoolExecutor()
@@ -653,7 +667,7 @@ class DeployMultiNosHelper:
                 cli_obj = dut['cli_obj']
                 with allure.step('Install traffic generator on switch: {}'.format(dut['dut_name'])):
                     install_threads.append((f"Traffic Generator install on {dut['dut_name']}",
-                                            executor.submit(cli_obj.install_traffic_generator)))
+                                            executor.submit(cli_obj.install_traffic_generator, **install_kwargs)))
             DeployOrchestrator.wait_until_deploy_background_process(install_threads)
 
 
@@ -799,7 +813,8 @@ class DeployOrchestrator:
                 self.context.setup_info['duts'],
                 replace_nos,
                 self.context.is_performance,
-                deploy_sequential=self.context.deploy_sequential
+                deploy_sequential=self.context.deploy_sequential,
+                sdk_source=self.context.sdk_source
             )
 
     def execute_dpu_post_installation_steps(self):
