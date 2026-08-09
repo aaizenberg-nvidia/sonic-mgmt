@@ -22,9 +22,11 @@ external attestation verifier is used.
 Test-plan section 9.1 (factory reset) is covered by the centralized factory-reset
 test via the IMA checkers in ``ima_factory_reset.py`` (registered in
 ``general/security/centralized_tests/factory_reset/test_factory_reset.py``).
-Test-plan section 9.2 (upgrade) is covered by the centralized upgrade test via the
-IMA checker in ``ima_upgrade.py`` (registered in
-``general/security/centralized_tests/upgrade/test_upgrade.py``).
+Test-plan section 9.2 (upgrade) is covered by ``_check_ima`` in
+``general/upgrade_downgrade/feature_checkers.py``:
+
+  * without-IMA base → with-IMA target: default disabled, then enable + measuring
+  * with-IMA base (enabled) → with-IMA target: IMA stays enabled and measuring
 """
 import pytest
 

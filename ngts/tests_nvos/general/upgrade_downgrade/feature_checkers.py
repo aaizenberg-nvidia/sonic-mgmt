@@ -70,6 +70,7 @@ from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as nv_co
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.infra.FWComponentsTool import FWComponentsTool
+from ngts.nvos_tools.infra.ImaTool import ImaTool
 from ngts.nvos_tools.infra.SSDTool import SSDTool
 from ngts.nvos_tools.infra.NmxRbacTool import NmxRbacTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -112,6 +113,13 @@ from ngts.tests_nvos.general.security.helpers import (
     import_certs_safely,
     import_crl_safely,
     setup_certs_for_tests,
+)
+from ngts.tests_nvos.general.security.ima.constants import ImaConsts
+from ngts.tests_nvos.general.security.ima.helpers import (
+    disable_ima_and_restore_default,
+    enable_ima_and_verify_measuring,
+    is_ima_feature_available,
+    verify_ima_state,
 )
 from ngts.tests_nvos.general.security.mtls.generic_testing.helpers import get_scp_player, verify_ca_configuration, verify_connection
 from ngts.tests_nvos.general.security.nmx_cert.constants import EncryptionMode
@@ -266,6 +274,8 @@ def run_checkers(*, engines: EnginesT, devices: DevicesT, base: SystemPackage, t
                     logger.info("Checker %s finished", checker_name)
                 except StopIteration:
                     logger.info("Checker %s finished", checker_name)
+                except Skipped as e:
+                    logger.info("Skipping checker %s post - %s", checker_name, e.reason)
         except Exception as e:
             logger.error(e)
             errors.append(Result(ok=False, operation=checker_name, error_message=str(e)))
@@ -1602,7 +1612,7 @@ def _check_speed_configuration(
             NvosInstallationSteps.cleanup_speed_testing_if_performed(speed_info, devices.dut)
 
 
-@ _requires_compatibility(minimal_version="25.02.2351")
+@_requires_compatibility(minimal_version="25.02.2351")
 def _check_ssd_firmware_auto_upgrade(
     engines: EnginesT, devices: DevicesT, **kwargs
 ) -> Generator[None, None, None]:
@@ -1636,6 +1646,70 @@ def _check_ssd_firmware_auto_upgrade(
         BmcTool.verify_platform_component_version(ssd_component, latest_version_name)
 
 
+@_requires_compatibility()
+def _check_ima(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator[None, None, None]:
+    """
+    Verify IMA across upgrade for the two supported image combinations:
+
+    1. Base **without** IMA → target **with** IMA:
+       Pre: nothing. Post: default ``disabled`` → enable + reboot → measuring.
+    2. Base **with** IMA (enabled) → target **with** IMA:
+       Pre: enable + save + reboot. Post: still operationally enabled and measuring.
+
+    Branching is runtime-based (``base_has_ima`` / ``target_has_ima``). Empty
+    ``@_requires_compatibility()`` allows a pre-IMA base. Target without IMA is
+    skipped only when the base also lacked IMA; if the base had IMA and the
+    target does not, that is treated as a regression (assert). Cleanup always
+    restores IMA to disabled when the feature is present.
+
+    This checker must run last in ``_CHECKERS``: enable/disable cleanup cold-reboots,
+    and a reboot between other post-checkers would invalidate their assumptions.
+    """
+    if not getattr(devices.dut, 'supports_ima_testing', False):
+        raise Skipped('DUT device does not support IMA testing on this platform')
+
+    base_has_ima = is_ima_feature_available(engines.dut)
+    topology_obj = TestToolkit.topology_obj
+    ima_tool = ImaTool(engines.dut)
+    need_cleanup = False
+
+    try:
+        if base_has_ima:
+            if not ima_tool.is_ima_kernel_supported():
+                raise Skipped('base image kernel is not built with IMA')
+
+            with allure.step('pre upgrade: enable IMA on base image (persist across upgrade)'):
+                need_cleanup = True
+                enable_ima_and_verify_measuring(engines, devices, topology_obj)
+
+        yield  # upgrade to the target nvos
+
+        target_has_ima = is_ima_feature_available(engines.dut)
+        if not target_has_ima:
+            assert not base_has_ima, 'IMA existed on base image but is gone after upgrade'
+            raise Skipped('target image does not expose the IMA NVUE resource')
+
+        ima_tool = ImaTool(engines.dut)
+        if not ima_tool.is_ima_kernel_supported():
+            raise Skipped('target image kernel is not built with IMA')
+
+        if base_has_ima:
+            with allure.step('post upgrade: IMA stayed enabled and is measuring'):
+                verify_ima_state(ImaConsts.ENABLED)
+                assert not ima_tool.has_no_file_measurements(), \
+                    'IMA was enabled before upgrade but is not measuring on the target image'
+        else:
+            with allure.step('post upgrade: IMA is present and defaults to disabled'):
+                verify_ima_state(ImaConsts.DISABLED)
+
+            with allure.step('post upgrade: enable IMA and confirm measuring'):
+                need_cleanup = True
+                enable_ima_and_verify_measuring(engines, devices, topology_obj)
+    finally:
+        if need_cleanup and is_ima_feature_available(engines.dut):
+            disable_ima_and_restore_default(engines, devices, topology_obj)
+
+
 # the checker must be called e.g. test_rbac
 _CHECKERS: list[CheckerFn] = [
     _check_nmx_cert,
@@ -1659,3 +1733,5 @@ _CHECKERS: list[CheckerFn] = [
 _CHECKERS.append(
     random.choice([_check_tacacs_auth, _check_radius_auth, _check_ldap_auth])
 )  # This is intended to be random, as two AAA checkers can't run together
+# IMA cleanup cold-reboots; keep it last so later post-checkers are not invalidated.
+_CHECKERS.append(_check_ima)

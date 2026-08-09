@@ -17,9 +17,7 @@ from ngts.tests_nvos.general.security.crl.test_crl import crl_factory_reset_keep
 from ngts.tests_nvos.general.security.nmx_rbac.test_nmx_rbac import nmx_rbac_upgrade_check
 from ngts.tests_nvos.general.security.nmx_cert.test_cluster_app_mngr_security import \
     cluster_app_mngr_security_upgrade_check
-from ngts.tests_nvos.general.security.ima.ima_upgrade import ima_upgrade_check
 from ngts.tests_nvos.general.security.test_api_server_security.test_api_mtls import api_mtls_upgrade_check
-from ngts.tests_nvos.general.upgrade_downgrade.feature_checkers import Skipped
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.system.factory_reset.helpers import *
 from ngts.tests_nvos.system.gnmi.helpers import get_scp_player
@@ -34,7 +32,6 @@ SED_PASSWORD = 'SED password'
 CERTS_MGMT = 'Certificates management'
 CRL = 'CRL'
 NMX_RBAC = 'NMX RBAC'
-IMA = 'IMA'
 
 UPGRADE_CHECKERS: Dict[str, Generator[None, None, None]] = {
     GNMI_CERT: gnmi_mtls_upgrade_check(),
@@ -43,7 +40,6 @@ UPGRADE_CHECKERS: Dict[str, Generator[None, None, None]] = {
     CERTS_MGMT: certs_mgmt_upgrade_check(),
     CRL: crl_factory_reset_keep_all_config_check(),
     NMX_RBAC: nmx_rbac_upgrade_check(),
-    IMA: ima_upgrade_check(),
 }
 
 CHECKERS_SKIP_RULES: Dict[str, CheckerSkipRule] = {
@@ -75,8 +71,6 @@ def test_downgrade_upgrade(base_version_realpath, target_version_realpath, devic
     system = System()
     target_version_name = target_version_realpath.split("/")[-1]
     need_recovery = False
-    successful_pre_checkers: list[tuple[str, Generator[None, None, None]]] = []
-    skipped_pre_checkers: dict[str, str] = {}
 
     try:
         with allure.step('setup'):
@@ -94,28 +88,19 @@ def test_downgrade_upgrade(base_version_realpath, target_version_realpath, devic
                 for name, checker in checkers.items():
                     if not should_skip_checker(CHECKERS_SKIP_RULES, name, setup_name):
                         with allure.independent_step(name):
-                            try:
-                                next(checker)
-                                successful_pre_checkers.append((name, checker))
-                            except Skipped as exc:
-                                skipped_pre_checkers[name] = exc.reason
-                                logging.info('Checker %s skipped: %s', name, exc.reason)
+                            next(checker)
 
             with allure.step(f"Run upgrade: {target_version_name}"):
                 fetch_install_img(system, target_version_realpath, engines)
 
             with allure.step('post upgrade steps'):
-                for name, reason in skipped_pre_checkers.items():
-                    with allure.independent_step(name):
-                        with allure.step(f'Skipped: {reason}'):
-                            logging.info('Checker %s skipped in pre-upgrade - not running post-check', name)
-
-                for name, checker in successful_pre_checkers:
-                    with allure.independent_step(name):
-                        try:
-                            next(checker)
-                        except StopIteration:
-                            logging.info('Checker %s finished (one-yield convention)', name)
+                for name, checker in checkers.items():
+                    if not should_skip_checker(CHECKERS_SKIP_RULES, name, setup_name):
+                        with allure.independent_step(name):
+                            try:
+                                next(checker)
+                            except StopIteration:
+                                logging.info('Checker %s finished (one-yield convention)', name)
 
     finally:
         with allure.step('cleanup'):

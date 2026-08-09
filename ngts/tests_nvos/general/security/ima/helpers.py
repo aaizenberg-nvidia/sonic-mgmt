@@ -10,6 +10,7 @@ from typing import Iterable, Tuple
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import ConfState
 from ngts.nvos_tools.infra.DutUtilsTool import RebootParams
+from ngts.nvos_tools.infra.ImaTool import ImaTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
@@ -231,6 +232,36 @@ def get_ima_state(dut_engine=None) -> str:
         return parsed.get(ImaConsts.STATE, '')
 
 
+def is_ima_feature_available(dut_engine=None) -> bool:
+    """
+    Return True if the running image exposes the IMA NVUE resource.
+
+    Used by upgrade checkers to distinguish images that predate IMA from images
+    that have the feature (regardless of enabled/disabled).
+
+    Only a known NVUE "resource/path not found" failure maps to False. Any other
+    ``nv show`` failure (SSH hiccup, busy NVUE, unexpected error) raises so callers
+    do not silently treat a transient/runtime failure as "IMA absent".
+    """
+    with allure.step('check if IMA NVUE feature is available'):
+        result = System().security.ima.show(
+            dut_engine=dut_engine, should_succeed=False, if_returned_value=False)
+        if result.result:
+            result.verify_result(should_succeed=True)
+            return True
+
+        info = (result.info or '').lower()
+        if 'does not exist' in info:
+            # Expected failure on pre-IMA images: NVUE has no /system/security/ima.
+            result.verify_result(should_succeed=False)
+            return False
+
+        result.ignore_result()
+        raise AssertionError(
+            'Failed to probe IMA NVUE availability for a reason other than '
+            f'missing resource; cannot classify as absent. show output:\n{result.info}')
+
+
 def verify_ima_state(expected_state: str, dut_engine=None):
     """
     Assert that ``nv show system security ima`` reports the expected state.
@@ -398,6 +429,37 @@ def save_config(engines):
             (f'nv config save still blocked by an in-progress job after '
              f'{ImaConsts.SAVE_RETRY_TRIES} retries; last output:\n{output}')
         SendCommandTool.verify_no_error_message(output).verify_result()
+
+
+def enable_ima_and_verify_measuring(engines, devices, topology_obj=None):
+    """
+    Enable IMA, save, cold-reboot, and assert operational enabled + measuring.
+
+    Shared by the IMA feature checker (pre/post upgrade) so enable+verify is not
+    duplicated across scenarios.
+    """
+    with allure.step('enable IMA, reboot, confirm measuring'):
+        set_ima_state(ImaConsts.ENABLED)
+        save_config(engines)
+        System().action_reboot(
+            reboot_params=build_reboot_params(devices, topology_obj)).verify_result()
+        verify_ima_state(ImaConsts.ENABLED)
+        assert not ImaTool(engines.dut).has_no_file_measurements(), \
+            'IMA is not measuring after enable + reboot'
+
+
+def disable_ima_and_restore_default(engines, devices, topology_obj=None):
+    """
+    Disable IMA, save, and cold-reboot so operational state returns to default.
+
+    Used as failure-safe cleanup after upgrade checkers that enable IMA.
+    """
+    with allure.step('disable IMA, save, reboot to restore default'):
+        set_ima_state(ImaConsts.DISABLED)
+        save_config(engines)
+        System().action_reboot(
+            reboot_params=build_reboot_params(devices, topology_obj)).verify_result()
+        verify_ima_state(ImaConsts.DISABLED)
 
 
 def unset_ima_state(apply: bool = True):
