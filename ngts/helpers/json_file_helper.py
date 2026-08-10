@@ -9,6 +9,23 @@ from ngts.helpers.config_db_utils import save_config_db_json
 
 logger = logging.getLogger()
 
+# Map filtered_platform names to chassis keys used in firmware.json / platform_components.json.
+# Add new entries here when platform naming differs from the firmware.json chassis key.
+FIRMWARE_CHASSIS_NAME_MAP = {
+    'MSN2700A1': 'MSN2700-A1',
+}
+
+
+def normalize_firmware_chassis_name(platform_name):
+    """
+    Normalize filtered_platform to the chassis name used in firmware.json.
+
+    :param platform_name: platform / filtered_platform string (case-insensitive)
+    :return: chassis key expected in firmware.json
+    """
+    chassis = platform_name.upper()
+    return FIRMWARE_CHASSIS_NAME_MAP.get(chassis, chassis)
+
 
 def get_platform_json(engine_dut, cli_object, fail_if_does_not_exist=True):
     """

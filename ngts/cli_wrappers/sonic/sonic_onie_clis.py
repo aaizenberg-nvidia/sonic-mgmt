@@ -9,7 +9,7 @@ from devts.infra.tools.connection_tools.onie_engine import OnieEngine
 from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
 from ngts.constants.constants import InfraConst, PlatformTypesConstants, SonicDeployConstants
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
-from ngts.helpers.json_file_helper import extract_fw_data
+from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
 from ngts.helpers.run_process_on_host import run_process_on_host
 from ngts.constants.constants import MarsConstants
 
@@ -291,10 +291,7 @@ def get_latest_onie_version(fw_pkg_path, platform_params):
     else:
         logger.info(f"Get latest ONIE version from specified file {fw_pkg_path}")
         fw_data = extract_fw_data(fw_pkg_path)
-        chassis = platform_params.filtered_platform.upper()
-        # The chassis name of 2700a1 in firmware.json and platform_components.json is "MSN2700-A1"
-        if chassis == "MSN2700A1":
-            chassis = "MSN2700-A1"
+        chassis = normalize_firmware_chassis_name(platform_params.filtered_platform)
         if chassis in fw_data["chassis"]:
             component = fw_data["chassis"][chassis]["component"]
         else:

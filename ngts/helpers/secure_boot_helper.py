@@ -9,7 +9,7 @@ from retry import retry
 from retry.api import retry_call
 from tests.common.utilities import wait_until
 from ngts.constants.constants import MarsConstants
-from ngts.helpers.json_file_helper import extract_fw_data
+from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
 from ngts.cli_util.cli_parsers import generic_sonic_output_parser
 from devts.infra.tools.general_constants.constants import DockerBringupConstants
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
@@ -684,10 +684,7 @@ class SonicSecureBootHelper(SecureBootHelper):
         path_to_current_folder = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
         fw_pkg_path = f'{path_to_current_folder}/../../{MarsConstants.UPDATED_FW_TAR_PATH}'
         fw_data = extract_fw_data(fw_pkg_path)
-        hw_type = platform_params.filtered_platform.upper()
-        # The chassis name of 2700a1 in firmware.json and platform_components.json is "MSN2700-A1"
-        if hw_type == "MSN2700A1":
-            hw_type = "MSN2700-A1"
+        hw_type = normalize_firmware_chassis_name(platform_params.filtered_platform)
         dut_name = platform_params['setup_name'].strip('_setup').split('_')[-1]
         component_data = None
         try:
