@@ -113,14 +113,38 @@ class CpldComponent(Component):
         except Exception as e:
             return False
 
+    NVOS_READY_TIMEOUT = 10 * 60
+    NVOS_READY_POLL_INTERVAL = 15
+
     def power_cycle(self, switch_info):
         reset_type = "PowerCycle"
         data = {
             "ResetType": f"{reset_type}"
         }
         respond, _ = self.rf_api.post_query(RedfishCollection.RESET, data)
-        print("Power cycle request sent. Sleeping for 6 minutes...")
-        time.sleep(6 * 60)
+        print(f"Power cycle request sent. Waiting up to {self.NVOS_READY_TIMEOUT // 60} minutes for NVOS to be ready...")
+        self._wait_for_nvos_ready()
+
+    def _wait_for_nvos_ready(self):
+        """Wait for the switch to go down and come back with NVOS ready.
+
+        Polls the STATE_DB key NVUE itself uses to answer 'System is initializing',
+        so the next MARS step never gets a half-booted switch.
+        """
+        cmd = 'sonic-db-cli STATE_DB hget "SYSTEM_READY|SYSTEM_STATE" Status'
+        deadline = time.monotonic() + self.NVOS_READY_TIMEOUT
+        went_down = False
+        while time.monotonic() < deadline:
+            try:
+                is_ready = self._run_ssh(cmd) == 'UP'
+            except Exception:  # noqa: BLE001 - _run_ssh raises a bare Exception while the switch is down
+                is_ready = False  # switch is off, rebooting, or redis is not up yet
+            if is_ready and went_down:
+                print("NVOS is ready")
+                return
+            went_down = went_down or not is_ready
+            time.sleep(self.NVOS_READY_POLL_INTERVAL)
+        raise TimeoutError(f"NVOS did not become ready within {self.NVOS_READY_TIMEOUT} seconds after power cycle")
 
     def _run_player_cmd(self, command):
         try:
@@ -155,7 +179,7 @@ class CpldComponent(Component):
         ssh_command = [
             'sshpass', '-p', self.ssh_pass,
             'ssh', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'StrictHostKeyChecking=no',
-            '-o', 'TCPKeepAlive=yes', '-o', 'ServerAliveInterval=30',
+            '-o', 'TCPKeepAlive=yes', '-o', 'ServerAliveInterval=30', '-o', 'ConnectTimeout=15',
         ]
         if is_ipv6(self.switch_ip):
             ssh_command.append('-6')
