@@ -355,7 +355,11 @@ class ValidationTool:
                 if key not in output_dictionary_keys:
                     info += key + " can't be found in output dictionary\n"
                 elif value != output_dictionary[key]:
-                    info += "the value of {} is not equal in both dictionaries\n".format(key)
+                    # Keep the leading phrase stable - bug-attribution error patterns
+                    # match on it - and append the values so a failure is diagnosable
+                    # without digging through the log for the show output.
+                    info += ("the value of {} is not equal in both dictionaries "
+                             "(expected: '{}', actual: '{}')\n").format(key, value, output_dictionary[key])
 
             return ResultObj(not info, info)
 
@@ -376,7 +380,8 @@ class ValidationTool:
                         if not res.result:
                             return res
                     elif value != output_dictionary[key]:
-                        info += "the value of {} is not equal in both dictionaries\n".format(key)
+                        info += ("the value of {} is not equal in both dictionaries "
+                                 "(expected: '{}', actual: '{}')\n").format(key, value, output_dictionary[key])
 
             return ResultObj(not info, info)
 

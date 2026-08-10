@@ -7,7 +7,16 @@ STATE_FW_DEFAULT = "fw-default"
 FORCE_ENABLED = "enabled"
 FORCE_DISABLED = "disabled"
 ADMIN_DEFAULT_TH = "0"
-OPER_ENABLED_LOSS_TH = "127"
+# The FW enabled-mode default for fec-plr-align-loss-th depends on the module:
+# passive copper resolves to 127, optical (and other non-passive media) to 126.
+# plr-retry-th is 255 on every module type.
+# Verified on croc-94, same switch and firmware, one copper loopback pair and one
+# optical loopback pair: 127 vs 126 respectively.
+OPER_ENABLED_LOSS_TH_COPPER = "127"
+OPER_ENABLED_LOSS_TH_OPTICAL = "126"
+# NVUE reports passive DACs under this cable-type; everything else (optical, active
+# cables) takes the 126 default.
+PASSIVE_COPPER_CABLE_TYPE = "Passive copper or linear active copper cable"
 OPER_ENABLED_RETRY_TH = "255"
 OPER_DISABLED_LOSS_TH = "126"
 OPER_DISABLED_RETRY_TH = "32"

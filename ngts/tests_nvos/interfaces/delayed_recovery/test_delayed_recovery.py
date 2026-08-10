@@ -13,7 +13,6 @@ from ngts.tests_nvos.interfaces.delayed_recovery.constants import (
     FORCE_ENABLED,
     OPER_DISABLED_LOSS_TH,
     OPER_DISABLED_RETRY_TH,
-    OPER_ENABLED_LOSS_TH,
     OPER_ENABLED_RETRY_TH,
     STATE_DISABLED,
     STATE_ENABLED,
@@ -24,7 +23,7 @@ from ngts.tests_nvos.interfaces.delayed_recovery.constants import (
 from ngts.tests_nvos.interfaces.delayed_recovery.helpers import (
     apply_config,
     delayed_recovery_expected,
-    get_connected_ports,
+    get_enabled_loss_th,
     set_delayed_recovery_values,
     unset_delayed_recovery,
     validate_expected_values,
@@ -78,16 +77,20 @@ def test_delayed_recovery_default_values(engines, devices, topology_obj):
 
 
 @pytest.mark.phy
-def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, register_cleanup, setup_name):
+def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, register_cleanup,
+                                           delayed_recovery_ports, disable_logic_relock):
     """
     Test flow:
         1. pick connected switch-switch ports
         2. verify no-force delayed recovery scenarios
     """
     with allure.step("get connected ports (peer ports)"):
-        selected_port, selected_peer_port = get_connected_ports(devices, engines, setup_name)
-        delayed_recovery_ports = (selected_port, selected_peer_port)
+        selected_port, selected_peer_port = delayed_recovery_ports
         register_cleanup(lambda: unset_delayed_recovery(delayed_recovery_ports))
+
+    # FW resolves a different enabled-mode threshold per module type, so the expected
+    # value has to be read from the port rather than hardcoded.
+    enabled_loss_th = get_enabled_loss_th(selected_port)
 
     no_force_scenarios = [
         (
@@ -110,7 +113,7 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
                     admin_values(state=STATE_ENABLED),
                     oper_values(
                         state=STATE_ENABLED,
-                        loss_th=OPER_ENABLED_LOSS_TH,
+                        loss_th=enabled_loss_th,
                         retry_th=OPER_ENABLED_RETRY_TH,
                     ),
                 ),
@@ -182,18 +185,22 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
     with allure.step("Validate switch-switch delayed recovery with no force applied"):
         for scenario_name, configuration, expected_values in no_force_scenarios:
             with allure.independent_step(scenario_name):
-                unset_delayed_recovery(delayed_recovery_ports)
+                # Clear and configure both ports in a single revision, so one apply
+                # flaps the link once and both ends renegotiate together. Applying the
+                # unset separately would flap twice per scenario and leave a window
+                # where the two ends are configured differently.
+                unset_delayed_recovery(delayed_recovery_ports, apply=False)
                 for fae_port, delayed_recovery_values in configuration.items():
                     set_delayed_recovery_values(fae_port, delayed_recovery_values)
-                if configuration:
-                    apply_config()
-                    wait_for_delayed_recovery_ports(delayed_recovery_ports)
+                apply_config()
+                wait_for_delayed_recovery_ports(delayed_recovery_ports)
                 for fae_port, expected_value in expected_values.items():
                     validate_expected_values_by_rev(fae_port, expected_value)
 
 
 @pytest.mark.phy
-def test_delayed_recovery_forced_values(engines, devices, topology_obj, register_cleanup, setup_name):
+def test_delayed_recovery_forced_values(engines, devices, topology_obj, register_cleanup,
+                                        delayed_recovery_ports, disable_logic_relock):
     """
     Test flow:
         1. pick connected switch-switch ports
@@ -201,9 +208,12 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
         3. verify forced operational values on both ports
     """
     with allure.step("get connected ports (peer ports)"):
-        selected_port, selected_peer_port = get_connected_ports(devices, engines, setup_name)
-        delayed_recovery_ports = (selected_port, selected_peer_port)
+        selected_port, selected_peer_port = delayed_recovery_ports
         register_cleanup(lambda: unset_delayed_recovery(delayed_recovery_ports))
+
+    # Side A's resolved default is what gets forced onto the peer, so both expectations
+    # below derive from side A's module type.
+    enabled_loss_th = get_enabled_loss_th(selected_port)
 
     force_all_values = force_values(
         state_force=FORCE_ENABLED,
@@ -259,7 +269,7 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                     ),
                     oper_values(
                         state=STATE_ENABLED,
-                        loss_th=OPER_ENABLED_LOSS_TH,
+                        loss_th=enabled_loss_th,
                         retry_th=OPER_ENABLED_RETRY_TH,
                     ),
                 ),
@@ -272,7 +282,7 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                     ),
                     oper_values(
                         state=STATE_ENABLED,
-                        loss_th=OPER_ENABLED_LOSS_TH,
+                        loss_th=enabled_loss_th,
                         retry_th=OPER_ENABLED_RETRY_TH,
                     ),
                 ),
@@ -415,7 +425,8 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
     with allure.step("Validate switch-switch delayed recovery with force applied"):
         for scenario_name, configuration, expected_values in forced_scenarios:
             with allure.independent_step(scenario_name):
-                unset_delayed_recovery(delayed_recovery_ports)
+                # Single revision for both ports - see the no-force loop above.
+                unset_delayed_recovery(delayed_recovery_ports, apply=False)
                 for fae_port, delayed_recovery_values in configuration.items():
                     set_delayed_recovery_values(fae_port, delayed_recovery_values)
                 apply_config()
