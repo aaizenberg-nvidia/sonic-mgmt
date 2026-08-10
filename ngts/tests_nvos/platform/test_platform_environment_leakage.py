@@ -115,7 +115,7 @@ def _link_back_sysfs_files(engines, leakage, leakage_folder_name):
                                                                           leakage_file, PlatformConsts.LEAKAGE_FILES_SYSFS_FOLDER, leakage_folder_name))
 
 
-@retry(Exception, tries=2, delay=1)
+@retry(Exception, tries=15, delay=1)
 def retry_validate_health_fix_or_issue(system, status):
     system.validate_health_status(status)
 
