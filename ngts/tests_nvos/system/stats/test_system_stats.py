@@ -24,6 +24,8 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils import nvos_general_utils
+from ngts.tests_nvos.platform.helpers import get_available_temperature_sensor_list
 from retry import retry
 
 logger = logging.getLogger(__name__)
@@ -878,9 +880,10 @@ def test_system_stats_big_files(engines: EnginesT, devices: DevicesT, random_api
 
         with allure.step("Get Temperature header number of lines"):
             temperature_header_num_of_lines = get_header_number_of_lines(engines, 'temperature')
-            assert temperature_header_num_of_lines >= devices.dut.stats_temperature_header_num_of_lines, \
-                (f"temperature header number of lines ({temperature_header_num_of_lines}) is lower than the "
-                 f"expected minimum number of lines: {devices.dut.stats_temperature_header_num_of_lines}")
+            expected_temperature_header_num_of_lines = len(get_available_temperature_sensor_list(devices.dut)) + StatsConsts.CONST_HEADER_ROWS
+            assert temperature_header_num_of_lines == expected_temperature_header_num_of_lines, \
+                (f"temperature header number of lines ({temperature_header_num_of_lines}) is not equal to the "
+                 f"expected number of lines: {expected_temperature_header_num_of_lines}")
 
         with allure.step("Validate creating new category file when file size is over 600MB"):
             validate_number_of_lines_in_external_file(engines, system, 'temperature',
@@ -1118,23 +1121,31 @@ def validate_upload_stats_file(engines: EnginesT, system: System, file: str, del
     """
     validate upload stats file with scp and sftp
     """
-    upload_protocols = ['scp', 'sftp']
+    uri_builders = {
+        'sftp': nvos_general_utils.generate_sftp_uri_using_player,
+        'scp': nvos_general_utils.generate_scp_uri_using_player,
+    }
     player = engines['sonic_mgmt']
     dest_path = NvosConst.MARS_RESULTS_FOLDER
 
-    with allure.step("Upload stats file to player {} with the next protocols : {}".format(player.ip, upload_protocols)):
-        for protocol in upload_protocols:
+    with allure.step("Upload stats file to player {} with the next protocols : {}".format(player.ip, list(uri_builders.keys()))):
+        quoted_full_path = shlex.quote(f"{dest_path}{file}")
+        for protocol, uri_builder in uri_builders.items():
             with allure.step("Upload stats file to player with {} protocol".format(protocol)):
-                upload_path = 'scp://{}:{}@{}{}'.format(player.username, player.password, player.ip, dest_path)
-                system.stats.files.file_name[file].action_upload(upload_path).verify_result()
+                request_uri = uri_builder(player, dest_path)
+                system.stats.files.file_name[file].action_upload(request_uri).verify_result()
 
             with allure.step("Validate file was uploaded to player"):
-                assert player.run_cmd(cmd='ls {} | grep {}'.format(dest_path, file)), \
+                assert player.run_cmd(cmd='ls {} | grep {}'.format(shlex.quote(dest_path), shlex.quote(file))), \
                     "Did not find the file with ls cmd"
+
+            with allure.step("Set permissions on uploaded file to owner-read/write, public-read (644)"):
+                # Needed because player is sometimes unable to read the file
+                player.run_cmd(cmd=f'chmod 644 -- {quoted_full_path}')
 
             if delete:
                 with allure.step("Delete uploaded file"):
-                    player.run_cmd(cmd='rm -f {}{}'.format(dest_path, file))
+                    player.run_cmd(cmd=f'rm -f -- {quoted_full_path}')
 
 
 def parse_stats_csv(file_path):

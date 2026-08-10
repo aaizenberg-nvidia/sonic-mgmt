@@ -26,10 +26,10 @@ from ngts.nvos_constants.constants_nvos import (
     NvosConst,
     RebootConsts,
     RemarkableLogsConsts,
-    StatsConsts,
     SyslogConsts,
     SystemConsts,
 )
+from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.nvos_tools.infra.DeviceLogTool import grep_log_lines_after_datetime
 from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
