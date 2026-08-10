@@ -1,14 +1,12 @@
 import re
 import time
 import pytest
-import sys
 import logging
 
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from pathlib import Path
 
-sys.path.append('/devts/tests/skynet')
-from system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
+from ngts.test_commons.skynet.system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
     do_ssd_endurance_test  # noqa
 
 ONE_DAY_IN_SEC = 86400
