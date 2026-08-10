@@ -18,7 +18,6 @@ import time
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import ApiType, ClusterApps
 from ngts.nvos_tools.infra.NvBridgeTool import NvBridgeTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -34,11 +33,13 @@ from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 from ngts.tests_nvos.general.security.nmx_cert.helpers import (
     enable_cluster,
 )
-from ngts.tests_nvos.general.security.nv_bridge.conftest import BridgeCrlCerts, BridgeSpiffeCerts
 from ngts.tests_nvos.general.security.nv_bridge.helpers import (
+    BridgeCrlCerts,
+    BridgeSpiffeCerts,
     reset_cluster_app,
     rotate_cluster_internal_and_verify,
     rotate_system_internal_and_verify,
+    save_config_and_reboot,
     verify_cluster_app_internal_cert_files,
     verify_cluster_app_internal_crl_show,
     verify_cluster_app_internal_has_empty_defaults,
@@ -244,12 +245,13 @@ def test_bridge_cluster_encryption_set(
 
     with allure.step(f"Update cluster apps {app_name} internal encryption to mtls"):
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -489,12 +491,13 @@ def test_bridge_main_flow(
         app.internal.certificate.action_update(bridge_cert.name).verify_result()
         app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -699,12 +702,13 @@ def test_bridge_cluster_encryption_negative(
     with allure.step(f"Update cluster apps {app_name} with matching cert and ca-cert"):
         app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -1688,9 +1692,7 @@ def test_bridge_upgrade_reboot_persistence_crl_spiffe(
         )
 
     with allure.step("Save config and reboot DUT"):
-        NvueGeneralCli.save_config(engines.dut)
-        System().action_reboot("force", engine=engines.dut).verify_result()
-        engines.dut.disconnect()
+        save_config_and_reboot(engines)
 
     with allure.step("Wait for cluster readiness after reboot"):
         wait_for_cluster_app_update(cluster, engines.dut)
