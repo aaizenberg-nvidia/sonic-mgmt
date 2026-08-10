@@ -5,6 +5,10 @@ from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import *
 from ngts.tools.test_utils import allure_utils as allure
 
+
+cumulus_owner = "bravindranat"
+
+
 logger = logging.getLogger()
 
 

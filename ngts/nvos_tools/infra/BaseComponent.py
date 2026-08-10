@@ -450,7 +450,7 @@ class BaseComponent:
 
     def action(self,
                action_str: str,  # e.g. 'install'
-               main_param: Tuple[str, str] = None,  # e.g. ('remote-url', '/path/to/file')
+               main_param: Tuple[str, str] | None = None,  # e.g. ('remote-url', '/path/to/file')
                flags: Union[str, Iterable[str]] = '',  # e.g. 'force immediate' or ['force', 'immediate']
                additional_params: Dict = None,  # e.g. {'reboot': 'no'}
                engine=None,

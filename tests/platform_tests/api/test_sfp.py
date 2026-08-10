@@ -325,6 +325,10 @@ class TestSfpApi(PlatformApiTestBase):
         type_name = xcvr_info_dict["type_abbrv_name"]
         spec = xcvr_info_dict["specification_compliance"]
 
+        # CPO transceivers are always optical regardless of type_abbrv_name.
+        if xcvr_info_dict["type"] == "CPO":
+            return True
+
         # QSFP-DD/OSFP-8X/QSFP+C/BP report specification_compliance as a plain string.
         if type_name in ["QSFP-DD", "OSFP-8X", "QSFP+C", "BP"]:
             return spec not in ("Passive Copper Cable", "passive_copper_media_interface")
@@ -334,9 +338,6 @@ class TestSfpApi(PlatformApiTestBase):
         if type_name == "SFP":
             if spec in ("Passive Copper Cable", "passive_copper_media_interface"):
                 return False
-        elif xcvr_info_dict["type"] == "CPO":
-            return True
-        else:
             try:
                 spec_compliance_dict = ast.literal_eval(spec)
             except (ValueError, SyntaxError):

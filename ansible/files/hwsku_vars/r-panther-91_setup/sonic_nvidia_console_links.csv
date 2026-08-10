@@ -1,0 +1,3 @@
+StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
+rcon,7016,r-panther-91,ssh,,root
+rcon,7021,r-panther-90,ssh,,root

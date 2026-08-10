@@ -1,0 +1,43 @@
+# Performance-test port selection config.
+#
+# Controls which DUT ports a performance test runs on. This file only takes effect when a
+# run explicitly enables a mode:
+#   --perf-exclude-ports   -> apply the `exclude_ports` list (run on everything else)
+#   --perf-include-ports   -> apply the `include_ports` list (run ONLY on these)
+# With neither flag, port selection is inert and every test runs on the whole switch
+# exactly as before (backward compatible).
+#
+# Structure (keyed by setup_name, then scenario):
+#
+#   <setup_name>:
+#     <scenario>:
+#       exclude_ports: [swp26]      # used when --perf-exclude-ports is set
+#       include_ports: []           # used when --perf-include-ports is set
+#
+# Notes:
+# - A port entry may be a full logical name (e.g. swp26s0 for a single child) or a parent
+#   (swp26 -> all swp26sN children).
+# - The tool keeps the DUT left/right sides balanced (see docs/PORT_EXCLUSION_INCLUSION_PLAN.md):
+#   excluding one side auto-mirrors the same sorted-index port on the other side.
+# - Enabling a mode whose list is empty/missing for the running setup+scenario is an error
+#   (fail fast) so an intended exclusion is never silently ignored.
+#
+# Override this file's location with: --perf-ports-config=<path>
+
+# ---------------------------------------------------------------------------
+# Example (commented out — copy and adapt for your setup/scenario):
+#
+# nv_performance_slm-254:
+#   spcx_ra:
+#     exclude_ports: [swp26]
+#     include_ports: []
+# ---------------------------------------------------------------------------
+nv_performance_moose-mec-32:
+  spcx_ra:
+    exclude_ports: [swp26]
+    # include_ports must keep equal counts per DUT side (left swp1-32, right swp33-64).
+    # This keeps 16 left + 16 right = "half the switch" (a balanced include).
+    include_ports: [swp1, swp2, swp3, swp4, swp5, swp6, swp7, swp8, swp9, swp10, swp11, swp12,
+                    swp13, swp14, swp15, swp16,
+                    swp33, swp34, swp35, swp36, swp37, swp38, swp39, swp40, swp41, swp42, swp43,
+                    swp44, swp45, swp46, swp47, swp48]

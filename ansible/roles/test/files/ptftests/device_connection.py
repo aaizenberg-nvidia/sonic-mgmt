@@ -46,7 +46,7 @@ class DeviceConnection:
         Executes command on remote device
 
         @param cmd: command to be run on remote device
-        @param timeout: timeout for command run session
+        @param timeout: timeout for connection and command run session
         @return: stdout, stderr, value
             stdout is a list of lines of the remote stdout gathered during command execution
             stderr is a list of lines of the remote stderr gathered during command execution
@@ -63,7 +63,8 @@ class DeviceConnection:
         retValue = 1
         try:
             client.connect(self.hostname, username=self.username,
-                           password=self.passwords[self.password_index], allow_agent=False)
+                           password=self.passwords[self.password_index], allow_agent=False,
+                           timeout=timeout)
             si, so, se = client.exec_command(cmd, timeout=timeout)
             stdOut = so.readlines()
             stdErr = se.readlines()

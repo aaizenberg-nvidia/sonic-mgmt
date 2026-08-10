@@ -13,6 +13,10 @@ from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.DutUtilsTool import RebootParams
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 

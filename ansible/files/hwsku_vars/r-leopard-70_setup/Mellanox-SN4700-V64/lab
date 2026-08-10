@@ -1,5 +1,5 @@
 [sonic_latest]
-r-leopard-70      ansible_host=10.210.24.88 ansible_hostv6="fe80::966d:aeff:fe14:2d7c" sonic_version=v2 hwsku="Mellanox-SN4700-V64" iface_speed=100000  mgmt_subnet_mask_length=22 vm_base=VM2601
+r-leopard-70      ansible_host=10.210.24.88 ansible_hostv6="fe80::5aa2:e1ff:fe71:c6da" sonic_version=v2 hwsku="Mellanox-SN4700-V64" iface_speed=100000  mgmt_subnet_mask_length=22 vm_base=VM2601
 r-leopard-72      ansible_host=10.210.24.196 ansible_hostv6="fe80::966d:aeff:fe1e:6350" sonic_version=v2 hwsku="Mellanox-SN4700-V64" iface_speed=100000  mgmt_subnet_mask_length=22 vm_base=VM2701
 
 [sonic:children]

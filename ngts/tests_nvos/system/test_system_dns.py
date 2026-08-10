@@ -21,6 +21,10 @@ import crypt
 from devts.infra.tools.connection_tools.utils import generate_strong_password
 from retry.api import retry_call
 
+
+cumulus_owner = "lbenbasat"
+
+
 logger = logging.getLogger()
 
 BASE_IMAGE_VERSION_TO_INSTALL = "nvos-amd64-{pre_release_name}.bin"

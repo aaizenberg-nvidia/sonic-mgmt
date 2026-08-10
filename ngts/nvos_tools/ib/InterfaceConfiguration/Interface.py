@@ -1,6 +1,7 @@
 from .IfIndex import IfIndex
 from .IpV4 import IpV4
 from .IpV6 import IpV6
+from .Cpo import InterfaceCpo
 from .Link import LinkMgmt
 from .LldpInterface import LldpInterface
 from .Type import Type
@@ -42,6 +43,7 @@ class Interface(BaseComponent):
         self.acl = Acl(self)
         self.lldp = LldpInterface(self)
         self.counters = Counters(self)
+        self.cpo = InterfaceCpo(self)
 
     def wait_for_port_state(self, state, timeout=InternalNvosConsts.DEFAULT_TIMEOUT, logical_state=None, sleep_time=2,
                             dut_engine=None):

@@ -1,20 +1,21 @@
 {% set port_list = filter_ports(["dut"]) %}
 {% set split_left = parameter_dict.split_left %}
+{% set total_ports = parameter_dict.total_ports %}
 {% set dut_lldp_ports = port_list['dut'] %}
 {% set mloop_lldp_ports = down_ports() %}
-{% set dut_pre_split = cumulus_ports_already_logical_split(dut_lldp_ports) %}
-{% set mloop_pre_split = cumulus_ports_already_logical_split(mloop_lldp_ports) %}
+{% set dut_pre_split = cumulus_ports_match_requested_split(dut_lldp_ports, split_left) %}
+{% set mloop_pre_split = cumulus_ports_match_requested_split(mloop_lldp_ports, split_left) %}
 {% set _ = validate_no_unsupported_service_port_split(dut_lldp_ports, split_left, "SRv6 left TG DUT-facing ports") %}
 {% set _ = validate_no_unsupported_service_port_split(mloop_lldp_ports, split_left, "SRv6 left TG mloop ports") %}
 {% set dut_parent_ports = get_swp_parent_port_names(dut_lldp_ports) %}
 {% set mloop_parent_ports = get_swp_parent_port_names(mloop_lldp_ports) %}
 {% set _ = validate_no_overlapping_swp_parent_ports(dut_lldp_ports, mloop_lldp_ports, "SRv6 left TG DUT-facing and mloop ports") %}
-{% if dut_pre_split and split_left | int == 2 %}
+{% if dut_pre_split %}
 {% set dut_ports = sort_swp_split_port_names(dut_lldp_ports) %}
 {% else %}
 {% set dut_ports = get_swp_ports_for_split(dut_lldp_ports, split_left) %}
 {% endif %}
-{% if mloop_pre_split and split_left | int == 2 %}
+{% if mloop_pre_split %}
 {% set mloop_ports = sort_swp_split_port_names(mloop_lldp_ports) %}
 {% else %}
 {% set mloop_ports = get_swp_ports_for_split(mloop_lldp_ports, split_left) %}
@@ -97,7 +98,7 @@
             {{ address | replace("aaaa", "bbbb") }}/48: {}
           {% endfor %}
         type: loopback
-    {% if split_left | int != 1 and not (dut_pre_split and split_left | int == 2) %}
+    {% if split_left | int != 1 %}
     {% for port in dut_parent_ports %}
       {{ port }}:
         link:
@@ -106,7 +107,7 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% if split_left | int != 1 and not (mloop_pre_split and split_left | int == 2) %}
+    {% if split_left | int != 1 %}
     {% for port in mloop_parent_ports %}
       {{ port }}:
         link:
@@ -197,7 +198,7 @@
               l2: {}
               l3: {}
               tunnel: {}
-        state: {% if parameter_dict.chip_type == 'SPC4' %}disabled{% else %}enabled{% endif %}
+        state: {% if parameter_dict.chip_type in ['SPC4', 'SPC6'] %}disabled{% else %}enabled{% endif %}
     router:
       bgp:
         autonomous-system: leaf

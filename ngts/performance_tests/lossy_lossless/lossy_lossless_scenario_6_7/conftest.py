@@ -109,9 +109,10 @@ def get_conf_args(scenario_name, players, all_ports_after_split):
     """
     This function alters all of the jinja template files.
     """
+    chip_type = get_chip_type(players['dut']['attributes'].noga_query_data['attributes'])
 
     conf_args = {
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
         "fboss_enabled": True,
         "auto_buffer_mode": "False",
         "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
@@ -190,7 +191,7 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
     neigh_mac_right_tg = '00:00:00:00:10:70'
     num_of_traffic_ports = 32
     speed = 400
-    lossless_rx_expected_bw = round((speed * PerfConsts.DVS_SHAPER_VALUE / num_of_traffic_ports) / speed, 2)
+    lossless_rx_expected_bw = round((speed * PerfConsts.DVS_SHAPER_VALUE / num_of_traffic_ports) / speed, 2) - 0.002
     left_unconnected = all_ports_after_split[PerfConsts.LEFT_TG_ALIAS]["unconnected_ports"]
     right_unconnected = all_ports_after_split[PerfConsts.RIGHT_TG_ALIAS]["unconnected_ports"]
     left_split = all_ports_after_split[PerfConsts.DUT_ALIAS]["left_split_ports"]
@@ -220,11 +221,11 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
         PerfConsts.BW_THRESHOLD: {
             "bisection_left_group": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE
+                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE - 0.002
             },
             "bisection_right_group": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE
+                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE - 0.002
             },
             "egress_ports_many_to_1_group_left": {
                 ValidationConsts.TX: bw_th,
@@ -284,10 +285,10 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
     left_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.LEFT_TG_ALIAS]
     right_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.RIGHT_TG_ALIAS]
 
-    bisection_lossy_packets = 8
+    bisection_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     bisection_lossless_packets = 0
     many_to_one_lossy_packets = 0
-    many_to_one_lossless_packets = 8
+    many_to_one_lossless_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
 
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.LEFT_TG_ALIAS: [
@@ -382,8 +383,8 @@ def get_scenario_6b_conf_args(players, all_ports_after_split, conf_args):
 
     left_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.LEFT_TG_ALIAS]
     bisection_lossy_packets = 0
-    bisection_lossless_packets = 8
-    few_to_many_lossy_packets = 8
+    bisection_lossless_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
+    few_to_many_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     few_to_many_lossless_packets = 0
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.LEFT_TG_ALIAS: [
@@ -500,7 +501,7 @@ def get_scenario_7a_conf_args(players, all_ports_after_split, conf_args):
     ]
 
     right_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.RIGHT_TG_ALIAS]
-    nic_to_spine_lossy_packets = 8
+    nic_to_spine_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     nic_to_spine_lossless_packets = 0
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.RIGHT_TG_ALIAS: [

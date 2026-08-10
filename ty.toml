@@ -1,0 +1,27 @@
+[environment]
+python-version = "3.12"
+
+[src]
+include = ["ngts", "tests"]
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    ".venv_py38_backup",
+    "**/*_pb2.py",
+    "**/*_pb2_grpc.py",
+    "spytest/",
+    "__pycache__",
+]
+respect-ignore-files = true
+
+[rules]
+possibly-unresolved-reference = "warn"
+unresolved-import = "warn"
+
+[analysis]
+respect-type-ignore-comments = true
+
+[terminal]
+output-format = "full"

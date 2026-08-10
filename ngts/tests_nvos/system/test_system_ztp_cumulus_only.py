@@ -17,6 +17,10 @@ import time
 import json
 import re
 
+
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger()
 
 

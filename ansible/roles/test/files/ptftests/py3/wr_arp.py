@@ -46,6 +46,7 @@ class ArpTest(BaseTest):
 
         self.q_to_dut = Queue()
         self.q_from_dut = Queue()
+        self.uptime_before_reboot = None
 
         return
 
@@ -297,7 +298,23 @@ class ArpTest(BaseTest):
         return
 
     def tearDown(self):
-        self.cmd(["supervisorctl", "stop", "ferret"])
+        try:
+            if self.uptime_before_reboot is not None:
+                self.log("tearDown: waiting for DUT reboot to complete")
+                stop_at = time.monotonic() + self.how_long
+                while time.monotonic() < stop_at:
+                    output, _, return_code = self.dut_connection.execCommand("uptime -s", timeout=5)
+                    if return_code == 0 and output and \
+                            "ok: {}".format(str(output)) != self.uptime_before_reboot:
+                        self.log("tearDown: DUT reboot completed")
+                        break
+                    time.sleep(5)
+                else:
+                    self.log("tearDown: DUT reboot did not complete within {} seconds".format(self.how_long))
+        except Exception as err:
+            self.log("tearDown: failed to wait for DUT reboot completion: {}".format(err))
+        finally:
+            self.cmd(["supervisorctl", "stop", "ferret"])
         return
 
     def runTest(self):
@@ -320,17 +337,18 @@ class ArpTest(BaseTest):
 
     def get_uptime(self):
         uptime = self.req_dut('uptime')
-        if uptime.startswith('error'):
-            self.log("DUT returned error for uptime request")
+        if uptime.startswith('error') or uptime == 'ok: []':
+            self.log("DUT returned invalid uptime response: {}".format(uptime))
             self.req_dut('quit')
-            self.assertTrue(False, "DUT returned error for uptime request")
+            self.assertTrue(False, "DUT returned invalid uptime response")
         return uptime
 
-    def warm_reboot(self):
+    def warm_reboot(self, uptime_before):
         self.log("Issuing WR command")
         self.stop_at = time.time() + self.how_long
         result = self.req_dut('WR')
         if result.startswith('ok'):
+            self.uptime_before_reboot = uptime_before
             self.log("WR OK!")
         else:
             self.log("Error in WR")
@@ -350,7 +368,7 @@ class ArpTest(BaseTest):
         test_port_thr.start()
 
         uptime_before = self.get_uptime()
-        self.warm_reboot()
+        self.warm_reboot(uptime_before)
 
         test_port_thr.join(timeout=self.how_long)
         if test_port_thr.is_alive():
@@ -428,7 +446,7 @@ class ArpTest(BaseTest):
             test_non_broadcast_reply_thread.start()
 
             uptime_before = self.get_uptime()
-            self.warm_reboot()
+            self.warm_reboot(uptime_before)
 
             test_non_broadcast_reply_thread.join(timeout=self.how_long)
 

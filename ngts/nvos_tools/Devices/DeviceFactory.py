@@ -16,7 +16,9 @@ from ngts.nvos_tools.Devices.IbDevice import (GorillaSwitch, GorillaSwitchBF3, C
                                               JulietNonScaleoutSwitchGB300QS, JulietNonScaleoutSwitchGB300PS,
                                               RosalindSimx, RosalindSwitch, RosalindSurrogateSwitch,
                                               RosalindStackedSwitch, RosalindStackedSimx, RosalindChipless,
-                                              TaipanSwitch, TaipanSingleAsicSwitch, PortiaSimx, PortiaSimxNso, PortiaSA,
+                                              TaipanSwitch, TaipanSingleAsicSwitch, PortiaSwitch, PortiaSimx,
+                                              PortiaCpoSwitch, PortiaCpoSimx, PortiaCpoTASimx,
+                                              PortiaNpoSwitch, PortiaNpoSimx, PortiaNpoTASimx,
                                               RosalindSA, RosalindRTF)
 
 logger = logging.getLogger()
@@ -78,9 +80,14 @@ class DeviceFactory:
             "N6100_LD_simx - Rosalind_SA": RosalindSA,
             "N6300_LD - RosalindStacked": RosalindStackedSwitch,
             "N6300_LD_simx - RosalindStacked": RosalindStackedSimx,
-            "N7170_LD_simx - Portia": PortiaSimx,
-            "N7100_LD_NSO_simx - Portia": PortiaSimxNso,
-            "N7170_LD_simx - Portia_SA": PortiaSA
+            "N7200_LD - Portia": PortiaSwitch,
+            "N7200_LD_simx - Portia": PortiaSimx,
+            "N7300_LD - Portia": PortiaCpoSwitch,
+            "N7300_LD_simx - Portia": PortiaCpoSimx,
+            "N7300_LD_TA_simx - Portia": PortiaCpoTASimx,
+            "N7400_LD - Portia": PortiaNpoSwitch,
+            "N7400_LD_simx - Portia": PortiaNpoSimx,
+            "N7400_LD_TA_simx - Portia": PortiaNpoTASimx,
         }
 
     @staticmethod

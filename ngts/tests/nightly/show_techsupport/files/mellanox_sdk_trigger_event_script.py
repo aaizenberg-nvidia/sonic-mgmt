@@ -12,6 +12,11 @@ import argparse
 ######################################################
 SWID = 0
 DEVICE_ID = 1
+FW_EVENT_TO_HEALTH_CAUSE = {
+    1: SX_HEALTH_CAUSE_FW_FATAL_EVENT_E,
+    2: SX_HEALTH_CAUSE_FW_ASSERT_E,
+    3: SX_HEALTH_CAUSE_PLL_E
+}
 
 ERR_FILE_LOCATION = '/tmp/python_err_log.txt'
 parser = argparse.ArgumentParser(description='This example demonstrates how to register, \
@@ -41,14 +46,13 @@ def trigger():
     print(("sx_api_host_ifc_open,fd = %d rc=%d] " % (fd.fd, rc)))
 
     # trigger a test event which will activate the handler
-    sx_dbg_test_params_p = new_sx_dbg_test_params_t_p()
-    sx_dbg_test_params_p.dev_id = args.device_id
-    sx_dbg_test_params_p.test_type = args.fw_event
-    rc = sx_api_fw_dbg_test(handle, sx_dbg_test_params_p)
+    sx_dbg_health_event_simulate_params_p = new_sx_dbg_health_event_simulate_params_t_p()
+    sx_dbg_health_event_simulate_params_p.cause = FW_EVENT_TO_HEALTH_CAUSE.get(args.fw_event)
+    rc = sx_api_dbg_health_event_simulate(handle, SX_ACCESS_CMD_SET, sx_dbg_health_event_simulate_params_p)
     if rc != SX_STATUS_SUCCESS:
-        print(("sx_api_fw_dbg_test failed rc %d" % rc))
+        print(("sx_api_dbg_health_event_simulate failed rc %d" % rc))
         return (rc)
-    delete_sx_dbg_test_params_t_p(sx_dbg_test_params_p)
+    delete_sx_dbg_health_event_simulate_params_t_p(sx_dbg_health_event_simulate_params_p)
 
     print("[+] close host ifc recv fd")
     rc = sx_api_host_ifc_close(handle, fd_p)

@@ -6,6 +6,8 @@ from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.platform.Asic import Asic
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.nvos_tools.platform.CableCartridge import CableCartridge
+from ngts.nvos_tools.platform.Cpo import Cpo
+from ngts.nvos_tools.platform.LaserSource import LaserSource
 from ngts.nvos_tools.platform.Environment import Environment
 from ngts.nvos_tools.platform.Inventory import Inventory
 from ngts.nvos_tools.platform.PowerCapping import PowerCapping
@@ -29,6 +31,8 @@ class Platform(BaseComponent):
         self.inventory = Inventory(self)
         self.ps_redundancy = PSRedundancy(self)
         self.transceiver = Transceiver(self)
+        self.cpo = Cpo(self)
+        self.laser_source = LaserSource(self)
         self.chassis_location = BaseComponent(self, path='/chassis-location')
         self.bmc_password = Bmc_password(self)
         self.bmc_factory_default = BmcFactoryDefault(self)

@@ -18,12 +18,12 @@ def skip_test_conditionally(players):
     yield
 
 
-def create_lossy_lossless_json_traffic_file(player_alias, traffic_parameters, json_path, num_lossy_packets, num_lossless_packets):
-    traffic_parameters["num_packets"] = num_lossy_packets
+def create_lossy_lossless_json_traffic_file(player_alias, traffic_parameters, json_path, num_lossy_packets, num_lossless_packets, chip_type):
+    traffic_parameters["num_packets"] = num_lossy_packets if chip_type != "SPC6" else int(num_lossy_packets * 1.5)
     lossy_stream = create_json_traffic_stream(player_alias, traffic_parameters, f"{player_alias}_lossy_stream",
                                               dscp_to_tc(traffic_parameters["lossy_dscp_value"], 2))
 
-    traffic_parameters["num_packets"] = num_lossless_packets
+    traffic_parameters["num_packets"] = num_lossless_packets if chip_type != "SPC6" else int(num_lossless_packets * 1.5)
     lossless_stream = create_json_traffic_stream(player_alias, traffic_parameters, f"{player_alias}_lossless_stream",
                                                  dscp_to_tc(traffic_parameters["lossless_dscp_value"], 2))
 
@@ -31,7 +31,7 @@ def create_lossy_lossless_json_traffic_file(player_alias, traffic_parameters, js
                                               stream_list=[lossy_stream, lossless_stream])
 
 
-def get_lossy_lossless_basic_traffic(players, conf_args, num_lossy_packets, num_lossless_packets, template_suite="traffic_packets_json_files"):
+def get_lossy_lossless_basic_traffic(players, conf_args, num_lossy_packets, num_lossless_packets, chip_type, template_suite="traffic_packets_json_files"):
     traffic_jsons = {}
     pkt_size = PerfConsts.PACKET_SIZE_LIST[0]
     for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
@@ -44,7 +44,7 @@ def get_lossy_lossless_basic_traffic(players, conf_args, num_lossy_packets, num_
 
         create_lossy_lossless_json_traffic_file(player_alias=player_alias, traffic_parameters=traffic_parameters,
                                                 json_path=json_path, num_lossy_packets=num_lossy_packets,
-                                                num_lossless_packets=num_lossless_packets)
+                                                num_lossless_packets=num_lossless_packets, chip_type=chip_type)
         traffic_jsons[player_alias] = json_path
     return traffic_jsons
 

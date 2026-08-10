@@ -7,8 +7,11 @@ class RedfishCollection:
     SESSION_SERVICE = "redfish/v1/SessionService"
     FIRMWARE_INVENTORY = "redfish/v1/UpdateService/FirmwareInventory"
     CPU_REDFISH_NAME = "MGX_FW_CPU_0"
+    ACCOUNT_SERVICE = "redfish/v1/AccountService"
     SYSTEM_ACTIONS = f"{SYSTEM}/System_0/Actions"
     RESET = f"{SYSTEM_ACTIONS}/ComputerSystem.Reset"
+    BMC_MANAGER = f"{MANAGERS}/BMC_0"
+    ROOT_ACCOUNT = f"{ACCOUNT_SERVICE}/Accounts/root"
 
 
 class Defaults:
@@ -16,6 +19,10 @@ class Defaults:
     DEFAULT_SWITCH_PASSWORD = 'admin'
     DEFAULT_BMC_USER = 'root'
     DEFAULT_BMC_PASSWORD = 'ABYX12#14artb'
+    BMC_NVOS_USER = 'yormnAnb'
+    GET_BMC_PASSWORD_FROM_TPM_CMD = ('sudo python3 -c "from sonic_platform.bmc import BMC; '
+                                     'print(BMC(\'10.0.1.1\').get_login_password())"')
+    SSH_CMD_TIMEOUT = 60
     DEFAULT_BRANCH_NAME = 'develop'
     CPLD_NAME = 'cpld'
     BMC_NAME = 'bmc'

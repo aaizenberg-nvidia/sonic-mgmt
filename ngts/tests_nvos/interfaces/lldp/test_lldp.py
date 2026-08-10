@@ -20,6 +20,9 @@ from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
 
 
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger(__name__)
 
 

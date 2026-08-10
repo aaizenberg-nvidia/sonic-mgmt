@@ -169,7 +169,7 @@ class IbInterfaceTool:
         Returns:
             bool: True if configuration was successful, False if skipped
         """
-        if not getattr(devices.dut, 'require_mloop_setup', False):
+        if not devices.dut.require_mloop_setup:
             logger.info("Device does not require MLOOP setup, skipping MLOOP configuration")
             return False
 
@@ -224,7 +224,7 @@ class IbInterfaceTool:
             >>> if not success:
             ...     logger.warning("No UP links found on device")
         """
-        if not getattr(devices.dut, 'require_mloop_setup', False):
+        if not devices.dut.require_mloop_setup:
             logger.info("Device does not require MLOOP setup, skipping link verification")
             return True
 

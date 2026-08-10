@@ -13,6 +13,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, UndefinedErro
 
 
 class DvsPerformance(PerformanceCommon):
+    PORT_STYLE = "sdk_hex"
+
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
         super().__init__(topology_obj, engine, dut_alias, cli_obj)
         self.base_ports, self.ports_lanes = self.get_base_ports()
@@ -319,18 +321,19 @@ class DvsPerformance(PerformanceCommon):
 
     def restore_basic_configuration(self):
         self.cleanup_shared_json_file()
-        restart_cmd = "dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID"
+        switch_attributes = self.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
+        chip_type = get_chip_type(switch_attributes)
+
+        restart_cmd = "dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL"
+        if chip_type == "SPC6":
+            restart_cmd += f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
         self.execute_cmd(restart_cmd)
 
         # TODO: Remove this once we have a better way to undo SDK tests
         if is_redmine_issue_active([4644033])[0]:
             self.clear_syslog()
 
-        switch_attributes = self.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
-        chip_type = get_chip_type(switch_attributes)
-        # TODO: Remove this once unsplit in SPC6 is supported
-        unsplit_list = ["SPC5"] if is_redmine_issue_active([4985641])[0] else ["SPC5", "SPC6"]
-        if chip_type in unsplit_list:
+        if chip_type == "SPC5":
             self.unsplit_all_ports()
         self.connected_ports = self.original_connected_ports
         self.unconnected_ports = self.original_unconnected_ports
@@ -483,11 +486,12 @@ class DvsPerformance(PerformanceCommon):
         """
         port_dump = self.execute_cmd('sx_api_ports_dump.py')
         port_label_tuple_list = re.findall(r"\|\s+(0x\d*\w*\d*)\|\s+\d+\|\s+\d+\|\s+(\d+)\|", port_dump)
-        ports_lanes = self.get_ports_lanes(port_label_tuple_list)
 
         bonus_ports_to_remove = self.get_bonus_ports_to_remove()
         if bonus_ports_to_remove > 0:
             port_label_tuple_list = port_label_tuple_list[:-bonus_ports_to_remove]
+        ports_lanes = self.get_ports_lanes(port_label_tuple_list)
+
         self.base_ports = port_label_tuple_list
         self.ports_lanes = ports_lanes
 
@@ -504,6 +508,10 @@ class DvsPerformance(PerformanceCommon):
         for idx, (port, label) in enumerate(port_label_tuple_list[:-1]):
             nxt_port, nxt_label = port_label_tuple_list[idx + 1]
             ports_lanes[port] = abs(int(port, 16) - int(nxt_port, 16))
+        if len(port_label_tuple_list) >= 2:
+            last_port = port_label_tuple_list[-1][0]
+            prev_port = port_label_tuple_list[-2][0]
+            ports_lanes[last_port] = ports_lanes[prev_port]
         return ports_lanes
 
     def get_right_left_ports_dict(self):
@@ -606,12 +614,7 @@ class DvsPerformance(PerformanceCommon):
         return traffic_parameters
 
     def set_ibm(self, scenario, conf_args, chip_type):
-        self.restore_basic_configuration()
-        # TODO: Remove this once unsplit in SPC6 is supported
-        unsplit_list = ["SPC5"] if is_redmine_issue_active([4985641])[0] else ["SPC5", "SPC6"]
-        if chip_type in unsplit_list:
-            self.unsplit_all_ports()
-        self.apply_configuration_file(scenario, conf_args)
+        return
 
     def get_sdk_ports(self, ports_list):
         """

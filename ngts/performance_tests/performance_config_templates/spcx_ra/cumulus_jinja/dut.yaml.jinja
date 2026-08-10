@@ -4,28 +4,51 @@
 {% set split_right = parameter_dict.split_right %}
 {% set total_ports = parameter_dict.total_ports %}
 {% set two_sided_ar = parameter_dict.two_sided_ar | string %}
-{% set pre_left = cumulus_ports_already_logical_split(left_lldp_ports) %}
-{% set pre_right = cumulus_ports_already_logical_split(right_lldp_ports) %}
+{% set pre_left = cumulus_ports_match_requested_split(left_lldp_ports, split_left) %}
+{% set pre_right = cumulus_ports_match_requested_split(right_lldp_ports, split_right) %}
 {% set _ = validate_no_unsupported_service_port_split(left_lldp_ports, split_left, "SPX-RA DUT left ports") %}
 {% set _ = validate_no_unsupported_service_port_split(right_lldp_ports, split_right, "SPX-RA DUT right ports") %}
 {% set left_parent_ports = get_swp_parent_port_names(left_lldp_ports) %}
 {% set right_parent_ports = get_swp_parent_port_names(right_lldp_ports) %}
-{% if pre_left and split_left | int == 2 %}
+{% if pre_left %}
 {% set left_ports = sort_swp_split_port_names(left_lldp_ports) %}
 {% else %}
 {% set left_ports = get_swp_ports_for_split(left_lldp_ports, split_left) %}
 {% endif %}
-{% if pre_right and split_right | int == 2 %}
+{% if pre_right %}
 {% set right_ports = sort_swp_split_port_names(right_lldp_ports) %}
 {% else %}
 {% set right_ports = get_swp_ports_for_split(right_lldp_ports, split_right) %}
 {% endif %}
-{% set left_count = left_ports|length %}
-{% set right_count = right_ports|length %}
-{% set left_address_list = generate_ip_address_list("172.15.1.2", "172::1:2", mode="dual", number_of_address=left_count) %}
-{% set right_address_list = generate_ip_address_list("192.168.1.2", "192::1:2", mode="dual", number_of_address=right_count) %}
-{% set left_bgp_neighbors = generate_ip_address_list("172.15.1.1", "172::1:1", mode="dual", number_of_address=left_count) %}
-{% set right_bgp_neighbors = generate_ip_address_list("192.168.1.1", "192::1:1", mode="dual", number_of_address=right_count) %}
+{# Port-selection encapsulation: only when exclusion/inclusion is active, size the address
+   space to the FULL (pre-exclusion) port set and index each configured port by its position
+   in that full list. This leaves a gap for excluded ports instead of compacting, so the DUT's
+   per-port subnets stay aligned with the unfiltered TG side (otherwise every port after an
+   excluded one lands in a mismatched subnet and its ARP/ND fails). When inactive the address
+   lists are sized exactly as before (no behavior change). #}
+{% set ps_active = port_selection_active() %}
+{% if ps_active %}
+{% set full_dict = get_full_right_left_ports_dict(bring_up_ports=False) %}
+{% if pre_left %}
+{% set left_ports_full = sort_swp_split_port_names(full_dict['left_ports']) %}
+{% else %}
+{% set left_ports_full = get_swp_ports_for_split(full_dict['left_ports'], split_left) %}
+{% endif %}
+{% if pre_right %}
+{% set right_ports_full = sort_swp_split_port_names(full_dict['right_ports']) %}
+{% else %}
+{% set right_ports_full = get_swp_ports_for_split(full_dict['right_ports'], split_right) %}
+{% endif %}
+{% set left_addr_count = left_ports_full|length %}
+{% set right_addr_count = right_ports_full|length %}
+{% else %}
+{% set left_addr_count = left_ports|length %}
+{% set right_addr_count = right_ports|length %}
+{% endif %}
+{% set left_address_list = generate_ip_address_list("172.15.1.2", "172::1:2", mode="dual", number_of_address=left_addr_count) %}
+{% set right_address_list = generate_ip_address_list("192.168.1.2", "192::1:2", mode="dual", number_of_address=right_addr_count) %}
+{% set left_bgp_neighbors = generate_ip_address_list("172.15.1.1", "172::1:1", mode="dual", number_of_address=left_addr_count) %}
+{% set right_bgp_neighbors = generate_ip_address_list("192.168.1.1", "192::1:1", mode="dual", number_of_address=right_addr_count) %}
 - header:
     model: sn5600
     nvue-api-version: nvue_v1
@@ -40,7 +63,7 @@
             set-hostname: disabled
         vrf: mgmt
         type: eth
-    {% if split_left | int != 1 and not (pre_left and split_left | int == 2) %}
+    {% if split_left | int != 1 %}
     {% for port in left_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -49,7 +72,7 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% if split_right | int != 1 and not (pre_right and split_right | int == 2) %}
+    {% if split_right | int != 1 %}
     {% for port in right_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -58,42 +81,40 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% set counter = namespace(value=0) %}
     {% for port in left_ports %}
+    {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
       {{ port }}:
-      {% if not (split_left | int == 8 and parameter_dict.get('link_phy_speed')) %}
+      {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
         ipv4:
           address:
-            {{ left_address_list["v4"][counter.value] }}/24 : {}
+            {{ left_address_list["v4"][ipidx] }}/24 : {}
         ipv6:
           address:
-            {{ left_address_list["v6"][counter.value] }}/120 : {}
-        {% set counter.value = counter.value + 1 %}
+            {{ left_address_list["v6"][ipidx] }}/120 : {}
+        router:
+          adaptive-routing:
+            state: enabled
+        type: swp
+    {% endfor %}
+    {% for port in right_ports %}
+    {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+      {{ port }}:
+      {% if not parameter_dict.get('link_phy_speed') %}
+{% include '_interface_link_phy_optional.jinja' %}
+      {% endif %}
+        ipv4:
+          address:
+            {{ right_address_list["v4"][ipidx] }}/24 : {}
+        ipv6:
+          address:
+            {{ right_address_list["v6"][ipidx] }}/120 : {}
         {% if two_sided_ar=='True' %}
         router:
           adaptive-routing:
             state: enabled
         {% endif %}
-        type: swp
-    {% endfor %}
-    {% set counter = namespace(value=0) %}
-    {% for port in right_ports %}
-      {{ port }}:
-      {% if not (split_right | int == 8 and parameter_dict.get('link_phy_speed')) %}
-{% include '_interface_link_phy_optional.jinja' %}
-      {% endif %}
-        ipv4:
-          address:
-            {{ right_address_list["v4"][counter.value] }}/24 : {}
-        ipv6:
-          address:
-            {{ right_address_list["v6"][counter.value] }}/120 : {}
-        {% set counter.value = counter.value + 1 %}
-        router:
-          adaptive-routing:
-            state: enabled
         type: swp
     {% endfor %}
     qos:
@@ -158,7 +179,7 @@
               l2: {}
               l3: {}
               tunnel: {}
-        state: enabled
+        state: {% if parameter_dict.chip_type == 'SPC6' %}disabled{% else %}enabled{% endif %}
     vrf:
       default:
         router:
@@ -174,29 +195,33 @@
                 state: enabled
             autonomous-system: spine    
             neighbor:
-              {% for neighbor in left_bgp_neighbors["v4"] %}
-              {{ neighbor }}:
+              {% for port in left_ports %}
+              {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ left_bgp_neighbors["v4"][ipidx] }}:
                 peer-group: v4_group_left
                 type: numbered
-                update-source: {{ left_address_list["v4"][loop.index0] }}
+                update-source: {{ left_address_list["v4"][ipidx] }}
               {% endfor %}
-              {% for neighbor in left_bgp_neighbors["v6"] %}
-              {{ neighbor }}:
+              {% for port in left_ports %}
+              {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ left_bgp_neighbors["v6"][ipidx] }}:
                 peer-group: v6_group_left
                 type: numbered
-                update-source: {{ left_address_list["v6"][loop.index0] }}
+                update-source: {{ left_address_list["v6"][ipidx] }}
               {% endfor %}
-              {% for neighbor in right_bgp_neighbors["v4"] %}
-              {{ neighbor }}:
+              {% for port in right_ports %}
+              {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ right_bgp_neighbors["v4"][ipidx] }}:
                 peer-group: v4_group_right
                 type: numbered
-                update-source: {{ right_address_list["v4"][loop.index0] }}
+                update-source: {{ right_address_list["v4"][ipidx] }}
               {% endfor %}
-              {% for neighbor in right_bgp_neighbors["v6"] %}
-              {{ neighbor }}:
+              {% for port in right_ports %}
+              {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ right_bgp_neighbors["v6"][ipidx] }}:
                 peer-group: v6_group_right
                 type: numbered
-                update-source: {{ right_address_list["v6"][loop.index0] }}
+                update-source: {{ right_address_list["v6"][ipidx] }}
               {% endfor %}
             peer-group:
               v4_group_left:

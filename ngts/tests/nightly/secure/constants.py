@@ -94,7 +94,7 @@ class SonicSecureBootConsts(SecureBootConsts):
     SECURE_FW_MSG = "Security Attributes:   secure-fw"
     SECURE_FW_DEV_MSG = "Security Attributes:   secure-fw, dev"
     BISON_ONIE_TIMEOUT_FACTOR = 1.5
-    PLATFORM_THAT_DO_NOT_SUPPORT_MISMATCH_SIGNATURE_TEST = ['x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600-r0']
+    PLATFORM_THAT_DO_NOT_SUPPORT_MISMATCH_SIGNATURE_TEST = ['x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600-r0', 'x86_64-nvidia_sn6810_ld-r0']
     MISMATCH_SIGNATURE_SIGNED_TYPE = ["key_mismatched_signed", "sig_mismatch_image_path"]
 
 

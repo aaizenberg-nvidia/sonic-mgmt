@@ -43,13 +43,20 @@ class CumulusInstallationSteps:
             logging.info("Updating /etc/apt/sources.list")
             CumulusInstallationSteps.update_apt_sources_list(dut)
             if is_performance:
+                asic_model = dut['cli'].general.get_asic_model(dut['engine'])
+                if asic_model == "Spectrum-6":
+                    logging.info("Detaching stale pending NVUE config while preserving Spectrum-6 breakout")
+                    dut['cli'].general.detach_config(dut['engine'])
                 logging.info(f"Disabling set hostname for performance setups.")
                 dut_hostname = dut['dut_alias'].replace("_", "-")
                 dut['engine'].run_cmd_set(["nv set interface eth0 ipv4 dhcp-client set-hostname disabled",
                                            f"nv set system hostname {dut_hostname}", "nv config apply -y"],
                                           patterns_list=["applied_and_saved"])
-                logging.info("Bringing up all the ports")
-                dut['cli'].interface.initialize_physical_ports()
+                if asic_model == "Spectrum-6":
+                    logging.info("Keeping Spectrum-6 ports in the installed default breakout")
+                else:
+                    logging.info("Bringing up and unsplitting all the ports")
+                    dut['cli'].interface.initialize_physical_ports()
                 logging.info("Restarting lldpd to clear LLDP neighbors")
                 dut['engine'].run_cmd("sudo systemctl restart lldpd")
 

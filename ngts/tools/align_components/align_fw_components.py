@@ -1,6 +1,8 @@
 import argparse
 import json
 import os.path
+import signal
+import subprocess
 import traceback
 from typing import List
 import time
@@ -35,7 +37,7 @@ def start_components_update(_args):
     switch_name = switch_info[NogaConstants.ATTRIBUTES][NogaConstants.COMMON]['Name'].strip()
     assert bmc_ip, "No bmc ip found in noga"
     update_via_parameter = bool(_args.bmc_path or _args.bios_path or _args.erot_path or _args.fpga_path)
-    rf_api = RedFishRestApi(bmc_ip, _args.bmc_user, _args.bmc_pass)
+    rf_api = get_reachable_rf_api(bmc_ip, switch_info, _args)
     json_dict = create_json_dict(_args.fw_versions_json_file)
     devices_with_rel_prod_erot = {
         "juliet-160": {Defaults.EROT_NAME, Defaults.BIOS_NAME, Defaults.BMC_NAME},
@@ -123,6 +125,96 @@ def start_components_update(_args):
     if all_errors:
         error_summary = "The following errors occurred during component alignment:\\n" + "\\n".join(all_errors)
         raise Exception(error_summary)
+
+
+def get_reachable_rf_api(bmc_ip, switch_info, _args) -> RedFishRestApi:
+    """
+    The whole update flow talks to the BMC with the root user, so make sure its credentials are valid.
+    If they are not, reset the root password from the switch, using the nvos user
+    whose password is stored in the TPM.
+    """
+    assert is_bmc_pingable(bmc_ip), (f"BMC {bmc_ip} does not answer to ping, so the bmc itself is down. "
+                                     f"Resetting the root password will not help here")
+
+    rf_api = RedFishRestApi(bmc_ip, _args.bmc_user, _args.bmc_pass)
+    if is_bmc_reachable(rf_api):
+        print(f"BMC {bmc_ip} is reachable with user {_args.bmc_user}")
+        return rf_api
+
+    print(f"BMC {bmc_ip} answers to ping, so its redfish rejected the password of user {_args.bmc_user}")
+    reset_bmc_root_password(bmc_ip, switch_info, _args)
+    rf_api = RedFishRestApi(bmc_ip, Defaults.DEFAULT_BMC_USER, Defaults.DEFAULT_BMC_PASSWORD)
+    assert is_bmc_reachable(rf_api), (f"BMC {bmc_ip} still rejects user {Defaults.DEFAULT_BMC_USER} with the "
+                                      f"default password after the root password reset was performed")
+    print(f"BMC {bmc_ip} is reachable with user {Defaults.DEFAULT_BMC_USER} after the root password reset")
+    return rf_api
+
+
+def is_bmc_reachable(rf_api: RedFishRestApi, retries: int = 2, interval: int = 2) -> bool:
+    """
+    :param retries: number of additional attempts on top of the first one
+    :param interval: seconds to wait between the attempts
+    """
+    for attempt in range(retries + 1):
+        try:
+            rf_api.get_query(RedfishCollection.BMC_MANAGER)
+            return True
+        except Exception as err:
+            print(f"Attempt {attempt + 1}/{retries + 1}: redfish query to BMC {rf_api.ip} "
+                  f"with user {rf_api.username} failed: {err}")
+            if attempt < retries:
+                time.sleep(interval)
+    return False
+
+
+def is_bmc_pingable(bmc_ip, count: int = 3, wait: int = 2) -> bool:
+    """
+    :param count: number of echo requests to send
+    :param wait: seconds to wait for a reply of each request
+    """
+    ping_cmd = ['ping', '-c', str(count), '-W', str(wait), bmc_ip]
+    return subprocess.run(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def reset_bmc_root_password(bmc_ip, switch_info, _args):
+    switch_hostname = switch_info[NogaConstants.ATTRIBUTES][NogaConstants.COMMON]['Name']
+    print(f"Resetting bmc root password via {Defaults.BMC_NVOS_USER} user")
+    tpm_password = run_ssh_cmd(switch_hostname, _args.ssh_user, _args.ssh_pass,
+                               Defaults.GET_BMC_PASSWORD_FROM_TPM_CMD)
+    assert tpm_password, f"Failed to get the bmc password from the tpm of {switch_hostname}"
+
+    nvos_rf_api = RedFishRestApi(bmc_ip, Defaults.BMC_NVOS_USER, tpm_password)
+    nvos_rf_api.patch_query(RedfishCollection.ROOT_ACCOUNT, {"Password": Defaults.DEFAULT_BMC_PASSWORD})
+
+
+def run_ssh_cmd(switch_ip, ssh_user, ssh_pass, command, timeout=Defaults.SSH_CMD_TIMEOUT):
+    """
+    execute command on the switch via ssh connection and wait for output
+    :param timeout: seconds to wait for the command to complete before killing it
+    :return: last line of the command output
+    """
+    ssh_command = [
+        'sshpass', '-p', ssh_pass,
+        'ssh', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'StrictHostKeyChecking=no',
+        '-o', 'TCPKeepAlive=yes', '-o', 'ServerAliveInterval=30', '-o', 'ConnectTimeout=30',
+        f'{ssh_user}@{switch_ip}', command
+    ]
+
+    process = subprocess.Popen(ssh_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        output, _ = process.communicate()
+        raise Exception(f"Ssh command on {switch_ip} did not complete within {timeout} seconds\n"
+                        f"{output.decode('latin-1').strip()}")
+
+    output = output.decode('latin-1').strip()
+    if process.returncode:
+        raise Exception(f"Failed to run ssh command on {switch_ip}\n"
+                        f"Exit Code: {process.returncode}\n{output}")
+    return output.split('\n')[-1].strip()
 
 
 def verify_install_path(install_path):

@@ -1,5 +1,7 @@
 import allure
+import json
 import logging
+import os
 import re
 import ipaddress
 import time
@@ -25,6 +27,9 @@ from ngts.helpers.interface_helpers import get_service_port
 logger = logging.getLogger()
 PORTCHANNEL_NAME = 'PortChannel1111'
 BASE_PKT = 'Ether(dst="{}")/IP(src="50.0.0.2",dst="50.0.0.3")/{}()/Raw()'
+SDK_LAG_QUERY_SCRIPT = 'get_sdk_lag_count.py'
+SDK_LAG_QUERY_TIMEOUT_SEC = 120
+SDK_LAG_QUERY_INTERVAL_SEC = 10
 CHIP_LAGS_LIM = {
     'SPC': 64,
     'SPC2': 110,    # TODO SDK support 128, but currently 128 doesn't work
@@ -397,24 +402,28 @@ def test_lag_members_scale(topology_obj, interfaces, engines, cleanup_list, plat
         service_ports = get_service_port(platform_params.platform)
         all_ifaces_info = exclude_service_ports(all_ifaces_info, service_ports)
         all_ifaces_info = exclude_dpu_interfaces(all_ifaces_info, platform_params.platform)
-        # We need to create bond on ifaces with the same type, choose list with ifaces with the same type
+        # Use the largest group of ports with a compatible hardware type.
         interfaces_types_dict = get_interfaces_by_type_dict(all_ifaces_info)
         test_ifaces_type = get_ifaces_type_which_has_bigger_ifaces_list(interfaces_types_dict)
         all_interfaces_with_same_type = interfaces_types_dict[test_ifaces_type]
         member_interfaces = random.sample(all_interfaces_with_same_type, min(max_lag_members,
                                                                              len(all_interfaces_with_same_type)))
         lb_member_interfaces = get_lag_lb_members(interfaces, member_interfaces)
+        # Preserve ports intentionally left admin-down after setup bring-up identified link issues.
+        admin_up_lb_member_interfaces = [
+            interface for interface in lb_member_interfaces if all_ifaces_info[interface]['Admin'] == 'up'
+        ]
 
-        with allure.step('Set same speed to all interfaces'):
+        with allure.step('Set same speed to all LAG members'):
             dut_orig_ifaces_speeds = dut_cli.interface.get_interfaces_speed(all_interfaces_with_same_type)
             # Get minimal supported speed
             min_speed = min([speed_string_to_int_in_mb(speed) for speed in dut_orig_ifaces_speeds.values()])
-            # Get speed for all members and if it's not similar - set all ports to minimal supported speed
+            # If member speeds differ, set the selected members to the minimum speed for their interface type.
             members_speed = {}
             [members_speed.update({iface: dut_orig_ifaces_speeds[iface]}) for iface in member_interfaces]
             if not all(x == list(members_speed.values())[0] for x in list(members_speed.values())):
                 interfaces_config_list = []
-                for interface in all_interfaces_with_same_type:
+                for interface in member_interfaces:
                     interfaces_config_list.append({'iface': interface,
                                                    'speed': min_speed,
                                                    'original_speed': dut_orig_ifaces_speeds.get(interface, min_speed)})
@@ -422,10 +431,17 @@ def test_lag_members_scale(topology_obj, interfaces, engines, cleanup_list, plat
                     'dut': interfaces_config_list
                 }
                 add_interface_conf(topology_obj, interfaces_config_dict, cleanup_list)
+                configured_speeds = dut_cli.interface.get_interfaces_speed(member_interfaces)
+                unexpected_speeds = {
+                    interface: speed for interface, speed in configured_speeds.items()
+                    if speed_string_to_int_in_mb(speed) != min_speed
+                }
+                assert not unexpected_speeds, \
+                    'Failed to set all LAG members to speed {}: {}'.format(min_speed, unexpected_speeds)
 
         with allure.step('Disable all member loopback interfaces'):
-            dut_cli.interface.disable_interfaces(lb_member_interfaces)
-            cleanup_list.append((dut_cli.interface.enable_interfaces, (lb_member_interfaces,)))
+            dut_cli.interface.disable_interfaces(admin_up_lb_member_interfaces)
+            cleanup_list.append((dut_cli.interface.enable_interfaces, (admin_up_lb_member_interfaces,)))
 
         with allure.step('Create PortChannel with all ports as members'):
             lag_config_dict = {
@@ -477,14 +493,10 @@ def test_lags_scale(topology_obj, engines, cleanup_list, platform_params):
         pytest.skip("Skip performance and scalability tests on ASAN image")
 
     try:
-        # workaround for issue in teardown.
-        # removing of LAGs take time. But in show and ASIC_DB it is presented as already removed.
-        # the current indicate that LAG was removed is only logging:
-        #           "NOTICE teamd#teammgrd: :- removeLag: Stop port channel PortChannel128"
-        # TODO create logic for checking the logging.
-        cleanup_list.append((time.sleep, (120,)))
-
         dut_cli = topology_obj.players['dut']['cli']
+
+        wait_for_sdk_lag_count(engines.dut, expected_count=0)
+        cleanup_list.append((wait_for_sdk_lag_count, (engines.dut, 0)))
 
         chip_type = topology_obj.players['dut']['attributes'].noga_query_data['attributes']['Specific']['chip_type']
         number_of_lags = CHIP_LAGS_LIM[chip_type]
@@ -530,6 +542,83 @@ def test_lags_scale(topology_obj, engines, cleanup_list, platform_params):
             )
     except BaseException as err:
         raise AssertionError(err)
+
+
+def prepare_sdk_lag_query(dut_engine):
+    script_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), SDK_LAG_QUERY_SCRIPT)
+    dut_engine.copy_file(
+        source_file=script_path,
+        file_system='/tmp',
+        dest_file=SDK_LAG_QUERY_SCRIPT,
+        overwrite_file=True,
+    )
+    dut_engine.run_cmd(
+        'docker cp /tmp/{script} syncd:/{script}'.format(
+            script=SDK_LAG_QUERY_SCRIPT,
+        ),
+        validate=True,
+    )
+
+
+def get_sdk_lag_state(dut_engine):
+    output = dut_engine.run_cmd(
+        'docker exec syncd python3 /{script}'.format(
+            script=SDK_LAG_QUERY_SCRIPT,
+        ),
+        validate=True,
+    )
+    for line in reversed(str(output).splitlines()):
+        try:
+            state = json.loads(line.strip())
+        except ValueError:
+            continue
+
+        if not isinstance(state, dict):
+            continue
+        lag_ids = state.get('lag_ids')
+        if isinstance(lag_ids, list):
+            state['count'] = len(lag_ids)
+            return state
+
+    raise RuntimeError("Invalid SDK LAG query output: {}".format(output))
+
+
+def verify_sdk_lag_count(dut_engine, expected_count):
+    sdk_state = get_sdk_lag_state(dut_engine)
+    if sdk_state['count'] != expected_count:
+        raise AssertionError(
+            "SDK LAG IDs have not been released: expected={}, actual={}, IDs={}".format(
+                expected_count,
+                sdk_state['count'],
+                sdk_state['lag_ids'],
+            )
+        )
+    return sdk_state
+
+
+def wait_for_sdk_lag_count(dut_engine, expected_count):
+    logger.info(
+        "Waiting for SDK LAG count on syncd to reach %s (timeout=%ss, interval=%ss)",
+        expected_count,
+        SDK_LAG_QUERY_TIMEOUT_SEC,
+        SDK_LAG_QUERY_INTERVAL_SEC,
+    )
+    prepare_sdk_lag_query(dut_engine)
+    tries = SDK_LAG_QUERY_TIMEOUT_SEC // SDK_LAG_QUERY_INTERVAL_SEC + 1
+    sdk_state = retry_call(
+        verify_sdk_lag_count,
+        fargs=[dut_engine, expected_count],
+        exceptions=(AssertionError, RuntimeError),
+        tries=tries,
+        delay=SDK_LAG_QUERY_INTERVAL_SEC,
+        logger=logger,
+    )
+    logger.info(
+        "SDK LAG count on syncd reached %s, IDs=%s",
+        sdk_state['count'],
+        sdk_state['lag_ids'],
+    )
+    return sdk_state
 
 
 def get_lag_lb_members(interfaces, member_interfaces):
@@ -969,17 +1058,21 @@ def config_bond_type_lag(topology_obj, interfaces, cleanup_list):
 
 def get_interfaces_by_type_dict(interfaces_info):
     """
-    Get dictionary with lists of RJ45 interfaces and rest QSFP interfaces
+    Group CPO and RJ45 interfaces separately from other pluggable interfaces.
     :param interfaces_info: parsed output from "show interfaces status" command
     :return: dictionary
     """
     rg45_type = 'RJ45'
     qsfp_type = 'QSFP'
-    interfaces_types_dict = {rg45_type: [], qsfp_type: []}
+    cpo_type = 'CPO'
+    interfaces_types_dict = {rg45_type: [], qsfp_type: [], cpo_type: []}
 
     for interface in interfaces_info:
-        if interfaces_info[interface]['Type'] == rg45_type:
+        interface_type = interfaces_info[interface]['Type']
+        if interface_type == rg45_type:
             interfaces_types_dict[rg45_type].append(interface)
+        elif interface_type == cpo_type:
+            interfaces_types_dict[cpo_type].append(interface)
         else:
             interfaces_types_dict[qsfp_type].append(interface)
 
@@ -989,7 +1082,7 @@ def get_interfaces_by_type_dict(interfaces_info):
 def get_ifaces_type_which_has_bigger_ifaces_list(interfaces_types_dict):
     """
     Get type of interface which has bigger number of interfaces
-    :param interfaces_types_dict: dict, example: {'RJ45': ['Ethernet0', 'Ethernet1'], 'QSFP': ['Ethernet2']}
+    :param interfaces_types_dict: dict of interface types and their interfaces
     :return: str, interface type which have bigger list of interfaces
     """
     num_of_ifaces = 0

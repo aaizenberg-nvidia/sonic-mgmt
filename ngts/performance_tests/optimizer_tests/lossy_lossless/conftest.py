@@ -53,7 +53,7 @@ def conf_args(players):
     This function alters all of the jinja template files.
     """
 
-    conf_args = {"congestion_thresh_lo": 190,
+    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
                  "auto_buffer_mode": "False",
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "is_ipv6": False,

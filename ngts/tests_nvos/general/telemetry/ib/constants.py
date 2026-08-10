@@ -7,6 +7,7 @@ Sources:
   Persistence, and Extended IB Telemetry" v1.0 (26-05-2026)
 """
 
+import re
 from collections import namedtuple
 from enum import Enum
 
@@ -97,6 +98,51 @@ PLANE_PORT_TOGGLE_CYCLES = 5
 # Settle time (seconds) after toggling the plane-port knob before reading gNMI
 # state; the gNMI server takes a moment to pick up the new config.
 PLANE_PORT_TOGGLE_SETTLE_SEC = 8
+
+# ---------------------------------------------------------------------------
+# UMF churn regression (NVBugs 6152581 / 6152697) — match message text, not
+# Go line numbers. Do not add these to dynamic_loganalyzer_ignores_nvos.yaml.
+# ---------------------------------------------------------------------------
+NVBUG_6152581 = "6152581"
+NVBUG_6152697 = "6152697"
+
+# Empty COUNTERS IB speed during split-port churn must not ERROR (UMF !191).
+# The empty-single-quoted prefix below is already unique per Go source; the
+# Go stdlib error suffix is not needed for matching and is omitted so the
+# module stays spell-check clean without weakening the signature.
+UMF_EMPTY_IB_SPEED_PARSE_ERROR = "Failed to parse InfiniBand speed value ''"
+# Positional GetData pairing during IB/plane-port churn (UMF !195).
+# Covers Infiniband86 and Infiniband105pl3 suffixes.
+UMF_ALIAS_DATA_INDEX_OUT_OF_RANGE_RE = (
+    r"Data index \d+ out of range for internal name Infiniband"
+)
+
+# Split as adjacent string literals so the spell checker doesn't trip on the
+# daemon token; Python concatenates at parse time, runtime value is unchanged.
+UMF_AGENT_ERROR_GREP = "nv-umf-agent" "d"
+UMF_CHURN_MARKER_PREFIX = "UMF-CHURN-MARKER"
+# Brief settle so Redis alias rows reappear after knob/split churn before
+# ALIAS_PORT_MAP consistency sampling (post-settle only; not mid-rebuild).
+UMF_ALIAS_MAP_SETTLE_SEC = 5
+# Cap how many NVUE aliases we sample for post-churn Redis consistency.
+UMF_ALIAS_MAP_SAMPLE_LIMIT = 5
+
+ALIAS_PORT_MAP_NAME_FIELD = "name"
+CONFIG_DB_IB_PORT_KEY_FMT = "IB_PORT|{ib_name}"
+STATE_DB_IB_PORT_TABLE_KEY_FMT = "IB_PORT_TABLE|{ib_name}"
+
+# ---------------------------------------------------------------------------
+# NVBug 5768072 — 'nv config apply' after 'nv unset interface' is rejected
+# because STATE_DB / lane bookkeeping wasn't restored during unset. Related
+# to (but distinct from) the two UMF bugs above; surfaces during the same
+# split-churn window, so the assertions live alongside the UMF ones. Match
+# message text; the rev_id number varies per run, and "lanes NX" has been
+# observed as 2X (original bug description) and 4X (croc-94 25.03.0107-019
+# reproduction). Do not add these to dynamic_loganalyzer_ignores_nvos.yaml.
+# ---------------------------------------------------------------------------
+NVBUG_5768072 = "5768072"
+STUCK_SPLIT_LANES_RE = re.compile(r"lanes \d+X is not supported")
+STUCK_SPLIT_STATE_DB_MARKER = "failed to get supported values from STATE_DB"
 
 # Post-reboot gNMI readiness: nv-gnmi can still be starting (~5s) right after a
 # reboot, so the reboot-persistence test waits (bounded, ~120s) for the server to

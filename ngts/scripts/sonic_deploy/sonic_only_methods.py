@@ -14,7 +14,7 @@ from ngts.helpers import json_file_helper
 from ngts.helpers.system_helpers import set_timezone as system_set_timezone
 from ngts.scripts.sonic_deploy.image_preparetion_methods import is_url, get_sonic_branch
 from ngts.constants.constants import MarsConstants, SonicDeployConstants, SonicConst, SimxCommunityConsts
-from ngts.scripts.sonic_deploy.community_only_methods import get_generate_minigraph_cmd, deploy_minigpraph, \
+from ngts.scripts.sonic_deploy.community_only_methods import deploy_minigpraph, \
     reboot_validation, execute_script, is_dualtor_topo, is_dualtor_aa_topo, generate_minigraph, \
     config_y_cable_simulator, add_host_for_y_cable_simulator
 from retry.api import retry_call, retry
@@ -165,22 +165,6 @@ class SonicInstallationSteps:
                                                     sonic_topo=sonic_topo)
         is_scale_topo = sonic_topo in SonicDeployConstants.SCALE_TOPOLOGIES_LIST
         is_bgp_scale_topo = sonic_topo in SonicDeployConstants.BGP_SCALE_TOPOLOGIES_LIST
-
-        if (not is_dualtor_topo(sonic_topo) and 'bobcat' not in dut_name and "r-moose-01" != dut_name and
-                "mtvr-moose-04" != dut_name and "r-leopard-01" != dut_name and "r-leopard-58" != dut_name and
-                'r-tigon-04' != dut_name and "mtvr-moose-13" != dut_name and "mtvr-moose-14" != dut_name and
-                "mtvr-gaur-02" != dut_name and "mtvr-gaur-03" != dut_name and "air-6600" not in dut_name and
-                (not dut_name.startswith('slm-') or dut_name in SonicDeployConstants.SLM_GEN_MG_ALLOWLIST) and
-                not setup_name.endswith('-ha') and
-                "r-bison-18" != dut_name and "r-bison-08" != dut_name and "r-bison-06" != dut_name and
-                "r-bison-20" != dut_name and "r-bison-22" != dut_name and "r-bison-16" != dut_name):
-            gen_mg_cmd = get_generate_minigraph_cmd(setup_info, dut_name, sonic_topo, port_number)
-            if is_scale_topo:
-                logger.info(f"Scale topo {sonic_topo}: running gen-mg foreground to avoid a race condition with add-topo for converged topos")
-                execute_script(gen_mg_cmd, ansible_path)
-            else:
-                run_background_process_on_host(threads_dict, 'generate_minigraph', gen_mg_cmd, timeout=300,
-                                               exec_path=ansible_path, deploy_sequential=deploy_sequential)
 
         if not deploy_image_only:
             add_topo_cmd = SonicInstallationSteps.get_add_topology_cmd(setup_name, dut_name, sonic_topo, neighbor_type,
@@ -624,69 +608,8 @@ class SonicInstallationSteps:
                                                               dut_alias=dut_alias,
                                                               custom_config_db_air_path=custom_config_db_air_path,
                                                               deploy_chipless=deploy_chipless)
-        dut_name = setup_info['duts'][0]['dut_name']
-        dut_platform_path = f'/usr/share/sonic/device/{platform_params["platform"]}'
-        sonic_mgmt_hwsku_path = '/usr/share/sonic/device/x86_64-kvm_x86_64-r0'
-        sonic_user = os.getenv("SONIC_SWITCH_USER")
-        sonic_password = os.getenv("SONIC_SWITCH_PASSWORD")
         dut_engine = topology_obj.players['dut']['engine']
         logger.info(f'Current hwsku in the platform_params is: {platform_params["platform"]}')
-        hwskus = []
-        need_gen_mingraph = False
-        if ("r-moose-01" in setup_name or "mtvr-moose-04" in setup_name or "mtvr-moose-13" in setup_name or
-                "mtvr-moose-14" in setup_name):
-            hwskus = ['Mellanox-SN5600-V256', 'Mellanox-SN5600-C256S1', 'Mellanox-SN5600-C224O8']
-            need_gen_mingraph = True
-        if "r-tigon-04" in setup_name:
-            hwskus = ['Mellanox-SN4600C-D24C52']
-            need_gen_mingraph = True
-        if "mtvr-gaur-02" in setup_name or "mtvr-gaur-03" in setup_name:
-            hwskus = ['Mellanox-SN5610N-C256S2', 'Mellanox-SN5610N-C224O8']
-            need_gen_mingraph = True
-        if "air-6600" in setup_name:
-            hwskus = ['Mellanox-SN6600-C512S4', 'ACS-SN6600', 'Mellanox-SN6600-V448P16S2']
-            if is_community(sonic_topo):
-                need_gen_mingraph = True
-        if ("r-bison-06" in setup_name or "r-bison-08" in setup_name or "r-bison-16" in setup_name or
-                "r-bison-18" in setup_name or "r-bison-20" in setup_name or "r-bison-22" in setup_name):
-            hwskus = ['Mellanox-SN5640-C512S2', 'Mellanox-SN5640-C448O16', 'Mellanox-SN5640-C512X2',
-                      'Mellanox-SN5640-C508O1X2', 'Mellanox-SN5640-O128X2']
-            need_gen_mingraph = True
-
-        for hwsku in hwskus:
-            if os.path.exists(f'{sonic_mgmt_hwsku_path}/{hwsku}'):
-                logger.warning(f"The hwsku {hwsku} already exist in the sonic mgmt docker, no need to copy")
-            elif "No such file or directory" in dut_engine.run_cmd(f"ls -l {dut_platform_path}/{hwsku}"):
-                logger.warning(f"The hwsku {hwsku} not exist in the DUT, no need to copy")
-            else:
-                execute_script(f'sshpass -p "{sonic_password}" scp -o "StrictHostKeyChecking no"'
-                               f' -r {sonic_user}@{dut_name}:{dut_platform_path}/{hwsku} '
-                               f'{sonic_mgmt_hwsku_path}', ansible_path)
-
-                logger.info(f"Copied the hwsku {hwsku} to sonic-mgmt")
-
-        if ("r-moose-01" in setup_name or "mtvr-moose-14" in setup_name):
-            v256 = "Mellanox-SN5600-V256"
-            if os.path.exists(f'{sonic_mgmt_hwsku_path}/{v256}/port_config.ini'):
-                execute_script(f'sed -i "s/200000/100000/g" {sonic_mgmt_hwsku_path}/{v256}/port_config.ini',
-                               ansible_path)
-
-            c256s1 = "Mellanox-SN5600-C256S1"
-            if os.path.exists(f'{sonic_mgmt_hwsku_path}/{c256s1}/port_config.ini'):
-                execute_script(f'sed -i "s/100000/50000/g" {sonic_mgmt_hwsku_path}/{c256s1}/port_config.ini',
-                               ansible_path)
-
-            c224o8 = "Mellanox-SN5600-C224O8"
-            if os.path.exists(f'{sonic_mgmt_hwsku_path}/{c224o8}/port_config.ini'):
-                execute_script(f'sed -i "s/100000/50000/g" {sonic_mgmt_hwsku_path}/{c224o8}/port_config.ini',
-                               ansible_path)
-                execute_script(f'sed -i "s/400000/100000/g" {sonic_mgmt_hwsku_path}/{c224o8}/port_config.ini',
-                               ansible_path)
-        if need_gen_mingraph:
-            if setup_name.endswith('-ha'):
-                generate_minigraph(ansible_path, setup_info, setup_name, sonic_topo, None)
-            else:
-                generate_minigraph(ansible_path, setup_info, dut_name, sonic_topo, None)
 
         for dut in setup_info['duts']:
             cli = dut['cli_obj']

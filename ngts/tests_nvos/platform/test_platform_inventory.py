@@ -11,6 +11,10 @@ from ngts.nvos_constants.constants_nvos import PlatformConsts
 from ngts.nvos_constants.constants_nvos import OutputFormat
 from ngts.nvos_constants.constants_nvos import ApiType
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 

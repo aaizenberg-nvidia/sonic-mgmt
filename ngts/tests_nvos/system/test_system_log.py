@@ -27,6 +27,10 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.infra.SudoScope import sudo_scope_if
 
+
+cumulus_owner = "gosaini"
+
+
 logger = logging.getLogger()
 
 

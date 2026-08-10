@@ -47,13 +47,14 @@ def basic_setup_configuration(players, conf_args):
 
 
 @pytest.fixture(scope='class', autouse=True)
-def conf_args():
+def conf_args(chip_type):
     """
     This function alters all of the jinja template files.
     """
-    conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {"auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
                  "is_ipv6": False,
+                 "is_ipv4": True,
                  "split_right": 4,
                  "split_left": 2,
                  "host": PerfConsts.RIGHT_TG_ALIAS,
@@ -61,9 +62,12 @@ def conf_args():
                  "shaper_value": 0.975,
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "left_num_packets": 1,
-                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,
+                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],
                  "two_sided_ar": False,
-                 "scenario": TESTS_SCENARIO
+                 "scenario": TESTS_SCENARIO,
+                 "use_incremental_dips": False,
+                 "dip_left_to_right_start_ipv4_list": ["10.0.1.0"],
+                 "dip_left_to_right_start_ipv6_list": [],
                  }
     return conf_args
 

@@ -128,6 +128,12 @@ def pytest_collection_modifyitems(session, config, items):
             modified_config = generate_config_db(original_config_db, dut_engine, expected_ports_num, platform,
                                                  dut_to_host_ports_list, topology)
             save_config_db_json(dut_engine, modified_config)
+            # Reload QoS to clear QoS configuration and generate new QoS configuration,
+            # because post are splitted to max ports, port configuration change
+            # some left qos buffer config will does not match the new ports config
+            # eg. For ACS-MSN2700, Port Ethernet25 will not exist in new config_db.json, but it still has qos buffer config in config_db.json
+            cli_object.qos.reload_qos()
+            cli_object.general.save_configuration()
             cli_object.general.reload_configuration(force=True)
 
             # Mark that the original configuration needs to be restored after the test

@@ -9,6 +9,7 @@ from ngts.scripts.sonic_deploy.community_only_methods import is_dualtor_topo
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.constants.constants import PlayersAliases
 from ngts.nvos_tools.system.System import System
+from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from .collect_simx_logs_on_not_success import dump_simx_data, dump_simx_syslog_data
 
 
@@ -131,7 +132,7 @@ def collect_dualtor_simulator_log(hypervisor_engine, target_folder):
 
 
 @pytest.mark.disable_loganalyzer
-def test_store_techsupport_on_not_success(topology_obj, duration, dumps_folder, is_simx, is_air, sonic_topo):
+def test_store_techsupport_on_not_success(topology_obj, duration, dumps_folder, is_simx, is_air, sonic_topo, setup_name):
     dut_cli_object_list = [topology_obj.players['dut']['cli']]
     dut_engine_list = [topology_obj.players['dut']['engine']]
     if topology_obj.players.get('dut-b'):
@@ -167,7 +168,18 @@ def test_store_techsupport_on_not_success(topology_obj, duration, dumps_folder, 
     global FETCH_THECHSURPORT_STATUS
     FETCH_THECHSURPORT_STATUS = True
 
-    if is_simx and not is_air:
+    if is_air:
+        try:
+            with allure.step('Collect AIR simulation logs via Loki proxy'):
+                collect_air_simulation_logs(
+                    setup_name=setup_name,
+                    dumps_folder=dumps_folder,
+                    test_name='store_techsupport_on_not_success',
+                    duration_seconds=duration if duration else 7200,
+                )
+        except Exception as err:
+            logger.error('Exception while collecting AIR simulation logs via Loki proxy: %s', err)
+    elif is_simx:
         dump_simx_data(topology_obj, dumps_folder)
 
     if sonic_topo and is_dualtor_topo(sonic_topo):

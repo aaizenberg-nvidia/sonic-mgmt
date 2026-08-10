@@ -12,7 +12,8 @@ def wait_and_verify_link(
     with allure.step(f"Wait for port state to be up on ports {port_names} (timeout={timeout}s)"):
         for port in ports:
             port.interface.wait_for_port_state(
-                ib_consts.NvosConsts.LINK_STATE_UP, timeout=timeout,
+                ib_consts.NvosConsts.LINK_STATE_UP,
+                timeout=timeout,
             ).verify_result()
     with allure.step(f"Verify link diagnostics on ports {port_names}"):
         nvl_port_helpers.verify_link_diagnostic(ports)

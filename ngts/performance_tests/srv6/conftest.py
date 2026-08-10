@@ -6,13 +6,21 @@ from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, MRCConsts, ValidationConsts
 from ngts.constants.constants import CliType
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
-from ngts.helpers.performance.performance_setup_helpers import skip_test_on_unsupported_os
+from ngts.helpers.performance.performance_setup_helpers import (skip_test_on_unsupported_os,
+                                                                restore_default_port_group_df_on_dut)
 
 
 @pytest.fixture(scope='module', autouse=True)
 def skip_test_conditionally(players):
     skip_test_on_unsupported_os(players['dut']['cli'], CliType.DVS)
     yield
+
+
+@pytest.fixture(scope='function', autouse=True)
+def restore_default_port_group_df_after_test(players):
+    """Restore default left/right validator port groups after each SRv6 test."""
+    yield
+    restore_default_port_group_df_on_dut(players[PerfConsts.DUT_ALIAS]['cli'].performance)
 
 
 def get_upstream_downstream_port_group_df(players, upstream_ports_num, downstream_ports_num, sequential=False):

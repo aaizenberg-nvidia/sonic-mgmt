@@ -40,14 +40,14 @@ def basic_setup_configuration(players, conf_args):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def conf_args(skip_test_conditionally):
+def conf_args(skip_test_conditionally, chip_type):
     """
     This function alters all of the jinja template files.
     """
     split_left = 2
     split_right = 2
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
                  "fboss_enabled": True,
                  "auto_buffer_mode": "False",
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],

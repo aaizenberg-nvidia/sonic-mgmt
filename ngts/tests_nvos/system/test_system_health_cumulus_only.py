@@ -15,6 +15,10 @@ from ngts.tests_nvos.helpers.memory_validation import MemoryStats
 from ngts.tests_nvos.system.test_system_health import reset_health_service
 from ngts.tools.test_utils import allure_utils as allure
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger()
 
 OK = HealthConsts.OK

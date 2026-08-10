@@ -31,9 +31,9 @@ def skip_test_conditionally(players):
 
 
 @pytest.fixture(scope='function', autouse=True)
-def conf_args(bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
+def conf_args(chip_type, bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
     conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
                  "two_sided_ar": False,
                  "is_ipv6": False,
                  "split_right": 2,
@@ -44,7 +44,7 @@ def conf_args(bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
                  "scenario": TESTS_SCENARIO,
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "left_num_packets": 2,
-                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,
+                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],
                  "speed": "400000000",
                  "ecmp_type_ar": ecmp_type_ar,
                  "bisection_traffic": bisection_traffic,

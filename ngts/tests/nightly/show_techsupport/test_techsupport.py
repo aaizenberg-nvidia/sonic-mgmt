@@ -8,18 +8,19 @@ import tarfile
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.helpers.sonic_branch_helper import get_sonic_branch
 from ngts.common.checkers import is_ver1_greater_or_equal_ver2
+from ngts.tests.nightly.show_techsupport.constants import HealthEventConst
+from ngts.tests.nightly.show_techsupport.conftest import trigger_sdk_health_event
 
 logger = logging.getLogger(__name__)
 
 SUCCESS_CODE = 0
 
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-FILES_DIR = os.path.join(BASE_DIR, 'files')
-TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 SDK_DUMP_DIR = '/var/log/mellanox/sdk-dumps'
-MAX_SDK_DUMPS_BEFORE_CLEANUP = 10
+# these two numbers are set in sai.profile, not expected to be changed by user
+MAX_SDK_DFW_DUMPS_BEFORE_CLEANUP = 5
+MAX_SDK_DFW_WARN_DUMPS_BEFORE_CLEANUP = 2
 SAI_DFW_DUMP_PREFIX = 'sai-dfw-'
-FW_EVENTS_DICT = {"FW_HEALTH_EVENT": 1, "PLL_LOCK_EVENT": 6}
+SAI_DFW_WARN_DUMP_PREFIX = 'sai-dfw-warn-'
 HEALTH_CHECK_INJECT_FILE_PATH = '/proc/mlx_sx/sx_core'
 
 SAI_PROFILE_PATH = "/etc/mlnx/sai-common.profile"
@@ -35,37 +36,29 @@ ZIPPED_FILE_POSTFIX = ".gz"
 
 
 @pytest.mark.disable_loganalyzer
-@allure.title('Tests that DumpMeNow dump contains all the expected dumps when fw stuck occurs')
-def test_techsupport_fw_stuck_dump(topology_obj, engines, cli_objects, set_health_event_debug_state_flags):
+@pytest.mark.parametrize("fw_event", ["FW_FATAL_EVENT", "FW_WARN_EVENT"])
+@allure.title('Tests that dump file contains all the expected dumps when fw stuck occurs')
+def test_techsupport_fw_stuck_dump(topology_obj, engines, cli_objects, fw_event):
     duthost = engines.dut
     chip_type = topology_obj.players['dut']['attributes'].noga_query_data['attributes']['Specific']['chip_type']
-
-    pre_stuck_dumps = duthost.run_cmd('ls -t {}/*.tar | wc -l'.format(SDK_DUMP_DIR))
-    if "No such file or directory" in pre_stuck_dumps:
-        pre_stuck_dumps = 0
-    else:
-        pre_stuck_dumps = int(pre_stuck_dumps.strip())
-    pre_stuck_dumps = trim_sai_dfw_dumps_if_at_limit(duthost, pre_stuck_dumps)
+    fatal_dumps, warn_dumps = check_sai_sdk_dumps(duthost)
 
     try:
-        with allure.step('Trigger fw fatal event'):
-            duthost.run_cmd("echo health_check_trigger sx_dbg_test_fw_fatal_event 1 > /proc/mlx_sx/sx_core")
+        with allure.step(f'Trigger {fw_event} event'):
+            trigger_sdk_health_event(duthost, HealthEventConst.FW_EVENTS_DICT[fw_event])
 
-        with allure.step('Wait for DumpMe dump to be created'):
+        with allure.step('Wait for dump file to be created'):
             retry_call(
                 verify_sdkdump_created,
-                fargs=[duthost, pre_stuck_dumps],
+                fargs=[duthost, fatal_dumps + warn_dumps],
                 tries=30,
                 delay=10,
                 logger=logger,
             )
 
-        with allure.step('Validate that the DumpMe dump contain all of the SDK extended dump files'):
+        with allure.step('Validate that the dump file contain all of the SDK extended dump files'):
             check_all_dumps_file_exsits(topology_obj, duthost, chip_type)
 
-        # with allure.step('Count number of SDK extended dumps on dut after stuck occurred'):
-        #     number_of_sdk_error_after = generate_tech_support_and_count_sdk_dumps(duthost)
-        #     assert number_of_sdk_error_after == pre_stuck_dumps + 1
     except Exception as err:
         raise err
     finally:
@@ -74,31 +67,26 @@ def test_techsupport_fw_stuck_dump(topology_obj, engines, cli_objects, set_healt
 
 
 @pytest.mark.parametrize('disable_rsyslog_ratelimit', ['syncd'], indirect=True)
-@pytest.mark.parametrize("fw_event", ["FW_HEALTH_EVENT", "PLL_LOCK_EVENT"])
+@pytest.mark.parametrize("fw_event", ["FW_FATAL_EVENT", "FW_WARN_EVENT", "PLL_LOCK_EVENT"])
 def test_techsupport_mellanox_sdk_dump(topology_obj, engines, cli_objects, loganalyzer, fw_event,
-                                       disable_rsyslog_ratelimit, set_health_event_debug_state_flags):
+                                       disable_rsyslog_ratelimit):
     duthost = engines.dut
-    logger.info("Health event generated is {}".format(fw_event))
-    event_id = FW_EVENTS_DICT[fw_event]
-    with allure.step('Copy to dut a script that triggers SDK health event'):
-        cp_sdk_event_trigger_script_to_dut_syncd(duthost)
-
     logger.debug("Running show techsupport ... ")
     with allure.step('STEP1: Count number of SDK extended dumps at dut before test'):
-        number_of_sdk_error_before = generate_tech_support_and_count_sdk_dumps(duthost)
-        number_of_sdk_error_before = trim_sai_dfw_dumps_if_at_limit(duthost, number_of_sdk_error_before)
+        sdk_dumps_files_before = generate_tech_support_and_count_sdk_dumps(duthost)
 
     with allure.step('STEP2: Trigger SDK health event at dut'):
-        duthost.run_cmd(
-            'docker exec -it syncd python mellanox_sdk_trigger_event_script.py --fw_event {}'.format(event_id))
+        trigger_sdk_health_event(duthost, HealthEventConst.FW_EVENTS_DICT[fw_event])
         for dut in loganalyzer:
             loganalyzer[dut].expect_regex.extend(["Health event happened"])
             loganalyzer[dut].ignore_regex = [r".*"]
     with allure.step('STEP3: Count number of SDK extended dumps at dut after event occurred'):
-        number_of_sdk_error_after = generate_tech_support_and_count_sdk_dumps(duthost)
+        sdk_dumps_files_after = generate_tech_support_and_count_sdk_dumps(duthost)
 
-    with allure.step('Validate that the techsupport file contain one more SDK extended dump'):
-        assert number_of_sdk_error_after == number_of_sdk_error_before + 1
+    with allure.step('Validate that the techsupport file contain the new generated dump'):
+        new_dump_files = list(set(sdk_dumps_files_after) - set(sdk_dumps_files_before))
+        logger.info(f"new_dump_files: {new_dump_files}")
+        assert len(new_dump_files) == 1, 'Did not create dump file'
 
     with allure.step('Reload switch'):
         cli_objects.dut.general.reload_flow(topology_obj=topology_obj, reload_force=True)
@@ -108,12 +96,7 @@ def test_techsupport_mellanox_sdk_dump(topology_obj, engines, cli_objects, logan
 def test_techsupport_health_event_sdk_dump(topology_obj, loganalyzer, engines, cli_objects):
     duthost = engines.dut
     chip_type = topology_obj.players['dut']['attributes'].noga_query_data['attributes']['Specific']['chip_type']
-    pre_stuck_dumps = duthost.run_cmd('ls -t {}/*.tar | wc -l'.format(SDK_DUMP_DIR))
-    if "No such file or directory" in pre_stuck_dumps:
-        pre_stuck_dumps = '0'
-    else:
-        pre_stuck_dumps = int(pre_stuck_dumps.strip())
-    pre_stuck_dumps = trim_sai_dfw_dumps_if_at_limit(duthost, pre_stuck_dumps)
+    fatal_dumps, warn_dumps = check_sai_sdk_dumps(duthost)
 
     try:
         with allure.step('Verify Health-Check: Trigger SYSFS failure appears in syslog'):
@@ -130,7 +113,7 @@ def test_techsupport_health_event_sdk_dump(topology_obj, loganalyzer, engines, c
         with allure.step('Wait for health check dump to be created'):
             retry_call(
                 verify_sdkdump_created,
-                fargs=[duthost, pre_stuck_dumps],
+                fargs=[duthost, fatal_dumps + warn_dumps],
                 tries=30,
                 delay=10,
                 logger=logger,
@@ -165,6 +148,47 @@ def is_api_sniffer_enabled(duthost):
     sniffer_mode_val_group = 1
     # return true if the match is not none (hence the mode is configured) and the mode is valid
     return match and match.group(sniffer_mode_val_group) in POSSIBLE_API_SNIFFER_MODES
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.parametrize("fw_event", ["FW_FATAL_EVENT", "FW_WARN_EVENT"])
+def test_techsupport_dump_retention(topology_obj, engines, cli_objects, mock_dump_file_to_capacity_limit, fw_event):
+    duthost = engines.dut
+    try:
+        with allure.step(f'Get dump files before {fw_event} health event'):
+            fatal_dumps_before, warn_dumps_before = check_sai_sdk_dumps(duthost)
+
+        with allure.step(f'Trigger {fw_event} health event'):
+            trigger_sdk_health_event(duthost, HealthEventConst.FW_EVENTS_DICT[fw_event])
+
+        with allure.step('Wait for sdk dump to be created'):
+            retry_call(
+                verify_sdkdump_created,
+                fargs=[duthost, fatal_dumps_before + warn_dumps_before],
+                tries=30,
+                delay=10,
+                logger=logger,
+            )
+
+        if fw_event == "FW_FATAL_EVENT":
+            with allure.step('Validate that the only fatal dump files changed and the oldest fatal dump is replaced'):
+                fatal_dumps_after, warn_dumps_after = check_sai_sdk_dumps(duthost)
+                assert warn_dumps_before == warn_dumps_after, \
+                    "Warn dump files are affected"
+                assert fatal_dumps_before[0] not in fatal_dumps_after, \
+                    "Oldest fatal dump file is not replaced"
+        elif fw_event == "FW_WARN_EVENT":
+            with allure.step('Validate that the only warn dump files changed and the newest warn dump is replaced'):
+                fatal_dumps_after, warn_dumps_after = check_sai_sdk_dumps(duthost)
+                assert fatal_dumps_after == fatal_dumps_before, \
+                    "Fatal dump files are affected"
+                assert warn_dumps_before[-1] not in warn_dumps_after, \
+                    "Newest warn dump file is not replaced"
+    except Exception as err:
+        raise err
+    finally:
+        with allure.step('Reload switch'):
+            cli_objects.dut.general.reload_flow(topology_obj=topology_obj, reload_force=True)
 
 
 @allure.title('Tests that the api sniffer feature dumps are included in the techsupport command')
@@ -208,31 +232,21 @@ def test_techsupport_validate_api_sniffer_dumps(topology_obj, engines, cli_objec
                                                                            f"Actual: {pcap_files_techsupport}")
 
 
-def trim_sai_dfw_dumps_if_at_limit(engine, dump_count):
+def check_sai_sdk_dumps(engine):
     """
-    Remove the oldest sai-dfw dump when count >= MAX_SDK_DUMPS_BEFORE_CLEANUP.
-    Returns the adjusted dump count.
+    Return the sai-dfw/sai-dfw-warn dump names.
+     - Fatal(sai-dfw): top 5 newest
+     - Warn(sai-dfw-warn): 1 oldest + 1 newest
     """
-    count = int(dump_count)
-    if count >= MAX_SDK_DUMPS_BEFORE_CLEANUP:
-        oldest_file = engine.run_cmd(
-            f'ls -t {SDK_DUMP_DIR}/{SAI_DFW_DUMP_PREFIX}* 2>/dev/null | tail -1'
-        ).strip()
-        if oldest_file and 'No such file' not in oldest_file:
-            logger.info('Removing oldest sai-dfw dump: %s', oldest_file)
-            engine.run_cmd(f'sudo rm -f {oldest_file}')
-            count -= 1
-    return count
+    # Sort by file timestamp in ascending order: old -> new.
+    output = engine.run_cmd(f"ls -1tr {SDK_DUMP_DIR}/{SAI_DFW_DUMP_PREFIX}* 2>&1", validate=False).strip()
+    if not output or "No such file or directory" in output:
+        return [], []
 
-
-def cp_sdk_event_trigger_script_to_dut_syncd(engine):
-    dst = os.path.join('/tmp', 'mellanox_sdk_trigger_event_script.py')
-    engine.copy_file(source_file=os.path.join(FILES_DIR, 'mellanox_sdk_trigger_event_script.py'),
-                     dest_file='mellanox_sdk_trigger_event_script.py',
-                     file_system='/tmp',
-                     direction='put'
-                     )
-    engine.run_cmd('docker cp {} {}'.format(dst, 'syncd:/'))
+    file_names = [os.path.basename(file_path.strip()) for file_path in output.splitlines() if file_path.strip()]
+    warn_dumps = [name for name in file_names if name.startswith(SAI_DFW_WARN_DUMP_PREFIX)]
+    fatal_dumps = [name for name in file_names if name not in warn_dumps]
+    return fatal_dumps, warn_dumps
 
 
 def generate_tech_support_and_count_sdk_dumps(engine):
@@ -257,13 +271,13 @@ def generate_tech_support_and_count_sdk_dumps(engine):
     after_list = list(filter(r.match, filenames))
 
     engine.run_cmd("sudo rm -rf {}".format(tar_file))
-    return len(after_list)
+    return [os.path.basename(path) for path in after_list]
 
 
 def verify_sdkdump_created(engine, before):
-    after = engine.run_cmd('ls -t {}/*.tar | wc -l'.format(SDK_DUMP_DIR))
-    assert ("No such file or directory" not in after and
-            int(after.strip()) > int(before)), 'Did not create DumpMe dump'
+    after_fatal_dumps, after_warn_dumps = check_sai_sdk_dumps(engine)
+    new_files = list(set(after_fatal_dumps + after_warn_dumps) - set(before))
+    assert len(new_files) > 0, 'Did not create dump file'
 
 
 def stop_irisics(chip_type, host):
@@ -339,3 +353,26 @@ def check_all_dumps_file_exsits(topology_obj, engine, chip_type):
 def get_health_check_running_counter(engine):
     health_check_counter_file_path = "/sys/module/sx_core/health_check_running_counter"
     return engine.run_cmd(f"sudo cat {health_check_counter_file_path}")
+
+
+@pytest.fixture(scope='function', autouse=False)
+def mock_dump_file_to_capacity_limit(duthost):
+    """
+    Mock dump files to the capacity limit, 5 fatal dumps and 2 warn dumps.
+    """
+    try:
+        with allure.step('Mock dump files to the capacity limit'):
+            fatal_dumps, warn_dumps = check_sai_sdk_dumps(duthost)
+            mock_fatal_dumps = MAX_SDK_DFW_DUMPS_BEFORE_CLEANUP - len(fatal_dumps)
+            mock_warn_dumps = MAX_SDK_DFW_WARN_DUMPS_BEFORE_CLEANUP - len(warn_dumps)
+            for i in range(mock_fatal_dumps):
+                duthost.run_cmd(f'sudo touch {SDK_DUMP_DIR}/{SAI_DFW_DUMP_PREFIX}{1000000000 + i}.tar')
+            for i in range(mock_warn_dumps):
+                duthost.run_cmd(f'sudo touch {SDK_DUMP_DIR}/{SAI_DFW_WARN_DUMP_PREFIX}{2000000000 + i}.tar')
+        yield
+    except Exception as err:
+        raise err
+    finally:
+        with allure.step('Remove mock dump files'):
+            duthost.run_cmd(f'sudo rm -f {SDK_DUMP_DIR}/{SAI_DFW_DUMP_PREFIX}100000000*')
+            duthost.run_cmd(f'sudo rm -f {SDK_DUMP_DIR}/{SAI_DFW_WARN_DUMP_PREFIX}200000000*')

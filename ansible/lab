@@ -323,8 +323,8 @@ ci-sonic-mgmt-chipsim-61      ansible_host=10.220.75.61 ansible_hostv6="" sonic_
 ci-sonic-mgmt-chipsim-62      ansible_host=10.220.75.62 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-63      ansible_host=10.220.75.63 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-81      ansible_host=10.220.163.81 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
-portia-chipsim-86      ansible_host=10.220.163.86 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7170_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
-portia-chipsim-87      ansible_host=10.220.163.87 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7170_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
+portia-chipsim-86      ansible_host=10.220.163.86 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7200_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
+portia-chipsim-87      ansible_host=10.220.163.87 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7200_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 nvos-chipsim-64      ansible_host=10.220.75.64 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 nvos-chipsim-65      ansible_host=10.220.75.65 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 nvos-chipsim-66      ansible_host=10.220.75.66 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
@@ -488,7 +488,9 @@ slm-111      ansible_host=10.220.13.111 ansible_hostv6="fe80::e42:a1ff:fe44:44c0
 slm-112      ansible_host=10.220.13.112 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 slm-31      ansible_host=10.220.13.31 ansible_hostv6="fe80::dc73:fcff:feb2:477e" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 slm-233      ansible_host=10.220.13.233 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
+slm-233-bmc      ansible_host=10.193.67.233 sonic_version=v2 hwsku="NVIDIA-AST2700-BMC" sonic_hw_platform=arm64-aspeed_nvidia_ast2700_bmc-r0 asic_type=aspeed mgmt_subnet_mask_length=19 vm_base=VM0000
 slm-113      ansible_host=10.220.13.113 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
+sws-cham6s-4      ansible_host=10.220.14.28 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="ACS-SN6810_LD" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 
 [sonic_sn2700_40]
 str-msn2700-01    ansible_host=10.251.0.188 serial="MT1234X56789" base_mac="24:8a:07:12:34:56" syseeprom_info="{'0xFE': '0xFBA1E964', '0x28': 'x86_64-mlnx_x86-r0', '0x29': '2016.11-5.1.0008-9600', '0x22': 'MSN2700-CS2FO', '0x23': 'MT1234X56789', '0x21': 'MSN2700', '0x26': '0', '0x24': '24:8a:07:12:34:56', '0x25': '12/07/2016', '0x2B': 'Mellanox', '0x2A': '128'}"

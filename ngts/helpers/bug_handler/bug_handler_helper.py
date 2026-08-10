@@ -21,6 +21,7 @@ from ngts.constants.constants import BugHandlerConst, InfraConst, FILE_INCLUDE_F
 from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_tools.infra import ExceptionTool
 from devts.infra.tools.redmine.redmine_api import get_issue_fixed_in_version_value
+from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from ngts.scripts.collect_simx_logs_on_not_success import collect_hypervisor_logs, dump_simx_data
 from devts.infra.tools.topology_tools.topology_setup_utils import get_topology_by_setup_name
 from ngts.helpers.redmine_cache_helper import access_redmine_cache
@@ -535,7 +536,19 @@ def get_tech_support_from_switch(bug_handler_params):
     dumps_files = []
     if cli_type == "Sonic":
         platform = duthost.shell("show platform summary | grep Platform | awk '{print $2}'")['stdout']
-        if "_simx" in platform:
+        if 'air' in testbed.lower():
+            try:
+                air_log_file = collect_air_simulation_logs(
+                    setup_name=testbed,
+                    dumps_folder=dumps_folder,
+                    test_name=test_name,
+                    duration_seconds=get_test_duration(duthost),
+                )
+                if air_log_file:
+                    dumps_files.append(air_log_file)
+            except Exception as e:
+                logger.error(f"Exception while collecting AIR simulation logs via Loki proxy: {e}")
+        elif "_simx" in platform:
             try:
                 topology_obj = get_topology_by_setup_name(setup_name=testbed, slow_cli=True)
                 dumps_files.extend(dump_simx_data(topology_obj, dumps_folder))

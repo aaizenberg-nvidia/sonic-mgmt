@@ -52,6 +52,10 @@ from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaa
 
 from ngts.tests_nvos.constants import MINUTE
 
+
+cumulus_owner = "bsrinivas"
+
+
 logger = logging.getLogger(__name__)
 
 PATH_TO_IMAGED_DIRECTORY = "/auto/sw_system_release/nos/nvos/"

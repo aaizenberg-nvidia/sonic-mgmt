@@ -4,10 +4,15 @@ Switch Capability System - SOLID Implementation
 Clean, maintainable switch capability system using SOLID principles.
 """
 
-from typing import Any, Callable, Dict, List, Set, Protocol
-from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Set, Protocol, TYPE_CHECKING
+from dataclasses import dataclass, field, replace
 from abc import ABC, abstractmethod
 import logging
+
+from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoTopology
+
+if TYPE_CHECKING:
+    from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
 
 logger = logging.getLogger()
 
@@ -15,6 +20,7 @@ logger = logging.getLogger()
 @dataclass
 class CapabilityConfig:
     """Metadata for switch capability configuration."""
+
     name: str
     excluded_categories: Set[str] = field(default_factory=set)
     cleared_lists: Set[str] = field(default_factory=set)
@@ -28,8 +34,7 @@ class CapabilityConfig:
 class Capability(Protocol):
     """Protocol for switch capabilities."""
 
-    def get_config(self) -> CapabilityConfig:
-        ...
+    def get_config(self) -> CapabilityConfig: ...
 
 
 class BaseCapability(ABC):
@@ -57,10 +62,10 @@ class NoPSUCapability(BaseCapability):
             unsupported_commands={
                 "nv show platform ps-redundancy",
                 "nv set platform ps-redundancy policy no-redundancy",
-                "nv show platform environment psu"
+                "nv show platform environment psu",
             },
             excluded_inventory_keys={"psu"},
-            excluded_health_components=excluded_health
+            excluded_health_components=excluded_health,
         )
 
 
@@ -80,7 +85,7 @@ class NoFanCapability(BaseCapability):
             cleared_lists={"fan_list", "fan_led_list"},
             unsupported_commands={"nv show platform environment fan"},
             excluded_inventory_keys={"fan"},
-            excluded_health_components=excluded_health
+            excluded_health_components=excluded_health,
         )
 
 
@@ -92,8 +97,14 @@ class CpoCapability(BaseCapability):
     with its platform-specific MST formula.
     """
 
-    def __init__(self, els_index_to_ga, pmaos_module_offset, number_of_lasers_per_els,
-                 els_port_mapping, els_oe_mapping):
+    def __init__(
+        self,
+        els_index_to_ga,
+        pmaos_module_offset,
+        number_of_lasers_per_els,
+        els_port_mapping,
+        els_oe_mapping,
+    ):
         self._els_index_to_ga = els_index_to_ga
         self._pmaos_module_offset = pmaos_module_offset
         self._number_of_lasers_per_els = number_of_lasers_per_els
@@ -102,21 +113,91 @@ class CpoCapability(BaseCapability):
 
     @staticmethod
     def _compute_els_list(switch_instance):
-        return [name for name in switch_instance.transceiver_list if name.startswith('els')]
+        return [
+            name for name in switch_instance.transceiver_list if name.startswith("els")
+        ]
 
     def get_config(self) -> CapabilityConfig:
         return CapabilityConfig(
             name="CPO",
             set_attributes={
-                'els_index_to_ga': self._els_index_to_ga,
-                'pmaos_module_offset': self._pmaos_module_offset,
-                'number_of_lasers_per_els': self._number_of_lasers_per_els,
-                'els_port_mapping': self._els_port_mapping,
-                'els_oe_mapping': self._els_oe_mapping,
+                "els_index_to_ga": self._els_index_to_ga,
+                "pmaos_module_offset": self._pmaos_module_offset,
+                "number_of_lasers_per_els": self._number_of_lasers_per_els,
+                "els_port_mapping": self._els_port_mapping,
+                "els_oe_mapping": self._els_oe_mapping,
             },
             computed_attributes={
-                'els_list': self._compute_els_list,
-            }
+                "els_list": self._compute_els_list,
+            },
+        )
+
+
+class PortiaCpoCapability(BaseCapability):
+    """Capability for Gen2 (Portia / QM5 / NVL7) CPO switches.
+
+    Attaches a first-class CpoTopology as ``device.cpo`` (one CPO / vModule per
+    ASIC, 4 OEs + 1 ELS each) and exposes flat name projections used by the
+    platform / system-health validations. Distinct from the Gen1 Taipan
+    ``CpoCapability`` - there is no transceiver_list ELS/OE model here.
+
+    Args:
+        cpo_count: Override the number of CPOs. Defaults to the device's
+            ``asic_amount`` (1 CPO per ASIC).
+        oe_per_cpo / els_per_cpo / lasers_per_els / lanes_per_oe /
+        channels_per_cpo: Optional CpoTopology field overrides for a
+            future CPO device whose vModule layout differs from the Portia default.
+    """
+
+    def __init__(  # noqa: PLR0913 - one keyword per CpoTopology field that can be overridden
+        self,
+        *,
+        cpo_count: int | None = None,
+        oe_per_cpo: int | None = None,
+        els_per_cpo: int | None = None,
+        lasers_per_els: int | None = None,
+        lanes_per_oe: int | None = None,
+        channels_per_cpo: int | None = None,
+    ) -> None:
+        self._cpo_count: int | None = cpo_count
+        # Collect only the overrides that were explicitly given; the rest keep
+        # CpoTopology's defaults.
+        self._topology_overrides: dict[str, int] = {
+            field: value
+            for field, value in (
+                ("oe_per_cpo", oe_per_cpo),
+                ("els_per_cpo", els_per_cpo),
+                ("lasers_per_els", lasers_per_els),
+                ("lanes_per_oe", lanes_per_oe),
+                ("channels_per_cpo", channels_per_cpo),
+            )
+            if value is not None
+        }
+
+    def _build_topology(self, switch_instance: "BaseSwitch") -> CpoTopology:
+        # cpo_count defaults to the device's asic_amount (1 CPO / vModule per ASIC).
+        count = (
+            self._cpo_count
+            if self._cpo_count is not None
+            else switch_instance.asic_amount
+        )
+        topology = CpoTopology(cpo_count=count)
+        if self._topology_overrides:
+            return replace(topology, **self._topology_overrides)
+        return topology
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="PortiaCPO",
+            # Order matters: 'cpo' is built first, the projections read it after.
+            # Gen2 uses distinct attribute names (laser_source_list, not els_list)
+            # so it never collides with the Gen1 Taipan els_list/transceiver model.
+            computed_attributes={
+                "cpo": self._build_topology,
+                "cpo_list": lambda sw: sw.cpo.cpo_names(),
+                "laser_source_list": lambda sw: sw.cpo.els_names(),
+                "oe_list": lambda sw: sw.cpo.oe_names(),
+            },
         )
 
 
@@ -135,9 +216,10 @@ class CategoryConfigurator(SwitchConfigurator):
         if not config.excluded_categories:
             return
 
-        original_categories = getattr(switch_instance, 'category_list', [])
-        new_categories = [cat for cat in original_categories
-                          if cat not in config.excluded_categories]
+        original_categories = getattr(switch_instance, "category_list", [])
+        new_categories = [
+            cat for cat in original_categories if cat not in config.excluded_categories
+        ]
 
         switch_instance.category_list = new_categories
         self._update_category_dicts(switch_instance, new_categories)
@@ -147,19 +229,25 @@ class CategoryConfigurator(SwitchConfigurator):
 
     def _update_category_dicts(self, switch_instance, category_list: List[str]) -> None:
         """Update category dictionaries."""
-        if not hasattr(switch_instance, 'category_disabled_dict'):
+        if not hasattr(switch_instance, "category_disabled_dict"):
             return
 
         new_disabled_dict = {}
         new_default_dict = {}
 
         for category in category_list:
-            if category == 'disk':
-                disabled_value = getattr(switch_instance, 'category_disk_default_disable_dict', {})
-                default_value = getattr(switch_instance, 'category_disk_default_dict', {})
+            if category == "disk":
+                disabled_value = getattr(
+                    switch_instance, "category_disk_default_disable_dict", {}
+                )
+                default_value = getattr(
+                    switch_instance, "category_disk_default_dict", {}
+                )
             else:
-                disabled_value = getattr(switch_instance, 'category_default_disabled_dict', {})
-                default_value = getattr(switch_instance, 'category_default_dict', {})
+                disabled_value = getattr(
+                    switch_instance, "category_default_disabled_dict", {}
+                )
+                default_value = getattr(switch_instance, "category_default_dict", {})
 
             new_disabled_dict[category] = disabled_value
             new_default_dict[category] = default_value
@@ -169,22 +257,26 @@ class CategoryConfigurator(SwitchConfigurator):
 
     def _update_stats_files(self, switch_instance, category_list: List[str]) -> None:
         """Update stats dump files."""
-        if not hasattr(switch_instance, 'constants'):
+        if not hasattr(switch_instance, "constants"):
             return
 
         stats_files_map = {
-            'cpu': 'cpu.csv.gz',
-            'disk': 'disk.csv.gz',
-            'fan': 'fan.csv.gz',
-            'power': 'power.csv.gz',
-            'mgmt-interface': 'mgmt-interface.csv.gz',
-            'temperature': 'temperature.csv.gz',
-            'voltage': 'voltage.csv.gz',
-            'asic-power': 'asic-power.csv.gz'
+            "cpu": "cpu.csv.gz",
+            "disk": "disk.csv.gz",
+            "fan": "fan.csv.gz",
+            "power": "power.csv.gz",
+            "mgmt-interface": "mgmt-interface.csv.gz",
+            "temperature": "temperature.csv.gz",
+            "voltage": "voltage.csv.gz",
+            "asic-power": "asic-power.csv.gz",
         }
 
-        new_stats_files = [stats_files_map[cat] for cat in category_list if cat in stats_files_map]
-        switch_instance.constants = switch_instance.constants._replace(stats_dump_files=new_stats_files)
+        new_stats_files = [
+            stats_files_map[cat] for cat in category_list if cat in stats_files_map
+        ]
+        switch_instance.constants = switch_instance.constants._replace(
+            stats_dump_files=new_stats_files
+        )
 
 
 class ListConfigurator(SwitchConfigurator):
@@ -201,7 +293,7 @@ class CommandConfigurator(SwitchConfigurator):
     """Handles unsupported commands."""
 
     def configure(self, switch_instance, config: CapabilityConfig) -> None:
-        if not hasattr(switch_instance, 'unsupported_commands_list'):
+        if not hasattr(switch_instance, "unsupported_commands_list"):
             switch_instance.unsupported_commands_list = []
 
         for cmd in config.unsupported_commands:
@@ -214,7 +306,7 @@ class InventoryConfigurator(SwitchConfigurator):
     """Handles inventory configuration."""
 
     def configure(self, switch_instance, config: CapabilityConfig) -> None:
-        if not hasattr(switch_instance, 'platform_inventory_items_dict'):
+        if not hasattr(switch_instance, "platform_inventory_items_dict"):
             return
 
         for key in config.excluded_inventory_keys:
@@ -225,7 +317,7 @@ class InventoryConfigurator(SwitchConfigurator):
 
     def _update_inventory_list(self, switch_instance) -> None:
         """Update platform_inventory_items list."""
-        if not hasattr(switch_instance, 'platform_inventory_items'):
+        if not hasattr(switch_instance, "platform_inventory_items"):
             return
 
         new_items = []
@@ -241,16 +333,19 @@ class HealthComponentsConfigurator(SwitchConfigurator):
     """Handles health components configuration."""
 
     def configure(self, switch_instance, config: CapabilityConfig) -> None:
-        if not hasattr(switch_instance, 'health_components'):
+        if not hasattr(switch_instance, "health_components"):
             return
 
         if not config.excluded_health_components:
             return
 
         # Filter out excluded health components
-        original_components = getattr(switch_instance, 'health_components', [])
-        new_components = [comp for comp in original_components
-                          if comp not in config.excluded_health_components]
+        original_components = getattr(switch_instance, "health_components", [])
+        new_components = [
+            comp
+            for comp in original_components
+            if comp not in config.excluded_health_components
+        ]
 
         switch_instance.health_components = new_components
         logger.info(f"Excluded health components: {config.excluded_health_components}")
@@ -278,10 +373,12 @@ class SwitchCapabilityHandler:
             CommandConfigurator(),
             InventoryConfigurator(),
             HealthComponentsConfigurator(),
-            AttributeConfigurator()
+            AttributeConfigurator(),
         ]
 
-    def configure_switch_capabilities(self, switch_instance, capabilities: List[Capability]) -> None:
+    def configure_switch_capabilities(
+        self, switch_instance, capabilities: List[Capability]
+    ) -> None:
         """
         Configure switch based on its capabilities.
 
@@ -295,7 +392,9 @@ class SwitchCapabilityHandler:
 
         # Convert capabilities to configs
         configs = [cap.get_config() for cap in capabilities]
-        logger.info(f"Configuring switch with capabilities: {[c.name for c in configs]}")
+        logger.info(
+            f"Configuring switch with capabilities: {[c.name for c in configs]}"
+        )
 
         for config in configs:
             for configurator in self.configurators:
@@ -314,7 +413,9 @@ class SwitchCapabilityHandler:
         handler.configure_switch_capabilities(switch_instance, [capability])
 
     @classmethod
-    def apply_capabilities(cls, switch_instance, capabilities: List[Capability]) -> None:
+    def apply_capabilities(
+        cls, switch_instance, capabilities: List[Capability]
+    ) -> None:
         """
         Apply multiple capabilities to a switch instance.
 

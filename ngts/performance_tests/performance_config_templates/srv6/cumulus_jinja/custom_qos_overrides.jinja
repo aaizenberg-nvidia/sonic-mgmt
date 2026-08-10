@@ -1,0 +1,32 @@
+{% set dwrr_weights = parameter_dict.dwrr_weights %}
+{% set strict_tcs = parameter_dict.strict_tcs %}
+{% set egress_lossy_buffer_by_tc = parameter_dict.egress_lossy_buffer_by_tc %}
+- set:
+    qos:
+      egress-scheduler:
+        default-global:
+          traffic-class:
+            {% for tc, weight in dwrr_weights.items() %}
+            '{{ tc }}':
+              mode: dwrr
+              bw-percent: {{ weight }}
+            {% endfor %}
+            {% for tc in strict_tcs %}
+            '{{ tc }}':
+              mode: strict
+            {% endfor %}
+      {% if egress_lossy_buffer_by_tc %}
+      advance-buffer-config:
+        default-global:
+          egress-lossy-buffer:
+            traffic-class:
+            {% for tc, buffer_config in egress_lossy_buffer_by_tc.items() %}
+              '{{ tc }}':
+                {% if buffer_config.shared_alpha is not none %}
+                shared-alpha: {{ buffer_config.shared_alpha }}
+                {% endif %}
+                {% if buffer_config.reserved is not none %}
+                reserved: {{ buffer_config.reserved }}
+                {% endif %}
+            {% endfor %}
+      {% endif %}

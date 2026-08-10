@@ -23,6 +23,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.reboot_telemetry_helpers import REBOOT_REASON_SHOW_EXEMPTED_ERR_MSGS
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger()
 
 

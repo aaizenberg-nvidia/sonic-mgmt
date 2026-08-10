@@ -95,7 +95,8 @@ class TestSRv6Base:
         self.ip = InfraConst.IPV6 if is_ipv6 else InfraConst.IPV4
         self.chip_type = chip_type
         self.scenario = "srv6"
-        self.opt_ts = os.getenv(MRCConsts.OPT_TS, default=MRCConsts.OPT_TS_DEFAULT)
+        self.opt_ts = os.getenv(MRCConsts.OPT_TS,
+                                default=MRCConsts.get_opt_ts_default(self.chip_type))
         self.conf_args = conf_args
         self.hwsku = conf_args["hwsku"]
         self.power_thresholds_by_chip_type = power_thresholds_by_chip_type
@@ -200,6 +201,7 @@ class TestSRv6Base:
                 stop_traffic(self.players)
                 end_time = time.time()
                 duration = end_time - start_time
+                time.sleep(10)
             with allure.step(f"validate trimmed untrimmed dropped percentages"):
                 if len(ingress_ports) == MRCConsts.INCAST_VALUE_WITH_TRIMMING_DROP:
                     self.cli_object.performance.validate_ets(egress_port, MRCConsts.ETS_TC_LIST, violations_list)

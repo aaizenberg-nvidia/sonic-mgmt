@@ -6,17 +6,58 @@ import os
 import logging
 import time
 from datetime import datetime
-from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, stop_traffic, unsplit_all_ports, get_is_simx)
+from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, stop_traffic, unsplit_all_ports,
+                                                                get_is_simx, _build_default_port_group_df)
 from ngts.helpers.performance.Performance_log_print import print_players_logs, remove_players_logs
 from ngts.constants.constants import PytestConst
-from ngts.constants.performance_constants import MongoDbConsts, PowerConsts, PerfConsts, ValidationConsts
+from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.thread_log_filter import config_root_logger
+from ngts.helpers.performance.port_selection import (set_cli_port_selection_options,
+                                                     get_cli_port_selection_options,
+                                                     port_selection_was_activated,
+                                                     DEFAULT_PORT_SELECTION_CONFIG)
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 logger = logging.getLogger()
+
+
+def pytest_configure(config):
+    """Capture port-selection options at session start (before any fixtures run).
+
+    Stored at module scope in ``port_selection`` so resolution works regardless of fixture
+    ordering — in particular when a class-scoped ``basic_setup_configuration`` applies the
+    config before any function-scoped fixture would run. No-op behavior unless
+    ``--perf-exclude-ports`` / ``--perf-include-ports`` is supplied.
+    """
+    set_cli_port_selection_options(
+        setup_name=config.getoption("--setup_name", default=None),
+        exclude_enabled=config.getoption("--perf-exclude-ports", default=False),
+        include_enabled=config.getoption("--perf-include-ports", default=False),
+        config_path=config.getoption("--perf-ports-config", default=None),
+    )
+    opts = get_cli_port_selection_options()
+    if opts["exclude_enabled"] or opts["include_enabled"]:
+        logger.info("PORT SELECTION ENABLED via CLI: exclude=%s include=%s config=%s (setup=%s)",
+                    opts["exclude_enabled"], opts["include_enabled"],
+                    opts["config_path"] or DEFAULT_PORT_SELECTION_CONFIG, opts["setup_name"])
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Warn loudly if port selection was requested on the CLI but never took effect.
+
+    This makes the "flag set but silently did nothing" failure mode impossible to miss (e.g.
+    the test path never applied configuration, or the config file lacked an entry).
+    """
+    opts = get_cli_port_selection_options()
+    if (opts["exclude_enabled"] or opts["include_enabled"]) and not port_selection_was_activated():
+        logger.warning("PORT SELECTION WAS REQUESTED (--perf-exclude-ports/--perf-include-ports) "
+                       "BUT NEVER BECAME ACTIVE this session. Check that: (1) the updated code is "
+                       "deployed, (2) the test applies performance configuration, and (3) the "
+                       "config file has an entry for setup '%s' and the test's scenario.",
+                       opts["setup_name"])
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -67,7 +108,7 @@ def init(request):
 
 @pytest.fixture(scope='session', autouse=True)
 def power_thresholds_by_chip_type(chip_type):
-    return PowerConsts.POWER_TH_PER_ASIC[chip_type]
+    return RailModel.asic_total_threshold(chip_type)
 
 
 @pytest.fixture(scope="session")
@@ -222,19 +263,8 @@ def port_group_df(request, players, basic_setup_configuration, conf_args=None):
                   ...
               ]
     """
-    port_group_df = []
-
-    port_groups = players[PerfConsts.DUT_ALIAS]['cli'].performance.port_groups
-
-    for port_group_name, port_list in port_groups.items():
-        sdk_port_list = players['dut']['cli'].performance.get_sdk_ports(port_list)
-        for port in sdk_port_list:
-            port_group_df.append({
-                ValidationConsts.PORT: port,
-                MongoDbConsts.PORT_GROUP_NAME: port_group_name
-            })
-
-    return port_group_df
+    dut_performance = players[PerfConsts.DUT_ALIAS]['cli'].performance
+    return _build_default_port_group_df(dut_performance)
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -264,7 +294,7 @@ def fix_tg_cli_objects_alias_keys(cli_objects, topology_obj):
 @pytest.fixture(scope='session', autouse=True)
 def unsplit_all_ports_on_spc5_6(players):
     """
-    Unsplits all ports on the SPC5/6.
+    Unsplit all ports on SPC5/SPC6.
     """
     unsplit_all_ports(players, step="unsplit_all_ports_on_spc5_6 - unsplit_all_ports")
     return

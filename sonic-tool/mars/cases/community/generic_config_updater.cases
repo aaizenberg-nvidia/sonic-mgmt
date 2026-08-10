@@ -208,7 +208,7 @@
         <name> bgp_speaker_cases </name>
         <cmd>
             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_bgp_speaker.py </static_args>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --alluredir=/tmp/allure-results --timeout 600 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_bgp_speaker.py </static_args>
             </params>
         </cmd>
     </case>
@@ -334,7 +334,7 @@
         <name> vlan_interface_cases </name>
         <cmd>
             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --alluredir=/tmp/allure-results --timeout 900 --session-timeout 900 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_vlan_interface.py </static_args>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --alluredir=/tmp/allure-results --timeout 900 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_vlan_interface.py </static_args>
             </params>
         </cmd>
     </case>
@@ -516,6 +516,40 @@
         <cmd>
             <params>
                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1500 --session-timeout 3600 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_dns_nameserver.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> generic_config_updater/test_multiasic_addcluster.py </info>
+        <name> generic_config_updater_test_multiasic_addcluster </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_multiasic_addcluster.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> generic_config_updater/add_cluster/test_add_cluster.py </info>
+        <name> generic_config_updater_add_cluster_test_add_cluster </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/add_cluster/test_add_cluster.py </static_args>
             </params>
         </cmd>
     </case>

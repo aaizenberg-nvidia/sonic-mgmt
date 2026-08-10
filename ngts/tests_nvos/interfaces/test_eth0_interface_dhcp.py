@@ -21,6 +21,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.constants import MINUTE
 
+
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger()
 
 

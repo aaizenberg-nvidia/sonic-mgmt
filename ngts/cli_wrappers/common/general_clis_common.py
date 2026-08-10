@@ -351,17 +351,121 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
     def boot_into_onie_by_serial_on_remote_reboot(self, topology_obj, dut_alias='dut'):
         serial_engine = SecureBootHelper.get_serial_engine_instance(topology_obj, dut_alias)
         serial_engine.create_serial_engine(login_to_switch=False)
-        arrow_down_key = "\x1b[B"
-        arrow_up_key = "\x1b[A"
-        enter_key = '\r'
 
         logger.info("Wait for GNU GRUB  version")
         output, respond = serial_engine.run_cmd(
             '', ['GRUB loading.', 'GNU GRUB  version'], timeout=240, send_without_enter=True)
         logger.info(f"GNU GRUB  version is ready.\n output:{output} \n respond:{respond}")
 
+        self.enter_onie_from_grub_menu_by_serial(serial_engine)
+
+    def enter_onie_from_grub_menu_by_serial(self, serial_engine):
+        """
+        Boot into ONIE from a (SONiC) GRUB menu shown on the serial console,
+        in a way that works for every BIOS/UEFI x bookworm/trixie grub combo.
+
+        The classic approach of selecting the ONIE entry inside the SONiC grub
+        menu chainloads ONIE, which is broken on trixie grub 2.12+ under UEFI
+        Secure Boot (sonic-buildimage#24249). Instead we always:
+          1. Press 'c' to drop into the grub command shell.
+          2. Read $grub_platform to tell UEFI (efi) from legacy BIOS (pc).
+          3. efi -> type 'exit' so UEFI boots the ONIE EFI entry directly
+                    (no chainload); then select ONIE: Install OS.
+             pc  -> no chainload issue; go back to the menu and select ONIE
+                    the classic way.
+        This single path is a safe superset of the old flow, so it is used
+        unconditionally for all platforms.
+        """
+        enter_key = '\r'
+
+        # Drop into the grub command line ('c'). Wait for the grub> prompt.
+        logger.info("Pressing 'c' to drop into the grub shell")
+        serial_engine.run_cmd('c', expected_value=['grub>'],
+                              timeout=15, send_without_enter=True)
+
+        # Detect the platform via $grub_platform. run_cmd returns
+        # (output, matched_index) where matched_index is the position of the
+        # matched pattern in the expected_value list (pexpect.expect semantics).
+        # We must key off that index, NOT a substring search of 'output', because
+        # 'output' holds the text BEFORE the match (the echoed command / banner),
+        # not the matched value itself. $grub_platform is 'efi' on UEFI and 'pc'
+        # on legacy BIOS.
+        #
+        # IMPORTANT: on some rcon/serial-console gateways, sending a multi-char
+        # command as a single write (pexpect.sendline / send) drops trailing
+        # characters at the grub end. Observed on this setup: the last byte of
+        # 'echo $grub_platform' ('m') never reaches grub, so grub sits with an
+        # unterminated command string in its input buffer and no Enter is
+        # ever registered - pexpect then hangs waiting for 'efi'/'pc'. Sending
+        # one byte at a time with a small inter-char delay matches how the
+        # classic arrow-key flow drives grub reliably (single-byte writes).
+        # Send Enter ('\r') separately, and also use it as the trigger to wait
+        # for the 'efi'/'pc' output pattern.
+        grub_platform_patterns = ['efi', 'pc']
+        efi_idx = grub_platform_patterns.index('efi')
+        pc_idx = grub_platform_patterns.index('pc')
+        logger.info("Detecting grub platform via 'echo $grub_platform' (typed char-by-char)")
+        self._grub_type_command(serial_engine, 'echo $grub_platform')
+        _, platform_idx = serial_engine.run_cmd(enter_key,
+                                                expected_value=grub_platform_patterns,
+                                                timeout=15, send_without_enter=True)
+        logger.info(f"grub_platform matched index: {platform_idx} "
+                    f"(efi={efi_idx}, pc={pc_idx})")
+
+        if platform_idx == pc_idx:
+            # Legacy BIOS: no secure boot / chainload issue. Leave the shell and
+            # select ONIE in the menu the classic way.
+            logger.info("Legacy BIOS (pc) detected - returning to grub menu "
+                        "to select ONIE the classic way")
+            serial_engine.run_cmd('\x1b', expected_value=['GNU GRUB'],
+                                  timeout=10, send_without_enter=True)
+            self._select_onie_in_grub_menu_by_serial(serial_engine)
+            return
+
+        # UEFI (efi): exit the grub shell so UEFI hands control back to the
+        # firmware, which boots the ONIE EFI entry directly without chainloading
+        # (mandatory on trixie grub 2.12+, sonic-buildimage#24249).
+        # Type 'exit' char-by-char for the same reason as 'echo' above.
+        logger.info("UEFI (efi) detected - typing 'exit' to boot into ONIE grub directly")
+        self._grub_type_command(serial_engine, 'exit')
+        serial_engine.run_cmd(enter_key, expected_value=['ONIE', 'GNU GRUB'],
+                              timeout=60, send_without_enter=True)
+
+        # We are now expected to be in the ONIE grub menu. Select the default
+        # (ONIE: Install OS) by pressing Enter.
+        logger.info("Pressing Enter to boot the default ONIE grub entry (Install OS)")
+        serial_engine.run_cmd(enter_key, expected_value=['ONIE'],
+                              timeout=30, send_without_enter=True)
+
+    def _grub_type_command(self, serial_engine, cmd, inter_char_delay=0.05):
+        """
+        Type a command into the grub shell one character at a time.
+
+        Grub's command shell is a TUI: every keystroke is echoed and the cursor
+        is repositioned via ANSI escape sequences. Sending a whole string in one
+        pexpect.sendline() write causes grub to drop trailing characters over an
+        SSH-tunneled serial link. Sending one byte at a time with a small delay
+        matches how the classic arrow-key/Enter flow drives grub reliably.
+
+        The Enter key is NOT sent here; the caller is expected to send '\\r'
+        via serial_engine.run_cmd(..., send_without_enter=True) so it can also
+        wait for the command output pattern.
+        """
+        for ch in cmd:
+            serial_engine.serial_engine.send(ch)
+            time.sleep(inter_char_delay)
+
+    def _select_onie_in_grub_menu_by_serial(self, serial_engine):
+        """
+        Classic flow: select ONIE directly in the (SONiC/ONIE) grub menu.
+        Only used on legacy BIOS systems (no chainload issue).
+        """
+        arrow_down_key = "\x1b[B"
+        arrow_up_key = "\x1b[A"
+        enter_key = '\r'
+
         logger.info("Select ONIE by pressing arrow down")
-        # press the arrow up several times to ensure the item is selected
+        # press the arrow down several times to ensure the item is selected
         for i in range(3):
             logger.info("Sending one arrow down")
             serial_engine.run_cmd(arrow_down_key, expected_value='.*', send_without_enter=True)
@@ -431,33 +535,11 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
                 logger.error(f"Create serial engine error: {err}")
         with allure.step('switch dut to onie by serial'):
             try:
-                time_out = 10
-                wait_serial_take_effect = 2
-                cmd_enter = "\n"
-                cmd_press_esc = "\33"
-
-                # before selecting onie, press esc and enter key to make sure the page is in the os selected page
-                logger.info("Press esc ")
-                serial_engine.run_cmd(cmd_press_esc, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-                logger.info("Press enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Select the last item: ONIE")
-                cmd_last_one = "\03"
-                serial_engine.run_cmd(cmd_last_one, expected_value="ONIE", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Boot into ONIE by pressing enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Boot into ONIE install by pressing enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
+                # The DUT is stuck on the grub OS-selection page. Use the unified
+                # Trixie-safe grub-shell flow to enter ONIE (works for every
+                # BIOS/UEFI x bookworm/trixie grub combo, sonic-buildimage#24249).
+                self.enter_onie_from_grub_menu_by_serial(serial_engine)
                 logger.info("DUT is switched to onie by serial")
-
             except Exception as err:
                 logger.error(f"Switching dut to onie by serial failed. {err}")
 
@@ -477,13 +559,20 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         with allure.step('Switch dut from sonic to onie by serial'):
             try:
                 time_out = 10
-                logger.info("Set next_entry=ONIE in grub")
-                cmd_set_next_entry = "sudo grub-editenv /host/grub/grubenv set next_entry=ONIE"
-                serial_engine.run_cmd(cmd_set_next_entry, timeout=time_out)
-
+                # NOTE: do NOT use "grub-editenv set next_entry=ONIE" here. On
+                # trixie grub 2.12+ under UEFI Secure Boot that makes SONiC grub
+                # chainload ONIE, which is broken (sonic-buildimage#24249).
+                # Instead just reboot and enter ONIE from the grub menu using the
+                # unified Trixie-safe flow (grub-shell 'exit' on UEFI).
                 logger.info("Do reboot ")
                 cmd_reboot = "sudo reboot"
                 serial_engine.run_cmd(cmd_reboot, expected_value=" ", timeout=time_out)
+
+                logger.info("Wait for GNU GRUB version after reboot")
+                serial_engine.run_cmd(
+                    '', ['GRUB loading.', 'GNU GRUB  version'], timeout=240, send_without_enter=True)
+
+                self.enter_onie_from_grub_menu_by_serial(serial_engine)
                 logger.info("DUT is switched to onie by serial")
             except Exception as err:
                 logger.error(f"Switching dut to onie by serial failed. {err}")

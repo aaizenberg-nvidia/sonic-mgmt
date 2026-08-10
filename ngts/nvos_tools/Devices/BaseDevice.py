@@ -46,6 +46,9 @@ class BaseDevice(ABC):
         self.cli_coverage_project_name = ""
         self.cur_mgmt_port_name = ''
         self.cur_mgmt_port_ip = ''
+        # simx flavors (SimxDevice subclasses) override both
+        self.is_simx = False
+        self.require_mloop_setup = False
 
         self._init_constants()
         self._init_available_databases()

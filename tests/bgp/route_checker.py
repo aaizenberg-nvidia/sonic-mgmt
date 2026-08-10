@@ -463,6 +463,10 @@ def verify_current_routes_announced_to_neighs(dut_host, neigh_hosts, orig_routes
         parse_routes_on_neighbors(dut_host, neigh_hosts, ip_ver, exp_community))
     # Compare current routes after TSB with original routes advertised to neighbors
     if cur_routes_on_all_nbrs != orig_routes_on_all_nbrs:
+        if check_and_log_routes_diff(dut_host, neigh_hosts,
+                                     orig_routes_on_all_nbrs, cur_routes_on_all_nbrs, ip_ver):
+            logger.info("Route diff found but all diffs are in neighbor's own AS-path (acceptable)")
+            return True
         return False
     return True
 

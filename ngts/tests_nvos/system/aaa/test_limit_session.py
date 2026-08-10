@@ -31,6 +31,10 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.SerialConsoleTool import SerialConsoleTool
 from ngts.tools.test_utils import allure_utils as allure
 
+
+cumulus_owner = "lbenbasat"
+
+
 logger = logging.getLogger(__name__)
 
 # Test constants

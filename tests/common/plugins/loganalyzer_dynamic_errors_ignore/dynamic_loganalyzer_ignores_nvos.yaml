@@ -2380,3 +2380,68 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos
+
+# NVOS
+- Errors_list:
+  - '.*ERR nvued:   ERROR: cluster_utils.py:\d+ File name package_info.json does not exist in package.*'
+  Conditions:
+  - Affected_test_cases:
+    - tests_nvos/fae/test_nmx_package.py::test_nmx_package_bad_flow
+
+# NVOS - ignore log info message for not a bug
+- Errors_list:
+  - '.* INFO ib-utils#OpenSM\[\d+\]:\s+Loading Cached Option:enable_crashd = FALSE#012.*'
+  Conditions:
+  - Affected_test_cases:
+    - tests_nvos/interfaces/test_ib_interface_configuration.py
+    - tests_nvos/ib/test_set_unset_sm_state.py
+    - tests_nvos/ib/test_unset_ib.py
+    - tests_nvos/interfaces/test_ib_interface_counters.py
+    - tests_nvos/system/test_system_factory_reset.py
+    - tests_nvos/interfaces/test_port_split.py
+    - tests_nvos/interfaces/test_ib_show_interface.py::test_ib_show_interface_all_state_up
+    - tests_nvos/interfaces/test_ib_show_interface.py::test_ib_show_interface_all_state_up_openapi
+    - tests_nvos/interfaces/test_ib_interface_counters.py
+    - tests_nvos/general/traffic/test_basic_traffic.py
+    - tests_nvos/interfaces/test_ib0_interface_state.py::test_ib0_interface_state
+    - tests_nvos/system/test_techsupport_feature.py::test_techsupport_folder_name
+    - tests_nvos/system/test_system_profile_change.py::test_system_profile_adaptive_routing
+
+# NVOS
+- Errors_list:
+  - '.*ERR swss-ibv00#orchagent: :- getPortFnmStatus: Mismatch between FNM status 0 and alias fnma1p236.*'
+  - '.*ERR swss-ibv00#orchagent: :- getPortFnmStatus: Mismatch between FNM status 0 and alias fnm1pl1.*'
+  - '.*ERR swss-ibv00#orchagent: :- getPortFnmStatus: Mismatch between FNM status 0 and alias fnm1pl2.*'
+  Conditions:
+  - Affected_test_cases:
+    - tests_nvos/infra/init_flow/test_system_init_done_feature.py::test_system_ready_state_down
+    - tests_nvos/infra/init_flow/test_system_init_done_feature.py::test_system_ready_state_up
+  - Platform:
+    - mqm9700
+
+# NVOS
+- Errors_list:
+  - '.*Exception \[ztp section not found in JSON data\].*'
+  - '.*ZTP JSON file .* processing failed.*'
+  - '.*IPv4 hosts not reachable.*'
+  Conditions:
+  - Affected_test_cases:
+    - tests_nvos/system/ztp/test_system_ztp.py::test_ztp_json
+
+# NVOS
+- Errors_list:
+  - '.*startup-file\: Failed to apply YAML configuration.*'
+  - '.*startup-file\: Error\: NVUE file must contain a list of operation objects.*'
+  - '.*ztp.*Traceback.*'
+  - '.*Exception.*'
+  - '.*Error.*'
+  Conditions:
+  - Affected_test_cases:
+    - tests_nvos/system/ztp/test_system_ztp.py::test_ztp_startup_file_commands_list
+
+- Errors_list:
+  - '.* ERR pmon#xcvrd: Failed to write EEPROM data sfp.+write limited .*'
+  - '.* ERR pmon#xcvrd: CMIS:.*FAILED.*'
+  Conditions:
+  - Redmine:
+    - 3669272

@@ -314,6 +314,7 @@ _NVUE_FAMILY_SPECS = [
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
+@pytest.mark.nvos_build
 def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
     """Every NVUE-listed peer carries an identity, an associated switch port, and classifies as HCA."""
     peers = _live_nvue_peers(engines)

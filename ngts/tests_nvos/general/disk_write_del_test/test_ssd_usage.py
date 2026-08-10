@@ -8,6 +8,10 @@ import re
 from ngts.nvos_constants.constants_nvos import LogComponentsConsts
 from ngts.nvos_tools.system.System import System
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 # =========================

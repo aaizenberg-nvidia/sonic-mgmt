@@ -235,6 +235,15 @@ def pytest_addoption(parser):
                      help='On Performance tests, this parameter will determine if the tests run with ipv4 or ipv6')
     parser.addoption('--parameter_file_location', dest="parameter_file_location", required=False, action='store', default=None,
                      help='location of the parameter file for ar parameters optimiser')
+    parser.addoption('--perf-exclude-ports', dest="perf_exclude_ports", required=False,
+                     action='store_true', default=False,
+                     help='Performance tests: enable port exclusion from the configured setup/scenario list.')
+    parser.addoption('--perf-include-ports', dest="perf_include_ports", required=False,
+                     action='store_true', default=False,
+                     help='Performance tests: enable port inclusion from the configured setup/scenario list.')
+    parser.addoption('--perf-ports-config', dest="perf_ports_config", required=False,
+                     action='store', default=None,
+                     help='Performance tests: override the port-selection YAML configuration path.')
     parser.addoption(SerialLoggerConst.CMD_LINE_KEY, action='store', required=False,
                      choices=SerialLoggerConst.CMD_LINE_VALUES, default=SerialLoggerConst.MODE_OFF,
                      help='Action for serial log handler. Options: off (no serial logging), store (without analyzing), '

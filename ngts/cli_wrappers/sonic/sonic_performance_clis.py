@@ -15,6 +15,7 @@ from ngts.constants.constants import BugHandlerConst, InfraConst, CliType, Sonic
     IndependentModuleConst
 from ngts.constants.performance_constants import PerfConsts, PowerConsts, ValidationConsts, MRCConsts, MongoDbConsts, PortMappingOptionsConsts
 from ngts.cli_wrappers.common.performance_clis_common import PerformanceCommon
+from ngts.helpers.performance.port_selection import PortSelection
 from ngts.helpers.performance.sensors_power_parse import (
     build_controllers_info_dicts_list,
     get_controllers_info_str_list as sensors_get_controllers_info_str_list,
@@ -34,6 +35,7 @@ class SonicPerformanceCli(PerformanceCommon):
     """
     This class is for Performance cli commands for sonic only
     """
+    PORT_STYLE = "ethernet"
 
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
         self.topology_obj = topology_obj
@@ -54,6 +56,9 @@ class SonicPerformanceCli(PerformanceCommon):
         self.connected_ports, self.unconnected_ports = [], []
         self.mloops = []
         self.port_groups = {}
+        self.port_selection = PortSelection(port_style=self.PORT_STYLE)
+        self._port_selection_params = None
+        self.excluded_port_names = set()
 
     def validate_no_drops_on_tg_ports(self):
         violations = []

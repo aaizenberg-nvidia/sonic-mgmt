@@ -48,8 +48,13 @@ class TestSRv6Leaf(TestSRv6Base):
         self.dut_interfaces_ipv6_configuration_dict = self.cli_object.performance.get_dut_interfaces_ipv6_configuration()
         self.vlan_interface_configuration_dict = self.tg_cli_object.performance.get_tg_interfaces_vlan_configuration()
         self.cli_object.performance.configure_interfaces_mac_neighbor(self.vlan_interface_configuration_dict)
-        self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
-        self.opt_ts = os.getenv(MRCConsts.OPT_TS, default=MRCConsts.OPT_TS_DEFAULT)
+        trimming_size = int(os.getenv(MRCConsts.OPT_TS,
+                                      MRCConsts.get_opt_ts_default(self.chip_type)))
+        if isinstance(self.cli_object, NvueCli):
+            self.cli_object.trimming.configure_trimming_size(trimming_size)
+        else:
+            self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
+        self.opt_ts = trimming_size
         self.cli_object.trimming.configure_custom_dwrr_weights()
         self.shaper_value = shaper_value
 

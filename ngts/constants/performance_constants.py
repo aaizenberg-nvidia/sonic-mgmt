@@ -2,6 +2,8 @@ import logging
 import os
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field, fields
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 from ngts.constants.constants import NvosCliTypes, DVSCliTypes, BugHandlerConst
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
@@ -105,13 +107,21 @@ class PerfConsts:
     PERF_SETUP_DUT_ALIASES = [DUT_ALIAS]
     ECN_CAPABLE_TRANSPORT = 1
     # Sample Parameters
+    # DISABLE_HFT_ON_SPC6: temporary workaround for RM #5165343. Remove once resolved.
+    DISABLE_HFT_ENV_VAR = "DISABLE_HFT"
+    DISABLE_HFT = "True" if is_redmine_issue_active([5165343])[0] else "False"
     SAMPLES_PARAMS = {
         "SAMPLE_DURATION": 30,
         "BW_SAMPLE_DELAY": 5,
         "TC_SAMPLE_DELAY": 5,
         "COUNTERS_SAMPLE_DELAY": 5,
-        "CLEAR_COUNTERS": "True"
+        "CLEAR_COUNTERS": "True",
+        "COLLECT_TC_LATENCY": "False",
+        "COLLECT_SDK_DUMP": "False",
+        DISABLE_HFT_ENV_VAR: DISABLE_HFT,
     }
+    COLLECT_TC_LATENCY_ENV_VAR = "COLLECT_TC_LATENCY"
+    COLLECT_SDK_DUMP_ENV_VAR = "COLLECT_SDK_DUMP"
     SENSORS_CMD_ENV_VAR = "SENSORS_CMD"
     DEFAULT_SENSORS_CMD = r"sensors *-i2c-5-*"
     SPC6_SENSORS_CMD = "sensors"
@@ -127,6 +137,7 @@ class PerfConsts:
     OCC_TH_DICT = {ValidationConsts.OCC_AVG: OCC_AVG_TH}
     TEMPERATURE_TH = 105
     LOW_AR_THRESHOLD = 190
+    LOW_AR_THRESHOLD_SPC6 = 280
     MED_AR_THRESHOLD = 800
     HIGH_AR_THRESHOLD = 2000
     SDK_GENERATION_SECONDS_THRESHOLD = 30
@@ -150,6 +161,7 @@ class PerfConsts:
     SDK_DUMP_FILE_SYSTEM = '/var/log/sdk_dbg'
     SHARED_SDK_DUMPS_DIR = "/auto/sw_system_project/switch_performance/results/dumps"
     CLEAN_SWITCH_PATH = "/auto/mswg/projects/sx_mlnx_os/sx_fit_regression/libs/scripts/sx_sdk_clean_logs.py"
+    SPC6_DVS_CUSTOM_CONFIG_FILE = "/usr/share/dvs_manager_eth_spectrum6_bu_128ports_4x_2bonus.xml"
     FW_BURN_PATH = "/auto/mswg/projects/sx_mlnx_os/sx_fit_regression/libs/scripts/sdk_fw_burn.py"
     LATEST_SDK_DEB_DIR_TEMPLATE = "/auto/sw_system_release/sx_sdk_eth/lastrc_{SDK_BRANCH}/DEBS/"
     SYNCD_PIP_INDEX_URL = 'https://urm.nvidia.com/artifactory/api/pypi/nv-shared-pypi/simple'
@@ -609,25 +621,26 @@ class SPCXRAConsts:
         return SPCXRAConsts.DUT_TX_UTIL_IBM_BW_TH
 
     DUT_TX_UTIL_AUTO_TH_DICT = {
-        PerfConsts.PACKET_SIZE_4K: {
-            "left_ports": {ValidationConsts.TX: 0.92, ValidationConsts.RX: 0.92},
-            "right_ports": {ValidationConsts.TX: 0.92, ValidationConsts.RX: 0.92}
-        }
+        "left_ports": {ValidationConsts.TX: 0.92, ValidationConsts.RX: 0.92},
+        "right_ports": {ValidationConsts.TX: 0.92, ValidationConsts.RX: 0.92}
     }
     DUT_TX_UTIL_IBM_TH_DICT = {
-        PerfConsts.PACKET_SIZE_4K: {
-            "left_ports": {ValidationConsts.TX: DUT_TX_UTIL_IBM_BW_TH, ValidationConsts.RX: DUT_TX_UTIL_IBM_BW_TH},
-            "right_ports": {ValidationConsts.TX: DUT_TX_UTIL_IBM_BW_TH, ValidationConsts.RX: DUT_TX_UTIL_IBM_BW_TH}
-        }
+        "left_ports": {ValidationConsts.TX: DUT_TX_UTIL_IBM_BW_TH, ValidationConsts.RX: DUT_TX_UTIL_IBM_BW_TH},
+        "right_ports": {ValidationConsts.TX: DUT_TX_UTIL_IBM_BW_TH, ValidationConsts.RX: DUT_TX_UTIL_IBM_BW_TH}
     }
     if is_redmine_issue_active([4667031])[0]:
-        DUT_TX_UTIL_AUTO_TH_DICT[PerfConsts.PACKET_SIZE_4K][ValidationConsts.VALIDATION_KEY] = (ValidationConsts.TX_BW_AVG, ValidationConsts.RX_BW_AVG)
-        DUT_TX_UTIL_IBM_TH_DICT[PerfConsts.PACKET_SIZE_4K][ValidationConsts.VALIDATION_KEY] = (ValidationConsts.TX_BW_AVG, ValidationConsts.RX_BW_AVG)
+        DUT_TX_UTIL_AUTO_TH_DICT[ValidationConsts.VALIDATION_KEY] = (ValidationConsts.TX_BW_AVG, ValidationConsts.RX_BW_AVG)
+        DUT_TX_UTIL_IBM_TH_DICT[ValidationConsts.VALIDATION_KEY] = (ValidationConsts.TX_BW_AVG, ValidationConsts.RX_BW_AVG)
 
-    PACKET_NUM_400G_x2 = 8
-    PACKET_NUM_800G_x1 = 20
+# Per-chip traffic-packet counts, indexed by chip_type.
+    # SPC6 lanes are 200G (vs 100G on SPC4/SPC5), so SPC6 uses 1.5x the
+    # SPC4/SPC5 packet count at the same per-port speed.
+    # All callers must index by chip_type, e.g. PACKET_NUM_800G_x1[chip_type].
+    PACKET_NUM_200G_x4 = {"SPC4": 6, "SPC5": 6, "SPC6": 9}
+    PACKET_NUM_400G_x2 = {"SPC4": 8, "SPC5": 8, "SPC6": 12}
+    PACKET_NUM_800G_x1 = {"SPC4": 20, "SPC5": 20, "SPC6": 30}
     PACKET_NUM_800G_x2 = PACKET_NUM_800G_x1
-    PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS = 72
+    PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS = {"SPC4": 72, "SPC5": 72, "SPC6": 108}
 
 
 class MongoDbConsts:
@@ -706,6 +719,96 @@ class PortMappingOptionsConsts:
 
 
 class MRCConsts:
+    # Cumulus SRv6 scheduler configuration:
+    # - Select one entry from CUMULUS_DWRR_PROFILES with CUMULUS_DWRR_PROFILE.
+    # - A TC listed in "weights" is configured in DWRR mode; its value becomes NVUE bw-percent.
+    # - A TC listed in "strict_tcs" is configured in strict mode (no DWRR weight).
+    # - To change a TC from strict to DWRR, remove it from "strict_tcs" and add it to "weights".
+    # - To change a TC from DWRR to strict, remove it from "weights" and add it to "strict_tcs".
+    # - Weights must be integers from 1 through 100 and their configured total cannot exceed 100.
+    CUMULUS_DWRR_PROFILE = "default"
+    CUMULUS_DWRR_PROFILES = {
+        "sonic": {
+            "weights": {1: 8, 2: 18, 3: 22, 4: 22},
+            "strict_tcs": []
+        },
+        "custom": {
+            "weights": {1: 8, 2: 18, 3: 22, 4: 48},
+            "strict_tcs": []
+        },
+        "default": {
+            "weights": {},
+            "strict_tcs": []
+        }
+    }
+    # Per-TC egress lossy-buffer shared-alpha overrides (NVUE values such as "alpha_8").
+    # Empty dict preserves lossy-multi-tc defaults for all TCs. Keys are TC ids 0-7.
+    # Example — override MRC/trimming TCs 1-4:
+    # Empty dict preserves lossy-multi-tc defaults for all TCs. Example override:
+    #   CUMULUS_EGRESS_LOSSY_SHARED_ALPHA_BY_TC = {1: "alpha_1_4", 2: "alpha_1_4", 3: "alpha_1_4", 4: "alpha_4"}
+    CUMULUS_EGRESS_LOSSY_SHARED_ALPHA_BY_TC = {}
+    # Deprecated: use CUMULUS_EGRESS_LOSSY_SHARED_ALPHA_BY_TC[4] instead. When set and TC4 is
+    # absent from the dict, applies only to TC4 (backward compatible).
+    CUMULUS_TC4_SHARED_ALPHA = None
+    # Per-chip / per-TC egress lossy-buffer reservation in cells. Empty outer/inner dicts preserve
+    # the profile defaults. Values are converted to bytes using the ASIC cell size.
+    # Example for SPC6 only: {"SPC6": {4: 50}} renders reserved: 12800
+    # (50 cells * 256 bytes/cell). SPC4/SPC5 stay unchanged when omitted.
+    CUMULUS_EGRESS_LOSSY_RESERVED_CELLS_BY_CHIP_TYPE = {}
+
+    @staticmethod
+    def get_cumulus_egress_lossy_shared_alpha_by_tc():
+        """Return sorted TC→alpha map for Cumulus egress-lossy-buffer overrides.
+
+        Merges CUMULUS_EGRESS_LOSSY_SHARED_ALPHA_BY_TC with legacy CUMULUS_TC4_SHARED_ALPHA
+        (legacy applies only when TC4 is not already in the dict). Entries with None values
+        are omitted.
+
+        Returns:
+            dict: Mapping of traffic class id to NVUE shared-alpha string, or empty dict.
+        """
+        shared_alpha_by_tc = {
+            tc: alpha for tc, alpha in (MRCConsts.CUMULUS_EGRESS_LOSSY_SHARED_ALPHA_BY_TC or {}).items()
+            if alpha is not None
+        }
+        if MRCConsts.CUMULUS_TC4_SHARED_ALPHA is not None:
+            shared_alpha_by_tc.setdefault(4, MRCConsts.CUMULUS_TC4_SHARED_ALPHA)
+        return dict(sorted(shared_alpha_by_tc.items()))
+
+    @staticmethod
+    def get_cumulus_egress_lossy_reserved_cells_by_tc(chip_type):
+        """Return per-TC reservation cells for the given chip type.
+
+        Args:
+            chip_type: ASIC generation, such as ``SPC5`` or ``SPC6``.
+
+        Returns:
+            dict: Mapping of traffic class id to reserved cells, or an empty dict.
+        """
+        reserved_by_chip = MRCConsts.CUMULUS_EGRESS_LOSSY_RESERVED_CELLS_BY_CHIP_TYPE or {}
+        return dict(reserved_by_chip.get(chip_type) or {})
+
+    @staticmethod
+    def get_cumulus_egress_lossy_reserved_bytes_by_tc(chip_type):
+        """Convert configured per-TC reservation cells to NVUE bytes for a chip.
+
+        Args:
+            chip_type: ASIC generation, such as ``SPC5`` or ``SPC6``.
+
+        Returns:
+            dict: Mapping of traffic class id to reserved bytes, or an empty dict.
+
+        Raises:
+            ValueError: If reservations are configured for an unsupported chip type.
+        """
+        reserved_cells_by_tc = MRCConsts.get_cumulus_egress_lossy_reserved_cells_by_tc(chip_type)
+        if not reserved_cells_by_tc:
+            return {}
+        cell_size = MRCConsts.BUFFER_CELL_SIZE_BY_CHIP_TYPE.get(chip_type)
+        if cell_size is None:
+            raise ValueError(f"No buffer cell size configured for chip type '{chip_type}'")
+        return dict(sorted((tc, cells * cell_size) for tc, cells in reserved_cells_by_tc.items()))
+
     DOWNLINKS = "Downlinks"
     UPLINKS = "Uplinks"
     T1_MANY_TO_FEW_INGRESS_PORTS_NUM_BY_CHIP_TYPE = {
@@ -797,6 +900,11 @@ class MRCConsts:
     CL_TRIMMING_DUT_TX_UTIL_TH = 0.5
     BUFFER_CELL_SIZE = 192
     BUFFER_CELL_SIZE_SPC6 = 256
+    BUFFER_CELL_SIZE_BY_CHIP_TYPE = {
+        "SPC4": BUFFER_CELL_SIZE,
+        "SPC5": BUFFER_CELL_SIZE,
+        "SPC6": BUFFER_CELL_SIZE_SPC6
+    }
     SPC5_POOL_SIZE_MB = 105
     SPC5_POOL_SIZE_BYTES = SPC5_POOL_SIZE_MB * 1000 * 1000
     SPC4_POOL_SIZE_BYTES = 158230080
@@ -846,6 +954,7 @@ class MRCConsts:
     MRC_TRIMMED_TC = 4
     OPT_TS = 'OPT_TS'
     OPT_TS_DEFAULT = 256
+    OPT_TS_DEFAULT_SPC6 = 256
     MINIMAL_TRIM_SIZE = 256
     MAX_TRIM_SIZE_CHECKING_RANGE = 512
     TRIMMING_TC = '4'
@@ -860,6 +969,12 @@ class MRCConsts:
     TRIMMING_QUEUE_NUM = [int(TRIMMING_TC)]
     MRC_CONTROL_TC = '4'
     GFP_DATA_TC = '5'
+
+    @staticmethod
+    def get_opt_ts_default(chip_type):
+        """Return the default optimal trimming size for the ASIC generation."""
+        return MRCConsts.OPT_TS_DEFAULT_SPC6 if chip_type == "SPC6" else MRCConsts.OPT_TS_DEFAULT
+
     WORKLOAD_1_TC_LIST = [int(MRC1_DATA_TC), int(MRC2_DATA_TC), int(MRC_RETRANSMISSION_TC), int(TRIMMING_TC)]
     WORKLOAD_2_TC_LIST = [int(MRC1_DATA_TC), int(MRC2_DATA_TC), int(MRC_RETRANSMISSION_TC), int(TRIMMING_TC), int(GFP_DATA_TC)]
 
@@ -876,6 +991,16 @@ class MRCConsts:
     SHAPER_VALUE_AFTER_TEST = 1.0
     TC_OCC_ALLOWED_DEVIATION = 0.15
     TC_OCC_ALLOWED_DEVIATION_BISECTION = 1
+
+    # MRC1 + MRC2 data packets per stream for many-to-one SRv6 tests (workload_1 default is 6).
+    MANY_TO_ONE_MRC_NUM_PACKETS_BY_CHIP_TYPE = {
+        "SPC6": 15,
+    }
+
+    @staticmethod
+    def get_many_to_one_mrc_num_packets(chip_type):
+        """Return MRC data packet count for many-to-one, or None to use workload_1 default (6)."""
+        return MRCConsts.MANY_TO_ONE_MRC_NUM_PACKETS_BY_CHIP_TYPE.get(chip_type)
 
     # Drop Over Max constants per chip type
     DROP_OVER_MAX_BY_CHIP_TYPE = {
@@ -894,45 +1019,6 @@ class MRCConsts:
 
 
 class PowerConsts:
-    POWER_TH_PER_ASIC = {
-        "SPC3": None,
-        "SPC4": {
-            r"VCORE TILES \d & \d \(VDD_Tx\)": 17,
-            r"DVDD TILES \d & \d \(DVDD_Tx\)": 18.13,
-            r"HVDD TILES \(HVDD_T\d+\)": 124,
-            r"VDDSCC": 47,
-            r"VCORE MAIN \(VDD_M\)": 345,
-            "TOTAL": 754,
-            "HVDD_TILES_TH": 243
-        },
-        "SPC5": {
-            r"VCORE TILES \d & \d \(VDD_Tx\)": 28.5,
-            r"DVDD TILES \d & \d \(DVDD_Tx\)": 30.75,
-            r"HVDD TILES \(HVDD_T\d+\)": 222,
-            r"VDDSCC": 48,
-            r"VCORE MAIN \(VDD_M\)": 310,
-            "TOTAL": 811,
-            "HVDD_TILES_TH": 444
-        },  # TODO: Add SPC6 power thresholds
-        "SPC6": {
-            r"swb_mps29816_\d+_STRESS_VDD_rail\d+": 400,
-            r"swb_mps29816_\d+_STRESS_HVDD_T\d+_rail\d+": 222,
-            r"swb_mps29816_\d+_STRESS_DVDD_T\d+_rail\d+": 35,
-            r"swb_mps29816_\d+_STRESS_VDDHBID_T\d+(?:_T\d+)?_rail\d+": 150,
-            r"swb_mps29816_\d+_STRESS_AVDD_T\d+_rail\d+": 55,
-            r"VCORE TILES \d & \d \(VDD_Tx\)": 150,
-            r"DVDD TILES \d & \d \(DVDD_Tx\)": 35,
-            r"HVDD TILES \(HVDD_T\d+\)": 222,
-            r"VDDSCC": 55,
-            r"VCORE MAIN \(VDD_M\)": 400,
-            r"DDR PMIC": 60,
-            r"OSFP PHY": 45,
-            r"PDB CONVERTER": 200,
-            r"Misc PMIC": 600,
-            "TOTAL": 2500,
-            "HVDD_TILES_TH": 444,
-        }
-    }
     CONTROLLER_REGEX = r'\w*\d*-i2c-\d*-\d*\w*'
     POWER_SUPPLY = "powerSupply"
     POWER_SUPPLY_ADDRESS = "address"
@@ -940,84 +1026,485 @@ class PowerConsts:
     POWER_CURRENT = "currentAmp"
     POWER_WATT = "powerWatt"
     TOTAL_POWER = "Total Power"
-
-    # SPC6 lm-sensors supply inference (sensors_power_parse.infer_spc6_supply_label)
-    SPC6_MARKER_DDR_PMIC = 'DDR PMIC'
-    SPC6_SUPPLY_DDR_PMIC = 'DDR PMIC (VDD_MEM)'
-    SPC6_MARKER_CPU_PMIC = 'CPU PMIC'
-    SPC6_MARKER_VDDCR = 'VDDCR'
-    SPC6_SUPPLY_VCORE_MAIN = 'VCORE MAIN (VDD_M)'
-    SPC6_REGEX_ASIC_VDD_MAIN = r'ASIC_VDD\s+Volt\s*\(out'
-    SPC6_MARKER_TILE = 'TILE'
-    SPC6_REGEX_ASIC_HVDD = r'ASIC_HVDD|Pvin1_HVDD|PVIN1_HVDD'
-    SPC6_SUPPLY_HVDD_TILES = 'HVDD TILES (HVDD_T03)'
-    SPC6_REGEX_ASIC_DVDD_TILE = r'ASIC_DVDD_TILE(\d)'
-    SPC6_SUPPLY_DVDD_TILES_FMT = 'DVDD TILES {low} & {high} (DVDD_Tx)'
-    SPC6_REGEX_ASIC_VDD_TILE = r'ASIC_VDD_TILE(\d)'
-    SPC6_SUPPLY_VCORE_TILES_FMT = 'VCORE TILES {low} & {high} (VDD_Tx)'
-    SPC6_REGEX_ASIC_AVDD_TILE = r'ASIC_AVDD_TILE'
-    SPC6_SUPPLY_VDDSCC = 'VDDSCC'
-    SPC6_MARKER_ASIC_HBID = 'ASIC_HBID'
-    SPC6_MARKER_HBID_TILE = 'HBID_TILE'
-    SPC6_REGEX_ASIC_HBID_TILE = r'ASIC_HBID_TILE(\d+)'
-    SPC6_SUPPLY_VCORE_TILES_45 = 'VCORE TILES 4 & 5 (VDD_Tx)'
-    SPC6_MARKER_ASIC_OSFP = 'ASIC_OSFP'
-    SPC6_MARKER_OSFPX = 'OSFPx'
-    SPC6_SUPPLY_OSFP_PHY = 'OSFP PHY (ASIC_OSFP)'
-    SPC6_REGEX_PDB = r'PDB-\d+\s+(CONV|HSC)'
-    SPC6_SUPPLY_PDB_CONVERTER = 'PDB CONVERTER'
-    SPC6_SUPPLY_MISC_PMIC = 'Misc PMIC (unknown rail)'
+    POWER_DOMAIN = "domain"
 
 
-class SPCControllers:
-    SPCControllers_DICT = {
-        "SPC3": {
-            "0x62": "VCORE MAIN",
-            "0x64": "1.8V_MAIN & 1.2V_MAIN",
-            "0x66": "VCORE & 1.8V_Tile",
-            "0x68": "VCORE & 1.8V_Tile",
-            "0x6a": "VCORE & 1.8V_Tile",
-            "0x6c": "VCORE & 1.8V_Tile",
-            "0x6e": "VCORE & 1.8V_Tile",
-        },
-        "SPC4": {
-            "0x61": "HVDD TILES (HVDD_T47)",
-            "0x62": "VCORE MAIN (VDD_M)",
-            "0x63": "VCORE TILES 0 & 1 (VDD_Tx)",
-            "0x64": "VCORE TILES 2 & 3 (VDD_Tx)",
-            "0x65": "VCORE TILES 4 & 5 (VDD_Tx)",
-            "0x66": "VCORE TILES 6 & 7 (VDD_Tx)",
-            "0x67": "DVDD TILES 0 & 1 (DVDD_Tx)",
-            "0x68": "DVDD TILES 2 & 3 (DVDD_Tx)",
-            "0x69": "DVDD TILES 4 & 5 (DVDD_Tx)",
-            "0x6a": "DVDD TILES 6 & 7 (DVDD_Tx)",
-            "0x6c": "HVDD TILES (HVDD_T03)",
-            "0x6e": "VDDSCC",
-        },
-        "SPC5": {
-            "0x62": "VCORE MAIN (VDD_M)",
-            "0x63": "VCORE TILES 0 & 1 (VDD_Tx)",
-            "0x64": "VCORE TILES 2 & 3 (VDD_Tx)",
-            "0x65": "VCORE TILES 4 & 5 (VDD_Tx)",
-            "0x66": "VCORE TILES 6 & 7 (VDD_Tx)",
-            "0x67": "DVDD TILES 0 & 1 (DVDD_Tx)",
-            "0x68": "DVDD TILES 2 & 3 (DVDD_Tx)",
-            "0x69": "DVDD TILES 4 & 5 (DVDD_Tx)",
-            "0x6a": "DVDD TILES 6 & 7 (DVDD_Tx)",
-            "0x6c": "HVDD TILES (HVDD_T03)",
-            "0x6e": "VDDSCC",
-        },
-        "SPC6": {  # TODO: Add SPC6 controllers dictionary
-            "0x62": "VCORE MAIN (VDD_M)",
-            "0x63": "VCORE TILES 0 & 1 (VDD_Tx)",
-            "0x64": "VCORE TILES 2 & 3 (VDD_Tx)",
-            "0x65": "VCORE TILES 4 & 5 (VDD_Tx)",
-            "0x66": "VCORE TILES 6 & 7 (VDD_Tx)",
-            "0x67": "DVDD TILES 0 & 1 (DVDD_Tx)",
-            "0x68": "DVDD TILES 2 & 3 (DVDD_Tx)",
-            "0x69": "DVDD TILES 4 & 5 (DVDD_Tx)",
-            "0x6a": "DVDD TILES 6 & 7 (DVDD_Tx)",
-            "0x6c": "HVDD TILES (HVDD_T03)",
-            "0x6e": "VDDSCC",
-        }
+class RailDomain:
+    """Electrical domain a power rail belongs to.
+
+    Separates ASIC (silicon) rails from Switch/Board rails so reports and power
+    totals never mix or double-count the two domains.
+    """
+    ASIC = "ASIC"
+    BOARD = "Board"
+
+
+@dataclass(frozen=True)
+class RailDef:
+    """Declarative definition of a single power rail (one controller output).
+
+    Single source of truth for a rail's identity, intended to replace the
+    scattered address dicts, label-inference markers and threshold regexes.
+    Kept chip-agnostic so other chip types (SPC4/SPC5/...) can adopt the same
+    model in future refactors.
+
+    Attributes:
+        canonical_name (str): Org-aligned rail name (e.g. ``"VDD_Tile"``, ``"HVDD"``).
+        domain (str): Rail domain, one of :class:`RailDomain` (``ASIC``/``Board``).
+        address (str): I2C device address in ``0x..`` form (e.g. ``"0x60"``).
+        buses (Tuple[int, ...]): I2C bus numbers (branches) the address is valid
+            on. An address can repeat across branches, so the bus distinguishes
+            the branch and separates ASIC buses from board buses that reuse the
+            same address.
+        power_threshold_watt (Optional[float]): Explicit canonical-GROUP budget
+            in watts (used as-is), or ``None`` when the group budget is instead
+            derived from ``per_leg_power_threshold_watt``. Used for Arch-given
+            group budgets and SPC6 placeholders (see ``is_placeholder_threshold``).
+        per_leg_power_threshold_watt (Optional[float]): Legacy PER-LEG cap in
+            watts. When set, the canonical-group budget is derived as this value
+            times ``active_legs``, summed across every controller sharing the
+            canonical name. Preserves the legacy per-leg validation intent while
+            enforcing at the group level (SPC4/SPC5).
+        active_legs (int): Number of real output legs this controller contributes
+            to its canonical group (dual-output rails = 2; single-output rails
+            such as VCORE MAIN / VDDSCC = 1). Only used together with
+            ``per_leg_power_threshold_watt``.
+        label_regex (Optional[str]): Optional token pattern for descriptive/bench
+            ``sensors`` dumps (e.g. the Arch stress-tool ``STRESS_<RAIL>`` labels).
+            Address is the primary key; this is a fallback for label-only dumps.
+        description (str): One-line responsibility summary (feeds the rail wiki).
+        is_placeholder_threshold (bool): ``True`` while ``power_threshold_watt``
+            is a placeholder that is not yet validated, awaiting Arch calibration.
+        is_upstream_feed (bool): ``True`` for an upstream input converter (e.g. a
+            PDB CONV / HSC) whose output feeds downstream leaf rails. Such rails
+            are excluded from domain power totals to avoid double-counting.
+    """
+    canonical_name: str
+    domain: str
+    address: str
+    buses: Tuple[int, ...]
+    power_threshold_watt: Optional[float] = None
+    per_leg_power_threshold_watt: Optional[float] = None
+    active_legs: int = 2
+    label_regex: Optional[str] = None
+    description: str = ""
+    is_placeholder_threshold: bool = False
+    is_upstream_feed: bool = False
+
+
+class RailModel:
+    """Chip-type to declarative rail table (single source of truth for identity).
+
+    New chip types are added by defining their rail list and registering it in
+    :attr:`RAILS_BY_CHIP_TYPE`; parsing, naming, grouping and thresholds can then
+    all be derived generically from these definitions.
+    """
+
+    # SPC6 (Salamandra) exposes a single ASIC. Its BGA dynamic/controlled rails
+    # are driven by MPS ``M29816`` controllers on two i2c branches:
+    #   branch 1 = i2c-15, branch 2 = i2c-16 (confirmed against a live dump).
+    # At the canonical level an address maps to the same rail on both branches
+    # (e.g. 0x63/0x64 => DVDD), so the branch is only needed to (a) place the
+    # branch-unique rails (VDD_main on 16, HVDD on 15) and (b) separate ASIC
+    # buses from board buses that reuse the same address (e.g. 0x60 on i2c-6/7
+    # is a board PDB converter, not VDD_main).
+    #
+    # NOTE: the ASIC controllers on these buses also drive the front-panel OSFP
+    # optics supply (0x68/0x69, see below). Rail domain (ASIC vs Board) is
+    # therefore taken per-rail from this table, never inferred from the bus.
+    SPC6_ASIC_BUSES = (15, 16)
+
+    # ``power_threshold_watt`` below is a rail-GROUP budget (the sum of all the
+    # rail's tile legs), taken from the Arch SPC6 power design at the worst/max
+    # column across voltage-temp corners. Still placeholders pending Arch
+    # sign-off; two known caveats: (1) HVDD design max (~61 W) is below an
+    # observed run (~65 W) - open with Arch; (2) "DVDD CPO" (a separate ~160 W
+    # rail in the design) is not modeled yet (i2c address TBD).
+    SPC6_RAILS = [
+        RailDef(
+            canonical_name="VDD_main",
+            domain=RailDomain.ASIC,
+            address="0x60",
+            buses=(16,),
+            power_threshold_watt=540,
+            label_regex=r"_STRESS_VDD_rail\d+",
+            description="Main core supply (VDD_M) feeding the ASIC core.",
+        ),
+        RailDef(
+            canonical_name="VDD_Tile",
+            domain=RailDomain.ASIC,
+            address="0x61",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=276,
+            label_regex=r"_STRESS_VDD_T\d+_rail\d+",
+            description="Per-tile core supply (VDD_Tx) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="VDD_Tile",
+            domain=RailDomain.ASIC,
+            address="0x62",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=276,
+            label_regex=r"_STRESS_VDD_T\d+_rail\d+",
+            description="Per-tile core supply (VDD_Tx) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="DVDD",
+            domain=RailDomain.ASIC,
+            address="0x63",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=188,
+            label_regex=r"_STRESS_DVDD_T\d+_rail\d+",
+            description="Digital core supply (DVDD) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="DVDD",
+            domain=RailDomain.ASIC,
+            address="0x64",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=188,
+            label_regex=r"_STRESS_DVDD_T\d+_rail\d+",
+            description="Digital core supply (DVDD) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="AVDD",
+            domain=RailDomain.ASIC,
+            address="0x65",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=185,
+            label_regex=r"_STRESS_AVDD_T\d+_rail\d+",
+            description="Analog supply (AVDD) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="AVDD",
+            domain=RailDomain.ASIC,
+            address="0x66",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=185,
+            label_regex=r"_STRESS_AVDD_T\d+_rail\d+",
+            description="Analog supply (AVDD) for the ASIC tiles.",
+        ),
+        RailDef(
+            canonical_name="VDDHBID",
+            domain=RailDomain.ASIC,
+            address="0x67",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=220,
+            label_regex=r"_STRESS_VDDHBID_T\d+(?:_T\d+)?_rail\d+",
+            description="HBM/interface supply (VDDHBID) shared across tile pairs.",
+        ),
+        RailDef(
+            canonical_name="HVDD",
+            domain=RailDomain.ASIC,
+            address="0x6a",
+            buses=(15,),
+            power_threshold_watt=72,
+            label_regex=r"_STRESS_HVDD_T\d+(?:_\d+)?_rail\d+",
+            description="Fixed 1.2 V high-voltage supply (HVDD) for tile groups.",
+        ),
+        RailDef(
+            canonical_name="OSFP",
+            domain=RailDomain.BOARD,
+            address="0x68",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=None,
+            label_regex=r"OSFP",
+            description="Front-panel OSFP optics/PHY supply (OSFP x16).",
+        ),
+        RailDef(
+            canonical_name="OSFP",
+            domain=RailDomain.BOARD,
+            address="0x69",
+            buses=SPC6_ASIC_BUSES,
+            power_threshold_watt=None,
+            label_regex=r"OSFP",
+            description="Front-panel OSFP optics/PHY supply (OSFP x16).",
+        ),
+        # --- SPC6 Board / upstream rails (domain=Board) -------------------
+        # Not ASIC silicon; modeled for canonical naming + clean domain totals.
+        # Bus scoping is REQUIRED: 0x60 is VDD_main on i2c-16 (ASIC) but a PDB
+        # brick on i2c-6/7 (board). PDB/HSC are 48V->12V upstream feeds (their
+        # output equals all downstream power), so is_upstream_feed excludes them
+        # from domain totals to avoid double-counting the leaf rails they supply.
+        # NOTE: on Sonic the HSC yields dataframe rows (input-side power); on DVS
+        # it produced none. is_upstream_feed excludes it from domain totals in
+        # either case, so it never double-counts the leaf rails it supplies.
+        RailDef(
+            canonical_name="PDB Converter",
+            domain=RailDomain.BOARD,
+            address="0x60",
+            buses=(6, 7),
+            power_threshold_watt=None,
+            label_regex=r"PDB-\d+\s+CONV",
+            description="PDB 48V->12V input converter (upstream feed).",
+            is_upstream_feed=True,
+        ),
+        RailDef(
+            canonical_name="PDB HSC",
+            domain=RailDomain.BOARD,
+            address="0x12",
+            buses=(6, 7),
+            power_threshold_watt=None,
+            label_regex=r"PDB-\d+\s+HSC",
+            description="PDB hot-swap controller input stage (upstream feed).",
+            is_upstream_feed=True,
+        ),
+        RailDef(
+            canonical_name="DDR (VDD_MEM)",
+            domain=RailDomain.BOARD,
+            address="0x6a",
+            buses=(5,),
+            power_threshold_watt=None,
+            label_regex=r"DDR PMIC",
+            description="DDR memory supply (VDD_MEM / VDD_MEMIO).",
+        ),
+        RailDef(
+            canonical_name="CPU PMIC (VDDCR)",
+            domain=RailDomain.BOARD,
+            address="0x69",
+            buses=(5,),
+            power_threshold_watt=None,
+            label_regex=r"CPU PMIC",
+            description="Host CPU core/SoC supply (VDDCR_CPU / VDDCR_SOC).",
+        ),
+    ]
+
+    # --- Legacy ASIC chips (SPC3/4/5) -------------------------------------
+    # These keep their EXISTING addresses; only the label format is cleaned
+    # (encapsulated detail moved to `description`). All rails are ASIC-domain.
+    # `buses=()` means "match on address regardless of i2c bus" (single
+    # controller bank, unlike SPC6's dual branch).
+    #
+    # Per Arch, threshold validation is CANONICAL-GROUP level for every chip
+    # (sum every leg sharing a canonical rail name). The legacy POWER_TH_PER_ASIC
+    # values are PER-LEG caps (each dataframe row is one leg / vout channel), so
+    # the group budget is derived as per_leg_power_threshold_watt * active_legs,
+    # summed across a rail's controllers. This reproduces the legacy HVDD group
+    # aggregate (e.g. SPC5 222*2=444, SPC4 124*2=248) and stays above the observed
+    # measurements. Dual-output rails have active_legs=2; single-output rails
+    # (VCORE MAIN, VDDSCC) active_legs=1.
+    SPC4_RAILS = [
+        # HVDD: only controller 0x6c is populated on these boards (2 legs, ~110 W
+        # each => group 124*2=248, matching the legacy HVDD_TILES_TH aggregate and
+        # the Arch spec HVDD total of 221 W). The legacy map also listed 0x61
+        # (HVDD_T47) but it never appears in live dumps.
+        # TODO(Arch): confirm 0x61 is unpopulated on all SPC4 board variants.
+        RailDef(canonical_name="HVDD", domain=RailDomain.ASIC, address="0x6c", buses=(),
+                per_leg_power_threshold_watt=124, active_legs=2,
+                description="HVDD tiles (HVDD_T03 + HVDD_T47), 2 legs."),
+        RailDef(canonical_name="VCORE MAIN", domain=RailDomain.ASIC, address="0x62", buses=(),
+                per_leg_power_threshold_watt=345, active_legs=1,
+                description="Main core supply (VDD_M), single leg."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x63", buses=(),
+                per_leg_power_threshold_watt=17, active_legs=2, description="Core tiles 0 & 1 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x64", buses=(),
+                per_leg_power_threshold_watt=17, active_legs=2, description="Core tiles 2 & 3 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x65", buses=(),
+                per_leg_power_threshold_watt=17, active_legs=2, description="Core tiles 4 & 5 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x66", buses=(),
+                per_leg_power_threshold_watt=17, active_legs=2, description="Core tiles 6 & 7 (VDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x67", buses=(),
+                per_leg_power_threshold_watt=18.13, active_legs=2, description="Digital tiles 0 & 1 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x68", buses=(),
+                per_leg_power_threshold_watt=18.13, active_legs=2, description="Digital tiles 2 & 3 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x69", buses=(),
+                per_leg_power_threshold_watt=18.13, active_legs=2, description="Digital tiles 4 & 5 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x6a", buses=(),
+                per_leg_power_threshold_watt=18.13, active_legs=2, description="Digital tiles 6 & 7 (DVDD_Tx)."),
+        RailDef(canonical_name="VDDSCC", domain=RailDomain.ASIC, address="0x6e", buses=(),
+                per_leg_power_threshold_watt=47, active_legs=1, description="SerDes/SCC supply (VDDSCC), single leg."),
+    ]
+
+    # SPC5: same per-leg * active_legs derivation. HVDD is a single controller
+    # (0x6c) driving 2 legs (HVDD_T03 + HVDD_T47) => 222*2=444.
+    SPC5_RAILS = [
+        RailDef(canonical_name="HVDD", domain=RailDomain.ASIC, address="0x6c", buses=(),
+                per_leg_power_threshold_watt=222, active_legs=2,
+                description="HVDD tiles (HVDD_T03 + HVDD_T47), 2 legs."),
+        RailDef(canonical_name="VCORE MAIN", domain=RailDomain.ASIC, address="0x62", buses=(),
+                per_leg_power_threshold_watt=310, active_legs=1,
+                description="Main core supply (VDD_M), single leg."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x63", buses=(),
+                per_leg_power_threshold_watt=28.5, active_legs=2, description="Core tiles 0 & 1 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x64", buses=(),
+                per_leg_power_threshold_watt=28.5, active_legs=2, description="Core tiles 2 & 3 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x65", buses=(),
+                per_leg_power_threshold_watt=28.5, active_legs=2, description="Core tiles 4 & 5 (VDD_Tx)."),
+        RailDef(canonical_name="VCORE TILES", domain=RailDomain.ASIC, address="0x66", buses=(),
+                per_leg_power_threshold_watt=28.5, active_legs=2, description="Core tiles 6 & 7 (VDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x67", buses=(),
+                per_leg_power_threshold_watt=30.75, active_legs=2, description="Digital tiles 0 & 1 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x68", buses=(),
+                per_leg_power_threshold_watt=30.75, active_legs=2, description="Digital tiles 2 & 3 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x69", buses=(),
+                per_leg_power_threshold_watt=30.75, active_legs=2, description="Digital tiles 4 & 5 (DVDD_Tx)."),
+        RailDef(canonical_name="DVDD", domain=RailDomain.ASIC, address="0x6a", buses=(),
+                per_leg_power_threshold_watt=30.75, active_legs=2, description="Digital tiles 6 & 7 (DVDD_Tx)."),
+        RailDef(canonical_name="VDDSCC", domain=RailDomain.ASIC, address="0x6e", buses=(),
+                per_leg_power_threshold_watt=48, active_legs=1, description="SerDes/SCC supply (VDDSCC), single leg."),
+    ]
+
+    # SPC3 has no power thresholds today (power validation stays disabled). Kept
+    # for naming parity in the unified resolver; thresholds intentionally None.
+    SPC3_RAILS = [
+        RailDef(canonical_name="VCORE MAIN", domain=RailDomain.ASIC, address="0x62", buses=(),
+                description="Main core supply."),
+        RailDef(canonical_name="1.8V_MAIN & 1.2V_MAIN", domain=RailDomain.ASIC, address="0x64", buses=(),
+                description="1.8V/1.2V main rails."),
+        RailDef(canonical_name="VCORE & 1.8V_Tile", domain=RailDomain.ASIC, address="0x66", buses=(),
+                description="Core + 1.8V tile rail."),
+        RailDef(canonical_name="VCORE & 1.8V_Tile", domain=RailDomain.ASIC, address="0x68", buses=(),
+                description="Core + 1.8V tile rail."),
+        RailDef(canonical_name="VCORE & 1.8V_Tile", domain=RailDomain.ASIC, address="0x6a", buses=(),
+                description="Core + 1.8V tile rail."),
+        RailDef(canonical_name="VCORE & 1.8V_Tile", domain=RailDomain.ASIC, address="0x6c", buses=(),
+                description="Core + 1.8V tile rail."),
+        RailDef(canonical_name="VCORE & 1.8V_Tile", domain=RailDomain.ASIC, address="0x6e", buses=(),
+                description="Core + 1.8V tile rail."),
+    ]
+
+    RAILS_BY_CHIP_TYPE = {
+        "SPC3": SPC3_RAILS,
+        "SPC4": SPC4_RAILS,
+        "SPC5": SPC5_RAILS,
+        "SPC6": SPC6_RAILS,
     }
+
+    # ASIC-domain total power budget (watts) per chip type, compared against the
+    # summed ASIC-domain rails in _validate_asic_total_power. Chips absent here
+    # (e.g. SPC3) have no total check, so their power validation stays disabled.
+    ASIC_TOTAL_POWER_TH_WATT = {
+        "SPC4": 754,
+        "SPC5": 811,
+        "SPC6": 1500,
+    }
+
+    @classmethod
+    def rails_for_chip_type(cls, chip_type: str) -> List[RailDef]:
+        """Return the declarative rail list for a chip type.
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            List[RailDef]: Rail definitions for the chip type, or an empty list
+            when the chip type has not been migrated to the declarative model.
+        """
+        return cls.RAILS_BY_CHIP_TYPE.get(chip_type, [])
+
+    @classmethod
+    def asic_total_threshold(cls, chip_type: str) -> Optional[float]:
+        """Return the ASIC-domain total power budget (watts) for a chip type.
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            Optional[float]: Total budget in watts, or ``None`` when the chip has
+            no total check (power validation stays disabled, e.g. SPC3).
+        """
+        return cls.ASIC_TOTAL_POWER_TH_WATT.get(chip_type)
+
+    @classmethod
+    def get_rail_def(cls, chip_type: str, bus: Optional[int], address: Optional[str]) -> Optional[RailDef]:
+        """Return the rail definition matching an ``(i2c bus, address)`` pair.
+
+        For chips whose addresses repeat across branches (e.g. SPC6), the rail's
+        ``buses`` tuple is required and both bus and address must match. For
+        single-bank legacy chips whose rails set ``buses=()``, matching is
+        address-only (bus is ignored).
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+            bus (Optional[int]): I2C bus number (branch) the chip sits on.
+            address (Optional[str]): I2C device address in ``0x..`` form.
+
+        Returns:
+            Optional[RailDef]: The matching rail definition, or ``None`` when the
+            address (and bus, when constrained) is unknown.
+        """
+        if not address:
+            return None
+        for rail in cls.rails_for_chip_type(chip_type):
+            if rail.address == address and (not rail.buses or bus in rail.buses):
+                return rail
+        return None
+
+    @classmethod
+    def power_thresholds_by_rail(cls, chip_type: str) -> Dict[str, float]:
+        """Return the canonical-group power budget per rail for a chip type.
+
+        Two modes are supported so chip types can be mixed cleanly:
+
+        * Per-leg rails (SPC4/SPC5): the group budget is derived as
+          ``per_leg_power_threshold_watt * active_legs``, SUMMED across every
+          controller sharing the canonical name.
+        * Explicit rails (SPC6 placeholders / Arch-given group budgets): the
+          ``power_threshold_watt`` value is taken as the whole-group budget
+          (once per canonical name, not summed).
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            Dict[str, float]: Canonical-group power budgets keyed by canonical name.
+        """
+        derived: Dict[str, float] = {}
+        explicit: Dict[str, float] = {}
+        for rail in cls.rails_for_chip_type(chip_type):
+            if rail.per_leg_power_threshold_watt is not None:
+                contribution = rail.per_leg_power_threshold_watt * rail.active_legs
+                derived[rail.canonical_name] = derived.get(rail.canonical_name, 0.0) + contribution
+            elif rail.power_threshold_watt is not None:
+                explicit[rail.canonical_name] = rail.power_threshold_watt
+        return {**explicit, **derived}
+
+    @classmethod
+    def asic_buses(cls, chip_type: str) -> set:
+        """Return the set of i2c buses carrying ASIC-domain rails for a chip type.
+
+        Derived from the rail table so callers never hardcode bus numbers. Used
+        to decide whether an unmapped controller sits on an ASIC branch (worth a
+        coverage warning) versus a board branch (intentionally not modeled).
+        Legacy single-bank chips whose rails set ``buses=()`` yield an empty set.
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            set: I2C bus numbers used by the chip's ASIC-domain rails.
+        """
+        return {bus for rail in cls.rails_for_chip_type(chip_type)
+                if rail.domain == RailDomain.ASIC for bus in rail.buses}
+
+    @classmethod
+    def asic_canonical_names(cls, chip_type: str) -> set:
+        """Return the set of ASIC-domain canonical rail names for a chip type.
+
+        Used to classify a report row's domain from its name alone (rows not in
+        this set are treated as Board/Switch).
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            set: Canonical names whose domain is :attr:`RailDomain.ASIC`.
+        """
+        return {rail.canonical_name for rail in cls.rails_for_chip_type(chip_type)
+                if rail.domain == RailDomain.ASIC}
+
+    @classmethod
+    def upstream_feed_names(cls, chip_type: str) -> set:
+        """Return the canonical names of upstream feed rails for a chip type.
+
+        Upstream feeds (e.g. PDB CONV / HSC) are excluded from domain power
+        totals to avoid double-counting the downstream leaf rails they supply.
+
+        Args:
+            chip_type (str): Chip identifier such as ``"SPC6"``.
+
+        Returns:
+            set: Canonical names whose ``is_upstream_feed`` flag is ``True``.
+        """
+        return {rail.canonical_name for rail in cls.rails_for_chip_type(chip_type)
+                if rail.is_upstream_feed}

@@ -579,7 +579,7 @@ def test_l1_agg_port_up(duthost, fanouthosts):
     try:
         if not wait_until(120, 5, 0, check_if_port_is_active, duthost, port):
             pytest.fail("Could not start up {} port.\nAborting.".format(port))
-        entry = verify_l1_agg_drop_exists(duthost, SHOW_L1_AGGREGATE, port, 'Up')
+        entry = run_until(2, 1, 5, ('Port', port), verify_l1_agg_drop_exists, duthost, SHOW_L1_AGGREGATE, port, 'Up')
         if entry['Down Reason - Recommended Action'] != 'N/A':
             pytest.fail("Could not find L1 drop on WJH aggregated table.")
     finally:

@@ -27,6 +27,10 @@ from devts.infra.tools.validations.traffic_validations.port_check.port_checker i
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.infra.SudoScope import sudo_scope_if
 
+
+cumulus_owner = "gosaini"
+
+
 logger = logging.getLogger()
 INCOMPLETE_COMMAND = "Incomplete Command"
 ERROR = "Error"

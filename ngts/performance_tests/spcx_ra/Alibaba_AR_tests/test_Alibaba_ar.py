@@ -22,15 +22,15 @@ SCENARIO_TO_PACKET_SIZE_DICT = {
                                                     ecmp_size=4096, create_acls=False, create_goto_acl=False, two_sided_ar=True),
 
     "p3_leaf_no_acl": AlibabaScenarioToconfiguration(scenario_name="p3_leaf_no_acl_hash_crc", packet_size=1600,
-                                                     num_left_packets=3, num_right_packets=20, ecmp_type_stateless=True,
+                                                     num_left_packets=3, num_left_packets_spc6=1, num_right_packets=20, ecmp_type_stateless=True,
                                                      ecmp_size=4096, create_acls=False, create_goto_acl=False, two_sided_ar=False),
 
     "p4_leaf_six_acl": AlibabaScenarioToconfiguration(scenario_name="p4_1_leaf_six_acl_hash_crc", packet_size=1600,
-                                                      num_left_packets=3, num_right_packets=20, ecmp_type_stateless=False,
+                                                      num_left_packets=3, num_left_packets_spc6=1, num_right_packets=20, ecmp_type_stateless=False,
                                                       ecmp_size=512, create_acls=True, create_goto_acl=False, two_sided_ar=False),
 
     "p4_1_leaf_seven_acl": AlibabaScenarioToconfiguration(scenario_name="p4_2_leaf_seven_acl_hash_crc", packet_size=1500,
-                                                          num_left_packets=3, num_right_packets=19, ecmp_type_stateless=False,
+                                                          num_left_packets=12, num_left_packets_spc6=1, num_right_packets=19, ecmp_type_stateless=False,
                                                           ecmp_size=512, create_acls=True, create_goto_acl=True, two_sided_ar=False),
 }
 
@@ -49,7 +49,7 @@ class Test_Alibaba_scenarios_with_reset:
         self.ip = InfraConst.IPV6 if basic_setup_configuration else InfraConst.IPV4
         self.is_ipv6 = basic_setup_configuration
         self.chip_type = chip_type
-        self.conf_args = get_conf_args(self.is_ipv6)
+        self.conf_args = get_conf_args(self.is_ipv6, self.chip_type)
 
     @pytest.mark.parametrize("scenario_name,scenario_configuration,packet_size,hash_type",
                              [(scenario_name, scenario_configuration, scenario_configuration.packet_size, hash_type)
@@ -88,7 +88,7 @@ class Test_Alibaba_scenarios_with_reset:
                 skip_first_counters_iteration = False
             else:
                 skip_first_counters_iteration = True
-            bw_threshold = SPCXRAConsts.DUT_TX_UTIL_AUTO_TH_DICT[PerfConsts.PACKET_SIZE_LIST[0]]
+            bw_threshold = SPCXRAConsts.DUT_TX_UTIL_IBM_TH_DICT
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,

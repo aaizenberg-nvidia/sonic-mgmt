@@ -7,7 +7,7 @@ import allure
 import json
 import logging
 from devts.infra.tools.exceptions.test_issue import TestIssue
-from ngts.constants.performance_constants import Cl_Consts, ValidationConsts
+from ngts.constants.performance_constants import Cl_Consts, MRCConsts, ValidationConsts
 import time
 import os
 from jinja2 import Environment, FileSystemLoader
@@ -175,6 +175,125 @@ class NvueTrimmingCli(TrimmingCommon):
             with allure.step(f"Attach queue_packet_percentages_df"):
                 allure.attach(queue_packet_percentages_df.to_html(), "Queue packet percentages dataframe", attachment_type=allure.attachment_type.HTML)
         return queue_packet_percentages_df
+
+    @staticmethod
+    def _validate_custom_qos_profile(profile_name, profile, shared_alpha_by_tc, reserved_cells_by_tc):
+        if profile is None:
+            supported_profiles = ", ".join(sorted(MRCConsts.CUMULUS_DWRR_PROFILES))
+            raise ValueError(f"Unsupported Cumulus DWRR profile '{profile_name}'. "
+                             f"Supported profiles: {supported_profiles}")
+
+        dwrr_weights = profile.get("weights", {})
+        strict_tcs = profile.get("strict_tcs", [])
+        invalid_tcs = [tc for tc in list(dwrr_weights) + strict_tcs
+                       if not isinstance(tc, int) or isinstance(tc, bool) or tc not in range(8)]
+        if invalid_tcs:
+            raise ValueError(f"Traffic classes must be integers from 0 through 7: {invalid_tcs}")
+
+        overlapping_tcs = sorted(set(dwrr_weights).intersection(strict_tcs))
+        if overlapping_tcs:
+            raise ValueError(f"Traffic classes cannot be both DWRR and strict: {overlapping_tcs}")
+
+        invalid_weights = {tc: weight for tc, weight in dwrr_weights.items()
+                           if not isinstance(weight, int) or isinstance(weight, bool) or not 1 <= weight <= 100}
+        if invalid_weights:
+            raise ValueError(f"DWRR weights must be integers from 1 through 100: {invalid_weights}")
+        if sum(dwrr_weights.values()) > 100:
+            raise ValueError(f"Total configured DWRR weight cannot exceed 100: {sum(dwrr_weights.values())}")
+
+        if shared_alpha_by_tc:
+            invalid_alpha_tcs = [tc for tc in shared_alpha_by_tc
+                                 if not isinstance(tc, int) or isinstance(tc, bool) or tc not in range(8)]
+            if invalid_alpha_tcs:
+                raise ValueError(f"Shared-alpha traffic classes must be integers from 0 through 7: "
+                                 f"{invalid_alpha_tcs}")
+            invalid_alpha_values = {tc: alpha for tc, alpha in shared_alpha_by_tc.items()
+                                    if not isinstance(alpha, str) or not alpha.strip()}
+            if invalid_alpha_values:
+                raise ValueError(f"Shared-alpha values must be non-empty NVUE alpha strings: "
+                                 f"{invalid_alpha_values}")
+
+        if reserved_cells_by_tc:
+            invalid_reserved_tcs = [tc for tc in reserved_cells_by_tc
+                                    if not isinstance(tc, int) or isinstance(tc, bool) or tc not in range(8)]
+            if invalid_reserved_tcs:
+                raise ValueError(f"Reserved-buffer traffic classes must be integers from 0 through 7: "
+                                 f"{invalid_reserved_tcs}")
+            invalid_reserved_cells = {tc: cells for tc, cells in reserved_cells_by_tc.items()
+                                      if not isinstance(cells, int) or isinstance(cells, bool) or cells < 0}
+            if invalid_reserved_cells:
+                raise ValueError(f"Reserved-buffer cell counts must be non-negative integers: "
+                                 f"{invalid_reserved_cells}")
+
+        return dict(sorted(dwrr_weights.items())), sorted(strict_tcs)
+
+    def configure_custom_dwrr_weights(self):
+        """Apply SRv6 Cumulus scheduler and optional egress-buffer overrides."""
+        profile_name = MRCConsts.CUMULUS_DWRR_PROFILE
+        profile = MRCConsts.CUMULUS_DWRR_PROFILES.get(profile_name)
+        shared_alpha_by_tc = MRCConsts.get_cumulus_egress_lossy_shared_alpha_by_tc()
+        chip_type = self.cli_obj.performance.get_chip_type()
+        reserved_cells_by_tc = MRCConsts.get_cumulus_egress_lossy_reserved_cells_by_tc(chip_type)
+        dwrr_weights, strict_tcs = self._validate_custom_qos_profile(profile_name, profile, shared_alpha_by_tc,
+                                                                     reserved_cells_by_tc)
+        reserved_bytes_by_tc = MRCConsts.get_cumulus_egress_lossy_reserved_bytes_by_tc(chip_type)
+        buffer_tcs = sorted(set(shared_alpha_by_tc).union(reserved_bytes_by_tc))
+        egress_lossy_buffer_by_tc = {
+            tc: {
+                "shared_alpha": shared_alpha_by_tc.get(tc),
+                "reserved": reserved_bytes_by_tc.get(tc)
+            }
+            for tc in buffer_tcs
+        }
+
+        templates_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                      PerfConsts.DEFAULT_PERF_TEMPLATES_DIR, "srv6", "cumulus_jinja")
+        template_env = Environment(loader=FileSystemLoader(searchpath=templates_path))
+        jinja_template = template_env.get_template("custom_qos_overrides.jinja")
+        parameter_dict = {
+            "dwrr_weights": dwrr_weights,
+            "strict_tcs": strict_tcs,
+            "egress_lossy_buffer_by_tc": egress_lossy_buffer_by_tc
+        }
+        output_text = jinja_template.render(parameter_dict=parameter_dict)
+        try:
+            yaml.safe_load(output_text)
+        except yaml.YAMLError:
+            logging.error(f"{self.dut_alias}'s custom QoS Jinja template produced invalid YAML:\n"
+                          f"{output_text}")
+            raise
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
+            temp_file.write(output_text)
+            temp_path = temp_file.name
+
+        destination_file = "custom_qos_overrides.yaml"
+        try:
+            self.engine.copy_file(source_file=temp_path, file_system=Cl_Consts.CL_HOME_DIR,
+                                  dest_file=destination_file, overwrite_file=True, verify_file=False)
+        finally:
+            os.remove(temp_path)
+
+        full_path = os.path.join(Cl_Consts.CL_HOME_DIR, destination_file)
+        self.cli_obj.general.detach_config(self.engine)
+        self.cli_obj.general.patch_config(self.engine, full_path)
+        self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)
+
+        scheduler_output = self.engine.run_cmd(
+            "nv show qos egress-scheduler default-global", print_output=False)
+        buffer_outputs = {}
+        for tc in buffer_tcs:
+            buffer_outputs[tc] = self.engine.run_cmd(
+                f"nv show qos advance-buffer-config default-global egress-lossy-buffer traffic-class {tc}",
+                print_output=False)
+        with allure.step(f"Attach applied Cumulus QoS profile '{profile_name}'"):
+            allure.attach(output_text, "Cumulus custom QoS configuration",
+                          attachment_type=allure.attachment_type.TEXT)
+            allure.attach(scheduler_output, "Cumulus egress scheduler",
+                          attachment_type=allure.attachment_type.TEXT)
+            for tc, buffer_output in buffer_outputs.items():
+                allure.attach(buffer_output, f"Cumulus TC{tc} egress buffer configuration",
+                              attachment_type=allure.attachment_type.TEXT)
 
     def configure_trim_of_all_packets(self, ports, queues, scenario, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR):
         self.cli_obj.general.detach_config(self.engine)

@@ -37,6 +37,21 @@ class AlibabaScenarioToconfiguration:
     create_acls: bool
     create_goto_acl: bool
     two_sided_ar: bool
+    num_left_packets_spc6: int = None
+
+    def get_num_left_packets(self, chip_type):
+        """
+        Return the number of left TG packets to use for the given chip type.
+
+        Args:
+            chip_type (str): Chip type identifier (e.g. "SPC5", "SPC6").
+
+        Returns:
+            int: The SPC6-specific value when defined and running on SPC6, otherwise the default value.
+        """
+        if chip_type == "SPC6" and self.num_left_packets_spc6 is not None:
+            return self.num_left_packets_spc6
+        return self.num_left_packets
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -45,15 +60,15 @@ def skip_test_conditionally(players):
     yield
 
 
-def get_conf_args(is_ipv6):
+def get_conf_args(is_ipv6, chip_type):
     """
     Config args for the test.
     Note that unlike must tests, those test perform DVS_START at the end. Then, we override some variables according
     to the new test.
     """
     conf_args = {
-        "auto_buffer_mode": "False",
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+        "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
         "is_ipv6": is_ipv6,
         "host": PerfConsts.RIGHT_TG_ALIAS,
         "spine": PerfConsts.LEFT_TG_ALIAS,
@@ -66,8 +81,8 @@ def get_conf_args(is_ipv6):
         "params": None,
         "two_sided_ar": True,  # overridden in fixture
         "packet_size": PerfConsts.PACKET_SIZE_LIST[0],  # overridden in fixture
-        "left_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,  # overridden in fixture
-        "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,  # overridden in fixture
+        "left_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],  # overridden in fixture
+        "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],  # overridden in fixture
         "ecmp_type_stateless": True,  # overridden in fixture
         "ecmp_size": 4096,  # overridden in fixture
         "create_acls": False,  # overridden in fixture
@@ -76,8 +91,8 @@ def get_conf_args(is_ipv6):
     return conf_args
 
 
-def apply_basic_setup_configuration(is_ipv6, players):
-    conf_args = get_conf_args(is_ipv6)
+def apply_basic_setup_configuration(is_ipv6, players, chip_type):
+    conf_args = get_conf_args(is_ipv6, chip_type)
     with allure.step('Save Players initial Configuration'):
         save_base_configuration(players)
     with allure.step("Apply Test configuration on all Players"):
@@ -85,10 +100,10 @@ def apply_basic_setup_configuration(is_ipv6, players):
 
 
 @pytest.fixture(scope='class')
-def basic_setup_configuration(request, players):
+def basic_setup_configuration(request, players, chip_type):
     is_ipv6 = request.param == InfraConst.IPV6
     try:
-        apply_basic_setup_configuration(is_ipv6, players)
+        apply_basic_setup_configuration(is_ipv6, players, chip_type)
         yield is_ipv6
     except Exception as e:
         raise e
@@ -98,7 +113,7 @@ def basic_setup_configuration(request, players):
 
 
 @pytest.fixture(scope='function', autouse=False)
-def alibaba_scenarios_fixture(players, scenario_configuration, hash_type, basic_setup_configuration):
+def alibaba_scenarios_fixture(players, chip_type, scenario_configuration, hash_type, basic_setup_configuration):
     """
     Fixture to apply scenario-specific configuration for each test case.
     Updates conf_args with scenario configuration and applies it to players.
@@ -106,15 +121,15 @@ def alibaba_scenarios_fixture(players, scenario_configuration, hash_type, basic_
     if scenario_configuration is None:
         raise ValueError("scenario_configuration must be provided")
     is_ipv6 = basic_setup_configuration
-    conf_args = get_conf_args(is_ipv6)
+    conf_args = get_conf_args(is_ipv6, chip_type)
     try:
         with allure.step("Restore Base Configuration on all Players"):
             restore_basic_configuration(players)
 
         conf_args.update({
             "packet_size": scenario_configuration.packet_size,
-            "left_num_packets": scenario_configuration.num_left_packets,
-            "right_num_packets": scenario_configuration.num_right_packets,
+            "left_num_packets": scenario_configuration.get_num_left_packets(chip_type),
+            "right_num_packets": scenario_configuration.num_right_packets if chip_type != "SPC6" else int(scenario_configuration.num_right_packets * 1.5),
             "ecmp_type_stateless": scenario_configuration.ecmp_type_stateless,
             "ecmp_size": scenario_configuration.ecmp_size,
             "create_acls": scenario_configuration.create_acls,

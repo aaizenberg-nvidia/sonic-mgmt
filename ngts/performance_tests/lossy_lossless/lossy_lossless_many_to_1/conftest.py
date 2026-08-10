@@ -183,7 +183,8 @@ def get_many_to_1_traffic(conf_args, num_lossy_packets, num_lossless_packets, nu
                                                 traffic_parameters=traffic_parameters,
                                                 json_path=traffic_script_path,
                                                 num_lossy_packets=num_lossy_packets,
-                                                num_lossless_packets=num_lossless_packets)
+                                                num_lossless_packets=num_lossless_packets,
+                                                chip_type=conf_args["chip_type"])
 
         traffic_jsons[tg_alias] = traffic_script_path
 
@@ -220,7 +221,7 @@ def conf_args(players, chip_type, test_config, split_left, split_right, num_of_t
 
     num_of_downlink_ports = num_downlink_ports if num_downlink_ports else num_of_left_ports + num_of_right_ports
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
                  "sdk_test_name": "LossyLosslessDynamicPortsTo1PortDut",
                  "auto_buffer_mode": auto_buffer_mode,
                  "packet_size": packet_size,
@@ -234,6 +235,7 @@ def conf_args(players, chip_type, test_config, split_left, split_right, num_of_t
                  "effective_test_id": effective_test_id,
                  "num_of_traffic_ports": num_of_traffic_ports,
                  "num_of_downlink_ports": num_of_downlink_ports,
+                 "chip_type": chip_type,
                  "two_sided_ar": False,
                  "scenario": TESTS_SCENARIO,
                  "left_num_packets": 0,  # Override in the test

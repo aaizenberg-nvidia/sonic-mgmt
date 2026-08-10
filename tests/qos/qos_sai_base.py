@@ -61,7 +61,8 @@ class QosBase:
                           "t1-isolated-d56u1-lag", "t1-isolated-v6-d56u1-lag", "t1-isolated-d128", "t1-isolated-d32",
                           "t1-isolated-d448u16", "t1-isolated-v6-d448u16", "t1-isolated-d224u8",
                           "t1-isolated-d128", "t1-isolated-d32",
-                          "t1-isolated-d448u15-lag", "t1-isolated-v6-d448u15-lag"]
+                          "t1-isolated-d448u15-lag", "t1-isolated-v6-d448u15-lag",
+                          't1-d118u8s2', 't0-d96-u30s2']
     SUPPORTED_PTF_TOPOS = ['ptf32', 'ptf64']
     SUPPORTED_ASIC_LIST = ["pac", "gr", "gr2", "gr2x", "gb", "p200", "td2", "th", "th2", "spc1", "spc2", "spc3",
                            "spc4", "spc5", "spc6", "td3", "th3", "j2c+", "jr2", "th5", "th6", "q3d"]
@@ -2087,8 +2088,8 @@ class QosSaiBase(QosBase):
             if 'platform_asic' in duthost.facts and duthost.facts['platform_asic'] == 'broadcom-dnx':
                 logger.info("THDI_BUFFER_CELL_LIMIT_SP is not valid for broadcom DNX - ignore dynamic buffer config")
                 qosParams = qosConfigs['qos_params'][dutAsic][dutTopo]
-            elif dutAsic == 'th5':
-                logger.info("Generator script not implemented for TH5")
+            elif dutAsic in ['th5', 'th6']:
+                logger.info("Generator script not implemented for TH5/6")
                 qosParams = qosConfigs['qos_params'][dutAsic][dutTopo]
             else:
                 bufferConfig = dutBufferConfig(duthost, dut_asic)

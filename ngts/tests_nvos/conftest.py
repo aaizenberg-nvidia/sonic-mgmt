@@ -38,6 +38,7 @@ from ngts.nvos_constants.constants_nvos import ApiType, OperationTimeConsts, Out
 from ngts.tests_nvos.platform.els_fiber_tuning.cpo_constants import CpoConsts
 from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
+from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_tools.cli_coverage.nvue_cli_coverage import NVUECliCoverage
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.nvos_tools.infra import ExceptionTool
@@ -254,6 +255,21 @@ def update_platform_expected_values():
         platform = Platform()
         output = OutputParsingTool.parse_show_output_to_dict(platform.show()).get_returned_value()
         TestToolkit.get_device().update_show_platform_output(output)
+
+
+@pytest.fixture(autouse=True)
+def cpov2_device_guard(request):
+    """Self-skip guard for Gen2 CPO tests (marker `cpov2`).
+
+    Skips any cpov2-marked test when the DUT device does not expose a Gen2 CPO
+    topology (device.cpo, attached by PortiaCpoCapability), so cpov2 tests never
+    fail on Taipan (Gen1) or non-CPO devices even if mis-selected. The `devices`
+    fixture is requested lazily to keep this a no-op for non-cpov2 tests.
+    """
+    if request.node.get_closest_marker('cpov2') is not None:
+        devices = request.getfixturevalue('devices')
+        if not is_cpo_capable(devices.dut):
+            pytest.skip('cpov2 test requires a Gen2 CPO-capable device (device.cpo is absent)')
 
 
 @pytest.fixture(autouse=True)

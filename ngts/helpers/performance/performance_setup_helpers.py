@@ -1,5 +1,6 @@
 import logging
 import logging.config
+import time
 import allure
 import os
 import json
@@ -20,6 +21,7 @@ from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_u
 from ngts.helpers.performance.performance_counter_helpers import validate_performance_counters
 from ngts.helpers.performance.topology_helpers import get_dvs_topology_obj, get_nvue_sonic_topology_obj
 from ngts.helpers.performance.power_temp_helpers import validate_temperature, validate_power
+from ngts.helpers.performance.port_selection import set_resolved_excluded_dut_ports
 from ngts.cli_wrappers.dvs.dvs_cli import DvsCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
@@ -114,6 +116,10 @@ class ValidationConfig:
 
     def __post_init__(self):
         self.max_tc_occ_variance_per_port_group = OccupancyVarianceConfig.from_tc_occ_threshold(self.tc_occ_threshold)
+        # Copy so per-test overrides (and auto-enable below) do not mutate PerfConsts.SAMPLES_PARAMS.
+        self.samples_params_dict = dict(self.samples_params_dict)
+        if self.run_validate_performance_counters:
+            self.samples_params_dict[PerfConsts.COLLECT_SDK_DUMP_ENV_VAR] = "True"
 
     def get_validations(self) -> Dict[str, Validation]:
         """
@@ -199,9 +205,11 @@ class ValidationConfig:
 
 def unsplit_all_ports(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
                       step="basic_test_configuration - unsplit_all_ports", parallel_run=True):
-    """
-    Unsplit all ports on SPC5/SPC6 before applying test configuration.
-    This is needed because SPC5/SPC6 comes up with ports already split after dvs_start.sh
+    """Bring ports to a known baseline before performance templates render.
+
+    - DVS: SPC5 only (SPC6 DVS keeps its default breakout).
+    - NVUE/Cumulus: SPC4/SPC5 run ``initialize_physical_ports`` (breakout 1x);
+      SPC6 keeps the platform default 2x and disables WJH.
 
     Args:
         players (dict): Dictionary containing player information and CLI interfaces
@@ -209,29 +217,63 @@ def unsplit_all_ports(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALI
         step (str): Description of the current setup step
         parallel_run (bool): If True, unsplits in parallel. If False, unsplits sequentially. Defaults to True
     """
-    spc5_6_aliases = []
+    aliases_to_unsplit = []
     try:
         for player_alias in players_aliases:
             switch_attributes = players[player_alias]['attributes'].noga_query_data['attributes']
             chip_type = get_chip_type(switch_attributes)
-            if chip_type in ["SPC5", "SPC6"]:
-                spc5_6_aliases.append(player_alias)
+            cli_obj = players[player_alias]['cli']
+            if isinstance(cli_obj, (SonicCli, NvueCli)) and chip_type in ("SPC5", "SPC6"):
+                aliases_to_unsplit.append(player_alias)
+            elif chip_type == "SPC5":
+                aliases_to_unsplit.append(player_alias)
     except (KeyError, AttributeError) as e:
         raise TestIssue(f"Could not determine chip_type from topology: {e}")
 
-    if not spc5_6_aliases:
+    if not aliases_to_unsplit:
         return
 
-    logger.info(f"Detected SPC5/SPC6 - unsplitting all ports on all players: {spc5_6_aliases}")
+    logger.info(f"Unsplitting / initializing ports on players: {aliases_to_unsplit}")
 
     if parallel_run:
-        call_performance_function_with_threads(players, players_aliases=spc5_6_aliases,
+        call_performance_function_with_threads(players, players_aliases=aliases_to_unsplit,
                                                action="unsplit all ports",
                                                performance_clis_function_name="unsplit_all_ports",
                                                performance_clis_function_args=(), step=step)
     else:
-        for player_alias in spc5_6_aliases:
+        for player_alias in aliases_to_unsplit:
             players[player_alias]['cli'].performance.unsplit_all_ports()
+
+
+def _prime_dut_port_selection_cascade(dut_performance, tries=12, interval=10):
+    """Compute the DUT port-selection cascade on the main thread before the parallel apply.
+
+    Retries so transient empty LLDP (ports still converging) does not leave the cascade
+    empty. TG threads only read the resulting cached ``excluded_port_names`` (read-only,
+    in-process) to skip oper-down ports in their readiness waits; they must not call the DUT
+    engine themselves. Fails open with a warning.
+
+    Args:
+        dut_performance: The DUT performance CLI object.
+        tries: Max attempts.
+        interval: Seconds between attempts.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            ports = dut_performance.get_right_left_ports_dict()
+        except Exception as e:
+            logging.warning(f"Priming DUT port-selection cascade attempt {attempt}/{tries} failed: {e}")
+            ports = None
+        if dut_performance.excluded_port_names:
+            logging.info(f"DUT port-selection cascade primed: excluded "
+                         f"{sorted(dut_performance.excluded_port_names)}")
+            return
+        if ports is not None and not ports.get("left_ports") and not ports.get("right_ports"):
+            logging.info(f"Priming DUT cascade: LLDP left/right still empty "
+                         f"(attempt {attempt}/{tries}), retrying in {interval}s")
+        time.sleep(interval)
+    logging.warning("DUT port-selection cascade is empty after priming; exclusion may not "
+                    "apply. Check DUT LLDP and the config-file entry for this setup/scenario.")
 
 
 def apply_test_configuration(players, scenario, conf_args,
@@ -252,6 +294,20 @@ def apply_test_configuration(players, scenario, conf_args,
     - In debug mode (parallel_run=False): Sequentially applies configuration to each player
     - In normal mode (parallel_run=True): Uses threading to apply configuration to all players in parallel
     """
+    # Resolve port selection (exclude/include) for the running scenario before rendering the
+    # config templates, so get_right_left_ports_dict()/get_player_ports() see the selection.
+    # No-op unless --perf-exclude-ports / --perf-include-ports was supplied.
+    for player_alias in players_aliases:
+        players[player_alias]['cli'].performance.resolve_port_selection(scenario)
+    # Reset any previously-published exclusion (stale from an earlier test in this session)
+    # before recomputing for this apply, then pre-compute the DUT cascade on the MAIN thread
+    # (with retry for LLDP readiness). TGs read the published names in-process; they must never
+    # call the DUT engine themselves (that corrupts the DUT's shared SSH session). Fail open.
+    set_resolved_excluded_dut_ports(set())
+    dut_player = players.get(PerfConsts.DUT_ALIAS)
+    if dut_player and dut_player['cli'].performance.port_selection.is_active():
+        _prime_dut_port_selection_cascade(dut_player['cli'].performance)
+
     if parallel_run:
         call_performance_function_with_threads(players, players_aliases=players_aliases,
                                                action="apply test configuration",
@@ -268,6 +324,14 @@ def validate_perf_dut_ingress_buffer_mode(players):
     if not isinstance(cli_obj, NvueCli):
         return
     cli_obj.performance.validate_ingress_buffer_mode_active()
+
+
+def validate_perf_dut_rebalancer_buffer_mode(players):
+    """Cumulus (NVUE) DUT only: assert automatic/rebalancer buffer mode is active."""
+    cli_obj = players[PerfConsts.DUT_ALIAS]["cli"]
+    if not isinstance(cli_obj, NvueCli):
+        return
+    cli_obj.performance.validate_rebalancer_buffer_mode_active()
 
 
 def allure_attach_performance_conf_context(players, conf_args, attach_dut_applied_yaml=True):
@@ -515,9 +579,11 @@ def run_validation(config: ValidationConfig, ignore_violations=False, attach_to_
                     logger.info(f"Running validation: {name}")
                     violations_before = len(player_violations)
                     t_start = time.monotonic()
-                    validation.func(traffic_json, **(validation.extra_args or {}), violations_list=player_violations)
+                    validation.func(traffic_json, **(validation.extra_args or {}),
+                                    violations_list=player_violations)
                     elapsed = time.monotonic() - t_start
-                    logger.info(f"Running validation: {name}: finished in {elapsed:.3f}s, violations found: {len(player_violations) - violations_before}")
+                    logger.info(f"Running validation: {name}: finished in {elapsed:.3f}s, "
+                                f"violations found: {len(player_violations) - violations_before}")
                 except Exception as e:
                     player_violations.append(f"Validation '{name}' raised an unexpected error: {e}")
 
@@ -744,8 +810,9 @@ def copy_sdk_dump_to_shared_storage(local_dump_path, players, test_name, scenari
     return dest_path
 
 
-def configure_incremental_dips_on_tg(players, step="basic_test_configuration - configure_incremental_dips_on_tg"):
-    call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+def configure_incremental_dips_on_tg(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+                                     step="basic_test_configuration - configure_incremental_dips_on_tg"):
+    call_performance_function_with_threads(players, players_aliases=players_aliases,
                                            action="create incremental dips",
                                            performance_clis_function_name="configure_incremental_dips_on_tg",
                                            performance_clis_function_args=(), step=step)
@@ -804,3 +871,45 @@ def update_port_group_in_df(port_group_df, port_group_name, port_list):
     for port in port_list:
         port_group_df.append({ValidationConsts.PORT: port, MongoDbConsts.PORT_GROUP_NAME: port_group_name})
     return port_group_df
+
+
+def _build_default_port_group_df(dut_performance):
+    """Build the default DUT port-group dataframe (left_ports / right_ports).
+
+    Prefers cached ``port_groups`` on the performance CLI and falls back to
+    ``get_right_left_ports_dict()`` when groups are empty.
+
+    Args:
+        dut_performance: DUT performance CLI wrapper.
+
+    Returns:
+        list: Port group entries for ``update_port_group_df_on_dut``.
+    """
+    port_group_df = []
+    port_groups = dut_performance.port_groups
+    if not port_groups or not any(port_groups.values()):
+        port_groups = dut_performance.get_right_left_ports_dict()
+    for port_group_name, port_list in port_groups.items():
+        if not port_list:
+            continue
+        sdk_port_list = dut_performance.get_sdk_ports(port_list)
+        for port in sdk_port_list:
+            port_group_df.append({ValidationConsts.PORT: port,
+                                  MongoDbConsts.PORT_GROUP_NAME: port_group_name})
+    return port_group_df
+
+
+def restore_default_port_group_df_on_dut(dut_performance):
+    """Push default left/right port groups to DUT ``/tmp/conf.json``.
+
+    SRv6 and other scenarios write custom groups (``ingress_ports``, etc.) that must
+    not leak into later SPCX-RA TrafficValidator runs.
+
+    Args:
+        dut_performance: DUT performance CLI wrapper.
+    """
+    port_group_df = _build_default_port_group_df(dut_performance)
+    if not port_group_df:
+        logging.warning("Skipping restore of default port groups: no SDK ports resolved")
+        return
+    dut_performance.update_port_group_df_on_dut(port_group_df)

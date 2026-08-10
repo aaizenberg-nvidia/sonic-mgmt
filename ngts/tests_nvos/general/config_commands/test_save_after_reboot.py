@@ -4,6 +4,7 @@ import time
 
 import pytest
 from ngts.nvos_tools.acl.acl import Acl
+from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_constants.constants_nvos import FastRecoveryConsts, LinkDetectionConsts, ActionConsts, HealthConsts, \
     FansConsts
 from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ApiType, AclConsts, IpConsts, EventConsts
@@ -22,6 +23,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+
+
+cumulus_owner = "gosaini"
+
 
 logger = logging.getLogger()
 
@@ -170,14 +175,49 @@ def test_save_reboot(engines, devices):
                         f"unhealthy-count being set."
                     )
 
-        with allure.step('Save config'):
-            TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
-
-        with allure.step('Run set system dns server ipv6 command and apply config'):
-            system.dns.set(op_param_name=SystemConsts.DNS_SERVER, op_param_value=SystemConsts.DNS_SERVER_IDS["ipv6"],
-                           apply=True, dut_engine=engines.dut, ask_for_confirmation='y').verify_result()
+        # NVL7 CPO trunk-port PHY recovery: set a policy + a random numeric leaf on a
+        # trunk port BEFORE save, then verify both are preserved after reboot.
+        # Init OUTSIDE the try so the finally cleanup can always reference these.
+        nvl7_phy_recovery_port = None
+        nvl7_phy_recovery_expected = None
+        nvl7_unset_result = None
 
         try:
+            # NVL7 CPO set is INSIDE the try (before save) so the finally cleanup is guaranteed even
+            # if Save config / a later step raises. Feature is supported only on CPO-capable NVL7.
+            if is_cpo_capable(devices.dut):
+                from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import PhyRecoveryConsts
+                from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
+                    nvl7_stage_and_apply_leaves,
+                    nvl7_verify_new_leaves,
+                    nvl7_wait_trunk_up,
+                    select_nvl7_trunk_fae_port,
+                )
+                with allure.step("NVL7 CPO: enable phy-recovery + set a numeric leaf on a trunk port (pre-save)"):
+                    nvl7_phy_recovery_port = select_nvl7_trunk_fae_port()
+                    if nvl7_phy_recovery_port is not None:
+                        # A distinctive non-default value pair (policy enum + non-zero timer) so the
+                        # "preserved after reboot" check is meaningful. Show echoes configured values literally.
+                        nvl7_phy_recovery_expected = {
+                            PhyRecoveryConsts.RECOVERY_POLICY_CONFIG:
+                                PhyRecoveryConsts.RecoveryPolicyConfig.EXPLICIT_CONFIG_CONTROLS,
+                            PhyRecoveryConsts.RECOVERY_TX_TOGGLE_TIME:
+                                random.randint(1, PhyRecoveryConsts.NVL7_TIMER_MAX),
+                        }
+                        nvl7_stage_and_apply_leaves(nvl7_phy_recovery_port, nvl7_phy_recovery_expected.items())
+                        # Bring the trunk back up right away (the apply admin-DOWNs it and it
+                        # stays down) so the pre-reboot steps don't run with a degraded sw* link.
+                        nvl7_wait_trunk_up(nvl7_phy_recovery_port.port.name)
+                    else:
+                        logger.info("NVL7 save-reboot: no trunk (sw*) port found - skipping phy-recovery step")
+
+            with allure.step('Save config'):
+                TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
+
+            with allure.step('Run set system dns server ipv6 command and apply config'):
+                system.dns.set(op_param_name=SystemConsts.DNS_SERVER, op_param_value=SystemConsts.DNS_SERVER_IDS["ipv6"],
+                               apply=True, dut_engine=engines.dut, ask_for_confirmation='y').verify_result()
+
             eth0_port = Port('eth0')
             new_eth0_description = 'eth0_test_desc'
             trigger_id = FastRecoveryConsts.TRIGGER_CREDIT_WATCHDOG
@@ -320,7 +360,32 @@ def test_save_reboot(engines, devices):
                     ValidationTool.verify_field_value_in_output(link_dict, LinkDetectionConsts.FEC_MODE,
                                                                 fec_mode).verify_result()
 
+            if nvl7_phy_recovery_port is not None:
+                with allure.step("NVL7 CPO: verify phy-recovery config is preserved after reboot"):
+                    nvl7_verify_new_leaves(nvl7_phy_recovery_port, nvl7_phy_recovery_expected)
+
         finally:
+            if nvl7_phy_recovery_port is not None:
+                with allure.step('Cleanup - unset NVL7 phy-recovery config and wait for trunk up'):
+                    try:
+                        # CAPTURE the ResultObj (a failed unset won't raise, so except can't catch
+                        # it); it is verified AFTER the remaining cleanup ran (see below) so a
+                        # failed unset is loud but does not abort hostname-unset/save/reboot.
+                        nvl7_unset_result = nvl7_phy_recovery_port.port.interface.link.phy_recovery.unset(
+                            apply=True, ask_for_confirmation=True)
+                        if not nvl7_unset_result.result:
+                            # retry ONCE before the cleanup save below - otherwise the save would
+                            # persist the leftover phy-recovery config into the startup baseline.
+                            logger.warning("NVL7 phy-recovery unset failed (%s) - retrying before the "
+                                           "cleanup save", nvl7_unset_result.info)
+                            nvl7_unset_result.ignore_result()
+                            nvl7_unset_result = nvl7_phy_recovery_port.port.interface.link.phy_recovery.unset(
+                                apply=True, ask_for_confirmation=True)
+                        # don't leave the trunk port down for subsequent tests
+                        nvl7_wait_trunk_up(nvl7_phy_recovery_port.port.name)
+                    except Exception as nvl7_cleanup_err:
+                        logger.warning("NVL7 phy-recovery cleanup failed: %s", nvl7_cleanup_err)
+
             with allure.step('Cleanup - Clear system health component unhealthy information'):
                 system.health.component.action(ActionConsts.CLEAR)
 
@@ -332,6 +397,15 @@ def test_save_reboot(engines, devices):
                 TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
                 with allure.step('Run nv action reboot system'):
                     system.reboot.action_reboot()
+
+            if nvl7_unset_result is not None:
+                with allure.step('Verify the NVL7 phy-recovery cleanup unset succeeded'):
+                    # verified LAST so a failed unset cannot abort the cleanup above. The save
+                    # above still runs either way - skipping it would resurrect the WHOLE
+                    # pre-cleanup test config (hostname/dns/phy-recovery) from the mid-test save
+                    # at reboot, which is strictly worse. After the pre-save retry, only a
+                    # double-failed unset can reach here failed - and it fails the test loudly.
+                    nvl7_unset_result.verify_result()
 
 
 @pytest.mark.cumulus

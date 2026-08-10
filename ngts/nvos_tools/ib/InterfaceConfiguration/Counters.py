@@ -17,6 +17,7 @@ class Counters(BaseComponent):
         self.ib = BaseComponent(self, path='/ib')
         self.link = BaseComponent(self, path='/link')
         self.nvl = BaseComponent(self, path='/nvl')
+        self.debug = BaseComponent(self, path='/debug')
 
     def clear_counters(self, dut_engine=None, fae_param=""):
         """

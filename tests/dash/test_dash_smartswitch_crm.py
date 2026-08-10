@@ -67,6 +67,16 @@ def build_privatelink_config_messages(dpuhost):
     ]
 
 
+def get_polling_interval(dpuhost):
+    """
+    Parse CRM polling interval from 'crm show summary'.
+    """
+    summary = dpuhost.shell("crm show summary")["stdout"]
+    parsed = re.findall(r"Polling Interval: +(\d+) +second", summary)
+    assert parsed, f"Failed to parse CRM polling interval from 'crm show summary' output:\n{summary}"
+    return int(parsed[0])
+
+
 def wait_until_crm_dash_eni_applied(dpuhost, default_crm_facts, timeout=90, interval=1):
     """
     Privatelink config adds exactly one ENI. Poll CRM until dash_eni used increases by 1 vs
@@ -86,7 +96,8 @@ def wait_until_crm_dash_eni_applied(dpuhost, default_crm_facts, timeout=90, inte
         facts = get_crm_facts(dpuhost)
         used = facts.get("resources", {}).get("dash_eni", {}).get("used")
         raise AssertionError(
-            "dash_eni CRM used did not reach baseline+1 (expected used>={}, baseline was {}); last used={} after {}s".format(
+            "dash_eni CRM used did not reach baseline+1 "
+            "(expected used>={}, baseline was {}); last used={} after {}s".format(
                 expected, base, used, timeout))
 
 
@@ -96,6 +107,9 @@ def set_polling_interval(dpuhost):
     Set CRM polling interval
     """
     wait_time = 2
+    # Get current polling interval so we can restore it during teardown
+    original_interval = get_polling_interval(dpuhost)
+
     dpuhost.shell(f"crm config polling interval {CRM_POLLING_INTERVAL}")
 
     logger.info("Waiting {} sec for CRM counters to become updated".format(wait_time))
@@ -103,15 +117,17 @@ def set_polling_interval(dpuhost):
 
     yield
 
-    dpuhost.shell(f"crm config polling interval {DEFAULT_CRM_POLLING_INTERVAL}")
+    dpuhost.shell(f"crm config polling interval {original_interval}")
 
 
 @pytest.fixture(scope="class", autouse=True)
 def disable_logrotate_cron(dpuhost):
     logging.info("Disable DPU logrotate cron task / systemd timer "
                  "and make sure the running logrotate is stopped.")
+    logrotate_cron = "/etc/cron.d/logrotate"
+    logrotate_cron_bak = "/etc/cron.d/logrotate.bak"
     dpuhost.shell("sudo systemctl stop logrotate.timer", module_ignore_errors=True)
-    dpuhost.shell("sudo sed -i \'s/^/#/g\' /etc/cron.d/logrotate", module_ignore_errors=True)
+    dpuhost.shell(f"sudo mv {logrotate_cron} {logrotate_cron_bak}", module_ignore_errors=True)
     logging.info("Waiting for logrotate from previous cron task or systemd timer run to finish")
     end = time.time() + 60
     while time.time() < end:
@@ -130,7 +146,7 @@ def disable_logrotate_cron(dpuhost):
     yield
 
     logging.info("Restore logrotate cron task and systemd timer.")
-    dpuhost.shell("sudo sed -i \'s/^#//g\' /etc/cron.d/logrotate", module_ignore_errors=True)
+    dpuhost.shell(f"sudo mv {logrotate_cron_bak} {logrotate_cron}", module_ignore_errors=True)
     dpuhost.shell("sudo systemctl start logrotate.timer", module_ignore_errors=True)
 
 
@@ -187,10 +203,7 @@ def get_crm_facts(dpuhost):
     crm_facts = {}
 
     # Get polling interval
-    output = dpuhost.shell("crm show summary")['stdout']
-    parsed = re.findall(r'Polling Interval: +(\d+) +second', output)
-    if parsed:
-        crm_facts['polling_interval'] = int(parsed[0])
+    crm_facts['polling_interval'] = get_polling_interval(dpuhost)
 
     # Get thresholds
     crm_facts['thresholds'] = {}
@@ -277,7 +290,7 @@ def get_crm_facts(dpuhost):
         logging.warning("CRM counters are not ready yet, will retry after 10 seconds")
         time.sleep(10)
         timeout -= 10
-    assert(timeout >= 0)
+    assert timeout >= 0
 
     return crm_facts
 
@@ -390,12 +403,9 @@ class TestDashCRM:
         Note: validation for default polling interval skipped
         :return:
         """
-        available_crm_res = self.crm_facts["resources"].keys()
-        assert len(available_crm_res) == len(DASH_CRM_RES_LIST), \
-            f"Available CRM resources: '{available_crm_res}' does not " \
-            f"match expected CRM resources: '{DASH_CRM_RES_LIST}'"
-        for res in DASH_CRM_RES_LIST:
-            assert res in available_crm_res, f"CRM resource: '{res}' not found in CRM resources list."
+        available_crm_res = set(self.crm_facts["resources"].keys())
+        missing = [res for res in DASH_CRM_RES_LIST if res not in available_crm_res]
+        assert not missing, f"Missing expected DASH CRM resources: {missing}. Available: {sorted(available_crm_res)}"
 
         for res_name, res_data in self.crm_facts["thresholds"].items():
             th_type = res_data["type"]

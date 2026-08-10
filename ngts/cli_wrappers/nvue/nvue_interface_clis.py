@@ -6,6 +6,7 @@ from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.cli_wrappers.sonic.sonic_interface_clis import SonicInterfaceCli
 from ngts.cli_wrappers.nvue.nvue_json_utils import parse_nvue_json_cli_output
 from ngts.constants.performance_constants import Cl_Consts
+from ngts.helpers.performance.nvue_port_count import get_nvue_physical_ports_count
 
 
 class NvueInterfaceCli(SonicInterfaceCli):
@@ -76,6 +77,28 @@ class NvueInterfaceCli(SonicInterfaceCli):
         self.engine.run_cmd(f"nv set interface {string_of_ports} link state {port_state}")
         self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)
 
+    def bring_all_existing_swp_ports_up(self):
+        """Bring every currently exposed Cumulus switch interface administratively up.
+
+        Returns:
+            List of existing ``swp*`` interface names updated through NVUE.
+
+        Raises:
+            RuntimeError: If the switch exposes no ``swp*`` interfaces.
+        """
+        output = self.engine.run_cmd(
+            "for port in /sys/class/net/swp*; do basename \"$port\"; done",
+            print_output=False)
+        ports = [port.strip() for port in output.splitlines()
+                 if re.match(r"^swp\d+(?:s\d+)?$", port.strip())]
+        ports = sorted(ports, key=lambda port: tuple(int(value) for value in re.findall(r"\d+", port)))
+        if not ports:
+            raise RuntimeError("No existing swp* interfaces found")
+        for port in ports:
+            self.engine.run_cmd(f"nv set interface {port} link state up")
+        self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)
+        return ports
+
     def get_lldp_neighbors(self, output_type="json"):
         lldp_neighbors = self.engine.run_cmd(f"nv sh interface lldp -o {output_type}", print_output=False)
         try:
@@ -88,13 +111,7 @@ class NvueInterfaceCli(SonicInterfaceCli):
     def get_physical_ports(self):
         output = self.engine.run_cmd("nv sh platform -o json", print_output=False)
         output = parse_nvue_json_cli_output(output)
-        if output['asic-model'] == 'Spectrum-5':
-            # for Spectrum 5 the number of ports is 66 but reported as 130
-            return 66
-        port_layout = output["port-layout"]
-        port_number = re.findall(r'(\d+) x', port_layout)
-        number_of_ports = sum(int(x) for x in port_number)
-        return number_of_ports
+        return get_nvue_physical_ports_count(output["asic-model"], output["port-layout"])
 
     def initialize_physical_ports(self):
         number_of_ports = self.get_physical_ports()
@@ -122,20 +139,13 @@ class NvueInterfaceCli(SonicInterfaceCli):
         return filtered_neighbors
 
     def get_down_ports(self):
-        loopback_port = "lo"
-        docker_port = "docker0"
+        """Return down front-panel interfaces, excluding platform bonus ports."""
+
         output = self.engine.run_cmd("nv sh interface down -o json", print_output=False)
         output = json.loads(output)
-        down_ports = [*output.keys()]
-        bonus_port = self.cli_obj.interface.get_bonus_ports(self.engine)
-        for port in bonus_port:
-            down_ports.pop(down_ports.index(port))
-        try:
-            down_ports.pop(down_ports.index(loopback_port))
-            down_ports.pop(down_ports.index(docker_port))
-        except ValueError:
-            pass
-        return down_ports
+        bonus_ports = set(self.cli_obj.interface.get_bonus_ports(self.engine))
+        return [port_name for port_name, port_data in output.items()
+                if port_data.get("type") == "swp" and port_name not in bonus_ports]
 
     def get_interface_status(self):
         output = self.engine.run_cmd("nv sh interface status -o json", print_output=False)

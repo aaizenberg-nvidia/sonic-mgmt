@@ -25,6 +25,10 @@ from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger(__name__)
 
 

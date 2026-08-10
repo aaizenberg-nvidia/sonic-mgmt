@@ -22,12 +22,16 @@ from ngts.nvos_tools.infra.Simulator import HWSimulator
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_constants.constants_nvos import ActionConsts
-from ngts.nvos_constants.constants_nvos import SystemConsts, HealthConsts, NvosConst, PlatformConsts, FansConsts
+from ngts.nvos_constants.constants_nvos import SystemConsts, HealthConsts, NvosConst, PlatformConsts, FansConsts, \
+    Cpov2Consts
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_constants.constants_nvos import DatabaseConst
 from ngts.tests_nvos.platform.test_platform_environment_leakage import rewrite_files
+
+
+cumulus_owner = "yleibovichwe"
 
 
 logger = logging.getLogger()
@@ -48,6 +52,10 @@ MULTI_INSTANCE_COMPONENTS = {
     HealthConsts.Component.PSU: (r'PSU\d+', 'psu_list'),
     # Port-style (swA14p1) and module-style (fnm1) instance IDs both appear in health output
     HealthConsts.Component.Transceiver: (r'(?:[A-Za-z]+\d+p\d+|[A-Za-z]+\d+)', 'transceiver_list'),
+    # Gen2 CPO (Portia): only validated when the DUT reports these components and
+    # device.cpo_list / device.laser_source_list are populated (Gen2 CPO devices only).
+    HealthConsts.Component.CPO: (Cpov2Consts.CPO_INSTANCE_REGEX, 'cpo_list'),
+    HealthConsts.Component.Laser_Source: (Cpov2Consts.ELS_INSTANCE_REGEX, 'laser_source_list'),
 }
 
 # Single-instance components (only have "ALL" instance)

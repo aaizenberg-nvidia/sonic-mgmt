@@ -1,0 +1,148 @@
+all:
+  children:
+    vm_host:
+      children:
+        vm_host_3:
+    eos:
+      children:
+        vms_3:
+
+    servers:
+      vars:
+        topologies:
+          - t0
+          - t1-lag
+          - ptf32
+          - ptf-any
+          - t0-56
+
+      children:
+        server_3:
+
+vm_host_3:
+  hosts:
+    R-R640-15:
+      ansible_host: r-r640-15
+
+vms_3:
+  hosts:
+    VM0301:
+      ansible_host: 10.215.22.4
+    VM0302:
+      ansible_host: 10.215.22.5
+    VM0303:
+      ansible_host: 10.215.22.6
+    VM0304:
+      ansible_host: 10.215.22.7
+    VM0305:
+      ansible_host: 10.215.22.8
+    VM0306:
+      ansible_host: 10.215.22.9
+    VM0307:
+      ansible_host: 10.215.22.10
+    VM0308:
+      ansible_host: 10.215.22.11
+    VM0309:
+      ansible_host: 10.215.22.12
+    VM0310:
+      ansible_host: 10.215.22.13
+    VM0311:
+      ansible_host: 10.215.22.14
+    VM0312:
+      ansible_host: 10.215.22.15
+    VM0313:
+      ansible_host: 10.215.22.16
+    VM0314:
+      ansible_host: 10.215.22.17
+    VM0315:
+      ansible_host: 10.215.22.18
+    VM0316:
+      ansible_host: 10.215.22.19
+    VM0317:
+      ansible_host: 10.215.22.20
+    VM0318:
+      ansible_host: 10.215.22.21
+    VM0319:
+      ansible_host: 10.215.22.22
+    VM0320:
+      ansible_host: 10.215.22.23
+    VM0321:
+      ansible_host: 10.215.22.24
+    VM0322:
+      ansible_host: 10.215.22.25
+    VM0323:
+      ansible_host: 10.215.22.26
+    VM0324:
+      ansible_host: 10.215.22.27
+    VM0325:
+      ansible_host: 10.215.22.28
+    VM0326:
+      ansible_host: 10.215.22.29
+    VM0327:
+      ansible_host: 10.215.22.30
+    VM0328:
+      ansible_host: 10.215.22.31
+    VM0329:
+      ansible_host: 10.215.22.32
+    VM0330:
+      ansible_host: 10.215.22.33
+    VM0331:
+      ansible_host: 10.215.22.34
+    VM0332:
+      ansible_host: 10.215.22.35
+    VM0333:
+      ansible_host: 10.215.22.36
+    VM0334:
+      ansible_host: 10.215.22.37
+    VM0335:
+      ansible_host: 10.215.22.38
+    VM0336:
+      ansible_host: 10.215.22.39
+    VM0337:
+      ansible_host: 10.215.22.40
+    VM0338:
+      ansible_host: 10.215.22.41
+    VM0339:
+      ansible_host: 10.215.22.42
+    VM0340:
+      ansible_host: 10.215.22.43
+    VM0341:
+      ansible_host: 10.215.22.44
+    VM0342:
+      ansible_host: 10.215.22.45
+    VM0343:
+      ansible_host: 10.215.22.46
+    VM0344:
+      ansible_host: 10.215.22.47
+    VM0345:
+      ansible_host: 10.215.22.48
+    VM0346:
+      ansible_host: 10.215.22.49
+    VM0347:
+      ansible_host: 10.215.22.50
+    VM0348:
+      ansible_host: 10.215.22.51
+    VM0349:
+      ansible_host: 10.215.22.52
+    VM0350:
+      ansible_host: 10.215.22.53
+    VM0351:
+      ansible_host: 10.215.22.54
+    VM0352:
+      ansible_host: 10.215.22.55
+    VM0353:
+      ansible_host: 10.215.22.56
+    VM0354:
+      ansible_host: 10.215.22.57
+    VM0355:
+      ansible_host: 10.215.22.58
+    VM0356:
+      ansible_host: 10.215.22.59
+
+server_3:
+  children:
+    vm_host_3:
+    vms_3:
+  vars:
+    host_var_file: host_vars/R-R640-15.yml
+    mgmt_prefixlen: 20

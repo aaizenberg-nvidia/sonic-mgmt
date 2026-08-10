@@ -85,8 +85,15 @@ class DvsGeneralCli(GeneralCliCommon):
         logger.info("Performing restart to DVS")
         clean_switch_alias_cmd = f"alias clean_switch={PerfConsts.CLEAN_SWITCH_PATH}"
         self.engine.run_cmd_set([clean_switch_alias_cmd], validate=True)
-        restart_cmd = "dvs_stop.sh && clean_switch && dvs_start.sh --sdk_bridge_mode=HYBRID"
+        restart_cmd = "dvs_stop.sh && clean_switch && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL"
+        if self._get_chip_type_from_noga() == "SPC6":
+            restart_cmd += f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
         self.engine.run_cmd(restart_cmd, validate=True)
+
+    def _get_chip_type_from_noga(self):
+        hostname = self.hostname().strip()
+        noga_data = get_noga_entire_resource_data(resource_name=hostname)
+        return noga_data[0]['chip_type']
 
     def apply_mount(self):
         with allure.step("Apply mount and configure switch"):

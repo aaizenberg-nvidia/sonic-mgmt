@@ -34,6 +34,16 @@ from ngts.tests_nvos.system.test_system_health import (
 )
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
+from ngts.tests_nvos.multi_asic.fatal_dump_rotation_helpers import (
+    FATAL_DUMP_ROTATION_CYCLES,
+    assert_fatal_dump_rotation_inventory,
+    cleanup_fatal_dump_tech_support,
+    configure_fatal_dump_rotation_settings,
+    prepare_fatal_dump_rotation_baseline,
+    run_fatal_dump_rotation_cycle,
+    verify_system_healthy_after_fatal_cycles,
+    verify_tech_support_after_fatal_cycles,
+)
 
 logger = logging.getLogger()
 fatal_event_timestamps = []
@@ -509,6 +519,61 @@ def test_all_asic_fatal_while_tech_support_generating(engines, test_name, events
         recover_asic_health_fatal_state=True,
         overlap_tarball_fatal_via_state_db=True,
     )
+
+
+@pytest.mark.timeout(45 * MINUTE, func_only=True)
+@pytest.mark.checklist
+@pytest.mark.fatal_mode
+def test_repeated_fatal_fw_dumps_rotation_and_cleanup(
+    engines, random_asic, test_name, events_count_setting,
+):
+    """
+    Repeated FW health-check fatal events: verify ``sai-dfw`` dumps are created, rotated when at retention,
+    tech-support still works, and the system leaves fatal cleanly.
+
+    Each cycle injects two qualifying MFDEs (2× SAI cause=5).
+    After recovery, checks NVOS functional and syncd/swss containers.
+
+    Knobs: ``FATAL_DUMP_ROTATION_CYCLES`` (default 5), ``FATAL_DUMP_MAX_FILES`` (20),
+    ``FATAL_DUMP_MAX_TOTAL_MB`` (600), ``FATAL_DUMP_GROWTH_WAIT_SEC`` (90),
+    ``FATAL_DUMP_CLEAR_TIME_MIN`` (2), ``FATAL_DUMP_CLEAR_EXTRA_SEC`` (5),
+    ``FATAL_DUMP_EVICTION_ASSERT_FROM_COUNT`` (3),
+    ``FATAL_DUMP_REQUIRE_EVICTION_OBSERVED`` (false; set true on platforms with low dump cap).
+    """
+    engine = engines.dut
+    tech_support_tar = None
+    per_cycle_counts = []
+    rotation_observed = False
+
+    try:
+        with allure.step("1. Baseline: clean sai-dfw dumps and verify SDK dump directories"):
+            prepare_fatal_dump_rotation_baseline(engine)
+
+        with allure.step("2. Configure FAE fatal-mode settings for repeated FW fatal events"):
+            ctx = configure_fatal_dump_rotation_settings(events_count_setting)
+
+        for cycle in range(1, FATAL_DUMP_ROTATION_CYCLES + 1):
+            with allure.step(
+                f"3.{cycle}. FW fatal cycle {cycle}/{FATAL_DUMP_ROTATION_CYCLES} "
+                f"on ASIC{random_asic}"
+            ):
+                result = run_fatal_dump_rotation_cycle(
+                    engine, random_asic, cycle, ctx["fw_inject_events"],
+                )
+                per_cycle_counts.append(result["summary"])
+                rotation_observed = rotation_observed or result["rotation_observed"]
+
+        with allure.step("4. Verify final sai-dfw inventory within retention and size budget"):
+            assert_fatal_dump_rotation_inventory(engine, per_cycle_counts, rotation_observed)
+
+        with allure.step("5. Verify tech-support succeeds after repeated fatal events"):
+            tech_support_tar = verify_tech_support_after_fatal_cycles(engine, test_name)
+
+        with allure.step("6. Verify system health is OK and not stuck in fatal"):
+            verify_system_healthy_after_fatal_cycles()
+    finally:
+        with allure.step("7. Cleanup tech-support tarball"):
+            cleanup_fatal_dump_tech_support(engine, tech_support_tar)
 
 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)

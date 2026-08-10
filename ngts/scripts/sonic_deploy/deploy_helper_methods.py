@@ -1592,6 +1592,10 @@ class DeployBmcHelper:
         engine.run_cmd("sudo systemctl start chrony")
         time.sleep(BmcDeployConstants.BMC_CHRONY_SETTLE_SECONDS)
         engine.run_cmd("sudo chronyc -a makestep")
+        if is_redmine_issue_active([5083483])[0]:
+            logger.info('Redmine #5083483 is active, persisting chrony makestep on BMC')
+            engine.run_cmd("echo 'makestep 1 3' | sudo tee /etc/chrony/conf.d/step.conf")
+            engine.run_cmd("sudo systemctl restart chrony")
         logger.info(
             f"BMC clock after sync:  {engine.run_cmd('date').strip()}"
         )

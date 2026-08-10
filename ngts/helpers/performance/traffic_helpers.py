@@ -15,6 +15,12 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger()
 
+LOOPBACK_FILTER_COUNTER = 'loopback_filter'
+LOOPBACK_FILTER_REDMINE_ISSUE = 5195585
+# Bug #5195585: the traffic pattern raises a few loopback_filter discards per sample. While the issue
+# is open only a per-port value above 5 is a violation; once it is closed 0 restores strict checking.
+LOOPBACK_FILTER_MAX_TOLERATED_VALUE = 5 if is_redmine_issue_active([LOOPBACK_FILTER_REDMINE_ISSUE])[0] else 0
+
 
 def generate_ip_address_list(address_start_v4="172.168.1.1", address_start_v6="172::1:1", step_v4=256, step_v6=0x10000,
                              number_of_address: int = 64, mode="v4"):
@@ -1001,7 +1007,7 @@ def validate_required_counters(traffic_json, required_counter_list, violations_l
                     found_in_sample = True
                     break
             if not found_in_sample:
-                violations_list.append(f"Required counter '{counter}' was 0 in sample {sample_id} in port group {port_group_name}")
+                violations_list.append(f"Required counter '{counter}' was 0 in sample {sample_id}")
 
 
 def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, violations_list):
@@ -1020,6 +1026,14 @@ def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, vi
         ports_with_counters = counters_df.loc[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].any(axis=1), ValidationConsts.PORT].to_list()
         counters_with_values = counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].columns[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].gt(0).any()].tolist()
         counters_with_values = [counter for counter in counters_with_values if counter not in ignore_counter_list]
+
+        if LOOPBACK_FILTER_COUNTER in counters_with_values and \
+                not counters_df[LOOPBACK_FILTER_COUNTER].gt(LOOPBACK_FILTER_MAX_TOLERATED_VALUE).any():
+            logger.info(f"Bug #{LOOPBACK_FILTER_REDMINE_ISSUE} is active and no port exceeded "
+                        f"{LOOPBACK_FILTER_MAX_TOLERATED_VALUE}: skipping {LOOPBACK_FILTER_COUNTER} "
+                        f"(highest per-port value: {counters_df[LOOPBACK_FILTER_COUNTER].max()}) "
+                        f"in {sample_id} for {port_group_name}")
+            counters_with_values.remove(LOOPBACK_FILTER_COUNTER)
 
         if counters_with_values:
             violations_list.append(f"Ports: {ports_with_counters} had one or more of the following counters:\n"

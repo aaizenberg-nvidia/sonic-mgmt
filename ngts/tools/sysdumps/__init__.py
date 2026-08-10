@@ -8,6 +8,7 @@ import shlex
 import time
 
 import allure
+from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from ngts.scripts.collect_simx_logs_on_not_success import collect_hypervisor_logs
 from ngts.scripts.sonic_deploy.community_only_methods import is_dualtor_topo
 import pytest
@@ -21,7 +22,7 @@ from ngts.tools.allure_report.allure_report_attacher import collect_stored_cmds_
     clean_stored_cmds_with_fixture_scope_list
 from ngts.tools.test_utils.nvos_general_utils import get_switch_type
 from ngts.nvos_constants.constants_nvos import TopologyConsts
-from ngts.tools.infra import get_dumps_folder
+from ngts.tools.infra import get_dumps_folder, get_platform_info
 from ngts.tools.topology_tools.topology_by_setup import get_topology_by_setup_name_and_aliases, get_dpu_player_key
 
 DUAL_TOR_SIMULATOR_LOG_PREFIXE_REGEX_LIST = ['mux_simulator_*', 'nic_simulator_*']
@@ -535,9 +536,20 @@ def generate_and_copy_sonic_dump(topology_obj, dut_engine, dumps_folder, duratio
         # send the sysdumps requests to the worker threads
         dut_dump_file = collect_all_dumps(topology_obj, duts_to_dump, dumps_folder, duration, item_clean_name)
 
-    is_simx = item.funcargs.get('is_simx')
-    is_air = item.funcargs.get('is_air')
-    if is_simx and not is_air:
+    platform = get_platform_info(topology_obj)["platform"]
+    setup_name = item.config.option.setup_name
+    if 'air' in setup_name.lower():
+        try:
+            with allure.step('Collect AIR simulation logs via Loki proxy'):
+                collect_air_simulation_logs(
+                    setup_name=setup_name,
+                    dumps_folder=dumps_folder,
+                    test_name=item_clean_name,
+                    duration_seconds=duration,
+                )
+        except Exception as err:
+            logger.error('Exception while collecting AIR simulation logs via Loki proxy: %s', err)
+    elif '_simx' in platform.lower():
         with allure.step('Dump SIMX VM logs'):
             dump_simx_data(topology_obj, dumps_folder, name_prefix=item_clean_name)
         with allure.step('Collect hypervisor logs'):

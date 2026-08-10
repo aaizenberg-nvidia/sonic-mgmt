@@ -63,6 +63,7 @@ from ngts.nvos_constants.constants_nvos import (
 from ngts.nvos_constants import constants_nvos as consts_nv
 from ngts.tests_nvos.constants import FW_COMPONENT_SSD
 from ngts.nvos_tools.Devices import IbDevice
+from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CrlValidator import ClientConfig, RevokeConfig
 from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurationTool
@@ -186,6 +187,12 @@ from ngts.tests_nvos.general.security.test_ssh_cert_auth.helpers import (
     verify_user_login,
 )
 from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair
+from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
+    nvl7_stage_and_apply_leaves,
+    nvl7_verify_new_leaves,
+    nvl7_wait_trunk_up,
+    select_nvl7_trunk_fae_port,
+)
 from ngts.tests_nvos.interfaces.nvl_port.nvl6.test_port_phy_role import (
     get_fae_objs,
     role_case,
@@ -1429,6 +1436,63 @@ def _check_link_training(engines: EnginesT, devices: DevicesT, **kwargs) -> Gene
     finally:
         link_training_helpers.cleanup_link_training(devices, fae_objs_tuple)
 
+
+@_requires_compatibility(IbDevice.PortiaCpoSwitch, minimal_version="25.03.2000")
+def _check_phy_recovery_nvl7(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator[None, None, None]:
+    """
+    Verify NVL7 CPO trunk-port phy-recovery config survives upgrade.
+
+    Test Steps:
+        1. Select an NVL7 trunk (sw*) port
+        2. Set recovery-policy-config=explicit-config-controls + a numeric leaf (recovery-tx-toggle-time)
+        3. Save configuration
+        4. Do upgrade
+        5. Verify both values are preserved after upgrade
+        6. Cleanup phy-recovery configuration
+
+    Feature lands in release 25.03.2000 (dev 2026-07-17).
+    """
+    # Feature is supported only on CPO-capable NVL7 devices (pruned on non-CPO).
+    if not is_cpo_capable(devices.dut):
+        raise Skipped("Requires a CPO-capable device")
+
+    # A distinctive non-default value pair (policy enum + non-zero timer) so the
+    # "preserved after upgrade" check is meaningful. Show echoes configured values literally.
+    expected = {
+        ib_consts.PhyRecoveryConsts.RECOVERY_POLICY_CONFIG:
+            ib_consts.PhyRecoveryConsts.RecoveryPolicyConfig.EXPLICIT_CONFIG_CONTROLS,
+        ib_consts.PhyRecoveryConsts.RECOVERY_TX_TOGGLE_TIME: 100,
+    }
+
+    with allure.step("Select an NVL7 trunk (sw*) port"):
+        fae_port = select_nvl7_trunk_fae_port()
+        if fae_port is None:
+            raise Skipped("No NVL7 trunk (sw*) port available")
+
+    try:
+        with allure.step(f"Set NVL7 phy-recovery leaves {expected}"):
+            nvl7_stage_and_apply_leaves(fae_port, expected.items())
+            # Bring the trunk back up right away (the apply admin-DOWNs it and it stays down)
+            # so other feature-checkers' setups don't run with a degraded sw* link.
+            nvl7_wait_trunk_up(fae_port.port.name)
+
+        with allure.step("Save configuration"):
+            NvueGeneralCli.save_config(engines.dut)
+
+        yield  # Do upgrade
+
+        with allure.step("Verify phy-recovery config preserved after upgrade"):
+            nvl7_verify_new_leaves(fae_port, expected)
+    finally:
+        with allure.step("Cleanup NVL7 phy-recovery configuration and restore trunk link"):
+            fae_port.port.interface.link.phy_recovery.unset(
+                apply=True, ask_for_confirmation=True).verify_result()
+            try:
+                nvl7_wait_trunk_up(fae_port.port.name)
+            except Exception as err:
+                logger.warning(f"NVL7 cleanup: trunk {fae_port.port.name} did not come back up: {err}")
+
+
 # #################### End of Feature Checkers ###################
 
 
@@ -1654,6 +1718,7 @@ _CHECKERS: list[CheckerFn] = [
     _check_api_compression,
     _check_phy_role,
     _check_link_training,
+    _check_phy_recovery_nvl7,
 ]
 
 _CHECKERS.append(

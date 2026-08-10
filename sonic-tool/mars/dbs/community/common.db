@@ -51,4 +51,8 @@
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/reboot.cases </cases>
     </test>
 
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/custom/liquid_cooling.cases </cases>
+    </test>
+
 </DBDEF>

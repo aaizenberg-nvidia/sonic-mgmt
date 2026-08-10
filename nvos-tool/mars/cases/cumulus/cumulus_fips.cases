@@ -5,7 +5,7 @@
       <group> Cumulus </group>
       <name> Disconnect Action </name>
       <info></info>
-      <owner> Alon Blyachman </owner>
+      <owner> Guy Paz Ben Itzhak </owner>
     </Test>
     <Case>
       <tags> System commands </tags>

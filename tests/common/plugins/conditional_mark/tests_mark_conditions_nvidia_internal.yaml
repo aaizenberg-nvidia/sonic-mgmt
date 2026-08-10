@@ -314,9 +314,11 @@ tests/nightly/sensors/test_psu.py::test_psu_sensor_key_prefix:
 
 tests/push_build_tests:
   skip:
-    reason: "All push gate tests skipped on ASAN image due to RM issue: https://redmine.mellanox.com/issues/5079498"
+    reason: "All push gate tests skipped on ASAN image due to RM issue: https://redmine.mellanox.com/issues/5079498 or skipped due to RM#5179574 on specific testbeds"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5079498 and 'ASAN' in build_version"
+    - "https://redmine.mellanox.com/issues/5179574 and ('r-leopard-56' in testbed or 'r-lionfish-07' in testbed or 'r-panther-13' in testbed)"
 
 tests/push_build_tests/L3/sflow/test_sflow.py:
   skip:
@@ -775,18 +777,6 @@ gnmi/test_gnoi_os.py:
     conditions:
     - "https://redmine.mellanox.com/issues/4958590"
 
-smartswitch/platform_tests/test_reload_dpu.py::test_dpu_status_post_switch_mem_exhaustion:
-  xfail:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5139554"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5139554"
-
-smartswitch/platform_tests/test_reload_dpu.py::test_dpu_status_post_switch_kernel_panic:
-  xfail:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5138419"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5139554"
-
 iface_loopback_action/test_iface_loopback_action_wjh.py:
   skip:
     reason: "Testcase ignored due to dualtor topology."
@@ -839,29 +829,17 @@ platform_tests/api/test_bmc.py::TestBMCSessionNonBMC::test_bmc_commands_on_non_b
     conditions:
     - "https://redmine.mellanox.com/issues/5045807"
 
-platform_tests/api/test_switch_host_module.py::TestSwitchHostModuleApi::test_switch_host_status_control:
-  xfail:
-    reason: "Switch-Host reboot-cause shows 'unknown' after BMC-initiated reboot, xfail due to RM issue: https://redmine.mellanox.com/issues/5140682"
-    conditions:
-    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5140682"
-
-platform_tests/api/test_switch_host_module.py::TestChassisBmcModuleApi::test_switch_host_do_power_cycle:
-  xfail:
-    reason: "Switch-Host reboot-cause shows 'unknown' after BMC-initiated reboot, xfail due to RM issue: https://redmine.mellanox.com/issues/5140682"
-    conditions:
-    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5140682"
-
 platform_tests/cli/test_show_bmc.py::TestBmcCliCommands::test_config_chassis_modules:
   xfail:
-    reason: "Switch-Host reboot-cause shows 'unknown' after BMC-initiated reboot, xfail due to RM issue: https://redmine.mellanox.com/issues/5140682"
+    reason: "Switch-Host reboot-cause shows 'Power Loss', xfail due to RM issue: https://redmine.mellanox.com/issues/5174644"
     conditions:
-    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5140682"
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5174644"
 
 platform_tests/daemon/test_bmcctld.py::TestBmcctldDaemon::test_bmcctld_rack_manager_command:
   xfail:
-    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5140682 on BMC platform"
+    reason: "Switch-Host reboot-cause shows 'Power Loss', xfail due to RM issue: https://redmine.mellanox.com/issues/5174644"
     conditions:
-    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5140682"
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5174644"
 
 platform_tests/daemon/test_bmcctld.py::TestBmcctldDaemon::test_bmcctld_event_trigger:
   skip:
@@ -1300,18 +1278,15 @@ platform_tests/fw_utility/test_fwutil.py:
 
 platform_tests/test_sensors.py::test_sensors:
   skip:
-    reason: "Testcase ignored due to RM 4261914 on sn5610n or RM https://redmine.mellanox.com/issues/5023968 on slm-110 or slm-111"
-    conditions_logical_operator: or
+    reason: "Testcase ignored due to RM 4261914 on sn5640_simx"
     conditions:
     - "https://redmine.mellanox.com/issues/4261914 and 'sn5640_simx' in platform"
-    - "https://redmine.mellanox.com/issues/5023968 and ('slm-111' in testbed or 'slm-110' in testbed)"
   xfail:
-    reason: "Testcase ignored due to RM 4776315 on canonical bobcat setup, and failure due to https://redmine.mellanox.com/issues/5125814 on r-bison-12"
+    reason: "Testcase may fail due to RM 4441016 on affected PSUs or RM 5174071 on mtvr-moose-11"
     conditions_logical_operator: or
     conditions:
-    - "https://redmine.mellanox.com/issues/4776315 and 'bobcat-10' in testbed"
     - "https://redmine.mellanox.com/issues/4441016 and psu_manufacture=='Murata-PS' and psu_capacity=='1500'"
-    - "https://redmine.mellanox.com/issues/5125814 and 'r-bison-12' in testbed"
+    - "https://redmine.mellanox.com/issues/5174071 and 'mtvr-moose-11' in testbed"
 
 platform_tests/test_platform_info.py::test_turn_on_off_psu_and_check_psustatus:
   skip:
@@ -1391,11 +1366,11 @@ smartswitch/platform_tests/test_platform_dpu.py::test_system_health_summary:
     conditions:
     - "https://redmine.mellanox.com/issues/5075817"
 
-smartswitch/platform_tests/test_reload_dpu.py:
-  skip:
-    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5075817"
+smartswitch/platform_tests/test_reload_dpu.py::test_cold_reboot_dpus[gnoi:
+  xfail:
+    reason: "Xfailed due to: RM#5165789"
     conditions:
-    - "https://redmine.mellanox.com/issues/5075817"
+    - "https://redmine.mellanox.com/issues/5165789"
 
 process_monitoring/test_critical_process_monitoring.py:
   skip:
@@ -1410,6 +1385,10 @@ process_monitoring/test_critical_process_monitoring.py::test_monitoring_critical
     - "https://redmine.mellanox.com/issues/5100919"
     - "'bobcat' in testbed"
     - "'ptf' in topo_name or 't1' in topo_name"
+  skip:
+    reason: "skip on simx due to no pdu control"
+    conditions:
+    - "'simx' in platform"
 
 process_monitoring/test_critical_process_monitoring.py::test_orchagent_heartbeat:
   skip:
@@ -1775,11 +1754,9 @@ mvrf/test_mgmtvrf.py::TestReboot::test_warmboot:
 
 pfcwd/test_pfcwd_timer_accuracy.py::TestPfcwdAllTimer::test_pfcwd_timer_accuracy:
   xfail:
-    reason: "Test fails on SN2700/SN2700-A1 intermittently and on MSN4600-C"
-    conditions_logical_operator: or
+    reason: "Test fails on SN2700/SN2700-A1 intermittently: https://redmine.mellanox.com/issues/5024713"
     conditions:
     - "https://redmine.mellanox.com/issues/5024713 and 'sn2700' in platform"
-    - "https://redmine.mellanox.com/issues/5155526 and 'msn4600c' in platform"
 
 pfcwd/test_pfcwd_warm_reboot.py:
   skip:

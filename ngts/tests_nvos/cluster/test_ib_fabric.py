@@ -6,7 +6,7 @@ import time
 import pytest
 
 from ngts.ngts_types import DevicesT, EnginesT
-from ngts.nvos_tools.Devices.IbDevice import PortiaSimx
+from ngts.nvos_tools.Devices.IbDevice import PortiaSwitch
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
 from ngts.nvos_tools.infra.IbnetdiscoverTool import IbnetdiscoverTool
 from ngts.tests_nvos.constants import MINUTE
@@ -57,7 +57,7 @@ def _get_fnm_interfaces(engines, devices):
         return []
 
     fnm_ports = []
-    is_portia_simx = isinstance(devices.dut, PortiaSimx)
+    is_portia_simx = isinstance(devices.dut, PortiaSwitch) and devices.dut.is_simx
     for port_name, port_data in data.items():
         if isinstance(port_data, dict):
             port_type = port_data.get('type', '')

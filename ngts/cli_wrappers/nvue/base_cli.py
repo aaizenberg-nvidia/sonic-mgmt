@@ -48,7 +48,7 @@ class BaseCli(metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def action(cls, action_str: str, resource_path: str, main_param: Tuple[str, Union[str, int]],
+    def action(cls, action_str: str, resource_path: str, main_param: Tuple[str, Union[str, int]] | None,
                flags: Union[str, Iterable[str]], params: dict, engine, reboot_params: Optional[RebootParams],
                send_user_confirmation: Optional[str], expected_output: str, device,
                timeout: Optional[float] = None) -> ResultObj: pass

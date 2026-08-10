@@ -27,6 +27,10 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     verify_reboot_telemetry_after_reboot,
 )
 
+
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger()
 
 

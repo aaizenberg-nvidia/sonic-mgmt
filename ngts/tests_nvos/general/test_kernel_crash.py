@@ -1,25 +1,30 @@
-
-
-import pytest
 import logging
 import time
-import re
 from datetime import datetime
 
+import pytest
+
 from ngts.constants.constants import BugHandlerConst
+from ngts.nvos_constants.constants_nvos import HealthConsts, RebootConsts, SystemConsts
+from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
-from ngts.nvos_constants.constants_nvos import OperationTimeConsts, NvosConst, SystemConsts
+from ngts.tests_nvos.general.kernel_crash_helpers import (
+    LANDMAN_ROW27_FMEA,
+    cleanup_kernel_crash_stress,
+    get_kdump_expected_patterns,
+    precheck_kdump_for_stress,
+    prepare_kernel_crash_stress_baseline,
+    run_kernel_crash_stress_cycle,
+    verify_system_healthy_after_kernel_crash_stress,
+    verify_tech_support_after_kernel_crash_stress,
+    verify_techsupport_files_names,
+    verify_techsupport_files_sizes,
+)
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
-from ngts.nvos_tools.infra.Tools import Tools
-from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_constants.constants_nvos import RebootConsts
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
-from ngts.nvos_constants.constants_nvos import ApiType
-from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     REBOOT_REASON_SHOW_EXEMPTED_ERR_MSGS,
     RebootReasonCategory,
@@ -28,6 +33,11 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
 )
+from ngts.tools.test_utils import allure_utils as allure
+try:
+    from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+except ModuleNotFoundError:
+    from infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
 
 logger = logging.getLogger()
 
@@ -106,14 +116,7 @@ def test_kernel_crash(engines, devices, topology_obj, random_api):
         system.techsupport.check_techsupport_file_age(engines.dut, system, techsupport_file_path, max_age_hours=0.1)
 
     with allure.step("Get expected kdump files names"):
-        kdump_files_names_templates = ["dmesg.{}.gz", "kdump.{}", "kdump_lock.gz"]
-        expected_patterns_list = []
-        for template in kdump_files_names_templates:
-            if '{}' in template:
-                pattern = re.escape(template).replace(r'\{\}', NvosConst.TIMESTAMP_REGEX)
-            else:
-                pattern = re.escape(template)
-            expected_patterns_list.append(re.compile(f"^{pattern}$"))
+        expected_patterns_list = get_kdump_expected_patterns()
 
     with allure.step("Validate each expected file name and size"):
         system.techsupport.extract_techsupport_files(engines.dut, techsupport_file_name)
@@ -184,16 +187,75 @@ def test_kernel_crash(engines, devices, topology_obj, random_api):
                       f"Tech-support: {techsupport_size} MB\nTotal: {total_freed} MB")
 
 
-def verify_techsupport_files_names(techsupport_files_list, expected_patterns_list):
-    files_search_errors = {}
-    for expected_file_pattern in expected_patterns_list:
-        if not any(expected_file_pattern.match(file) for file in techsupport_files_list):
-            files_search_errors[expected_file_pattern] = f'file "{expected_file_pattern}" was not found'
-    err = ',\n'.join(list(files_search_errors.values()))
-    assert not files_search_errors, f"The following files weren't found:\n{err}"
+@pytest.mark.disable_loganalyzer
+@pytest.mark.timeout(90 * MINUTE, func_only=True)
+def test_repeated_kernel_crash_core_dump_retention(
+    engines, devices, topology_obj, random_api, test_name,
+):
+    """
+    Landman row 27 — stress multiple core dumps (kernel crashes).
 
+    Primary: SW-006 (panic/reboot/recovery/health), SW-026 (kdump capture/cleanup/bounded growth).
+    Secondary: SYS-010 (SSD usable for logs/tech-support). Proxy: SYS-012 (resilience only).
 
-def verify_techsupport_files_sizes(engine, techsupport_file_name):
+    Proves: repeated sysrq panics; new kdump dir each cycle under ``/var/crash/collected/``;
+    SSD/artifact bounds; manual tech-support after stress; verified cleanup.
+    Does **not** assert ``kdump_count <= num_dumps``: CONFIG_DB ``num_dumps`` is admin policy;
+    NVOS prunes old artifacts on tech-support (e.g. >7 days), not per-cycle kdump rotation.
+
+    Knobs: ``KERNEL_CRASH_STRESS_CYCLES`` (0 = ``KERNEL_CRASH_STRESS_CYCLES_DEFAULT``, default 4).
+
+    Note: OpenAPI ``/system/reboot`` history index ``1`` is the *most recent* panic, not pytest cycle
+    number. Auto tech-support can take several minutes; polling uses live syslog plus ``/host/dump/``.
+    """
+    pytest.skip_coredump_check = True
+    allure.attach("landman_row27_failure_modes", "\n".join(f"{k}: {v}" for k, v in LANDMAN_ROW27_FMEA.items()))
     system = System()
-    files_list = system.techsupport.get_techsupport_empty_files(engine, techsupport_file_name, "kdump")
-    assert len(files_list) == 0, f"the next files are unexpectedly empty {files_list}"
+    engine = engines.dut
+    serial_engine: PexpectSerialEngine = ConnectionTool.create_serial_connection(
+        topology_obj, devices
+    )
+    per_cycle = []
+    seen_kdump_dirs = set()
+    tech_support_tar = None
+
+    try:
+        with allure.step("1. Precheck: kdump enabled and ready"):
+            ctx = precheck_kdump_for_stress(engine)
+
+        with allure.step("2. Baseline: SSD free space before repeated kernel crashes"):
+            prepare_kernel_crash_stress_baseline(engine)
+
+        for cycle in range(1, ctx["stress_cycles"] + 1):
+            with allure.step(
+                f"3.{cycle}. Kernel crash cycle {cycle}/{ctx['stress_cycles']}: "
+                "sysrq-trigger → reboot → kdump capture"
+            ):
+                result = run_kernel_crash_stress_cycle(
+                    system,
+                    engines,
+                    engine,
+                    topology_obj,
+                    devices,
+                    serial_engine,
+                    cycle,
+                    ctx["stress_cycles"],
+                    seen_kdump_dirs,
+                )
+                per_cycle.append(result["summary"])
+                seen_kdump_dirs = result["seen_kdump_dirs"]
+                serial_engine = result["serial_engine"]
+
+        with allure.step("4. Verify system health is OK after repeated kernel crashes"):
+            verify_system_healthy_after_kernel_crash_stress(system, ctx["stress_cycles"])
+
+        with allure.step("5. Verify tech-support succeeds after repeated kernel crashes"):
+            tech_support_tar = verify_tech_support_after_kernel_crash_stress(
+                system, engine, test_name
+            )
+
+        allure.attach("kernel_crash_stress_summary", str(per_cycle))
+
+    finally:
+        with allure.step("6. Cleanup crash artifacts and tech-support"):
+            cleanup_kernel_crash_stress(system, engine, tech_support_tar)

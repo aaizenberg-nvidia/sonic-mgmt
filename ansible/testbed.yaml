@@ -14877,6 +14877,48 @@
   inv_name: lab
   comment: Mellanox MEC testbed
 
+- conf-name: sws-cham6s-7-t0-d96-u30s2
+  group-name: vm-t1
+  topo: t0-d96-u30s2
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-sws-cham6s-7
+  ptf_ip: 10.220.188.121/22
+  ptf_ipv6:
+  server: server_30
+  vm_base: VM3000
+  dut:
+    - sws-cham6s-7
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
+- conf-name: sws-cham6s-7-t1-d118u8s2
+  group-name: vm-t1
+  topo: t1-d118u8s2
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-sws-cham6s-7
+  ptf_ip: 10.220.188.121/22
+  ptf_ipv6:
+  server: server_30
+  vm_base: VM3000
+  dut:
+    - sws-cham6s-7
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
+- conf-name: sws-cham6s-7-ptp-126
+  group-name: vm-t1
+  topo: ptp-126
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-sws-cham6s-7
+  ptf_ip: 10.220.188.121/22
+  ptf_ipv6:
+  server: server_30
+  vm_base: VM3000
+  dut:
+    - sws-cham6s-7
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
 - conf-name: slm-110-ptf-any
   group-name: vm-t1
   topo: ptf-any
@@ -14959,6 +15001,23 @@
   dut:
      - slm-233
   comment: Mellanox MEC testbed
+
+- conf-name: slm-233-bmc-dual-mgmt
+  group-name: slm233bm
+  topo: bmc-dual-mgmt
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-233
+  ptf_ip: 10.220.163.254/22
+  ptf_ipv6:
+  server: server_97
+  vm_base:
+  dut:
+    - slm-233-bmc
+    - slm-233
+  bmc_host: slm-233
+  inv_name: lab
+  auto_recover: 'False'
+  comment: BMC dual-mgmt testbed for slm-233
 
 - conf-name: slm-113-ptf-any
   group-name: vm-t1
@@ -15098,3 +15157,58 @@
     - mtvr-panther-10
   inv_name: lab
   comment: Community bringup - mtvr-panther-10_setup
+
+- conf-name: r-panther-91-t0
+  group-name: vm-t1
+  topo: t0
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-panther-91
+  ptf_ip: 10.215.22.3/16
+  ptf_ipv6:
+  server: server_3
+  vm_base: VM0301
+  dut:
+    - r-panther-91
+  inv_name: lab
+  comment: Community bringup - r-panther-91_setup
+
+- conf-name: r-panther-91-t1-lag
+  group-name: vm-t1
+  topo: t1-lag
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-panther-91
+  ptf_ip: 10.215.22.3/16
+  ptf_ipv6:
+  server: server_3
+  vm_base: VM0301
+  dut:
+    - r-panther-91
+  inv_name: lab
+  comment: Community bringup - r-panther-91_setup
+
+- conf-name: r-panther-91-t0-56
+  group-name: vm-t1
+  topo: t0-56
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-panther-91
+  ptf_ip: 10.215.22.3/16
+  ptf_ipv6:
+  server: server_3
+  vm_base: VM0301
+  dut:
+    - r-panther-91
+  inv_name: lab
+  comment: Community bringup - r-panther-91_setup
+
+- conf-name: sws-cham6s-4-ptf-any
+  group-name: vm-t1
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-sws-cham6s-4
+  ptf_ip: 10.215.13.196/16
+  ptf_ipv6:
+  server: server_54
+  vm_base: VM0000
+  dut:
+     - sws-cham6s-4
+  comment: MEC01 canoncial testbed

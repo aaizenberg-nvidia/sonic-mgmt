@@ -14,7 +14,7 @@
                 <condition>
                     <key> dut_name </key>
                     <op> not in </op>
-                    <value> ["mtvr-moose-04", "r-bison-08", "slm-18", "slm-16"] </value>
+                    <value> ["mtvr-moose-04", "r-bison-08", "slm-18", "slm-16", "sws-cham6s-7"] </value>
                 </condition>
             </ignore>
 

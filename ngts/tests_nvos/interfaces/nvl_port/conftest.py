@@ -70,8 +70,8 @@ def rosalind_simx_setup(engines, devices, mloop_mode, nv_command):
         yield
         return
 
-    # Check if this device requires MLOOP setup (RosalindSimx/PortiaSimx and future compatible platforms)
-    if not getattr(devices.dut, 'require_mloop_setup', False):
+    # Check if this device requires MLOOP setup (simx flavors and future compatible platforms)
+    if not devices.dut.require_mloop_setup:
         logger.info("Device does not require MLOOP setup, skipping special configuration")
         yield
         return

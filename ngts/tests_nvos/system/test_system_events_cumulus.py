@@ -14,6 +14,10 @@ from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 
 import json
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger()
 
 

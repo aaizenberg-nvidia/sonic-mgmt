@@ -7,6 +7,10 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.HostMethods import HostMethods
 from ngts.nvos_constants.constants_nvos import NvosConst
 
+
+cumulus_owner = "gosaini"
+
+
 log = logging.getLogger()
 
 

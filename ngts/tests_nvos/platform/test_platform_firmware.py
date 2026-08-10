@@ -17,6 +17,10 @@ from ngts.tests_nvos.platform.firmware_telemetry_helpers import (
 )
 from ngts.tests_nvos.system.reboot_telemetry_helpers import gnmi_client_for_dut
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 

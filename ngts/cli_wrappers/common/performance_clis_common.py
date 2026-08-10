@@ -8,6 +8,8 @@ import pandas as pd
 from retry import retry
 from ngts.constants.constants import BugHandlerConst
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
+from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
+                                                     get_cli_port_selection_options)
 from ngts.nvos_tools.infra.FilesTool import FilesTool
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
@@ -48,11 +50,43 @@ def _read_sdk_dump_support_gzip(path):
 
 
 class PerformanceCommon:
+    PORT_STYLE = SWP
+
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
         self.topology_obj = topology_obj
         self.engine = engine
         self.dut_alias = dut_alias
         self.cli_obj = cli_obj
+        self.port_selection = PortSelection(port_style=self.PORT_STYLE)
+        self._port_selection_params = None
+        self.excluded_port_names = set()
+
+    def set_port_selection_params(self, params):
+        """Store raw port-selection parameters until the scenario is known.
+
+        Args:
+            params: Setup name, mode flags, and optional config path.
+        """
+        self._port_selection_params = params
+
+    def resolve_port_selection(self, scenario):
+        """Resolve port selection for a performance scenario.
+
+        Args:
+            scenario: Scenario key in the port-selection configuration.
+
+        Returns:
+            The resolved selection, inactive when no mode was enabled.
+        """
+        params = self._port_selection_params or get_cli_port_selection_options()
+        self.port_selection = build_port_selection(
+            setup_name=params.get("setup_name"), scenario=scenario,
+            exclude_enabled=params.get("exclude_enabled", False),
+            include_enabled=params.get("include_enabled", False),
+            config_path=params.get("config_path"), port_style=self.PORT_STYLE)
+        logging.info(f"[{self.dut_alias}] Port selection resolved for scenario '{scenario}': "
+                     f"mode={self.port_selection.mode} (active={self.port_selection.is_active()})")
+        return self.port_selection
 
     def get_chip_type(self):
         """Return the DUT chip type from Noga metadata when available."""
@@ -122,6 +156,10 @@ class PerformanceCommon:
 
     def validate_ingress_buffer_mode_active(self):
         """Assert ingress buffer mode (IBM) is active. NVUE-only; no-op on other CLIs."""
+        pass
+
+    def validate_rebalancer_buffer_mode_active(self):
+        """Assert automatic/rebalancer buffer mode is active. NVUE-only; no-op on other CLIs."""
         pass
 
     def save_configuration_file(self, conf_path, conf_json, dst_dut_dir="/tmp"):

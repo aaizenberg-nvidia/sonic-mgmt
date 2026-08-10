@@ -253,14 +253,16 @@ class snmpPduController(PduControllerBase):
             return False
 
         port_oid = '.' + self.PORT_CONTROL_BASE_OID + outlet
-        errorIndication, errorStatus, _, _ = \
+        errorIndication, errorStatus, errorIndex, _ = \
             cmdgen.CommandGenerator().setCmd(
                 self.rw_snmp_auth,
                 cmdgen.UdpTransportTarget((self.controller, 161)),
                 (port_oid, rfc1902.Integer(self.CONTROL_ON))
             )
         if errorIndication or errorStatus != 0:
-            logger.debug("Failed to turn on outlet %s, exception: %s" % (str(outlet), str(errorStatus)))
+            logger.debug("Failed to turn on outlet %s on PDU %s: errorIndication=%s, "
+                         "errorStatus=%s, errorIndex=%s" % (
+                             outlet, self.controller, errorIndication, errorStatus, errorIndex))
             return False
         return True
 
@@ -285,14 +287,16 @@ class snmpPduController(PduControllerBase):
             return False
 
         port_oid = '.' + self.PORT_CONTROL_BASE_OID + outlet
-        errorIndication, errorStatus, _, _ = \
+        errorIndication, errorStatus, errorIndex, _ = \
             cmdgen.CommandGenerator().setCmd(
                 self.rw_snmp_auth,
                 cmdgen.UdpTransportTarget((self.controller, 161)),
                 (port_oid, rfc1902.Integer(self.CONTROL_OFF))
             )
         if errorIndication or errorStatus != 0:
-            logger.debug("Failed to turn off outlet %s, exception: %s" % (str(outlet), str(errorStatus)))
+            logger.debug("Failed to turn off outlet %s on PDU %s: errorIndication=%s, "
+                         "errorStatus=%s, errorIndex=%s" % (
+                             outlet, self.controller, errorIndication, errorStatus, errorIndex))
             return False
         return True
 

@@ -43,6 +43,72 @@ class TestNewTc:
             time.sleep(1)
         logger.warning(f"TC loop did not resume within {retries} retries, PWM still at 100%")
 
+    def _backup_thermal_files(self):
+        """Backup asic/module thermal values before stopping thermal services.
+
+        Stopping thermalctld deletes these sysfs files; tests recreate them afterward
+        so the TC loop can keep reading sensors while the test mocks temperatures.
+        """
+        thermal_folder = TC_CONST.HW_THERMAL_FOLDER
+        thermal_file_list = self.dut_engine.run_cmd(
+            f"sudo ls {thermal_folder} 2>/dev/null | "
+            f"grep -E '^(asic|module[0-9]+_temp_(input|fault|emergency|crit))$' || true"
+        ).strip()
+        backups = {}
+        for fname in thermal_file_list.split('\n'):
+            fname = fname.strip()
+            if not fname:
+                continue
+            file_path = os.path.join(thermal_folder, fname)
+            value = self.dut_engine.run_cmd(f"sudo cat {file_path} 2>/dev/null || true").strip()
+            if value.isdigit():
+                backups[file_path] = value
+        assert backups, "No thermal files found to backup before stopping services"
+        logger.info(f"Backed up {len(backups)} thermal files before stopping services")
+        return backups
+
+    def _thermal_file_exists(self, file_path):
+        check = self.dut_engine.run_cmd(
+            f"test -e {file_path} && echo EXISTS || echo MISSING"
+        ).strip()
+        return "MISSING" not in check
+
+    def _ensure_thermal_files_exist(self, file_backups):
+        """Wait for stop cleanup to delete sysfs files, recreate them, and verify.
+
+        Stopping thermalctld can delete sysfs files asynchronously.  Recreating
+        before that cleanup finishes can be undone by a late delete, leaving the
+        TC loop without readable sensor files.  Wait until every backed-up file
+        is gone, then recreate them and verify they stay present.
+        """
+
+        def _restore_files():
+            present_files = [
+                file_path for file_path in file_backups
+                if self._thermal_file_exists(file_path)
+            ]
+            assert not present_files, (
+                "Temperature files still present after stopping thermal services, "
+                f"waiting for cleanup to finish: {present_files}")
+
+            for file_path, backup_value in file_backups.items():
+                logger.info(
+                    f"File {file_path} was deleted after stopping thermalctld, "
+                    f"re-creating with value {backup_value}"
+                )
+                self.dut_engine.run_cmd(f"sudo touch {file_path}")
+                self.dut_engine.run_cmd(f"sudo chown admin {file_path}")
+                self.dut_engine.run_cmd(f"sudo echo {backup_value} > {file_path}")
+
+            missing_files = [
+                file_path for file_path in file_backups
+                if not self._thermal_file_exists(file_path)
+            ]
+            assert not missing_files, \
+                f"Temperature files still missing after recreate: {missing_files}"
+
+        retry_call(_restore_files, exceptions=AssertionError, tries=10, delay=1)
+
     def _stop_thermal_services(self):
         """
         Stop services that write asic/module temperature sysfs files, so that
@@ -52,21 +118,19 @@ class TestNewTc:
         resume_thermal_control() and wait for the TC loop to stabilize so
         PWM is back to sensor-driven levels before the test begins.
 
-        After thermalctld is stopped, the asic sysfs file will be deleted.
+        After thermalctld is stopped, the asic/module sysfs files will be deleted.
         The hw-management TC loop (hw-management-tc.service)
         still runs independently and would fail to read the missing file,
         triggering sensor_read_error protection that locks PWM at 100%.
         To prevent this, we check immediately after stopping thermalctld
-        and re-create the file with a safe temperature value if it was
+        and re-create the files with backed-up temperature values if they were
         deleted.
 
         Must NOT be called when testing cpu_pack/ambient sensors: stopping
         thermalctld causes module temp files to go stale, triggering TC loop
         total_err_cnt >= 2 protection which locks PWM at 100%.
         """
-        asic_file = os.path.join(TC_CONST.HW_THERMAL_FOLDER, "asic")
-        asic_temp_backup = self.dut_engine.run_cmd(f"sudo cat {asic_file}").strip()
-        assert asic_temp_backup.isdigit(), f"asic temperature file {asic_file} is not a valid number"
+        file_backups = self._backup_thermal_files()
 
         # suspend thermal control to prevent sensor_read_error protection from locking PWM at 100%
         self.cli_objects.dut.hw_mgmt.suspend_thermal_control()
@@ -92,24 +156,7 @@ class TestNewTc:
         self.dut_engine.run_cmd("sudo systemctl stop hw-management-sync")
         self.dut_engine.run_cmd("sudo systemctl stop hw-management-thermal-updater")
 
-        def _ensure_asic_file_exists():
-            """Re-create the asic temperature file if it was deleted.
-
-            Args:
-                asic_file: Full path to the asic sysfs file.
-                backup_value: Temperature value to write.  Falls back to a safe
-                    default (40000 = 40 °C) if not provided.
-            """
-            check = self.dut_engine.run_cmd(f"test -e {asic_file} && echo EXISTS || echo MISSING").strip()
-            assert "MISSING" in check, \
-                f"Temperature file {asic_file} still exists after stopping thermalctld"
-
-            logger.info(f"asic file {asic_file} was deleted after stopping thermalctld, "
-                        f"re-creating with value {asic_temp_backup}")
-            self.dut_engine.run_cmd(f"sudo touch {asic_file}")
-            self.dut_engine.run_cmd(f"sudo chown admin {asic_file}")
-            self.dut_engine.run_cmd(f"sudo echo {asic_temp_backup} > {asic_file}")
-        retry_call(_ensure_asic_file_exists, exceptions=AssertionError, tries=5, delay=1)
+        self._ensure_thermal_files_exist(file_backups)
 
         self.cli_objects.dut.hw_mgmt.resume_thermal_control()
         self._wait_tc_loop_resume()
@@ -125,6 +172,56 @@ class TestNewTc:
         self.dut_engine.run_cmd("sudo systemctl start hw-management-sync")
         self.dut_engine.run_cmd("sudo systemctl start hw-management-thermal-updater")
         self.dut_engine.run_cmd("docker exec pmon supervisorctl start thermalctld")
+
+    def _run_temperature_sweep(self, mock_sensor, tc_config_dict, sensor_type, file_path_list):
+        """
+        Mock sensor temperature from val_min to val_max and back, verifying PWM and RPM at each step.
+        """
+        dev_parameters_name = SENSOR_DATA[sensor_type]['dev_parameters_name']
+
+        update_effective_val_min_max(mock_sensor, tc_config_dict, sensor_type, file_path_list[0])
+
+        temperature_max = get_temperature_digit(tc_config_dict['dev_parameters'][dev_parameters_name]['val_max'])
+        temperature_min = get_temperature_digit(tc_config_dict['dev_parameters'][dev_parameters_name]['val_min'])
+        logger.info(
+            f"\n sensor_type:{sensor_type}, \n sensor_path: {file_path_list},"
+            f" \n dev_parameters_name :{dev_parameters_name},"
+            f" \n temp max:{temperature_max}, \ntemp min: {temperature_min}")
+
+        initial_pwm = get_pwm(mock_sensor)
+        logger.info(f"Initial PWM before mocking: {initial_pwm}")
+
+        def mock_temp_and_check(file_path, temperature, initial_pwm):
+            mock_sensor.mock_temperature(file_path, temperature)
+            verify_pwd_and_rpm_are_expected_value(mock_sensor, tc_config_dict, sensor_type, temperature,
+                                                  initial_pwm=initial_pwm)
+
+        tested_temperature_file = file_path_list[0]
+        with allure.step(f'Mock {tested_temperature_file} to  temperature_min:{temperature_min}'):
+            mock_temp_and_check(tested_temperature_file, temperature_min, initial_pwm)
+
+        if sensor_type == "ambient":
+            with allure.step(f'For ambient, Mock {file_path_list[1]} to  temperature_max:{temperature_max}'):
+                mock_sensor.mock_temperature(file_path_list[1], temperature_max)
+
+        temp_change_step = 10000
+        temperature = temperature_min + temp_change_step
+        with allure.step(
+                f'Mock temperature of {tested_temperature_file} increase from {temperature_min} to '
+                f'{temperature_max} with step {temp_change_step}'):
+            while temperature <= temperature_max:
+                with allure.step(f'mock {sensor_type} temperature increase to {temperature}'):
+                    mock_temp_and_check(tested_temperature_file, temperature, initial_pwm)
+                    temperature += temp_change_step
+
+        temperature = temperature_max - temp_change_step
+        with allure.step(
+                f'Mock temperature of {tested_temperature_file} decrease from {temperature_max} to '
+                f'{temperature_min} with step {temp_change_step}'):
+            while temperature >= temperature_min:
+                with allure.step(f'mock {sensor_type} temperature decrease to {temperature}'):
+                    mock_temp_and_check(tested_temperature_file, temperature, initial_pwm)
+                    temperature -= temp_change_step
 
     @allure.title('test temperature sweep')
     def test_temperature_sweep(self, request, get_dut_supported_sensors_and_tc_config, platform_params):
@@ -152,14 +249,11 @@ class TestNewTc:
             asic
             cpu-pack
             voltmon1_temp_input
-            module{X}
+            module{X} — when val_max_clamp is configured, sweeps with mocked EEPROM max above and below it
             ambient
             Gearbox
         """
         sensor_temperature_test_list, tc_config_dict_orig = get_dut_supported_sensors_and_tc_config
-        # Deep copy to avoid mutating the package-scoped fixture when
-        # update_effective_val_min_max() writes dynamic values back in-place.
-        tc_config_dict = copy.deepcopy(tc_config_dict_orig)
         sensor_type = request.config.getoption("--sensor_type")
         if sensor_type == "all":
             tested_sensors = sensor_temperature_test_list
@@ -175,79 +269,55 @@ class TestNewTc:
         if tested_sensors[0] in ['module', 'asic'] and self.cli_objects.dut.im.is_im_enabled():
             pytest.skip(f"Skip mock temperature for sensor {tested_sensors} as it is not supported in IM enabled setup")
 
-        def mock_temp_and_check(file_path, temperature, initial_pwm):
-            mock_sensor.mock_temperature(file_path, temperature)
-            verify_pwd_and_rpm_are_expected_value(mock_sensor, tc_config_dict, sensor_type, temperature,
-                                                  initial_pwm=initial_pwm)
-
         for sensor_type in tested_sensors:
             # Stop services that would overwrite mocked asic/module temp files.
             # cpu_pack/ambient are maintained by kernel drivers — no services
             # need stopping for them. See _stop_thermal_services() docstring.
             need_stop_services = sensor_type in ("asic", "module")
-            if need_stop_services:
-                self._stop_thermal_services()
             try:
+                if need_stop_services:
+                    self._stop_thermal_services()
                 with MockSensors(self.dut_engine, self.cli_objects) as mock_sensor:
                     file_path_list = get_sensor_temperature_file_name(sensor_type, platform_params)
+
                     dev_parameters_name = SENSOR_DATA[sensor_type]['dev_parameters_name']
+                    sensor_config = tc_config_dict_orig['dev_parameters'][dev_parameters_name]
 
-                    # Update tc_config_dict in-place with the effective val_min/val_max
-                    # that the TC loop actually uses. For module/asic sensors this reads
-                    # temp_crit/temp_norm from sysfs and applies offsets. For sensors
-                    # with "!" prefix this uses the constant directly.
-                    update_effective_val_min_max(mock_sensor, tc_config_dict, sensor_type, file_path_list[0])
-
-                    temperature_max = get_temperature_digit(
-                        tc_config_dict['dev_parameters'][dev_parameters_name]['val_max'])
-                    temperature_min = get_temperature_digit(
-                        tc_config_dict['dev_parameters'][dev_parameters_name]['val_min'])
-                    logger.info(
-                        f"\n sensor_type:{sensor_type}, \n sensor_path: {file_path_list},"
-                        f" \n dev_parameters_name :{dev_parameters_name},"
-                        f" \n temp max:{temperature_max}, \ntemp min: {temperature_min}")
-
-                    # Capture initial PWM before any mocking — this reflects the baseline
-                    # PWM driven by all other (non-mocked) sensors and stays constant
-                    # throughout the entire increase/decrease sweep.
-                    initial_pwm = get_pwm(mock_sensor)
-                    logger.info(f"Initial PWM before mocking: {initial_pwm}")
-
-                    tested_temperature_file = file_path_list[0]
-                    with allure.step(f'Mock {tested_temperature_file} to  temperature_min:{temperature_min}'):
-                        mock_temp_and_check(tested_temperature_file, temperature_min, initial_pwm)
-
-                    if sensor_type == "ambient":
-                        # for ambient, we have port_amb and fan_amb,
-                        # pwm will be changed based on the min(port_amb_temp, fan_amb_temp).
-                        # to test pwm will be changed based the tested amb, set the temp of the other one amb to max
-                        with allure.step(f'For ambient, Mock {file_path_list[1]} to  temperature_max:{temperature_max}'):
-                            mock_sensor.mock_temperature(file_path_list[1], temperature_max)
-
-                    # 10 degree centigrade
-                    temp_change_step = 10000
-                    temperature = temperature_min + temp_change_step
-                    with allure.step(
-                            f'Mock temperature of {tested_temperature_file} increase from {temperature_min} to {temperature_max} with step {temp_change_step}'):
-                        while temperature <= temperature_max:
-                            with allure.step(f'mock {sensor_type} temperature increase to {temperature}'):
-                                mock_temp_and_check(tested_temperature_file, temperature, initial_pwm)
-                                temperature += temp_change_step
-
-                    temperature = temperature_max - temp_change_step
-                    with allure.step(
-                            f'Mock temperature of {tested_temperature_file} decrease from {temperature_max} to {temperature_min} with step {temp_change_step}'):
-                        while temperature >= temperature_min:
-                            with allure.step(f'mock {sensor_type} temperature decrease to {temperature}'):
-                                mock_temp_and_check(tested_temperature_file, temperature, initial_pwm)
-                                temperature -= temp_change_step
+                    if sensor_type == "module" and "val_max_clamp" in sensor_config:
+                        temp_crit_path = file_path_list[0].replace("_temp_input", "_temp_crit")
+                        val_max_clamp = int(sensor_config['val_max_clamp'])
+                        val_max_offset = sensor_config.get("val_max_offset", 0)
+                        module_clamp_scenarios = [
+                            ("clamp_applies", TC_CONST.MODULE_EEPROM_TEMP_MAX_ABOVE_CLAMP),
+                            ("clamp_not_applied", TC_CONST.MODULE_EEPROM_TEMP_MAX_BELOW_CLAMP)
+                        ]
+                        for scenario_name, mocked_eeprom_max in module_clamp_scenarios:
+                            expected_val_max = min(mocked_eeprom_max, val_max_clamp) + val_max_offset
+                            scenario_log = (
+                                f"Module val_max_clamp {scenario_name}: mock {temp_crit_path}="
+                                f"{mocked_eeprom_max}, expected val_max={expected_val_max}"
+                            )
+                            logger.info(scenario_log)
+                            with allure.step(scenario_log):
+                                tc_config_scenario = copy.deepcopy(tc_config_dict_orig)
+                                mock_sensor.mock_value(temp_crit_path, mocked_eeprom_max)
+                                update_effective_val_min_max(mock_sensor, tc_config_scenario, sensor_type, file_path_list[0])
+                                actual_val_max = get_temperature_digit(tc_config_scenario['dev_parameters'][dev_parameters_name]['val_max'])
+                                assert actual_val_max == expected_val_max, (
+                                    f"Effective module val_max {actual_val_max} != expected {expected_val_max}")
+                                self._run_temperature_sweep(
+                                    mock_sensor, tc_config_scenario, sensor_type, file_path_list)
+                    else:
+                        tc_config_dict = copy.deepcopy(tc_config_dict_orig)
+                        self._run_temperature_sweep(
+                            mock_sensor, tc_config_dict, sensor_type, file_path_list)
             finally:
                 if need_stop_services:
                     self._start_thermal_services()
 
     @pytest.mark.parametrize("sensor_err_type", SENSOR_ERR_TEST_DATA.keys())
     @allure.title('test sensor errors')
-    def test_sensor_errors(self, get_dut_supported_sensors_and_tc_config, sensor_err_type):
+    def test_sensor_errors(self, get_dut_supported_sensors_and_tc_config, sensor_err_type, loganalyzer):
         """
         This test is to verify sensor errors behaviors
         1. Mock the temperature for tested sensors to a minimum(30c)
@@ -278,6 +348,13 @@ class TestNewTc:
                     pytest.skip("Only one psu, skipping this test")
                 sensor_err_file, expected_pwm, mock_value = get_sensor_err_test_data(
                     sensor_err_type, mock_sensor, tc_config_dict, self.cli_objects)
+                if sensor_err_type == "psu_err_present" and loganalyzer:
+                    psu_status_match = re.search(r"psu(\d+)_status$", sensor_err_file)
+                    assert psu_status_match, f"Unexpected PSU status file path: {sensor_err_file}"
+                    psu_id = psu_status_match.group(1)
+                    expected_psu_absence_log = rf".*ERR pmon#psud\[\d+\]: PSU {psu_id} is not present.*"
+                    for analyzer in loganalyzer.values():
+                        analyzer.ignore_regex.append(expected_psu_absence_log)
                 sensor_read_error_type = None
                 if "sensor_read_error" == sensor_err_file:
                     sensor_read_error_type = random.choice(SENSOR_ERR_TEST_DATA["sensor_read_error"])

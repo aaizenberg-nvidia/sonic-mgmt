@@ -16,6 +16,9 @@ from devts.infra.tools.general_constants.constants import DefaultConnectionValue
 from ngts.tools.test_utils import allure_utils as allure
 
 
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger(__name__)
 
 

@@ -3,24 +3,15 @@ import pytest
 import logging
 import os
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
-from ngts.tests.nightly.show_techsupport.test_techsupport import cp_sdk_event_trigger_script_to_dut_syncd
 from ngts.helpers.vxlan_helper import get_tech_support_tar_file, validate_dest_files_exist_in_tarball
 from ngts.cli_util.cli_parsers import generic_sonic_output_parser
 from ngts.tests.nightly.show_techsupport.constants import HealthEventConst
+from ngts.tests.nightly.show_techsupport.conftest import trigger_sdk_health_event
 
 logger = logging.getLogger()
 
 
 # -------------------------------- Fixture --------------------------------
-@pytest.fixture(scope='session', autouse=True)
-def copy_event_trigger_script_to_dut(duthost):
-    """
-    Fixture to copy event trigger script ./mellanox_sdk_trigger_event_script.py to dut syncd.
-    """
-    with allure.step('Copy mellanox_sdk_trigger_event_script.py to DUT syncd'):
-        cp_sdk_event_trigger_script_to_dut_syncd(duthost)
-
-
 @pytest.fixture(scope='session', autouse=True)
 def disable_auto_techsupport(duthost, cli_objects):
     """
@@ -53,10 +44,11 @@ def restore_health_event_config(duthost, cli_objects):
     yield
 
     with allure.step('Restore health event configuration to default'):
-        cli_objects.dut.general.config_health_event(duthost,
-                                                    severity=HealthEventConst.SEVERITY,
-                                                    category_list=HealthEventConst.CATEGORY_NONE,
-                                                    max_events=HealthEventConst.MAX_EVENTS_NUM_DEFAULT)
+        for severity in [HealthEventConst.SEVERITY_FATAL, HealthEventConst.SEVERITY_WARNING]:
+            cli_objects.dut.general.config_health_event(duthost,
+                                                        severity=severity,
+                                                        category_list=HealthEventConst.CATEGORY_NONE,
+                                                        max_events=HealthEventConst.MAX_EVENTS_NUM_DEFAULT)
         get_health_event_config(duthost)
 
 
@@ -74,33 +66,40 @@ def cleanup_health_event(topology_obj, cli_objects):
 
 # -------------------------------- Test cases --------------------------------
 @pytest.mark.disable_loganalyzer
-def test_health_event_collect(duthost, cleanup_health_event, cli_objects, set_health_event_debug_state_flags):
+@pytest.mark.parametrize(
+    "severity,fw_event",
+    [
+        pytest.param(HealthEventConst.SEVERITY_FATAL, "FW_FATAL_EVENT"),
+        pytest.param(HealthEventConst.SEVERITY_WARNING, "FW_WARN_EVENT"),
+    ]
+)
+def test_health_event_collect(duthost, cleanup_health_event, cli_objects, severity, fw_event):
     with allure.step('STEP1: Config health event without suppression'):
         cli_objects.dut.general.config_health_event(duthost,
-                                                    severity=HealthEventConst.SEVERITY,
+                                                    severity=severity,
                                                     category_list=HealthEventConst.CATEGORY_NONE)
         get_health_event_config(duthost)
 
-    with allure.step('STEP2: Trigger one health event at dut'):
-        trigger_sdk_health_event(duthost)
+    with allure.step(f'STEP2: Trigger one {severity} health event at dut'):
+        trigger_sdk_health_event(duthost, fw_event_id=HealthEventConst.FW_EVENTS_DICT[fw_event])
 
-    with allure.step('STEP3: Verify receive one health event'):
+    with allure.step(f'STEP3: Verify receive one {severity} health event'):
         received_health_event = get_health_event_received(duthost)
         logger.info(f"The received health event is: {received_health_event}")
         assert len(received_health_event) == 1
-        assert received_health_event[0]['Severity'] == HealthEventConst.SEVERITY
+        assert received_health_event[0]['Severity'] == severity
 
 
 @pytest.mark.disable_loganalyzer
-def test_health_event_suppression(duthost, cleanup_health_event, cli_objects, set_health_event_debug_state_flags):
+def test_health_event_suppression(duthost, cleanup_health_event, cli_objects):
     with allure.step('STEP1: Config health event suppression'):
         cli_objects.dut.general.config_health_event(duthost,
-                                                    severity=HealthEventConst.SEVERITY,
+                                                    severity=HealthEventConst.DEFAULT_SEVERITY,
                                                     category_list=HealthEventConst.CATEGORY_FIRMWARE)
         get_health_event_config(duthost)
 
     with allure.step('STEP2: Trigger one health event at dut'):
-        trigger_sdk_health_event(duthost)
+        trigger_sdk_health_event(duthost, fw_event_id=HealthEventConst.DEFAULT_FW_HEALTH_EVENT_ID)
 
     with allure.step('STEP3: Verify no health event is received'):
         received_health_event = get_health_event_received(duthost)
@@ -120,7 +119,7 @@ def test_health_event_maximum_number(duthost, copy_bulk_event_trigger_script_to_
 
     with allure.step(f'STEP3: Set maximum event number {HealthEventConst.MAX_EVENTS_NUM_ELIMINATE_THRESHOLD}'):
         cli_objects.dut.general.config_health_event(duthost,
-                                                    severity=HealthEventConst.SEVERITY,
+                                                    severity=HealthEventConst.DEFAULT_SEVERITY,
                                                     max_events=HealthEventConst.MAX_EVENTS_NUM_ELIMINATE_THRESHOLD)
         get_health_event_config(duthost)
 
@@ -153,12 +152,12 @@ def test_health_event_command(duthost):
 def test_health_event_interop_with_techsupport(duthost, engines, cleanup_health_event, cli_objects):
     with allure.step('STEP1: Config health event without suppression'):
         cli_objects.dut.general.config_health_event(duthost,
-                                                    severity=HealthEventConst.SEVERITY,
+                                                    severity=HealthEventConst.DEFAULT_SEVERITY,
                                                     category_list=HealthEventConst.CATEGORY_NONE)
         get_health_event_config(duthost)
 
     with allure.step('STEP2: Trigger one health event at dut'):
-        trigger_sdk_health_event(duthost)
+        trigger_sdk_health_event(duthost, fw_event_id=HealthEventConst.DEFAULT_FW_HEALTH_EVENT_ID)
 
     with allure.step('STEP3: Generate show techsupport'):
         tar_file = get_tech_support_tar_file(engines)
@@ -224,7 +223,3 @@ def get_health_event_received(dut_engine, max_retries=6, retry_delay=10):
             time.sleep(retry_delay)
     logger.warning("Failed to receive health event after {} retries.".format(max_retries))
     return []
-
-
-def trigger_sdk_health_event(dut_engine, fw_event_id=HealthEventConst.DEFAULT_FW_EVENT_ID):
-    dut_engine.run_cmd(f'docker exec -it syncd python mellanox_sdk_trigger_event_script.py --fw_event {fw_event_id}')

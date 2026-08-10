@@ -1,0 +1,5 @@
+StartDevice,StartPort,EndDevice,EndPort,EndFeed
+pdu-10-193-230-180,2,slm-233,PSU1,
+pdu-10-193-230-180,4,slm-233,PSU2,
+pdu-10-193-230-180,2,slm-233-bmc,PSU1,
+pdu-10-193-230-180,4,slm-233-bmc,PSU2,

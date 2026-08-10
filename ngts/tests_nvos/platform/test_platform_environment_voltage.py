@@ -20,6 +20,10 @@ from ngts.tests_nvos.platform.helpers import (
 )
 from ngts.nvos_constants.constants_nvos import DatabaseConst, HealthConsts, PlatformConsts
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 VOLTAGE_BASE_PATH = PlatformConsts.VOLTAGE_FILES_PATH

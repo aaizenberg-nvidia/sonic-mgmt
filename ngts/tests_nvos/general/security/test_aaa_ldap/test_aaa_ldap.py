@@ -18,6 +18,9 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore, wait_for_ldap_nvued_restart_workaround
 
 
+cumulus_owner = "gpazbenitzha"
+
+
 @pytest.fixture(scope='session', autouse=True)
 def prepare_scp_test(prepare_scp):
     return

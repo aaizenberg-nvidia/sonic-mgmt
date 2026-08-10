@@ -3,7 +3,9 @@ import re
 
 
 class HealthEventConst:
-    SEVERITY = 'fatal'
+    DEFAULT_SEVERITY = 'fatal'
+    SEVERITY_FATAL = 'fatal'
+    SEVERITY_WARNING = 'warning'
     SEVERITY_LIST = ['fatal', 'error', 'warning']
     CATEGORY_FIRMWARE = 'firmware'
     CATEGORY_NONE = 'none'
@@ -14,7 +16,8 @@ class HealthEventConst:
     MAX_EVENTS_NUM_ELIMINATE_THRESHOLD = 10
     MAX_EVENTS_NUM_POSITIVE = ['0', '10000']
     MAX_EVENTS_NUM_NEGATIVE = ['1.0', '-1', 'unlimited']
-    DEFAULT_FW_EVENT_ID = '3'
+    DEFAULT_FW_HEALTH_EVENT_ID = 1
+    FW_EVENTS_DICT = {"FW_FATAL_EVENT": 1, "FW_WARN_EVENT": 2, "PLL_LOCK_EVENT": 3}
     BASE_DIR = os.path.dirname(os.path.realpath(__file__))
     FILES_DIR = os.path.join(BASE_DIR, 'files')
     GENERATE_EVENTS_SCRIPT = 'generate-events.py'
