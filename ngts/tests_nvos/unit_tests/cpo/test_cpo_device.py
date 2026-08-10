@@ -16,6 +16,19 @@ PORTIA_NPO_HW_KEY = "N7400_LD - Portia"
 PORTIA_NPO_SIMX_KEY = "N7400_LD_simx - Portia"
 PORTIA_NPO_TA_SIMX_KEY = "N7400_LD_TA_simx - Portia"
 NVL72_INTERNAL_PORTS = 576
+CPO_SAGITTA_CONNECTED_LANES = (16, 16, 16, 8)
+CPO_SW_GROUPS_PER_ASIC = 7
+CPO_SUBPORTS_PER_GROUP = 8
+CPO_PORTS_PER_ASIC = CPO_SW_GROUPS_PER_ASIC * CPO_SUBPORTS_PER_GROUP
+
+
+def expected_cpo_trunk_ports(asic_amount):
+    """Seven used optical groups per ASIC; each exposes eight 200G subports."""
+    return [
+        f"sw{sw}p1s{subport}"
+        for sw in range(1, CPO_SW_GROUPS_PER_ASIC * asic_amount + 1)
+        for subport in range(1, CPO_SUBPORTS_PER_GROUP + 1)
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -134,12 +147,30 @@ def test_cpo_port_and_optics_model(switch_type, asic_amount):
     # els_fiber_tuning conftest select on it, so Gen2 must never define it.
     assert not hasattr(switch, "els_list")
     assert len(switch.nvl_access_ports_list) == 72 * asic_amount
-    assert len(switch.nvl_trunk_ports_list) == 64 * asic_amount
-    assert switch.nvl_trunk_ports_list[-1] == f"sw{8 * asic_amount}p1s8"
+    assert switch.nvl_trunk_ports_list == expected_cpo_trunk_ports(asic_amount)
+    assert switch.nvl_trunk_ports_list[-1] == (
+        f"sw{CPO_SW_GROUPS_PER_ASIC * asic_amount}p1s{CPO_SUBPORTS_PER_GROUP}"
+    )
+    assert switch.SAGITTA_CONNECTED_LANES == CPO_SAGITTA_CONNECTED_LANES
+    assert len(switch.SAGITTA_CONNECTED_LANES) == switch.cpo.oe_per_cpo
+    assert max(switch.SAGITTA_CONNECTED_LANES) == switch.cpo.lanes_per_oe
     assert switch.nvl_trunk_port_speed == "200G"
     assert switch.nvl_internal_fnm_ports == [
         f"fnma{asic}p{port}" for asic in range(asic_amount) for port in range(1, 3)
     ]
+
+
+def test_cpo_port_numbering_is_compact_across_all_asic_boundaries(switch_env_vars):
+    from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
+
+    switch = DeviceFactory.create_device(PORTIA_CPO_HW_KEY)
+    ports = switch.nvl_trunk_ports_list
+    for asic in range(1, switch.asic_amount):
+        boundary = asic * CPO_PORTS_PER_ASIC
+        assert ports[boundary - 1:boundary + 1] == [
+            f"sw{asic * CPO_SW_GROUPS_PER_ASIC}p1s{CPO_SUBPORTS_PER_GROUP}",
+            f"sw{asic * CPO_SW_GROUPS_PER_ASIC + 1}p1s1",
+        ]
 
 
 @pytest.mark.parametrize(

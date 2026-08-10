@@ -160,7 +160,7 @@ class TestLaserSourceShowFields:
 
 class TestInterfaceCpoFields:
     def test_interface_cpo_fields(self):
-        parsed = _parse_json_round_trip(samples.SHOW_INTERFACE_CPO_SW9P1S1)
+        parsed = _parse_json_round_trip(samples.SHOW_INTERFACE_CPO_SW8P1S1)
         for field in (
             Cpov2Consts.PARENT,
             Cpov2Consts.STATUS,

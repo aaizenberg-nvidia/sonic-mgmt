@@ -169,11 +169,11 @@ class TestAssertConsistent:
         topology.assert_consistent(**self._good_maps(topology)).verify_result()
 
     def test_ports_cross_reference_pass(self, topology):
-        cpo_to_ports = {"cpo1": ["sw1p1s1", "sw1p1s2"], "cpo2": ["sw9p1s1"]}
+        cpo_to_ports = {"cpo1": ["sw1p1s1", "sw1p1s2"], "cpo2": ["sw8p1s1"]}
         port_to_cpo = {
             "sw1p1s1": "cpo1",
             "sw1p1s2": "cpo1",
-            "sw9p1s1": "cpo2",
+            "sw8p1s1": "cpo2",
         }
         topology.assert_consistent(cpo_to_ports=cpo_to_ports, port_to_cpo=port_to_cpo).verify_result()
 
@@ -217,8 +217,8 @@ class TestAssertConsistent:
         topology.assert_consistent(cpo_to_channels=maps["cpo_to_channels"]).verify_result(should_succeed=False)
 
     def test_port_mismatch_fails(self, topology):
-        cpo_to_ports = {"cpo1": ["sw1p1s1"], "cpo2": ["sw9p1s1"]}
-        port_to_cpo = {"sw1p1s1": "cpo2", "sw9p1s1": "cpo2"}
+        cpo_to_ports = {"cpo1": ["sw1p1s1"], "cpo2": ["sw8p1s1"]}
+        port_to_cpo = {"sw1p1s1": "cpo2", "sw8p1s1": "cpo2"}
         topology.assert_consistent(
             cpo_to_ports=cpo_to_ports, port_to_cpo=port_to_cpo
         ).verify_result(should_succeed=False)
