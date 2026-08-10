@@ -123,10 +123,12 @@ class TpmTool:
 
     def _get_sed_password(self, tpm_bank_context: str, device: BaseDevice):
         with allure.step('get sed password from tpm'):
+            # "| awk 1" forces a trailing newline: run_cmd returns empty output for
+            # commands whose output is not newline-terminated (merges into prompt line)
             if self._require_tpm_pass(device):
                 hex_pass = self.tpm_pass.encode().hex()
-                return self.engine.run_cmd(f"sudo tpm2_unseal -c '{tpm_bank_context}' -p 'hex:{hex_pass}'")
-            return self.engine.run_cmd(f"sudo tpm2_unseal -c '{tpm_bank_context}'")
+                return self.engine.run_cmd(f"sudo tpm2_unseal -c '{tpm_bank_context}' -p 'hex:{hex_pass}' | awk 1")
+            return self.engine.run_cmd(f"sudo tpm2_unseal -c '{tpm_bank_context}' | awk 1")
 
     def _store_sed_password(self, tpm_bank_context: str, sed_password: str, device: BaseDevice):
         with allure.step('store sed password in tpm bank'):

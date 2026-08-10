@@ -18,6 +18,7 @@ def tpm_tool(engines):
 def sed_default_password(tpm_tool, devices: DevicesT):
     with allure.step("Get SED password from tpm"):
         sed_password: str = tpm_tool.get_sed_password_primary_bank(device=devices.dut).strip()
+        assert sed_password, "Empty SED password read from TPM primary bank - aborting to avoid a broken restore in teardown"
     try:
         yield sed_password
     finally:
