@@ -201,6 +201,11 @@ class RunPytest(TermHandlerMixin, StandaloneWrapper):
         if self.dut_name in ["arc-switch1004", "arc-switch1025", "r-panther-23", "r-panther-45"] and \
                 "test_advanced_reboot.py" in self.test_scripts:
             self.raw_options += ' --ceos_neighbor_lacp_multiplier=5'
+        if self.dut_name in ["arc-switch1004", "arc-switch1025", "r-panther-23", "r-panther-45",
+                             "mtvr-panther-02", "mtvr-panther-03", "mtvr-panther-05", "mtvr-panther-07"] and \
+                "test_upgrade_path.py" in self.test_scripts:
+            self.raw_options = re.sub(r'\s*--neighbor_type[= ]\S+', '', self.raw_options)
+            self.raw_options += ' --neighbor_type vsonic'
         if old_allure_server in self.raw_options:
             self.raw_options = self.raw_options.replace(old_allure_server, "allure.nvidia.com")
         else:
