@@ -582,9 +582,11 @@
         - tests_nvos/system/syslog/test_system_syslog.py::test_rsyslog_server_severity_levels
         - tests_nvos/system/syslog/test_system_syslog.py::test_rsyslog_server_severity_levels_openapi
 
-# NVOS
+# NVOS. ref: https://nvbugspro.nvidia.com/bug/6566466
 - Errors_list:
     - '.* ERR rsyslogd: omfwd: remote server.*'
+    - '.* ERR rsyslogd: omfwd:.*remote server closed connection.*'
+    - '.* WARNING rsyslogd: omfwd:.*no working target servers.*'
     - '.* ERR rsyslogd: cannot connect to.*'
     - ".*ERR rsyslogd:.+cannot connect to .+Connection refused.+"
   Conditions:
@@ -1556,11 +1558,12 @@
     - Affected_test_cases:
         - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_server_unreachable
 
-# NVOS ldap bad flow
+# NVOS ldap bad flow. ref: https://nvbugspro.nvidia.com/bug/6565711
 - Errors_list:
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*failed to bind to LDAP server.*'
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*no available LDAP server found.*'
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*ldap_start_tls_s\(\) failed \(.*\): Connect error: \(unknown error code\).*'
+    - '.*WARNING nslcd\[\d+\]: \[\w+\].*ldap_start_tls_s\(\) failed.*Connect error.*certificate verify failed.*'
     - '.*WARNING systemd\[1\]: nvued\.service: Failed with result.*'
     - '.*ERR nslcd\[\d+\]: \[\w+\].*no available LDAP server found.*'
   Conditions:
