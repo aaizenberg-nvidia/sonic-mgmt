@@ -1756,6 +1756,13 @@ system_health/test_system_status.py::test_system_is_running:
     conditions:
     - "https://github.com/sonic-net/sonic-buildimage/issues/19879 and 'simx' in platform"
 
+upgrade_path/test_upgrade_path.py::test_upgrade_path:
+  xfail:
+    reason: "https://redmine.mellanox.com/issues/4110927 and '2700' in platform and '2700a1' not in platform"
+    conditions:
+    - "https://redmine.mellanox.com/issues/4110927 and '2700' in platform and '2700a1' not in platform"
+
+
 ########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) START ##########################
 arp/test_wr_arp.py:
   skip:
@@ -1876,5 +1883,4 @@ vrf/test_vrf.py::TestVrfWarmReboot::test_vrf_system_warm_reboot:
     reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
     - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
-
 ########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) END ##########################
