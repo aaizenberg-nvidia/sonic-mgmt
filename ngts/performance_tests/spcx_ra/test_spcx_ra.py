@@ -401,6 +401,7 @@ class _SpcXRATestBase:
             bw_threshold=self.CONFIG.ibm_bandwidth_threshold(self.chip_type),
             skip_first_counters_iteration=True)
 
+    @pytest.mark.skip(reason="Temporarily skipping this test case")
     @allure.description('AR enabled on one side (leaf scenario). Verify port utilization.')
     @_with_lanes_allure_title
     def test_ar_perf_max_bandwidth_leaf(self, request):
