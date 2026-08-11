@@ -98,6 +98,7 @@ def subscribe_system_events_stream(engines, devices):
             # events, >1MB of JSON) which floods the log; callers log a readable summary and allure-attach the raw.
             gnmi_client = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, devices.dut.default_username,
                                      devices.dut.default_password, print_outputs=False)
+            gnmi_client.cmd_runner.spool_output = True  # the stream is read only once it is closed
             gnmi_client.verify_gnmic_installation()
 
             def _open_stream():
