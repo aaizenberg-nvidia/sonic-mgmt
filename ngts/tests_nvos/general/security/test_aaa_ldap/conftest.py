@@ -40,6 +40,13 @@ def alias_ldap_server_dn(engines, request):
 
     yield
 
+    with allure.step('After tests: Unset ldap config, while the server alias still resolves'):
+        # The server is configured by hostname (the certificate CN must match a name, not an IP).
+        # Removing the alias while that config is still in place leaves the switch pointing at a
+        # name nothing can resolve, so every nsswitch ldap lookup floods syslog with nslcd bind
+        # timeouts that log analyzer then attributes to unrelated tests (NVBug 6530355).
+        System().aaa.ldap.unset(apply=True, ask_for_confirmation=True, dut_engine=engines.dut).ignore_result()
+
     with allure.step('After tests: Remove docker ldap server alias from the switch'):
         remove_etc_host_mapping_to_dn(server_cert_dn, engines.dut)
 

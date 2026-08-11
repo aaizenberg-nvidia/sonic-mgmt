@@ -27,7 +27,17 @@ class User(BaseComponent):
 
     @staticmethod
     def get_ssh_session_count(engine, username) -> int:
-        output = engine.run_cmd(f'who | grep {username} | wc -l')
+        """
+        @summary: Count the login sessions of a user, as the number of distinct terminals it holds.
+
+            Debian 13 dropped utmp, so 'who' is now a systemd-logind client and reports sessions
+            utmp never held - terminal-less 'ssh host cmd' connections - and reports the same
+            terminal twice for a nested connection. Counting raw lines therefore over-counts, and
+            counts the sampling command itself. Counting distinct terminals restores what utmp
+            used to measure: one line per real login (NVBug 6580053).
+        """
+        terminals_of_user = f"who | awk '$1 == \"{username}\"' | grep -oE 'pts/[0-9]+|ttyS[0-9]+'"
+        output = engine.run_cmd(f'{terminals_of_user} | sort -u | wc -l')
         return int(output.strip())
 
     def set_new_user(self, username=None, password=None, role=None, engine=None, hashed_password=None, apply=False):
