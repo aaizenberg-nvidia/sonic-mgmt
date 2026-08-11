@@ -786,6 +786,7 @@ class TestSpcXRA_8x_lanes(_SpcXRATestBase):
                 port_split=1,
                 port_speed_bps="800000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_800G_x1["SPC4"],
+                unsupported_os=CliType.NVUE,
             ),
             # SPC5 entry intentionally absent: 800G not supported:
             # https://p4hw-swarm.nvidia.com/view/hw/doc/engr/nswitch/flamingo/arch/IAS/released/SPC4.5_IAS.html#_port_permutations
