@@ -89,6 +89,7 @@ class SonicSecureBootConsts(SecureBootConsts):
     PROD_CORRUPT_MFA_FILE = 'prod_corrupted_bin'
     DEV_CORRUPT_MFA_FILE = 'dev_corrupted_bin'
     MFA_FILE_PATH = "/etc/mlnx"
+    FW_UPGRADE_FAILED_ERR_MSG = "All ASIC upgrades failed"
     DEV_CORRUPT_MFA_ERR_MSG = "Rejected authentication"
     PROD_CORRUPT_MFA_ERR_MSG = "Bad parameter"
     SECURE_FW_MSG = "Security Attributes:   secure-fw"
