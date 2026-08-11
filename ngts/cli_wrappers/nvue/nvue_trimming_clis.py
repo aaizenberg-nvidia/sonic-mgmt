@@ -42,7 +42,8 @@ class NvueTrimmingCli(TrimmingCommon):
         Returns:
             str: Pretty-printed JSON string of the diagnostic payload.
         """
-        wjh_service_name = "what-just-happened.service"
+        nv_wjh_check = self.engine.run_cmd("systemctl list-unit-files nv-wjh.service 2>/dev/null | grep nv-wjh", print_output=False)
+        wjh_service_name = "nv-wjh.service" if "nv-wjh" in nv_wjh_check else "what-just-happened.service"
         wjh_status_cmd = f"systemctl status {wjh_service_name} --no-pager --full || true"
         wjh_active_cmd = f"systemctl is-active {wjh_service_name} || true"
         packet_trim_show_cmd = "nv show system forwarding packet-trim || true"
