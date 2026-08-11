@@ -246,13 +246,12 @@ class NvosInstallationSteps:
         image_scp_url = f'scp://{scp_host_creds}{target_version_path}'
         system.image.action_fetch(image_scp_url, base_url='', engine=dut_engine, device=dut_device, timeout=600)
         # use new default password for recovery after upgrade
-        recovery_engine = LinuxSshEngine(dut_engine.ip, dut_engine.username,
-                                         dut_device.get_default_password_by_version(target_version_path))
         InstallStepsTimer.add_timestamp(InstallSteps.UPGRADE_CMD)
-        system.image.files.file_name[bin_filename].action_file_install_with_reboot(engine=dut_engine, device=dut_device,
-                                                                                   recovery_engine=recovery_engine,
-                                                                                   topology_obj=topology_obj,
-                                                                                   param_value=param_value, track_boot_intervals=True)
+        with LinuxSshEngine(dut_engine.ip, dut_engine.username,
+                            dut_device.get_default_password_by_version(target_version_path)) as recovery_engine:
+            system.image.files.file_name[bin_filename].action_file_install_with_reboot(
+                engine=dut_engine, device=dut_device, recovery_engine=recovery_engine,
+                topology_obj=topology_obj, param_value=param_value, track_boot_intervals=True)
 
     @staticmethod
     def fetch_apply_save_config(config_filename, config_file_path, dut_engine, scp_host_creds, system, dut_device=None,
