@@ -90,10 +90,11 @@ def port_selection_was_activated():
 
 # The DUT's cascade-excluded port names, published once the DUT resolves
 # get_right_left_ports_dict. Backed by BOTH a module global (fast, same-process) AND a file:
-# the file survives the module-global reset that apply_test_configuration does at its start and
-# the object-identity gap between the ``players`` dict and ``topology_obj``, so the TGs can read
-# it reliably at traffic time (by name) to scope traffic and skip readiness waits — robust
-# whether an excluded DUT port ends up link-up-but-not-routed or fully down.
+# the file bridges the object-identity gap between the ``players`` dict and ``topology_obj``,
+# so the TGs can read the exclusion by name at traffic time — robust whether an excluded DUT
+# port ends up link-up-but-not-routed or fully down. ``apply_test_configuration`` clears both
+# memory and file at the start of each apply, then the DUT priming step republishes when
+# selection is active.
 _RESOLVED_EXCLUDED_DUT_PORTS = set()
 _EXCLUDED_DUT_PORTS_FILE = os.path.join(tempfile.gettempdir(), "perf_excluded_dut_ports.json")
 _PORT_SELECTION_DEBUG_FILE = os.path.join(tempfile.gettempdir(), "perf_port_selection_debug.json")
@@ -118,9 +119,9 @@ def _read_names_file(path):
 def set_resolved_excluded_dut_ports(names):
     """Publish the DUT's cascade-excluded port names (DUT only).
 
-    Writes the file only for a non-empty set, so the apply_test_configuration reset
-    (``set_resolved_excluded_dut_ports(set())``) clears the in-memory global for a fresh
-    scenario without wiping the file that later phases (run_traffic) rely on.
+    Writes the file only for a non-empty set. An empty publish clears the in-memory global
+    only; callers that must also drop a previously written file (e.g. the start of
+    ``apply_test_configuration``) should use :func:`clear_resolved_excluded_ports`.
     """
     global _RESOLVED_EXCLUDED_DUT_PORTS
     _RESOLVED_EXCLUDED_DUT_PORTS = set(names or [])

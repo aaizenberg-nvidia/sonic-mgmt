@@ -21,7 +21,7 @@ from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_u
 from ngts.helpers.performance.performance_counter_helpers import validate_performance_counters
 from ngts.helpers.performance.topology_helpers import get_dvs_topology_obj, get_nvue_sonic_topology_obj
 from ngts.helpers.performance.power_temp_helpers import validate_temperature, validate_power
-from ngts.helpers.performance.port_selection import set_resolved_excluded_dut_ports
+from ngts.helpers.performance.port_selection import clear_resolved_excluded_ports
 from ngts.cli_wrappers.dvs.dvs_cli import DvsCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
@@ -299,11 +299,12 @@ def apply_test_configuration(players, scenario, conf_args,
     # No-op unless --perf-exclude-ports / --perf-include-ports was supplied.
     for player_alias in players_aliases:
         players[player_alias]['cli'].performance.resolve_port_selection(scenario)
-    # Reset any previously-published exclusion (stale from an earlier test in this session)
-    # before recomputing for this apply, then pre-compute the DUT cascade on the MAIN thread
-    # (with retry for LLDP readiness). TGs read the published names in-process; they must never
-    # call the DUT engine themselves (that corrupts the DUT's shared SSH session). Fail open.
-    set_resolved_excluded_dut_ports(set())
+    # Clear previously-published exclusion (memory + file) so a no-flag scenario cannot inherit
+    # stale exclusions from an earlier test in this session. Then, when selection is active,
+    # pre-compute the DUT cascade on the MAIN thread (with retry for LLDP readiness) so TGs can
+    # read the republished names. TGs must never call the DUT engine themselves (that corrupts
+    # the DUT's shared SSH session). Fail open.
+    clear_resolved_excluded_ports()
     dut_player = players.get(PerfConsts.DUT_ALIAS)
     if dut_player and dut_player['cli'].performance.port_selection.is_active():
         _prime_dut_port_selection_cascade(dut_player['cli'].performance)

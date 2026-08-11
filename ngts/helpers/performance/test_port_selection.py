@@ -253,6 +253,15 @@ class TestResolvedDutPortsStore:
         set_resolved_excluded_dut_ports(set())
         assert get_resolved_excluded_dut_ports() == set()
 
+    def test_empty_publish_does_not_clear_file(self):
+        """Empty publish clears memory only; callers must use clear_* to drop the file."""
+        clear_resolved_excluded_ports()
+        set_resolved_excluded_dut_ports({"swp26"})
+        set_resolved_excluded_dut_ports(set())
+        assert get_resolved_excluded_dut_ports() == {"swp26"}
+        clear_resolved_excluded_ports()
+        assert get_resolved_excluded_dut_ports() == set()
+
 
 class TestOtherPortStyles:
     def test_ethernet_style(self):

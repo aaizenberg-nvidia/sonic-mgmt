@@ -495,10 +495,12 @@ class NvuePerformanceCli(PerformanceCommon):
             if not self.excluded_port_names:
                 self.get_right_left_ports_dict()
             return set(self.excluded_port_names)
-        # TG: read the DUT-published excluded names from the module-level store (robust to
-        # object identity between players/topology_obj and to this TG's own port_selection
-        # state; populated on the main thread by the priming step before the parallel apply).
-        # Empty when no exclusion is in effect (backward compatible).
+        # TG: only consult the DUT-published store when this TG's own selection is active
+        # (same CLI flags as the DUT). That keeps no-flag runs immune to a leftover tempfile.
+        # When active, read the module-level store (robust to object identity between
+        # players/topology_obj; populated on the main thread by priming before parallel apply).
+        if not self.port_selection.is_active():
+            return set()
         return get_resolved_excluded_dut_ports()
 
     def configure_mloops(self, validate_mloops=True, is_simx=False):
@@ -697,7 +699,8 @@ class NvuePerformanceCli(PerformanceCommon):
 
     def _rescope_traffic_json_ports(self, traffic_jsons):
         """Rewrite the local traffic JSON so each stream's ``ports`` = the scoped mloops."""
-        if not get_resolved_excluded_dut_ports() or self.dut_alias not in traffic_jsons:
+        if (not self.port_selection.is_active() or not get_resolved_excluded_dut_ports() or
+                self.dut_alias not in traffic_jsons):
             return
         scoped_ports = self.get_tg_traffic_ports()
         path = traffic_jsons[self.dut_alias]
@@ -732,10 +735,13 @@ class NvuePerformanceCli(PerformanceCommon):
         needs no LLDP at traffic time, so it is robust whether the excluded DUT port is
         link-up-but-not-routed or fully down.
 
-        No-op (returns all mloops) when no exclusion is in effect (backward compatible) or when
-        the VLAN pairing cannot be read / nothing matches (fails open with a breadcrumb).
+        No-op (returns all mloops) when port selection is inactive, when no exclusion is
+        published, or when the VLAN pairing cannot be read / nothing matches (fails open with
+        a breadcrumb).
         """
         all_mloops = self.get_tg_unconnected_ports()
+        if not self.port_selection.is_active():
+            return all_mloops
         excluded_dut_names = get_resolved_excluded_dut_ports()
         if not excluded_dut_names:
             return all_mloops
