@@ -46,6 +46,7 @@ BARE_METAL_MOUNTPOINTS = {
     '/.autodirect/cumulus': '/.autodirect/cumulus',
     '/auto/mswg_release_mft/': '/auto/mswg_release_mft/',
     '/.autodirect/mswg_release_mft/': '/.autodirect/mswg_release_mft/',
+    '/auto/mswg/release/': '/auto/mswg/release/',
 }
 AIR_SONIC_MGMT_MOUNTPOINTS = {
     '/auto/sw_regression/system/SONIC/MARS': '/auto/sw_regression/system/SONIC/MARS',
