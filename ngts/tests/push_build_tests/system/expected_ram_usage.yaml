@@ -45,7 +45,7 @@ master:
     nbrmgrd: 7
     vxlanmgrd: 7
     sensord: 10
-    sonic_ax_impl: 35
+    sonic_ax_impl: 45
     rest_server: 60
     lldp_syncd: 20
     lldpd: 10
@@ -164,7 +164,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 1600
     syncd: 380
-    sonic_ax_impl: 60
+    sonic_ax_impl: 70
     redis: 80
     orchagent: 118
     thermalctld: 107
@@ -176,7 +176,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 1600
     syncd: 380
-    sonic_ax_impl: 60
+    sonic_ax_impl: 70
     redis: 80
     orchagent: 128
     thermalctld: 107
@@ -188,7 +188,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 1600
     syncd: 380
-    sonic_ax_impl: 60
+    sonic_ax_impl: 70
     redis: 80
     orchagent: 128
     thermalctld: 107
@@ -200,7 +200,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 1600
     syncd: 380
-    sonic_ax_impl: 60
+    sonic_ax_impl: 70
     redis: 80
     orchagent: 128
     thermalctld: 107
@@ -212,7 +212,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 1600
     syncd: 380
-    sonic_ax_impl: 60
+    sonic_ax_impl: 70
     redis: 80
     orchagent: 128
     thermalctld: 107
