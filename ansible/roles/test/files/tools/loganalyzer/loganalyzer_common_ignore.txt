@@ -624,5 +624,9 @@ r, ".* ERR ctrmgrd\.py:.*\[WARNING SystemVerification\]:.*Docker version is not 
 # Ignore SPC6 Egress mirroring not supported failures on SPC6 mellanox platform
 r, ".*ERR syncd#SDK: \[SAI_PORT.ERR\] .*mlnx_sai_port.c\[.*\]- mlnx_port_samplepacket_session_get: Egress mirroring is not supported on SPC6.*"
 
+# syncd port serdes lane count info not available (fixed in https://github.com/sonic-net/sonic-sairedis/pull/1945)
+# tracked by https://github.com/sonic-net/sonic-sairedis/issues/1946
+r, ".* ERR syncd\d*#syncd: :- initAttrData: PORT_PHY_SERDES_ATTR: port_serdes_rid:0x\w+ has no lane count information.*"
+
 # Ignore loganalyzer add marker logs in case the test name matches an error pattern
 r, ".*INFO.*ansible.*loganalyzer.py.*--action add.*marker.*"
