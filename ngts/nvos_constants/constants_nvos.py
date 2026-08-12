@@ -171,6 +171,11 @@ class NvosConst:
     DOCKER_PER_ASIC_LIST = ['syncd-ibv0', 'swss-ibv0', 'database']
     NV_GNMI_DOCKER = 'nv-gnmi'
     NV_UMF_DOCKER = 'nv-umf'
+    # Dockers allowed to start only after the system reports ready - polled instead of
+    # required immediately. Every other docker must be up the moment the system is ready.
+    LATE_START_DOCKERS = (NV_GNMI_DOCKER,)
+    DOCKERS_UP_TIMEOUT = 40
+    DOCKERS_UP_POLL_INTERVAL = 5
     SYM_MGR_SERVICES = ['configmgrd.service', 'countermgrd.service', 'portsyncmgrd.service']
     PORT_STATUS_LABEL = 'admin_status'
     PORT_CONFIG_DB_TABLES_PREFIX = "IB_PORT"

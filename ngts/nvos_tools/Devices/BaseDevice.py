@@ -301,20 +301,25 @@ class BaseDevice(ABC):
 
             return result_obj
 
-    def verify_dockers(self, dut_engine, dockers_list=""):
+    def verify_dockers(self, dut_engine, dockers_list="", timeout=NvosConst.DOCKERS_UP_TIMEOUT):
         """
-        Validate existing dockers
+        Validate existing dockers.
+        Dockers listed in NvosConst.LATE_START_DOCKERS are allowed to come up after the system
+        reports ready, so they are polled. Any other missing docker fails immediately.
         """
         with allure.step('Verify dockers'):
-            result_obj = ResultObj(True, "")
-            cmd_output = dut_engine.run_cmd('docker ps --format \"table {{.Names}}\"')
             list_of_dockers = dockers_list or self.available_dockers
-            for docker in list_of_dockers:
-                if docker not in cmd_output:
-                    result_obj.result = False
-                    result_obj.info += f"{docker} docker is not active.\n"
+            deadline = time.monotonic() + timeout
+            while True:
+                cmd_output = dut_engine.run_cmd('docker ps --format \"table {{.Names}}\"')
+                missing = [docker for docker in list_of_dockers if docker not in cmd_output]
+                if not missing or any(docker not in NvosConst.LATE_START_DOCKERS for docker in missing) \
+                        or time.monotonic() >= deadline:
+                    break
+                logger.info("Waiting up to %ss for dockers to come up: %s", timeout, missing)
+                time.sleep(NvosConst.DOCKERS_UP_POLL_INTERVAL)
 
-            return result_obj
+            return ResultObj(not missing, "".join(f"{docker} docker is not active.\n" for docker in missing))
 
     def verify_services(self, dut_engine):
         """
