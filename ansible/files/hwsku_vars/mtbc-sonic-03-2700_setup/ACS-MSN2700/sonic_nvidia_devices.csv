@@ -1,6 +1,0 @@
-Hostname,ManagementIp,HwSku,Type,Protocol,Os
-mtbc-sonic-03-2700,10.75.71.251/24,Mellanox-SN2700,DevSonic,,sonic
-mtbc-sonic-02-2700,10.75.67.45/25,MLNX-OS,FanoutLeaf,,
-dev-r730-03,10.75.207.5,TestServ,Server,,
-pdu-10-75-68-212,10.75.68.212,Sentry,Pdu,snmp,
-MTBC-RCON02,10.75.68.214,,ConsoleServer,ssh,sonic

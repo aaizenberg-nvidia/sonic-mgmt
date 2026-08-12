@@ -1425,10 +1425,6 @@ class BluefieldConstants:
                              "Nvidia-9009d3b600SVAA-C2"]
     BLUEFIELD_PORTS_LIST = ['Ethernet0', 'Ethernet4']
     DPU_SETUP_LIST = [
-        "r-r740-03-bf3-sonic-01_setup",
-        "r-r740-05-bf3-sonic-01_setup",
-        "r-r740-07-bf3-sonic-01_setup",
-        "r-r740-08-bf3-sonic-01_setup",
         "CI_sonic_BF3_1",
     ]
 

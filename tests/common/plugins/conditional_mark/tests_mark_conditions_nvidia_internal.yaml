@@ -209,7 +209,6 @@ tests/nightly/secure:
     reason: "Skipped on gaur and bobcat testbeds"
     conditions_logical_operator: or
     conditions:
-    - "'r-gaur-04' in testbed or 'mtvr-gaur-02' in testbed or 'mtvr-gaur-03' in testbed"
     - "'sn4280' in platform"
 
 tests/nightly/secure/test_secure_corrupt_fw/test_secure_corrupt_fw.py:

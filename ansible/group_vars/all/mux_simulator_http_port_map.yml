@@ -31,22 +31,8 @@ mux_simulator_http_port:
     vms-kvm-dual-vpp-t0-1: 8084
     vms-kvm-dual-vpp-t0-2: 8086
 
-    sonic-dual-tor: 8083
-    sonic-dual-tor-dualtor: 8083
-    sonic-dual-tor-dualtor-aa: 8083
-    sonic-dual-tor-dualtor-mixed: 8083
 
-    sonic-dual-tor-tigon: 8083
-    sonic-dual-tor-tigon-dualtor: 8083
-    sonic-dual-tor-tigon-dualtor-64: 8083
-    sonic-dual-tor-tigon-dualtor-aa: 8083
-    sonic-dual-tor-tigon-dualtor-aa-64: 8083
-    sonic-dual-tor-tigon-dualtor-mixed: 8083
 
-    sonic-dual-tor-tigon-01-dualtor: 8083
-    sonic-dual-tor-tigon-01-dualtor-64: 8083
-    sonic-dual-tor-tigon-01-dualtor-aa: 8083
-    sonic-dual-tor-tigon-01-dualtor-aa-64: 8083
 
     sonic-dual-tor-leopard: 8083
     sonic-dual-tor-leopard-dualtor: 8083

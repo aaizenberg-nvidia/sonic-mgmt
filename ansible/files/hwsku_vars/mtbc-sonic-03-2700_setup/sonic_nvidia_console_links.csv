@@ -1,3 +1,0 @@
-StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
-MTBC-RCON02,2015,mtbc-sonic-03-2700,ssh,,root
-MTBC-RCON02,2016,mtbc-sonic-02-2700,ssh,,root

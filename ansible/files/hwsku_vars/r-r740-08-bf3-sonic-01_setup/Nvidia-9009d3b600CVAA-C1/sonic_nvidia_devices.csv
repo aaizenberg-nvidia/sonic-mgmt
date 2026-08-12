@@ -1,4 +1,0 @@
-Hostname,ManagementIp,HwSku,Type,Protocol,Os
-r-r740-08-bf3-sonic-01,10.215.22.177,Nvidia-9009d3b600CVAA-C1,DevSonic,,sonic
-r-anaconda-86,10.210.24.190,MLNX-OS,FanoutLeaf,,
-r-r740-08,10.215.22.120,TestServ,Server,,

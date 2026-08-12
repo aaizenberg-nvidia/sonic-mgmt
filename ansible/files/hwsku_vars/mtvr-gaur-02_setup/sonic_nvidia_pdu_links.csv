@@ -1,5 +1,0 @@
-StartDevice,StartPort,EndDevice,EndPort,EndFeed
-pdu-10-245-2-15,17,mtvr-gaur-02,PSU1,
-pdu-10-245-2-15,13,mtvr-gaur-02,PSU2,
-pdu-10-245-2-34,21,mtvr-gaur-02,PSU3
-pdu-10-245-2-34,17,mtvr-gaur-02,PSU4

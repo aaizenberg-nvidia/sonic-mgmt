@@ -1,5 +1,0 @@
-StartDevice,StartPort,EndDevice,EndPort,EndFeed
-pdu-10-208-2-15,15,r-gaur-04,PSU1,
-pdu-10-208-2-42,15,r-gaur-04,PSU2,
-pdu-10-208-2-15,23,r-gaur-04,PSU3,
-pdu-10-208-2-42,23,r-gaur-04,PSU4

@@ -25,16 +25,6 @@
             </condition>
         </ignore>
 
-        <pre>
-            <info> mtbc_ntp_workaround </info>
-            <name> mtbc_ntp_workaround </name>
-            <type> reg_exec_cmd </type>
-            <tout> 50 </tout>
-            <params>
-                <exec> /bin/bash /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]]/sonic-tool/mars/scripts/mtbc_ntp_workaround.sh [[conf:extra_info.dut_name]] </exec>
-            </params>
-        </pre>
-
         <info> NTP Case </info>
         <name> ntp </name>
         <cmd>
