@@ -131,3 +131,43 @@ SETUPS_GROUPS_MAP = {
     }
 }
 # In canonical we have odd number of setups.
+
+# --- Finding the other setups of the scenario, and the topo and the hwsku each of them runs ---
+
+# Name of the environment variable Mars sets to the path of the scenario json of the current run.
+SCENARIO_JSON_ENV_VAR = 'JSON_FILE'
+
+# Key of a setup in that json, holding the command Mars runs to compute the dbs of that setup. It is
+# a generic key, a setup without it or with a command running another script takes its dbs from
+# somewhere else, see read_scenario_setups().
+SCENARIO_CALCULATE_PARAMS_KEY = 'MARS_ORCH_CALCULATE_PARAMS_COMMAND'
+
+# Options of extra_args_inst in that json, a setup declaring them overrides its .setup file.
+SCENARIO_TOPOLOGY_OPTION = '--meinfo_topology'
+SCENARIO_HWSKU_OPTION = '--meinfo_dut_hwsku'
+SCENARIO_SETUP_CONF_OPTION = '--conf'
+
+# The .setup file of a setup, holding its default topo and hwsku as xml like tags.
+SETUP_CONF_DIR = '/auto/sw_regression/system/SONIC/MARS/conf/setups'
+SETUP_CONF_TOPOLOGY_TAG = 'topology'
+SETUP_CONF_HWSKU_TAG = 'dut_hwsku'
+
+# Both files above live on the /auto mounts, which fail sporadically. A single failed read would
+# silently disable the sharing, so reading them is retried.
+NFS_READ_RETRIES = 3
+NFS_RETRY_DELAY_SECONDS = 1
+
+
+# --- Dbs that stay out of the sharing between the setups with the same topo and hwsku ---
+
+# Run by every one of those setups instead of being given to a single one.
+EVERY_SETUP_DBS = ['community/pretest.db']
+
+# Dbs depending on each other and on their order, they are given to a single setup as one block.
+INDIVISIBLE_DB_BLOCKS = [
+    ['community/pre_rpc.db',
+     'community/rpc_qos.db',
+     'community/rpc_pfc_asym_and_copp.db',
+     'community/rpc_qos_dualtor.db',
+     'community/post_rpc.db'],
+]
