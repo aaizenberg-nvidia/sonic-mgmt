@@ -1267,7 +1267,7 @@ def _send_command_timing(engine, cmd):
     """
     netmiko_engine = engine.engine
     logger.info(f"Running cmd: {cmd}")
-    response = netmiko_engine.send_command_timing(cmd, cmd_verify=True, delay_factor=4).strip()
+    response = netmiko_engine.send_command_timing(cmd, cmd_verify=True, delay_factor=4, last_read=5).strip()
     response = netmiko_engine.strip_command(cmd, response)
     logger.info(response)
     return response
