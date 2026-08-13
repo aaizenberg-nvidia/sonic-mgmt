@@ -55,7 +55,8 @@ class TestSRv6Leaf(TestSRv6Base):
         else:
             self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
         self.opt_ts = trimming_size
-        self.cli_object.trimming.configure_custom_dwrr_weights()
+        if MRCConsts.DWRR_WEIGHTS_CONFIG != "DEFAULT":
+            self.cli_object.trimming.configure_custom_dwrr_weights()
         self.shaper_value = shaper_value
 
     @pytest.mark.parametrize("workload", MRCConsts.MRC_REGRESSION_WORKLOADS_LIST)

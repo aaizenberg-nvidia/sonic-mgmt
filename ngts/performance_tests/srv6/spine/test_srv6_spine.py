@@ -38,7 +38,8 @@ class TestSRv6Spine(TestSRv6Base):
         self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
         self.opt_ts = os.getenv(MRCConsts.OPT_TS,
                                 default=MRCConsts.get_opt_ts_default(self.chip_type))
-        self.cli_object.trimming.configure_custom_dwrr_weights()
+        if MRCConsts.DWRR_WEIGHTS_CONFIG != "DEFAULT":
+            self.cli_object.trimming.configure_custom_dwrr_weights()
         self.shaper_value = shaper_value
 
     @pytest.mark.skip(reason="This test is no longer supported on performance setup, due to infra limitation - Contact QA for test results using IXIA")
