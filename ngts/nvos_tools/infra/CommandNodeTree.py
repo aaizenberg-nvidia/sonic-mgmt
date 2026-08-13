@@ -1,4 +1,18 @@
 
+def strip_dangling_quotes(command):
+    """
+    Drop a quote left unbalanced by pruning a command at a placeholder boundary.
+    'nv config lookup "<search-path>"' pruned at '<' yields 'nv config lookup "',
+    which leaves the remote shell waiting for the closing quote and hangs the session.
+    :param  command :   Command string, possibly pruned mid-quote
+    :return         :   Command string with any unbalanced trailing quote removed
+    """
+    for quote in ('"', "'"):
+        if command.count(quote) % 2:
+            command = command.rsplit(quote, 1)[0]
+    return command.strip()
+
+
 class CommandNode:
     def __init__(self):
         self.sub_command = {}
@@ -34,7 +48,7 @@ class CommandNodeTree:
                     continue
             for char in command:
                 if char in prune_cmds:
-                    command = command.split(char)[0]
+                    command = strip_dangling_quotes(command.split(char)[0])
                     break
             if len(command) > 180:
                 command = command[0:170] + "-truncated"

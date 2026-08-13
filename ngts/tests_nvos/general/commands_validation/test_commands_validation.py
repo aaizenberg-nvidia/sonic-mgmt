@@ -5,7 +5,7 @@ import pytest
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.CommandNodeTree import CommandNodeTree
+from ngts.nvos_tools.infra.CommandNodeTree import CommandNodeTree, strip_dangling_quotes
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -263,7 +263,7 @@ def alter_command_list_for_attribute_validation(command_list):
         if '(' in command:
             command = " ".join(command.split('(')[0].split(' ')[:-1])
         if '<' in command:
-            command = command.split('<')[0].strip()
+            command = strip_dangling_quotes(command.split('<')[0])
         if command not in new_command_list:
             new_command_list.append(command)
     return new_command_list
