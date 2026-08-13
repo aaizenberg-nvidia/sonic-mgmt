@@ -281,7 +281,7 @@ def test_gnmi_performance(engines, devices):
             result.append(output)
             if port_description not in str(output):
                 gnmi_clients_without_updates += 1
-        assert gnmi_clients_without_updates == 0, f"{gnmi_clients_without_updates} gnmi clients didn't get updates..{output}"
+        assert gnmi_clients_without_updates == 0, f"{gnmi_clients_without_updates} gnmi clients didn't get updates..{result}"
 
     with allure.step("Show gnmi-server status after all clients torn down - expect no clients"):
         time.sleep(WAIT_AFTER_STOP_SUBSCRIPTION_SEC)
@@ -547,6 +547,7 @@ def test_gnmi_extend_telemetry(random_api, engines, devices):
         component_keys = Tools.DatabaseTool.sonic_db_cli_get_keys(engine=engines.dut, asic="",
                                                                   db_name=DatabaseConst.STATE_DB_NAME,
                                                                   grep_str=GnmiConsts.SYSTEM_COMPONENTS).splitlines()
+        component_keys = [key for key in component_keys if key.startswith(f"{GnmiConsts.SYSTEM_COMPONENTS}|")]
         for component in component_keys:
             component_output = Tools.DatabaseTool.sonic_db_cli_hgetall(engine=engines.dut, asic="",
                                                                        db_name=DatabaseConst.STATE_DB_NAME,
