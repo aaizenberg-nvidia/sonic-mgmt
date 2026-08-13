@@ -143,10 +143,10 @@ class TransceiversConsts:
             transceiver_type='Wolverine2-Arcus2',
             last_release_path=f"{TRANSCEIVERS_FIRMWARES_PATH}44_Wolverine2_arcus2/{TRANSCEIVERS_RELEASE}",
             test_versions_path="/auto/sw_system_project/NVOS_INFRA/verification_files/module_fw/Wolverine2_arcus2/",
-            upgrade_version_name="fw_44_040_02030_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
-            downgrade_version_name="fw_44_040_02009_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
-            upgrade_version_number="44.40.2030",
-            downgrade_version_number="44.40.2009",
+            upgrade_version_name="fw_44_040_02035_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
+            downgrade_version_name="fw_44_040_02030_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
+            upgrade_version_number="44.40.2035",
+            downgrade_version_number="44.40.2030",
             installation_time=285
         )
     }
