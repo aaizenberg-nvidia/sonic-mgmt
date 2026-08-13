@@ -1802,6 +1802,7 @@ class NtpConsts:
     SERVER_FAILED = 'DNS resolution failed'
     USER_CONFIG = 'user-config'
     MULTIPLE_SERVERS_NUMBER = 11
+    SET_SERVERS_LOG_MSG = 'NtpCfg: Set servers'  # hostcfgd syslog line marking NTP server config applied
     CONFIG_TIME_DIFF_THRESHOLD = 2.5  # [sec]
     SHOW_TIME_DIFF_THRESHOLD = 0.5  # [sec]
     SYNCHRONIZE_NEW_LISTEN_TIME = 20  # [sec]
