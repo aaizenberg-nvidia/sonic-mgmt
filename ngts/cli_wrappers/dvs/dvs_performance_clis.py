@@ -47,12 +47,15 @@ class DvsPerformance(PerformanceCommon):
     def get_cmd_for_sdk(self, cmd, env_variables=None):
         """
         Returns:
-        a cmd that is running on the sdk. When env_variables (e.g. SEND_FWS=0 for Simx) is set, adds export.
+        a cmd that is running on the sdk. When env_variables (e.g. SEND_FWS=0 for Simx) is set, prepends them
+        so they are only scoped to this command, not exported into the whole session.
         """
         if env_variables:
-            export_part = " ".join(f"export {v}" for v in env_variables)
-            return f"{export_part} && {cmd}"
-        return cmd
+            sdk_cmd = f"{' '.join(env_variables)} {cmd}"
+        else:
+            sdk_cmd = cmd
+        self._log_sdk_cmd(sdk_cmd)
+        return sdk_cmd
 
     def update_player_ports(self):
         self.connected_ports, self.unconnected_ports = self.get_player_ports()
@@ -377,8 +380,9 @@ class DvsPerformance(PerformanceCommon):
         """
         bonus_ports_to_remove = self.get_bonus_ports_to_remove()
         ports_dump = self.execute_cmd("sx_api_ports_dump.py")
-        self.connected_ports, self.unconnected_ports = self._parse_ports_dump(
-            ports_dump, bonus_ports_to_remove
+        self._ports_dump_rows = self._parse_ports_dump_rows(ports_dump)
+        self.connected_ports, self.unconnected_ports = self._classify_ports_dump_rows(
+            self._ports_dump_rows, bonus_ports_to_remove
         )
         player_ports = {"connected_ports": self.connected_ports,
                         "unconnected_ports": self.unconnected_ports}
@@ -477,6 +481,29 @@ class DvsPerformance(PerformanceCommon):
             raise TestIssue(f"Invalid chip type: {chip_type}")
 
         return bonus_ports_map[chip_type]
+
+    def get_bonus_ports(self):
+        """Get the ASIC bonus ports of this player.
+
+        These are the trailing ports of the dump that get_player_ports excludes from testing, and the ones
+        the SDK turns into extra traffic generators when a burst is configured. Chips without bonus ports
+        (SPC1/2/3) yield an empty list.
+
+        Reuses the dump rows get_player_ports already fetched when available, since bonus-port identity is
+        a static hardware property that does not change within a test; falls back to a fresh dump otherwise.
+
+        Returns:
+            list: Bonus ports as SDK logical port numbers (int), in dump order.
+        """
+        bonus_ports_count = self.get_bonus_ports_to_remove()
+        if not bonus_ports_count:
+            return []
+        port_status_list = getattr(self, "_ports_dump_rows", None)
+        if port_status_list is None:
+            port_status_list = self._parse_ports_dump_rows(self.execute_cmd("sx_api_ports_dump.py"))
+        bonus_ports = [int(log_port, 16) for log_port, _, _ in port_status_list[-bonus_ports_count:]]
+        logging.info(f"Bonus ports on {self.dut_alias}: {self.get_sdk_ports(bonus_ports)}")
+        return bonus_ports
 
     def get_base_ports(self):
         """

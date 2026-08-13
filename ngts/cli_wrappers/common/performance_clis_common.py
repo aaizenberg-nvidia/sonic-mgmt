@@ -5,9 +5,11 @@ import re
 import json
 import fcntl
 import pandas as pd
+from typing import Optional
 from retry import retry
 from ngts.constants.constants import BugHandlerConst
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
+from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
 from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
                                                      get_cli_port_selection_options)
 from ngts.nvos_tools.infra.FilesTool import FilesTool
@@ -120,6 +122,10 @@ class PerformanceCommon:
         This method should return a cmd that is running on the sdk per OS
         """
         raise NotImplementedError
+
+    def _log_sdk_cmd(self, sdk_cmd):
+        """Log the final per-OS command built by get_cmd_for_sdk, right before it runs."""
+        logging.info(f"SDK command on {self.dut_alias}: {sdk_cmd}")
 
     @staticmethod
     def get_controllers_info_dicts_list(sensors_output):
@@ -309,6 +315,29 @@ class PerformanceCommon:
         """
         pass
 
+    @staticmethod
+    def _parse_ports_dump_rows(ports_dump):
+        """Extract (log_port, oper_state, module_state) from every row of an sx_api_ports_dump.py table.
+
+        The rows keep the order of the dump, which matters because the ASIC bonus ports are identified by
+        being the trailing rows.
+
+        Args:
+            ports_dump: Raw string output of sx_api_ports_dump.py.
+
+        Returns:
+            list: One (log_port_hex, oper_state, module_state) tuple per port, in dump order.
+        """
+        _log_port_hex = r"\|\s+(0x[\da-fA-F]+)\|"
+        _four_numeric_columns = r"(?:\s+\d+\|){4}"
+        _two_skip_columns = r"(?:\s+\S+\|){2}"
+        _oper_state = r"\s+(\S+)\|"
+        _module_state = r"\s+(\S+)\|"
+        return re.findall(
+            _log_port_hex + _four_numeric_columns + _two_skip_columns + _oper_state + _module_state,
+            ports_dump,
+        )
+
     def execute_cmd(self, cmd, print_output=False):
         """
         All functions on the inheritance classes (DVS, SONiC, Cumulus) will be executed
@@ -329,30 +358,20 @@ class PerformanceCommon:
             raise TestIssue(msg=error_msg) from e
 
     @staticmethod
-    def _parse_ports_dump(ports_dump, bonus_ports_to_remove=0):
-        """Parse sx_api_ports_dump.py output and classify ports as connected/unconnected.
+    def _classify_ports_dump_rows(port_status_list, bonus_ports_to_remove=0):
+        """Classify already-parsed ports-dump rows as connected/unconnected.
 
-        Extracts (log_port, oper_state, module_state) from each row of the dump table.
         Ports with module_state == "PLUGGED" are connected; all others are unconnected.
         ASIC-specific bonus ports are trimmed from the tail of the list.
 
         Args:
-            ports_dump: Raw string output of sx_api_ports_dump.py.
+            port_status_list: Rows as returned by _parse_ports_dump_rows, in dump order.
             bonus_ports_to_remove: Number of trailing rows to discard (management/bonus ports).
 
         Returns:
             tuple: (sorted_connected, sorted_unconnected) — each a sorted list of
                    SDK logical port numbers as ints.
         """
-        _log_port_hex = r"\|\s+(0x[\da-fA-F]+)\|"
-        _four_numeric_columns = r"(?:\s+\d+\|){4}"
-        _two_skip_columns = r"(?:\s+\S+\|){2}"
-        _oper_state = r"\s+(\S+)\|"
-        _module_state = r"\s+(\S+)\|"
-        port_status_list = re.findall(
-            _log_port_hex + _four_numeric_columns + _two_skip_columns + _oper_state + _module_state,
-            ports_dump,
-        )
         if bonus_ports_to_remove > 0:
             port_status_list = port_status_list[:-bonus_ports_to_remove]
         connected, unconnected = [], []
@@ -364,6 +383,27 @@ class PerformanceCommon:
                 unconnected.append(log_port_int)
         return sorted(connected), sorted(unconnected)
 
+    @classmethod
+    def _parse_ports_dump(cls, ports_dump, bonus_ports_to_remove=0):
+        """Parse sx_api_ports_dump.py output and classify ports as connected/unconnected.
+
+        Args:
+            ports_dump: Raw string output of sx_api_ports_dump.py.
+            bonus_ports_to_remove: Number of trailing rows to discard (management/bonus ports).
+
+        Returns:
+            tuple: (sorted_connected, sorted_unconnected) — each a sorted list of
+                   SDK logical port numbers as ints.
+        """
+        return cls._classify_ports_dump_rows(cls._parse_ports_dump_rows(ports_dump), bonus_ports_to_remove)
+
+    def _write_json_to_remote(self, local_path, data, dst_dut_dir, dest_file):
+        """Write `data` as local JSON at `local_path` and copy it to `dest_file` on the switch."""
+        with open(local_path, "w") as f:
+            json.dump(data, f, indent=4)
+        self.engine.copy_file(source_file=local_path, file_system=dst_dut_dir, dest_file=dest_file,
+                              overwrite_file=True, verify_file=False, direction='put')
+
     def _save_player_ports(self, player_ports, dst_dut_dir="/tmp"):
         """Save player ports dict to local JSON and copy to the switch.
 
@@ -373,11 +413,8 @@ class PerformanceCommon:
         """
         get_ports_output = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
                                         f"{self.dut_alias}_ports.json")
-        with open(get_ports_output, "w") as f:
-            json.dump(player_ports, f, indent=4)
         self.execute_cmd(f"sudo rm -f {dst_dut_dir}/tg_ports.json")
-        self.engine.copy_file(source_file=get_ports_output, file_system=dst_dut_dir, dest_file="tg_ports.json",
-                              overwrite_file=True, verify_file=False, direction='put')
+        self._write_json_to_remote(get_ports_output, player_ports, dst_dut_dir, "tg_ports.json")
 
     def get_port_mapping_df(self):
         sdk_port_to_local_port_mapping = {}
@@ -390,12 +427,48 @@ class PerformanceCommon:
             sdk_port_speed_mapping[sdk_port] = int(speed)
         return sdk_port_to_local_port_mapping, sdk_port_speed_mapping
 
+    def get_burst_config_path(self, dst_dut_dir="/tmp"):
+        """Path of the burst configuration file on the player, as passed to the SDK."""
+        return os.path.join(dst_dut_dir, BurstConfigConsts.BURST_CONFIG_FILE_NAME)
+
+    def deploy_burst_config(self, burst_config, dst_dut_dir="/tmp"):
+        """Write the burst configuration of this player and copy it to the switch.
+
+        The flood egress ports are resolved per player, since each traffic generator has its own logical
+        port ids, and are the ports facing the DUT so that the bonus ports burst into it.
+
+        Args:
+            burst_config: BurstConfig of the running test scenario.
+            dst_dut_dir: Remote directory for the burst configuration file (default /tmp).
+
+        Returns:
+            str: Path of the burst configuration file on the switch.
+        """
+        sdk_burst_config = burst_config.to_sdk_json(self.get_sdk_ports(self.get_dut_ports()))
+        local_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                  f"{self.dut_alias}_{BurstConfigConsts.BURST_CONFIG_FILE_NAME}")
+        remote_path = self.get_burst_config_path(dst_dut_dir)
+        logging.info(f"Copy burst configuration of {self.dut_alias} from {local_path} to "
+                     f"{self.engine.ip}:{remote_path}: {sdk_burst_config}")
+        self._write_json_to_remote(local_path, sdk_burst_config, dst_dut_dir, BurstConfigConsts.BURST_CONFIG_FILE_NAME)
+        logging.info(f"Burst configuration of {self.dut_alias} is in place at {self.engine.ip}:{remote_path}, "
+                     f"the SDK will read it from {PerfConsts.BURST_CONFIG_FILE_PATH_ENV}")
+        return remote_path
+
     @retry(exceptions=TestIssue, tries=2, delay=2)
-    def configure_mloops(self, validate_mloops=True, is_simx=False):
+    def configure_mloops(self, validate_mloops=True, is_simx=False, burst_config: Optional[BurstConfig] = None):
         try:
             logging.info(f"Configure Mloop on {self.dut_alias}")
             self.logrotate("rsyslog")
             env_variables = [f"{PerfConsts.SEND_FWS_ENV}={'false' if is_simx else 'true'}"]
+            if burst_config:
+                # The file itself is deployed before this step, so a copy failure is reported as such instead of
+                # as a mloop configuration failure, and the retry of this method does not re-copy it.
+                burst_config_path = self.get_burst_config_path()
+                burst_env_variable = f"{PerfConsts.BURST_CONFIG_FILE_PATH_ENV}={burst_config_path}"
+                logging.info(f"Burst is enabled on {self.dut_alias}, the SDK mloop configuration will read the burst "
+                             f"configuration from {burst_config_path} and turn the bonus ports into burst generators")
+                env_variables.append(burst_env_variable)
             configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
             self.execute_cmd(self.get_cmd_for_sdk(configure_mloops_cmd, env_variables=env_variables))
             if validate_mloops:
@@ -508,12 +581,16 @@ class PerformanceCommon:
                             f"The file may not exist on the DUT at {source_path}.")
 
     @retry(exceptions=TestIssue, tries=2, delay=2)
-    def stop_traffic(self):
+    def stop_traffic(self, burst_config=None):
         logging.info(f"Remove Mloop configuration from {self.dut_alias}")
         remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
         self.logrotate("rsyslog")
+        # The burst configuration must be pointed at on teardown as well, otherwise the SDK leaves the
+        # policers and ACLs it bound to the bonus ports behind for every following test on this player.
+        env_variables = [f"{PerfConsts.BURST_CONFIG_FILE_PATH_ENV}={self.get_burst_config_path()}"] \
+            if burst_config else []
         try:
-            self.execute_cmd(self.get_cmd_for_sdk(remove_mloops_cmd))
+            self.execute_cmd(self.get_cmd_for_sdk(remove_mloops_cmd, env_variables=env_variables))
         except Exception as e:
             logging.error(f"Error stopping traffic: {e}")
             raise TestIssue(msg=f"Error stopping traffic: {type(e).__name__}: {e}") from e

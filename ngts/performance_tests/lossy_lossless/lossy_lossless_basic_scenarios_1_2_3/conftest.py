@@ -70,7 +70,8 @@ def set_allure_lossy_lossless_title(request, scenario):
     scenario_names_dict = {"lossy_lossless_scenario_1": 'All lossless test',
                            "lossy_lossless_scenario_2": 'All lossy test',
                            "lossy_lossless_scenario_3a": '50% lossless traffic, 50% lossy traffic',
-                           "lossy_lossless_scenario_3b": '75% lossless traffic, 25% lossy traffic'}
+                           "lossy_lossless_scenario_3b": '75% lossless traffic, 25% lossy traffic',
+                           "lossy_lossless_scenario_1_burst": 'All lossless test, with a burst from the bonus ports'}
 
     test_name = get_perf_test_name(request)
     test_name_with_scenario = re.sub(r'\[.*?\]', test_name, f"- Scenario {scenario}: {scenario_names_dict[scenario]}")

@@ -80,6 +80,7 @@ class SonicPerformanceCli(PerformanceCommon):
         docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
         variables = " ".join(env_variables)
         new_cmd = f"{docker_exec_syncd_cmd} '{PerfConsts.EXPORT_PYTHONPATH} {variables} && {cmd}'"
+        self._log_sdk_cmd(new_cmd)
         return new_cmd
 
     def get_sensors_data(self):
@@ -384,8 +385,10 @@ class SonicPerformanceCli(PerformanceCommon):
         return {'connected_ports': self.connected_ports,
                 'unconnected_ports': self.unconnected_ports}
 
-    def configure_mloops(self, validate_mloops=True, is_simx=False):
+    def configure_mloops(self, validate_mloops=True, is_simx=False, burst_config=None):
         logging.info(f"Configure Mloop on {self.dut_alias}")
+        if burst_config:
+            raise NotImplementedError(f"Bonus port burst is not supported on {self.dut_alias}")
         self.update_mloops_conf_on_syncd()
         self.execute_cmd(self.get_cmd_for_sdk(f"python3 {PerfConsts.DISABLE_MAC_SCRIPT}"))
         self.cli_obj.mac.clear_fdb()

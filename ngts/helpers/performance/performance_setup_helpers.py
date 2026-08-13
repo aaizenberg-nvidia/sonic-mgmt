@@ -368,16 +368,42 @@ def allure_attach_performance_conf_context(players, conf_args, attach_dut_applie
         logger.info("allure_attach_performance_conf_context: skip DUT tmp.yaml (%s)", exc)
 
 
-def configure_mloops(players, validate_mloops=True, is_simx=False,
+def deploy_burst_config(players, burst_config, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+                        step="basic_test_configuration - deploy_burst_config", parallel_run=False):
+    """Copy the burst configuration to the traffic generators.
+
+    Runs before configure_mloops, which only exports the path of the file that this deploys, so that the
+    SDK finds the configuration already in place when the mloop configuration reads it.
+
+    Args:
+        players: The setup players.
+        burst_config: BurstConfig of the running test scenario.
+        players_aliases: Player aliases to deploy the burst configuration to. The scenario supplies them so
+            it can burst on its own set of traffic generators (default the setup's traffic generators).
+        step: Allure step name.
+        parallel_run: Deploy to all players concurrently when True.
+    """
+    if parallel_run:
+        call_performance_function_with_threads(players, players_aliases=players_aliases,
+                                               action="deploy burst configuration",
+                                               performance_clis_function_name="deploy_burst_config",
+                                               performance_clis_function_args=(burst_config,), step=step)
+    else:
+        for player_alias in players_aliases:
+            players[player_alias]['cli'].performance.deploy_burst_config(burst_config)
+
+
+def configure_mloops(players, validate_mloops=True, is_simx=False, burst_config=None,
                      step="basic_test_configuration - configure_mloops", parallel_run=True):
     if parallel_run:
         call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
                                                action="configure mloops",
                                                performance_clis_function_name="configure_mloops",
-                                               performance_clis_function_args=(validate_mloops, is_simx), step=step)
+                                               performance_clis_function_args=(validate_mloops, is_simx, burst_config),
+                                               step=step)
     else:
         for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
-            players[player_alias]['cli'].performance.configure_mloops(validate_mloops, is_simx)
+            players[player_alias]['cli'].performance.configure_mloops(validate_mloops, is_simx, burst_config)
 
 
 def save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
@@ -426,11 +452,11 @@ def attach_json_traffic_to_allure(players, tg_players_aliases, traffic_jsons):
         attach_json_to_allure(traffic_json_path, f'Traffic JSON configuration on {alias} - {hostname}')
 
 
-def stop_traffic(players, step="Stopping Traffic - Tear down"):
+def stop_traffic(players, burst_config=None, step="Stopping Traffic - Tear down"):
     call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
                                            action="stop traffic",
                                            performance_clis_function_name="stop_traffic",
-                                           performance_clis_function_args=(),
+                                           performance_clis_function_args=(burst_config,),
                                            step=step)
 
 

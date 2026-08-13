@@ -504,8 +504,10 @@ class NvuePerformanceCli(PerformanceCommon):
             return set()
         return get_resolved_excluded_dut_ports()
 
-    def configure_mloops(self, validate_mloops=True, is_simx=False):
-        super().configure_mloops(validate_mloops=validate_mloops, is_simx=is_simx)
+    def configure_mloops(self, validate_mloops=True, is_simx=False, burst_config=None):
+        if burst_config:
+            raise NotImplementedError(f"Bonus port burst is not supported on {self.dut_alias}")
+        super().configure_mloops(validate_mloops=validate_mloops, is_simx=is_simx, burst_config=burst_config)
         if validate_mloops:
             # TODO: validate oper-up wait after mloop config on SPC6 SRv6 (may be too strict for mloop ports)
             self.wait_for_all_swp_ports_oper_up()
@@ -922,7 +924,9 @@ class NvuePerformanceCli(PerformanceCommon):
     def get_cmd_for_sdk(self, cmd, env_variables=[]):
         variables = "sudo env "
         variables += " ".join(env_variables)
-        return variables + ' ' + Cl_Consts.CL_PYTHON_PATH + ' ' + cmd
+        sdk_cmd = variables + ' ' + Cl_Consts.CL_PYTHON_PATH + ' ' + cmd
+        self._log_sdk_cmd(sdk_cmd)
+        return sdk_cmd
 
     def run_customer_examples_on_sdk(self, example_name):
         """

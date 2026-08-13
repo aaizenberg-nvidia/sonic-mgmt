@@ -5,12 +5,15 @@ import allure
 import os
 import logging
 import time
+from typing import Optional
 from datetime import datetime
-from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, stop_traffic, unsplit_all_ports,
-                                                                get_is_simx, _build_default_port_group_df)
+from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, deploy_burst_config, stop_traffic,
+                                                                unsplit_all_ports, get_is_simx,
+                                                                _build_default_port_group_df)
 from ngts.helpers.performance.Performance_log_print import print_players_logs, remove_players_logs
 from ngts.constants.constants import PytestConst
 from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
+from ngts.helpers.performance.burst_config import BurstConfig
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
@@ -123,17 +126,32 @@ def is_ipv6(request):
     return False
 
 
+@pytest.fixture(scope="function")
+def burst_config():
+    """No bonus port burst by default.
+
+    Bonus port burst is opt-in per test suite: a suite that supports it overrides this fixture and builds
+    the configuration from the burst its scenario declares. Keeping the default here lets
+    basic_test_configuration stay burst aware for every performance test without each of them declaring one.
+    """
+    return None
+
+
 @pytest.fixture(scope='function', autouse=True)
-def basic_test_configuration(request, players, basic_setup_configuration):
+def basic_test_configuration(request, players, basic_setup_configuration, burst_config: Optional[BurstConfig]):
+    mloops_configured = False
     try:
+        if burst_config:
+            with allure.step('Copy the burst configuration to the Traffic Generators'):
+                deploy_burst_config(players, burst_config, parallel_run=False)
         with allure.step('Configure Mloops on Traffic Generators'):
-            configure_mloops(players, is_simx=get_is_simx(players))
+            configure_mloops(players, is_simx=get_is_simx(players), burst_config=burst_config)
+            mloops_configured = True
         yield
-        with allure.step('Stop Traffic on Traffic Generators'):
-            stop_traffic(players)
-    except Exception as e:
-        raise e
     finally:
+        if mloops_configured:
+            with allure.step('Stop Traffic on Traffic Generators'):
+                stop_traffic(players, burst_config=burst_config)
         test_was_skipped = request.node.rep_call.skipped if hasattr(request.node, 'rep_call') else False
         if not test_was_skipped:
             with allure.step(f"Attaching Players Logs to Allure"):
