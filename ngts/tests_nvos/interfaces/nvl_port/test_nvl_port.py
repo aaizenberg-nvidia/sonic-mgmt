@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from retry.api import retry_call
 from typing import Any
 import logging
 import random
 import pytest
-import math
 import time
 import re
 
@@ -66,7 +64,7 @@ from ngts.ngts_types import DevicesT
 
 from .helpers import (
     skip_if_fec_measure_not_supported,
-    validate_ports_state_and_speed,
+    wait_for_ports_state_and_speed,
     show_interface_and_validate,
     skip_if_no_access_links,
     skip_if_no_trunk_links,
@@ -753,9 +751,6 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
         all_ports = Port(group_all_ports)
 
     speed = IbInterfaceConsts.XDR_SLOW_SPEED
-    link_up_timeout = InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED
-    link_up_retry_delay = 15
-    link_up_retry_tries = math.ceil(link_up_timeout / link_up_retry_delay) + 1
 
     try:
         with allure.step(f"Test speed {speed}"):
@@ -763,13 +758,7 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
                                          ask_for_confirmation=True).verify_result()
 
             with allure.step(f"Validate xdr slow speed on ports"):
-                retry_call(
-                    validate_ports_state_and_speed,
-                    [speed, port_names, prefix],
-                    exceptions=AssertionError,
-                    tries=link_up_retry_tries,
-                    delay=link_up_retry_delay,
-                )
+                wait_for_ports_state_and_speed(devices, speed, port_names, prefix)
                 time.sleep(30)  # GNMI 30 seconds pulling interval
 
     # Unset port speed and verify default (device-specific: access_port_speed or nvl_trunk_port_speed) is restored
@@ -780,13 +769,7 @@ def _set_unset_interface_xdr_slow_speed(engines, devices, test_api, setup_name, 
             with allure.step(f"Validate unset xdr slow speed on ports"):
                 # Select correct default speed based on port type (access vs trunk)
                 expected_default_speed = devices.dut.access_port_speed if prefix == 'acp' else devices.dut.nvl_trunk_port_speed
-                retry_call(
-                    validate_ports_state_and_speed,
-                    [expected_default_speed, port_names, prefix],
-                    exceptions=AssertionError,
-                    tries=link_up_retry_tries,
-                    delay=link_up_retry_delay,
-                )
+                wait_for_ports_state_and_speed(devices, expected_default_speed, port_names, prefix)
 
         with allure.step('verify that client received the xdr speed in the existing streaming session'):
             out, err = client.close_session_and_get_out_and_err(session)
@@ -1148,8 +1131,7 @@ def test_nvl_speed_configuration(engines, devices, random_api, has_loopbox, stan
             ).verify_result()
 
         with allure_step(f"Wait and verify ALL access ports reached speed {new_speed}"):
-            retry_call(validate_ports_state_and_speed, [new_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=26, delay=15)
+            wait_for_ports_state_and_speed(devices, new_speed, port_names, 'acp')
             logger.info(f"✓ All access ports reached speed {new_speed}")
 
         with allure_step("Verify supported-lanes matches device configuration"):
@@ -1194,8 +1176,7 @@ def test_nvl_speed_configuration(engines, devices, random_api, has_loopbox, stan
             logger.info(f"Unset speed on {access_ports_range}")
 
             default_speed = devices.dut.access_port_speed if hasattr(devices.dut, 'access_port_speed') else original_speed
-            retry_call(validate_ports_state_and_speed, [default_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=26, delay=15)
+            wait_for_ports_state_and_speed(devices, default_speed, port_names, 'acp')
             logger.info(f"✓ All access ports restored to {default_speed}")
 
 
@@ -1220,7 +1201,7 @@ def test_nvl_200g_simplex_lanes_validation(engines, devices, random_api, has_loo
     1. Skip if no loopbox or if ASIC is QTM3/NVL5
     2. Get all access ports and create range (e.g., acp1-72 or acp1-288)
     3. Configure ALL access ports to 200G using range command
-    4. Wait for link toggle using retry validation (6 tries × 30 sec = 180 sec max)
+    4. Wait for link toggle using retry validation (device acp link-up budget)
     5. Select ONE random access port and verify supported-lanes includes "1X"
     6. Cleanup: unset speed on range, wait for restoration
     """
@@ -1255,8 +1236,7 @@ def test_nvl_200g_simplex_lanes_validation(engines, devices, random_api, has_loo
         with allure_step("Wait for link toggle using retry validation"):
             # Use same pattern as test_interface_xdr_slow_speed_access_ports
             port_names = devices.dut.nvl_access_ports_list
-            retry_call(validate_ports_state_and_speed, ['200G', port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
+            wait_for_ports_state_and_speed(devices, '200G', port_names, 'acp')
             logger.info(f"✓ All access ports successfully transitioned to 200G")
 
         with allure_step("Verify supported-lanes includes 1X for 200G (simplex mode)"):
@@ -1296,6 +1276,5 @@ def test_nvl_200g_simplex_lanes_validation(engines, devices, random_api, has_loo
             # Wait for restoration using retry validation
             port_names = devices.dut.nvl_access_ports_list
             default_speed = devices.dut.access_port_speed if hasattr(devices.dut, 'access_port_speed') else '400G'
-            retry_call(validate_ports_state_and_speed, [default_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
+            wait_for_ports_state_and_speed(devices, default_speed, port_names, 'acp')
             logger.info(f"✓ All access ports restored to {default_speed}")

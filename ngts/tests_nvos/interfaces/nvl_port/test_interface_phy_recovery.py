@@ -22,7 +22,7 @@ from ngts.tests_nvos.interfaces.nvl_port.helpers import (
     select_random_nvl_port_name,
     skip_if_no_access_links,
     skip_if_no_trunk_links,
-    validate_ports_state
+    wait_for_ports_state
 )
 from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
     PHY_RECOVERY_HIGHER_TIMEOUT_MAX,
@@ -105,7 +105,7 @@ def test_phy_recovery_counters(engines, devices, random_api):
             verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, out, err)
             verify_msg_in_out_or_err(f'{random_counter}', out)
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
@@ -156,11 +156,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 ask_for_confirmation=True,
             ).verify_result()
             time.sleep(30)
-            retry_call(
-                validate_ports_state,
-                [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=26, delay=15
-            )
+            wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
             retry_call(
                 _verify_attribute,
                 [selected_port, preset_mode_path, PhyRecoveryConsts.PRESENT_MODE, PhyRecoveryConsts.FULL_DUPLEX],
@@ -183,11 +179,7 @@ def test_phy_recovery_attributes(devices, random_api):
             ).verify_result()
             with allure.step("Verify value did not change"):
                 time.sleep(30)
-                retry_call(
-                    validate_ports_state,
-                    [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                    exceptions=AssertionError, tries=26, delay=15
-                )
+                wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
                 retry_call(
                     _verify_attribute,
                     [selected_port, random_path_list, random_attribute, str(current_value)],
@@ -201,11 +193,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 apply=True, ask_for_confirmation=True,
             ).verify_result()
             time.sleep(30)
-            retry_call(
-                validate_ports_state,
-                [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=26, delay=15
-            )
+            wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
             retry_call(
                 _verify_attribute,
                 [selected_port, random_path_list, random_attribute, str(new_higher_value)],
@@ -294,7 +282,7 @@ def test_phy_recovery_bad_flow(devices, random_api):
                     )
                     phy_recovery_obj.set(PhyRecoveryConsts.SerdesEQ.TIMEOUT, -1, expected_str=expected_str).verify_result()
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
@@ -325,7 +313,7 @@ def test_set_fae_phy_recovery_trunk_ports(devices, random_api):
             port_name=port_name,
         )
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
@@ -359,7 +347,7 @@ def test_set_fae_phy_recovery_access_ports(devices, random_api, standalone_syste
             setup_name=setup_name,
         )
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 # ==================== Mode / timeout (PhyRecoveryTestProfile: NVL5 vs NVL6) ====================

@@ -1,3 +1,4 @@
+import math
 import random
 import re
 import pytest
@@ -60,6 +61,32 @@ def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, sta
     actual_ports = [port.name for port in Port.get_list_of_ports(port_requirements_object=port_requirements) if port.name.startswith(prefix)]
 
     ValidationTool.validate_subset_in_superset(expected_ports, actual_ports).verify_result()
+
+
+def acp_link_up_timeout(devices) -> int:
+    """Device budget for an acp port to link up (Rosalind/NVL6: 375s, Juliet/NVL5: 30s)."""
+    return devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP,
+                                                        nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT)
+
+
+def group_link_up_timeout(devices, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP) -> int:
+    """Budget for a port group to reach state. Only acp ports going up link up slowly."""
+    if prefix != 'acp' or state != nv_consts.NvosConsts.LINK_STATE_UP:
+        return nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT
+    return acp_link_up_timeout(devices)
+
+
+def wait_for_ports_state_and_speed(devices, speed, expected_ports: list, prefix: str, delay: int = 15):
+    """Wait for ports to reach speed and up state, within the port type's link-up budget."""
+    retry_call(validate_ports_state_and_speed, [speed, expected_ports, prefix], exceptions=AssertionError,
+               tries=math.ceil(group_link_up_timeout(devices, prefix) / delay) + 1, delay=delay)
+
+
+def wait_for_ports_state(devices, expected_ports: list, prefix: str,
+                         state=nv_consts.NvosConsts.LINK_STATE_UP, delay: int = 15):
+    """Wait for ports to reach state, within the same budget as wait_for_ports_state_and_speed."""
+    retry_call(validate_ports_state, [expected_ports, prefix, state], exceptions=AssertionError,
+               tries=math.ceil(group_link_up_timeout(devices, prefix, state) / delay) + 1, delay=delay)
 
 
 def validate_ports_state(expected_ports: list, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP):
@@ -237,19 +264,13 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
             ask_for_confirmation=True, apply=True
         ).verify_result()
         prefix = re.match(r'[a-zA-Z]+', port_names[0]).group() if port_names else 'acp'
-        retry_call(
-            validate_ports_state_and_speed,
-            [new_speed, port_names, prefix],
-            exceptions=AssertionError,
-            tries=26,
-            delay=15
-        )
+        wait_for_ports_state_and_speed(devices, new_speed, port_names, prefix)
 
     logger.info(f"Speed changed from {original_speed} to {new_speed}")
     return (new_speed, port_obj, original_speed, port_names)
 
 
-def restore_nvl_speed(speed_info):
+def restore_nvl_speed(devices, speed_info):
     """Restore NVL port speed to default."""
     if speed_info is None:
         return
@@ -259,5 +280,4 @@ def restore_nvl_speed(speed_info):
         ports_obj.interface.link.unset(
             op_param='speed', apply=True, ask_for_confirmation=True
         ).verify_result()
-        retry_call(validate_ports_state_and_speed, [default_speed, port_names, prefix],
-                   exceptions=AssertionError, tries=26, delay=15)
+        wait_for_ports_state_and_speed(devices, default_speed, port_names, prefix)

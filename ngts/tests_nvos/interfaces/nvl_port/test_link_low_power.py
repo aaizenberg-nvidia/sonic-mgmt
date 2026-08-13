@@ -77,6 +77,7 @@ def _get_low_power_output(port_obj: Port) -> LowPowerStateOutputT:
 
 
 def low_power_state_case(
+    devices: DevicesT,
     ports_to_set: Optional[list[tuple[Port, str]]] = None,
     expected_values: Optional[list[tuple[Port, str, str]]] = None
 ) -> None:
@@ -90,7 +91,9 @@ def low_power_state_case(
                 if port.name in seen:
                     continue
                 seen.add(port.name)
-                port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+                port.interface.wait_for_port_state(
+                    NvosConsts.LINK_STATE_UP,
+                    timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
     if expected_values is not None:
         with allure.step("Verify link diagnostic"):
             ports: list[Port] = [port for port, _ in ports_to_set]
@@ -123,15 +126,18 @@ def test_link_low_power(devices: DevicesT, linked_ports_objs: tuple[Port, Port],
     TestToolkit.tested_api = test_api
     with allure.step("Verify default low power states on both ports"):
         low_power_state_case(
+            devices,
             expected_values=[((port_obj, NvosConst.DISABLED, NvosConst.DISABLED) for port_obj in linked_ports_objs)]
         )
     with allure.step("Verify low power states on both ports after setting to enabled"):
         low_power_state_case(
+            devices,
             ports_to_set=[((port_obj, NvosConst.ENABLED) for port_obj in linked_ports_objs)],
             expected_values=[((port_obj, NvosConst.ENABLED, NvosConst.ENABLED) for port_obj in linked_ports_objs)]
         )
     with allure.step("Verify low power states when one port is set to enabled and the other is set to disabled"):
         low_power_state_case(
+            devices,
             ports_to_set=[
                 (linked_ports_objs[0], NvosConst.DISABLED)
             ],
@@ -144,6 +150,7 @@ def test_link_low_power(devices: DevicesT, linked_ports_objs: tuple[Port, Port],
         for port_obj in linked_ports_objs:
             port_obj.interface.link.low_power.unset(apply=True).verify_result()
         low_power_state_case(
+            devices,
             expected_values=[((port_obj, NvosConst.DISABLED, NvosConst.DISABLED) for port_obj in linked_ports_objs)]
         )
 
@@ -209,6 +216,7 @@ def test_link_low_power_fae_params(devices: DevicesT, linked_ports_pair: tuple[s
     fae_low_power_objs: tuple[LowPower, LowPower] = tuple(Fae(port_name=port).port.interface.link.low_power for port in linked_ports_pair)
     with allure.step("Verify low power states on both ports after setting to enabled"):
         low_power_state_case(
+            devices,
             ports_to_set=[((port_obj, NvosConst.ENABLED) for port_obj in linked_ports_objs)],
             expected_values=[((port_obj, NvosConst.ENABLED, NvosConst.ENABLED) for port_obj in linked_ports_objs)]
         )

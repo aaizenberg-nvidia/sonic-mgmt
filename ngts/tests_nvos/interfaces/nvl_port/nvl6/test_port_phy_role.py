@@ -94,6 +94,7 @@ def _verify_role_output(role_output: PhyRoleOutputT | ConstantRoleOutputT, opera
 
 
 def role_case(
+    devices: DevicesT,
     roles_to_set: list[tuple[Fae, PhyRoleConsts.PhyRole | PhyRoleConsts.ConstantRole, str]] | None = None,
     expected_values: list[tuple[Fae, PhyRoleConsts.PhyRole | PhyRoleConsts.ConstantRole, str | list[str], str | list[str]]] | None = None
 ) -> dict[Fae, PhyRolesOutputT] | None:
@@ -110,7 +111,8 @@ def role_case(
                 if fae.port.name in seen:
                     continue
                 seen.add(fae.port.name)
-                fae.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+                fae.port.interface.wait_for_port_state(
+                    NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
     if expected_values is not None:
         roles_outputs: dict[Fae, PhyRolesOutputT] = {}
         with allure.step("Verify link diagnostic"):
@@ -129,9 +131,10 @@ def role_case(
     return roles_outputs
 
 
-def verify_phy_role_default(fae_port_1: Fae, fae_port_2: Fae) -> None:
+def verify_phy_role_default(devices: DevicesT, fae_port_1: Fae, fae_port_2: Fae) -> None:
     with allure.step("Verify default phy-role on both ports"):
         roles_outputs: dict[Fae, PhyRolesOutputT] | None = role_case(
+            devices,
             expected_values=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, [PhyRoleConsts.PhyRole.PRIMARY.value, PhyRoleConsts.PhyRole.SECONDARY.value], PhyRoleConsts.PhyRole.FW_DEFAULT.value),
                 (fae_port_2, PhyRoleConsts.PHY_ROLE, [PhyRoleConsts.PhyRole.PRIMARY.value, PhyRoleConsts.PhyRole.SECONDARY.value], PhyRoleConsts.PhyRole.FW_DEFAULT.value)
@@ -165,9 +168,10 @@ def test_port_phy_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_api: A
     TestToolkit.tested_api = test_api
     fae_port_1, fae_port_2 = fae_objs
     with allure.step("Verify default phy-role and constant-role on both ports"):
-        verify_phy_role_default(fae_port_1, fae_port_2)
+        verify_phy_role_default(devices, fae_port_1, fae_port_2)
     with allure.step("Set first port to primary role"):
         role_case(
+            devices,
             roles_to_set=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.PRIMARY.value)
             ],
@@ -178,6 +182,7 @@ def test_port_phy_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_api: A
         )
     with allure.step("Set first port to secondary role"):
         role_case(
+            devices,
             roles_to_set=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.SECONDARY.value)
             ],
@@ -188,6 +193,7 @@ def test_port_phy_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_api: A
         )
     with allure.step("Set first port to primary and second port to secondary"):
         role_case(
+            devices,
             roles_to_set=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.PRIMARY.value),
                 (fae_port_2, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.SECONDARY.value)
@@ -199,6 +205,7 @@ def test_port_phy_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_api: A
         )
     with allure.step("Set first port to auto role"):
         role_case(
+            devices,
             roles_to_set=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.AUTO.value)
             ],
@@ -210,9 +217,11 @@ def test_port_phy_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_api: A
     with allure.step("unset both ports"):
         fae_port_1.interface.link.unset(op_param=PhyRoleConsts.PHY_ROLE, apply=True, ask_for_confirmation=True).verify_result()
         fae_port_2.interface.link.unset(op_param=PhyRoleConsts.PHY_ROLE, apply=True, ask_for_confirmation=True).verify_result()
-        fae_port_1.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
-        fae_port_2.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
-        verify_phy_role_default(fae_port_1, fae_port_2)
+        fae_port_1.port.interface.wait_for_port_state(
+            NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
+        fae_port_2.port.interface.wait_for_port_state(
+            NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
+        verify_phy_role_default(devices, fae_port_1, fae_port_2)
 
 
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
@@ -239,8 +248,9 @@ def test_port_constant_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_a
     port_2 = Port.Port(fae_port_2.port.name)
 
     with allure.step("Verify default phy-role and constant-role on both ports"):
-        verify_phy_role_default(fae_port_1, fae_port_2)
+        verify_phy_role_default(devices, fae_port_1, fae_port_2)
         roles_outputs: dict[Fae, PhyRolesOutputT] = role_case(
+            devices,
             expected_values=[
                 (fae_port_1, PhyRoleConsts.CONSTANT_ROLE, PhyRoleConsts.ConstantRole.ENABLED.value, PhyRoleConsts.ConstantRole.ENABLED.value),
                 (fae_port_2, PhyRoleConsts.CONSTANT_ROLE, PhyRoleConsts.ConstantRole.ENABLED.value, PhyRoleConsts.ConstantRole.ENABLED.value)
@@ -252,6 +262,7 @@ def test_port_constant_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_a
     with allure.step("Set first port to auto role and enable constant-role"):
         port_1_expected_operational_role: str = [v for v in PhyRoleConsts.PhyRole.operational() if v != default_port_2[PhyRoleConsts.PHY_ROLE][ConfState.OPERATIONAL]][0]
         role_case(
+            devices,
             roles_to_set=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.AUTO.value),
                 (fae_port_1, PhyRoleConsts.CONSTANT_ROLE, PhyRoleConsts.ConstantRole.ENABLED.value)
@@ -267,8 +278,10 @@ def test_port_constant_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_a
         port_1.interface.link.state.set(NvosConsts.LINK_STATE_DOWN, apply=True, ask_for_confirmation=True).verify_result()
         port_1.interface.wait_for_port_state(NvosConsts.LINK_STATE_DOWN).verify_result()
         port_1.interface.link.state.set(NvosConsts.LINK_STATE_UP, apply=True, ask_for_confirmation=True).verify_result()
-        port_1.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+        port_1.interface.wait_for_port_state(
+            NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
         role_case(
+            devices,
             expected_values=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, port_1_expected_operational_role, PhyRoleConsts.PhyRole.AUTO.value),
                 (fae_port_1, PhyRoleConsts.CONSTANT_ROLE, PhyRoleConsts.ConstantRole.ENABLED.value, PhyRoleConsts.ConstantRole.ENABLED.value),
@@ -279,9 +292,12 @@ def test_port_constant_role(devices: DevicesT, fae_objs: tuple[Fae, Fae], test_a
     with allure.step("Unset constant-role"):
         fae_port_1.interface.link.unset(op_param=PhyRoleConsts.CONSTANT_ROLE, apply=True, ask_for_confirmation=True).verify_result()
         fae_port_2.interface.link.unset(op_param=PhyRoleConsts.CONSTANT_ROLE, apply=True, ask_for_confirmation=True).verify_result()
-        port_1.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
-        port_2.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+        port_1.interface.wait_for_port_state(
+            NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
+        port_2.interface.wait_for_port_state(
+            NvosConsts.LINK_STATE_UP, timeout=nvl_helpers.acp_link_up_timeout(devices)).verify_result()
         role_case(
+            devices,
             expected_values=[
                 (fae_port_1, PhyRoleConsts.PHY_ROLE, port_1_expected_operational_role, PhyRoleConsts.PhyRole.AUTO.value),
                 (fae_port_1, PhyRoleConsts.CONSTANT_ROLE, PhyRoleConsts.ConstantRole.ENABLED.value, PhyRoleConsts.ConstantRole.ENABLED.value),
