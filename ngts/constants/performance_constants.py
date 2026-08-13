@@ -769,6 +769,10 @@ class PortMappingOptionsConsts:
     EGRESS_SEQUENTIAL_OPTION = 6
 
 
+EGRESS_PORT_GROUP_NAME = "egress_ports"
+INGRESS_PORT_GROUP_NAME = "ingress_ports"
+
+
 class MRCConsts:
     # Cumulus SRv6 scheduler configuration:
     # - Select one entry from CUMULUS_DWRR_PROFILES with CUMULUS_DWRR_PROFILE.
@@ -883,8 +887,8 @@ class MRCConsts:
     LATENCY_ALLOWED_DEVIATION = 59
     HEADROOM_ALLOWED_DEVIATION = 0.15
     MRC_DATA_PACKET_SIZE = 4234
-    EGRESS_PORT_GROUP_NAME = "egress_ports"
-    INGRESS_PORT_GROUP_NAME = "ingress_ports"
+    EGRESS_PORT_GROUP_NAME = EGRESS_PORT_GROUP_NAME
+    INGRESS_PORT_GROUP_NAME = INGRESS_PORT_GROUP_NAME
     BISECTION_DOWNSTREAM_PORT_GROUP_NAME = "bisection_downstream"
     BISECTION_UPSTREAM_PORT_GROUP_NAME = "bisection_upstream"
     LEAF_ROUND_ROBIN_UPSTREAM_PORT_GROUP_NAME = "round_robin_upstream"
@@ -970,22 +974,45 @@ class MRCConsts:
         "SPC4": SPC4_POOL_SIZE_CELLS,
         "SPC6": SPC6_POOL_SIZE_CELLS
     }
-    FULL_MRC_DATA_PACKET_SIZE = 23
-    HALF_MRC_DATA_PACKET_SIZE = FULL_MRC_DATA_PACKET_SIZE / 2
-    MANY_TO_ONE_MAX_QUEUE_BUILDUP = FULL_MRC_DATA_PACKET_SIZE * 260
+    FULL_MRC_DATA_PACKET_SIZE_BY_CHIP_TYPE = {
+        "SPC4": 23,
+        "SPC5": 23,
+        "SPC6": 29
+    }
+    HALF_MRC_DATA_PACKET_SIZE_BY_CHIP_TYPE = {
+        chip: size / 2 for chip, size in FULL_MRC_DATA_PACKET_SIZE_BY_CHIP_TYPE.items()
+    }
+    MANY_TO_ONE_MAX_QUEUE_BUILDUP_BY_CHIP_TYPE = {
+        chip: size * 260 for chip, size in FULL_MRC_DATA_PACKET_SIZE_BY_CHIP_TYPE.items()
+    }
     MAX_PACKETS_IN_QUEUE_LEAF = 55
     MAX_PACKETS_IN_QUEUE_SPINE = 65
     MANY_TO_FEW_MAX_QUEUE_BUILDUP_LEAF = (MAX_PACKETS_IN_QUEUE_LEAF * MRC_DATA_PACKET_SIZE) / BUFFER_CELL_SIZE
     MANY_TO_FEW_MAX_QUEUE_BUILDUP_SPINE = (MAX_PACKETS_IN_QUEUE_SPINE * MRC_DATA_PACKET_SIZE) / BUFFER_CELL_SIZE
 
-    MANY_TO_ONE_TRAFFIC_TC_OCC_TH = {EGRESS_PORT_GROUP_NAME: {ValidationConsts.MAX_WATERMARK: MANY_TO_ONE_MAX_QUEUE_BUILDUP},
-                                     INGRESS_PORT_GROUP_NAME: {}}
+    MANY_TO_ONE_TRAFFIC_TC_OCC_TH_BY_CHIP_TYPE = {
+        chip: {
+            EGRESS_PORT_GROUP_NAME: {ValidationConsts.MAX_WATERMARK: max_queue_buildup},
+            INGRESS_PORT_GROUP_NAME: {},
+        }
+        for chip, max_queue_buildup in MANY_TO_ONE_MAX_QUEUE_BUILDUP_BY_CHIP_TYPE.items()
+    }
     SPINE_MANY_TO_FEW_TRAFFIC_TC_OCC_TH = {EGRESS_PORT_GROUP_NAME: {ValidationConsts.MAX_WATERMARK: MANY_TO_FEW_MAX_QUEUE_BUILDUP_SPINE},
                                            INGRESS_PORT_GROUP_NAME: {}}
     LEAF_MANY_TO_FEW_TRAFFIC_TC_OCC_TH = {EGRESS_PORT_GROUP_NAME: {ValidationConsts.MAX_WATERMARK: MANY_TO_FEW_MAX_QUEUE_BUILDUP_LEAF},
                                           INGRESS_PORT_GROUP_NAME: {}}
-    OCC_TH_DICT = {ValidationConsts.OCC_AVG: HALF_MRC_DATA_PACKET_SIZE,
-                   ValidationConsts.OCC_99: FULL_MRC_DATA_PACKET_SIZE}
+    OCC_TH_DICT_BY_CHIP_TYPE = {
+        chip: {
+            ValidationConsts.OCC_AVG: size / 2,
+            ValidationConsts.OCC_99: size,
+        }
+        for chip, size in FULL_MRC_DATA_PACKET_SIZE_BY_CHIP_TYPE.items()
+    }
+    VICTIM_FLOW_OCC_AVG_TH_BY_CHIP_TYPE = {
+        "SPC4": 13,
+        "SPC5": 13,
+        "SPC6": 16,
+    }
     MAX_WATERMARK_BY_ALPHA_TOLERANCE = 0.1
     ECN_COUNTERS = [f'tx_ecn_marked_tc_{tc}' for tc in range(PerfConsts.TC_NUM)]
     COUNTERS_WITH_ECN = PerfConsts.COUNTERS + ECN_COUNTERS

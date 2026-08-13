@@ -113,7 +113,7 @@ class TestSRv6Leaf(TestSRv6Base):
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
-                                      tc_occ_threshold=MRCConsts.OCC_TH_DICT,
+                                      tc_occ_threshold=MRCConsts.OCC_TH_DICT_BY_CHIP_TYPE[self.chip_type],
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       run_validate_counters=not is_drop_over_max,
                                       run_validate_no_drops_on_tg_ports=not is_drop_over_max,
@@ -261,8 +261,10 @@ class TestSRv6Leaf(TestSRv6Base):
             raise TestIssue("\n".join(violations_list))
 
     def get_victim_flow_additional_validations(self):
+        tc_occ_threshold = MRCConsts.OCC_TH_DICT_BY_CHIP_TYPE[self.chip_type].copy()
+        tc_occ_threshold[ValidationConsts.OCC_AVG] = MRCConsts.VICTIM_FLOW_OCC_AVG_TH_BY_CHIP_TYPE[self.chip_type]
         additional_validations = {
-            'validate_per_tc': Validation(validate_per_tc, {'tc_occ_threshold': MRCConsts.OCC_TH_DICT,
+            'validate_per_tc': Validation(validate_per_tc, {'tc_occ_threshold': tc_occ_threshold,
                                                             'tc_to_validate': MRCConsts.MRC_DATA_ONLY_WORKLOAD_TC_LIST,
                                                             'tolerance': None,
                                                             'port_group_name_to_validate_list': []})

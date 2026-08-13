@@ -416,5 +416,5 @@ class TestSRv6Base:
     def get_many_to_one_tc_occ_threshold(self):
         tc_occ_threshold = None
         if not is_redmine_issue_active([4668758])[0] and isinstance(self.cli_object, NvueCli):
-            tc_occ_threshold = MRCConsts.MANY_TO_ONE_TRAFFIC_TC_OCC_TH
+            tc_occ_threshold = MRCConsts.MANY_TO_ONE_TRAFFIC_TC_OCC_TH_BY_CHIP_TYPE[self.chip_type]
         return tc_occ_threshold
