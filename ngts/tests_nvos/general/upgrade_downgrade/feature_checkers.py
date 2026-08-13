@@ -67,7 +67,6 @@ from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CrlValidator import ClientConfig, RevokeConfig
 from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as nv_consts
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.infra.FWComponentsTool import FWComponentsTool
 from ngts.nvos_tools.infra.ImaTool import ImaTool
@@ -195,7 +194,8 @@ from ngts.tests_nvos.general.security.test_ssh_cert_auth.helpers import (
     verify_user_login,
 )
 from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair
-from ngts.tests_nvos.interfaces.nvl_port.nvl6.test_port_phy_role import (
+from ngts.tests_nvos.helpers.interfaces.nvl_port.nvl6.phy_role_helpers import (
+    cleanup_phy_role,
     get_fae_objs,
     role_case,
     verify_phy_role_default
@@ -1271,13 +1271,15 @@ def _check_phy_role(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator
     with allure.step("Get linked ports pair"):
         linked_ports_pair: list[str] = list(get_linked_ports_pair(devices, engines))
         logger.info(f"Linked ports pair: {linked_ports_pair[0]} <-> {linked_ports_pair[1]}")
-        fae_port_1, fae_port_2 = get_fae_objs(linked_ports_pair)
+        fae_objs = get_fae_objs(linked_ports_pair)
+        fae_port_1, fae_port_2 = fae_objs
 
     try:
         with allure.step("Verify default phy-role on both ports"):
-            verify_phy_role_default(fae_port_1, fae_port_2)
+            verify_phy_role_default(devices, fae_port_1, fae_port_2)
         with allure.step("Set ports phy-role to primary and secondary"):
             role_case(
+                devices,
                 roles_to_set=[
                     (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.PRIMARY.value),
                     (fae_port_2, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.SECONDARY.value)
@@ -1295,6 +1297,7 @@ def _check_phy_role(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator
 
         with allure.step("Verify ports phy-role after upgrade"):
             role_case(
+                devices,
                 expected_values=[
                     (fae_port_1, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.PRIMARY.value, [PhyRoleConsts.PhyRole.PRIMARY.value, PhyRoleConsts.PhyRole.FW_DEFAULT.value]),
                     (fae_port_2, PhyRoleConsts.PHY_ROLE, PhyRoleConsts.PhyRole.SECONDARY.value, [PhyRoleConsts.PhyRole.SECONDARY.value, PhyRoleConsts.PhyRole.FW_DEFAULT.value])
@@ -1302,10 +1305,7 @@ def _check_phy_role(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator
             )
     finally:
         with allure.step("Cleanup phy-role configuration"):
-            fae_port_1.interface.link.unset(op_param_name=PhyRoleConsts.PHY_ROLE, apply=True, ask_for_confirmation=True).verify_result()
-            fae_port_2.interface.link.unset(op_param_name=PhyRoleConsts.PHY_ROLE, apply=True, ask_for_confirmation=True).verify_result()
-            fae_port_1.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
-            fae_port_2.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+            cleanup_phy_role(devices, fae_objs)
 
 
 @_requires_compatibility(IbDevice.RosalindSwitch, minimal_version="25.03.0300")

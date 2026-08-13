@@ -1532,8 +1532,8 @@ class PhyRoleConsts:
         def operational(cls):
             return [cls.PRIMARY.value, cls.SECONDARY.value]
 
-    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES = (PhyRole.PRIMARY, PhyRole.SECONDARY)
-    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT
+    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES: tuple[str, ...] = (PhyRole.PRIMARY.value, PhyRole.SECONDARY.value)
+    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT.value
 
     CONSTANT_ROLE: str = 'constant-role'
 
@@ -1545,7 +1545,7 @@ class PhyRoleConsts:
         def all(cls):
             return [member.value for member in cls]
 
-    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED
+    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED.value
 
 
 class LowPowerConsts:
