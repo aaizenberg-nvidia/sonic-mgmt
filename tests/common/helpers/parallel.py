@@ -197,7 +197,8 @@ def parallel_run(
                     )
 
     workers = []
-    _manager = None
+    results = Manager().dict()
+    start_time = datetime.datetime.now()
     tasks_done = 0
     total_tasks = len(nodes)
     tasks_running = 0
@@ -206,139 +207,119 @@ def parallel_run(
     ) if timeout else None
     failed_processes = {}
 
-    try:
-        _manager = Manager()
-        results = _manager.dict()
-        start_time = datetime.datetime.now()
+    # Before spawning the child process, ensure current thread is
+    # holding the logging handler locks to avoid deadlock in child process.
+    fix_logging_handler_fork_lock()
 
-        # Before spawning the child process, ensure current thread is
-        # holding the logging handler locks to avoid deadlock in child process.
-        fix_logging_handler_fork_lock()
-
-        while tasks_done < total_tasks:
-            # If execution time of processes exceeds timeout, need to force
-            # terminate them all.
-            if total_timeout is not None:
-                if (datetime.datetime.now() - start_time).seconds > total_timeout:
-                    logger.error('Process execution time exceeds {} seconds.'.format(
-                        str(total_timeout)
-                    ))
-                    break
-
-            while len(nodes) and tasks_running < concurrent_tasks:
-                node = nodes.pop(0)
-                # For sanity check process, initial results in case of timeout.
-                if init_result:
-                    init_result["host"] = node.hostname
-                    results[node.hostname] = init_result
-                kwargs['node'] = node
-                kwargs['results'] = results
-                process_name = "{}--{}".format(target.__name__, node)
-                worker = SonicProcess(
-                            name=process_name, target=target, args=args,
-                            kwargs=kwargs
-                        )
-                worker.start()
-                tasks_running += 1
-                logger.debug('Started process {} running target "{}"'.format(
-                    worker.pid, process_name
+    while tasks_done < total_tasks:
+        # If execution time of processes exceeds timeout, need to force
+        # terminate them all.
+        if total_timeout is not None:
+            if (datetime.datetime.now() - start_time).seconds > total_timeout:
+                logger.error('Process execution time exceeds {} seconds.'.format(
+                    str(total_timeout)
                 ))
-                workers.append(worker)
+                break
 
-            gone, alive = wait_procs(workers, timeout=timeout, callback=on_terminate)
-            workers = alive
-
-            logger.debug("task completed {}, running {}".format(
-                len(gone), len(alive)
-            ))
-
-            # Sometimes the child processes finished run but still alive, causing exception hidden.
-            # It mainly caused by child processes hang on send() if parent doesn't read from the pipe.
-            # Therefore, explicitly check the processes exception to prevent any error miss.
-            logger.info("Force read exception regardless of whether the process exited normally.")
-            for worker in gone + alive:
-                worker_exception = worker.exception  # Force-read to prevent pipe hangs
-                if worker_exception is not None:
-                    logger.info(f"Process {worker.name} has exception, is_alive={worker.is_running()}, record the error.")
-                    failed_processes[worker.name] = {
-                        'exit_code': worker.exitcode,
-                        'exception': worker_exception
-                    }
-
-            if len(gone) == 0:
-                logger.debug("all processes have timed out")
-                tasks_running -= len(workers)
-                tasks_done += len(workers)
-                force_terminate(workers, init_result)
-                del workers[:]
-            else:
-                tasks_running -= len(gone)
-                tasks_done += len(gone)
-
-        # In case of timeout force terminate spawned processes
-        for worker in workers:
-            if worker.is_alive():
-                logger.error('Process {} is alive, force terminate it.'.format(
-                    worker.name
-                ))
-                worker.terminate()
-                # If sanity check process is killed, it still has init results.
-                # set its failed to True.
-                if init_result:
-                    init_result['failed'] = True
-                    results[list(results.keys())[0]] = init_result
-                else:
-                    results[worker.name] = {'failed': True}
-
-        end_time = datetime.datetime.now()
-        delta_time = end_time - start_time
-
-        # force terminate any workers still running
-        force_terminate(workers, init_result)
-
-        # if we have failed processes, we should log the exception and exit code
-        # of each Process and fail
-        if len(list(failed_processes.keys())):
-            for process_name, process in list(failed_processes.items()):
-                p_exitcode = ""
-                p_exception = ""
-                p_traceback = ""
-                if 'exception' in process and process['exception']:
-                    p_exception = process['exception'][0]
-                    p_traceback = process['exception'][1]
-                    p_exitcode = process['exit_code']
-                # For analyzed matched syslog, don't need to log the traceback
-                if "analyze_logs" in process_name and "Match Messages" in str(p_exception):
-                    failure_message = 'Got matched syslog in processes "{}" exit code:"{}"\n{}'.format(
-                        process_name, p_exitcode, p_exception
+        while len(nodes) and tasks_running < concurrent_tasks:
+            node = nodes.pop(0)
+            # For sanity check process, initial results in case of timeout.
+            if init_result:
+                init_result["host"] = node.hostname
+                results[node.hostname] = init_result
+            kwargs['node'] = node
+            kwargs['results'] = results
+            process_name = "{}--{}".format(target.__name__, node)
+            worker = SonicProcess(
+                        name=process_name, target=target, args=args,
+                        kwargs=kwargs
                     )
-                else:
-                    failure_message = 'Processes "{}" failed with exit code "{}"\nException:\n{}\nTraceback:\n{}'.format(
-                        list(failed_processes.keys()), p_exitcode, p_exception, p_traceback)
-                pt_assert(False, failure_message)
+            worker.start()
+            tasks_running += 1
+            logger.debug('Started process {} running target "{}"'.format(
+                worker.pid, process_name
+            ))
+            workers.append(worker)
 
-        logger.info(
-            'Completed running processes for target "{}" in {} seconds'.format(
-                target.__name__, str(delta_time)
-            )
+        gone, alive = wait_procs(workers, timeout=timeout, callback=on_terminate)
+        workers = alive
+
+        logger.debug("task completed {}, running {}".format(
+            len(gone), len(alive)
+        ))
+
+        # Sometimes the child processes finished run but still alive, causing exception hidden.
+        # It mainly caused by child processes hang on send() if parent doesn't read from the pipe.
+        # Therefore, explicitly check the processes exception to prevent any error miss.
+        logger.info("Force read exception regardless of whether the process exited normally.")
+        for worker in gone + alive:
+            worker_exception = worker.exception  # Force-read to prevent pipe hangs
+            if worker_exception is not None:
+                logger.info(f"Process {worker.name} has exception, is_alive={worker.is_running()}, record the error.")
+                failed_processes[worker.name] = {
+                    'exit_code': worker.exitcode,
+                    'exception': worker_exception
+                }
+
+        if len(gone) == 0:
+            logger.debug("all processes have timedout")
+            tasks_running -= len(workers)
+            tasks_done += len(workers)
+            force_terminate(workers, init_result)
+            del workers[:]
+        else:
+            tasks_running -= len(gone)
+            tasks_done += len(gone)
+
+    # In case of timeout force terminate spawned processes
+    for worker in workers:
+        if worker.is_alive():
+            logger.error('Process {} is alive, force terminate it.'.format(
+                worker.name
+            ))
+            worker.terminate()
+            # If sanity check process is killed, it still has init results.
+            # set its failed to True.
+            if init_result:
+                init_result['failed'] = True
+                results[list(results.keys())[0]] = init_result
+            else:
+                results[worker.name] = {'failed': True}
+
+    end_time = datetime.datetime.now()
+    delta_time = end_time - start_time
+
+    # force terminate any workers still running
+    force_terminate(workers, init_result)
+
+    # if we have failed processes, we should log the exception and exit code
+    # of each Process and fail
+    if len(list(failed_processes.keys())):
+        for process_name, process in list(failed_processes.items()):
+            p_exitcode = ""
+            p_exception = ""
+            p_traceback = ""
+            if 'exception' in process and process['exception']:
+                p_exception = process['exception'][0]
+                p_traceback = process['exception'][1]
+                p_exitcode = process['exit_code']
+            # For analyzed matched syslog, don't need to log the traceback
+            if "analyze_logs" in process_name and "Match Messages" in str(p_exception):
+                failure_message = 'Got matched syslog in processes "{}" exit code:"{}"\n{}'.format(
+                    process_name, p_exitcode, p_exception
+                )
+            else:
+                failure_message = 'Processes "{}" failed with exit code "{}"\nException:\n{}\nTraceback:\n{}'.format(
+                    list(failed_processes.keys()), p_exitcode, p_exception, p_traceback)
+            pt_assert(False, failure_message)
+
+    logger.info(
+        'Completed running processes for target "{}" in {} seconds'.format(
+            target.__name__, str(delta_time)
         )
+    )
 
-        return dict(results)
-    finally:
-        # Kill any worker still alive before the manager dies, so it cannot
-        # write into a dead results proxy. Deliberately assertion-free: this
-        # runs on exception paths too and must not mask the original error.
-        for worker in workers:
-            if worker.is_alive():
-                try:
-                    os.kill(worker.pid, signal.SIGKILL)
-                except OSError:
-                    logger.error("Unable to kill %s:%s", worker.pid, worker.name)
-        # Shut down the Manager server so its non-daemon process is always
-        # reaped here, not deferred to interpreter exit where a traceback
-        # holding the proxy can cause process.join() to block indefinitely.
-        if _manager is not None:
-            _manager.shutdown()
+    return dict(results)
 
 
 def reset_ansible_local_tmp(target):
