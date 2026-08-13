@@ -1565,9 +1565,12 @@ class LowPowerConsts:
     FAE_FIELDS = {
         PEC_DURATION: {"values": range(0, 65535), "default": 379},
         PEC_RECAL_PERIOD: {"values": range(0, 65535), "default": 8008},
-        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION}
+        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION.value}
     }
 
+    STATE_DEFAULT: str = NvosConst.DISABLED
+
+    COUNTERS: str = 'counters'
     L1_TOTAL_ENTRIES: str = 'l1-total-entries'
     AVERAGE_LOCAL_FULL_BW_EXIT: str = 'average-local-full-bw-exit'
     ALL_COUNTERS: list[str] = [L1_TOTAL_ENTRIES, AVERAGE_LOCAL_FULL_BW_EXIT]

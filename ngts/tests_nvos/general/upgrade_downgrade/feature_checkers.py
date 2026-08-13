@@ -200,7 +200,8 @@ from ngts.tests_nvos.interfaces.nvl_port.nvl6.test_port_phy_role import (
     role_case,
     verify_phy_role_default
 )
-from ngts.tests_nvos.interfaces.nvl_port.test_link_low_power import (
+from ngts.tests_nvos.helpers.interfaces.nvl_port.low_power_helpers import (
+    cleanup_low_power,
     get_linked_ports_objs,
     low_power_state_case,
     should_skip_if_low_power_not_supported
@@ -1333,13 +1334,15 @@ def _check_low_power(engines: EnginesT, devices: DevicesT, **kwargs) -> Generato
     try:
         with allure.step("Verify default low power states on both ports"):
             low_power_state_case(
-                expected_values=[((port_obj, NvosConst.DISABLED, NvosConst.DISABLED) for port_obj in linked_ports_objs)]
+                devices,
+                expected_values=[(port_obj, NvosConst.DISABLED, NvosConst.DISABLED) for port_obj in linked_ports_objs]
             )
         with allure.step("Verify low power states on both ports after setting to enabled"):
             random_state = random.choice([NvosConst.ENABLED, NvosConst.DISABLED])
             low_power_state_case(
-                ports_to_set=[((port_obj, random_state) for port_obj in linked_ports_objs)],
-                expected_values=[((port_obj, random_state, random_state) for port_obj in linked_ports_objs)]
+                devices,
+                ports_to_set=[(port_obj, random_state) for port_obj in linked_ports_objs],
+                expected_values=[(port_obj, random_state, random_state) for port_obj in linked_ports_objs]
             )
         with allure.step("Save configuration"):
             NvueGeneralCli.save_config(engines.dut)
@@ -1348,15 +1351,13 @@ def _check_low_power(engines: EnginesT, devices: DevicesT, **kwargs) -> Generato
 
         with allure.step("Verify low power states after upgrade"):
             low_power_state_case(
-                expected_values=[((port_obj, random_state, random_state) for port_obj in linked_ports_objs)]
+                devices,
+                expected_values=[(port_obj, random_state, random_state) for port_obj in linked_ports_objs]
             )
 
     finally:
         with allure.step("Cleanup low power configuration"):
-            for port_obj in linked_ports_objs:
-                port_obj.interface.link.low_power.unset(apply=True).verify_result()
-            for port_obj in linked_ports_objs:
-                port_obj.port.interface.wait_for_port_state(NvosConsts.LINK_STATE_UP).verify_result()
+            cleanup_low_power(devices, linked_ports_objs)
 
 
 @_requires_compatibility(IbDevice.RosalindSwitch, minimal_version="25.03.0500")

@@ -72,7 +72,8 @@
 	</test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/interfaces/nvl_link_low_power.cases </cases>
-		<ignore><condition> <key>dut_type</key> <op> not in </op> <value>[juliet, rosalind, rosalind-surrogate, rosalind-chipless]</value> </condition></ignore>
+		<ignore><condition> <key>dut_type</key> <op> not in </op> <value>[juliet]</value> </condition></ignore>
+        <!-- Disabled for rosalind devices due to feature unavailability on this platform. -->
 	</test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/interfaces/nvos_fw_recovery.cases </cases>
