@@ -988,10 +988,20 @@
           ignore_errors: true
           when: use_ipv6_mgmt|default(false)|bool
 
-        - name: Pause briefly to allow minigraph load to start (IPv6 transition)
-          pause:
-            seconds: 5
-          when: use_ipv6_mgmt|default(false)|bool
+        - name: Wait for load_minigraph (IPv6 transition) to actually finish
+          become: true
+          async_status:
+            jid: "{{ load_minigraph_result_ipv6.ansible_job_id }}"
+          register: load_minigraph_ipv6_job
+          until: load_minigraph_ipv6_job.finished | default(false) | bool
+          retries: 60
+          delay: 5
+          ignore_errors: true
+          ignore_unreachable: true
+          when:
+            - use_ipv6_mgmt|default(false)|bool
+            - load_minigraph_result_ipv6 is defined
+            - load_minigraph_result_ipv6.ansible_job_id is defined
 
         - name: Configure Mellanox-SN5640-C508O1X2 Ethernet508 subport after minigraph load
           block:
@@ -1115,6 +1125,16 @@
               cp {{ breakout_output_path | default('/etc/sonic/config_db.breakout.json') }} /etc/sonic/golden_config_db.json
             when: breakout_apply | default(true) | bool
         when: buffer_breakout_enable | default(false) | bool
+
+      - name: Wait for sonic.target to settle after load_minigraph before starting chrony
+        become: true
+        command: systemctl is-active sonic.target
+        register: sonic_target_status
+        retries: 30
+        delay: 2
+        until: sonic_target_status.stdout == "active"
+        changed_when: false
+        ignore_errors: true
 
       - name: Check if chrony exists
         service: name=chrony
