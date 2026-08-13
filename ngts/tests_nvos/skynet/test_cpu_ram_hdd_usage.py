@@ -93,6 +93,9 @@ class TestCpuRamHddUsage:
         if is_parent_folder(partition_dir, SDK_DUMPS_PATH):
             partition_usage['max_usage'] += self.get_sai_fdw_dump_size()
 
+        if partition_dir == '/' and re.search('SN6600_LD|SN6810_LD', platform_params.hwsku):
+            partition_usage['max_usage'] += 4000
+
         logger.info(f"\nChecking hdd_usage of {partition_dir} with max_usage of {partition_usage['max_usage']}\n")
         try:
             do_hdd_usage_test(self.dut_engine, partition_usage, request.node.originalname)

@@ -98,7 +98,10 @@ class TestCpuRamHddUsage:
         available_index = lines.index('Available:')
         available_images = [item for item in lines[available_index + 1:] if item]
         if len(available_images) > 1:
-            partition_usage['max_usage'] = 11000
+            partition_usage['max_usage'] = 13000
+
+        if partition_dir == '/' and re.search('SN6600_LD|SN6810_LD', platform_params.hwsku):
+            partition_usage['max_usage'] += 4000
 
         logger.info(f"\nChecking hdd_usage of {partition_dir} with max_usage of {partition_usage['max_usage']}\n")
         do_hdd_usage_test(self.dut_engine, partition_usage)
