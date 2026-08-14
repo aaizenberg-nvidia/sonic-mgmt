@@ -6,6 +6,7 @@ from enum import StrEnum
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 REGRESSION_TYPE_ENV_VAR = "REGRESSION_TYPE"
+CLI_TYPE_CACHE_PATH = "/tmp/CLI_TYPE"
 
 
 class RegressionType(StrEnum):

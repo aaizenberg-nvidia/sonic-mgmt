@@ -31,6 +31,7 @@ from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, Debu
 from ngts.constants.constants import REGRESSION_TYPE_ENV_VAR, RegressionType
 from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType
 from ngts.constants.constants import SerialLoggerConst
+from ngts.constants.constants import CLI_TYPE_CACHE_PATH
 from ngts.helpers.general_helper import get_all_setups, get_dut_cli_objs_from_topo_obj
 from ngts.helpers.sonic_branch_helper import get_sonic_branch, update_branch_in_topology, update_sanitizer_in_topology, \
     get_sonic_image
@@ -637,6 +638,9 @@ def export_cli_type_to_cache(topology, request):
     cli_type = topology[0]['dut']['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
     request.session.config.cache.set('CLI_TYPE', cli_type)
     os.environ['CLI_TYPE'] = cli_type
+    # for community tests
+    with open(CLI_TYPE_CACHE_PATH, 'w') as f:
+        json.dump(cli_type, f)
 
 
 def update_topology_with_cli_class(topology, request=None, is_performance=False):
