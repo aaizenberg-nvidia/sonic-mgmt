@@ -3,9 +3,11 @@ import socket
 import random
 import time
 import pytest
+from datetime import datetime
 from retry import retry
 
 from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
+from ngts.constants.constants import BugHandlerConst
 from ngts.nvos_constants.constants_nvos import ApiType, NtpConsts, NvosConst, SystemConsts
 from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -13,6 +15,7 @@ from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
+from ngts.tests_nvos.system.clock.ClockTools import ClockTools
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 
@@ -681,10 +684,16 @@ def test_ntp_performance(random_api):
                            apply=True).verify_result()
 
         with allure.step("Measure configuring time of 1 server"):
-            start_time = time.time()
+            # Measure until the config lands in the DUT log: client wall-clock around apply is
+            # rounded up in whole 5s steps by the apply-status retry poll on OpenApi, which
+            # dwarfs the 2.5s diff threshold regardless of how long the apply actually took
+            start_time = datetime.strptime(
+                ClockTools.get_local_time_from_show_system_date_time_output(system.datetime.show()),
+                BugHandlerConst.TIMESTAMP_FORMATS[4])
             system.ntp.servers.set_resource(server_name, apply=True)
-            end_time = time.time()
-            config_1_duration = end_time - start_time
+            config_1_end = system.log.verify_expected_logs_by_time(
+                [NtpConsts.SET_SERVERS_LOG_MSG], TestToolkit.get_engine(), start_time=start_time)
+            config_1_duration = (config_1_end - start_time).total_seconds()
 
         with allure.step("Measure show system ntp time of 1 server"):
             start_time = time.time()
@@ -700,10 +709,13 @@ def test_ntp_performance(random_api):
                 server_name = 'dummy.server' + str(server_id)
                 system.ntp.servers.set_resource(server_name, apply=False)
             server_name = 'server10'
-            start_time = time.time()
+            start_time = datetime.strptime(
+                ClockTools.get_local_time_from_show_system_date_time_output(system.datetime.show()),
+                BugHandlerConst.TIMESTAMP_FORMATS[4])
             system.ntp.servers.set_resource(server_name, apply=True)
-            end_time = time.time()
-            config_10_duration = end_time - start_time
+            config_10_end = system.log.verify_expected_logs_by_time(
+                [NtpConsts.SET_SERVERS_LOG_MSG], TestToolkit.get_engine(), start_time=start_time)
+            config_10_duration = (config_10_end - start_time).total_seconds()
 
         with allure.step("Measure show system ntp time of 10 servers"):
             start_time = time.time()
@@ -712,6 +724,8 @@ def test_ntp_performance(random_api):
             show_10_duration = end_time - start_time
 
         with allure.step("Validate configuration diff time"):
+            logging.info(f"Configuration time (from DUT logs): 1 server={config_1_duration}s, "
+                         f"10 servers={config_10_duration}s")
             config_duration_diff = config_10_duration - config_1_duration
             assert config_duration_diff < NtpConsts.CONFIG_TIME_DIFF_THRESHOLD, \
                 "Configuration diff time: {actual} is higher than expected time: {expected}".\

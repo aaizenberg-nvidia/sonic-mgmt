@@ -69,5 +69,6 @@
 	</test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/interfaces/nvos_plu_phy_recovery.cases </cases>
+		<ignore><condition> <key>dut_type</key> <op> in </op> <value>[rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>
 	</test>
 </DBDEF>

@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
-from ngts.nvos_constants.constants_nvos import AclConsts, ConfState, SystemConsts
+from ngts.nvos_constants.constants_nvos import AclConsts, ApiType, ConfState, SystemConsts
 from ngts.nvos_tools.acl.acl import Acl
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
@@ -18,10 +19,25 @@ logger = logging.getLogger(__name__)
 
 
 def _apply_staged_nvue_config(dut_engine) -> None:
-    """Run ``nv -y config apply`` + ``nv config save`` so persistence-test edits survive ISSU/reboot."""
-    output = NvueGeneralCli.apply_config(engine=dut_engine, option="-y", verify_execution=True)
-    assert ConfState.APPLIED in output, "Failed to apply config"
-    NvueGeneralCli.save_config(dut_engine)
+    """
+    Run ``nv -y config apply`` + ``nv config save`` so persistence-test edits survive ISSU/reboot.
+
+    Always uses NVUE CLI. OpenAPI pending revisions are invisible to ``nv config apply``, which
+    then no-ops with "Revision 'applied' has already been applied" while still looking like
+    success (the word ``applied`` is in the message). Callers must stage under NVUE as well
+    (see :func:`add_acl_new_configs_for_persistence_checks`).
+    """
+    with TestToolkit.force_api(ApiType.NVUE):
+        output = NvueGeneralCli.apply_config(engine=dut_engine, option="-y", verify_execution=True)
+        output_text = str(output)
+        if "already been applied" in output_text.lower():
+            raise AssertionError(
+                "nv config apply was a no-op (no pending CLI diff). Staged ACL change was not "
+                "committed — check that sets were done under NVUE, not OpenAPI. output=%r"
+                % (output_text,)
+            )
+        assert ConfState.APPLIED in output_text, "Failed to apply config: %r" % (output_text,)
+        NvueGeneralCli.save_config(dut_engine)
 
 
 @dataclass
@@ -90,8 +106,18 @@ def add_acl_new_configs_for_persistence_checks(*, dut_engine) -> AclPersistenceM
         If ``nv show system control-plane acl`` has bindings, also ``nv unset system control-plane acl
         <random acl>`` (preferring an ACL other than the modified whitelist), apply, save.
 
+    Always stages/applies/saves under NVUE so OpenAPI pending revisions cannot leave the marker
+    unapplied. After apply+save, asserts the marker is visible in ``nv show acl`` before returning.
+
     Returns state for :func:`clear_acl_configs` and :func:`verify_acl_rules_preserved`.
     """
+    # OpenAPI PATCH stages into a pending revision that ``nv config apply`` does not see; force
+    # NVUE for the whole mangle so set/unset + apply + save share one pending changeset.
+    with TestToolkit.force_api(ApiType.NVUE):
+        return _add_acl_new_configs_for_persistence_checks_impl(dut_engine=dut_engine)
+
+
+def _add_acl_new_configs_for_persistence_checks_impl(*, dut_engine) -> AclPersistenceMangleState:
     pre_issu_acls = _show_acl_keys(dut_engine)
     mode = _detect_acl_mode(pre_issu_acls)
     logger.info("add_acl_new_configs_for_persistence_checks: detected ACL mode=%s", mode)
@@ -158,7 +184,7 @@ def add_acl_new_configs_for_persistence_checks(*, dut_engine) -> AclPersistenceM
         else:
             logger.warning("No system control-plane ACL keys; skipping unset")
 
-    return AclPersistenceMangleState(
+    state = AclPersistenceMangleState(
         mode=mode,
         marker_acl_id=marker_acl_id,
         marker_rule_id=marker_rule_id,
@@ -166,6 +192,9 @@ def add_acl_new_configs_for_persistence_checks(*, dut_engine) -> AclPersistenceM
         expected_post_issu_acl_id=marker_acl_id,
         removed_control_plane_acl_id=unbound_control_plane_acl_name,
     )
+    # Fail fast before ISSU/upgrade if apply+save did not actually land the marker.
+    _verify_user_change_marker_preserved(_show_acl_keys(dut_engine), state)
+    return state
 
 
 # Requested spelling alias (same implementation).
@@ -183,16 +212,17 @@ def clear_acl_configs(state: Optional[AclPersistenceMangleState], *, dut_engine)
     """
     if state is None:
         return
-    acl = Acl()
-    acl.acl_id[state.expected_post_issu_acl_id].rule.rule_id[state.marker_rule_id].unset(
-        apply=False, dut_engine=dut_engine
-    ).verify_result()
-    if state.removed_control_plane_acl_id:
-        System().control_plane.acl.acl_id[state.removed_control_plane_acl_id].inbound.set(
+    with TestToolkit.force_api(ApiType.NVUE):
+        acl = Acl()
+        acl.acl_id[state.expected_post_issu_acl_id].rule.rule_id[state.marker_rule_id].unset(
             apply=False, dut_engine=dut_engine
         ).verify_result()
-    _apply_staged_nvue_config(dut_engine)
-    logger.info("clear_acl_configs: restored ACL persistence mangle state")
+        if state.removed_control_plane_acl_id:
+            System().control_plane.acl.acl_id[state.removed_control_plane_acl_id].inbound.set(
+                apply=False, dut_engine=dut_engine
+            ).verify_result()
+        _apply_staged_nvue_config(dut_engine)
+        logger.info("clear_acl_configs: restored ACL persistence mangle state")
 
 
 # Default loopback ACLs are interface-bound on ``lo``, not only under system control-plane.

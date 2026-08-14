@@ -249,8 +249,10 @@ class CategoryConfigurator(SwitchConfigurator):
                 )
                 default_value = getattr(switch_instance, "category_default_dict", {})
 
-            new_disabled_dict[category] = disabled_value
-            new_default_dict[category] = default_value
+            new_disabled_dict[category] = switch_instance.category_disabled_dict.get(
+                category, disabled_value)
+            new_default_dict[category] = switch_instance.category_list_default_dict.get(
+                category, default_value)
 
         switch_instance.category_disabled_dict = new_disabled_dict
         switch_instance.category_list_default_dict = new_default_dict

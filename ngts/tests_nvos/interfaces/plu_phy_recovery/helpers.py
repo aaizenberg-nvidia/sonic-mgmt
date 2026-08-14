@@ -5,7 +5,7 @@ Reusable helper functions for PLU PHY recovery tests.
 Works on all port types (sw and acl).
 
 Functions:
-    - Port Selection: get_all_ports_range
+    - Port Selection: get_all_ports_ranges
     - Recovery Actions: trigger_recovery_go_once
     - Configuration: apply_mode, apply_mode_if_needed, apply_timeout,
                      verify_config, unset_config, cleanup_phy_recovery_config
@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 from retry.api import retry_call
 
 from ngts.nvos_constants.constants_nvos import ApiType, ConfState, NvosConst
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port, PortRequirements
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -92,6 +93,19 @@ def get_all_ports_ranges() -> List[str]:
         return ranges
 
 
+def get_port_connection_mode(port: Port) -> Optional[str]:
+    """
+    Return link connection-mode for a port (e.g. ``xdr``, ``ndr``).
+
+    Reads ``nv show interface <port> link`` / equivalent and returns
+    ``connection-mode`` from the link output.
+    """
+    link_output = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+        port.interface.link.show()
+    ).get_returned_value()
+    return link_output.get(IbInterfaceConsts.LINK_CONNECTION_MODE)
+
+
 # =============================================================================
 # Recovery Action Helpers
 # =============================================================================
@@ -125,6 +139,31 @@ def trigger_recovery_go_once(port_name: str) -> ResultObj:
 # Validation Helpers
 # =============================================================================
 
+def get_platform_default_config() -> Dict[str, str]:
+    """
+    Factory default logic-relock config of the DUT.
+
+    Factory defaults are platform specific - BlackMamba ships with
+    logic-relock-mode=enabled/timeout=100 - so use the values published by the
+    device, falling back to disabled/0.
+
+    Returns:
+        Dictionary of mode/timeout expected on an unconfigured port.
+    """
+    dut = TestToolkit.devices and TestToolkit.get_device()
+    return (
+        getattr(dut, "default_phy_recovery_dict", PhyRecoveryConfig.DEFAULT_CONFIG)
+        if dut else PhyRecoveryConfig.DEFAULT_CONFIG
+    )
+
+
+def get_platform_default_mode() -> str:
+    """Operational logic-relock-mode an unconfigured (fw-default) port falls back to."""
+    return get_platform_default_config().get(
+        PhyRecoveryConfig.MODE, PhyRecoveryConfig.DISABLED
+    )
+
+
 def validate_mode_set(selected_port, mode: str, timeout: Optional[int] = None):
     """
     Validate PHY recovery mode (logic-relock) is applied to the selected port.
@@ -142,8 +181,9 @@ def validate_mode_set(selected_port, mode: str, timeout: Optional[int] = None):
             selected_port.port.interface.link.phy_recovery.show()
         ).get_returned_value()
 
-        # fw-default maps to disabled operationally
-        expected_mode = PhyRecoveryConfig.DISABLED if mode == PhyRecoveryConfig.FW_DEFAULT else mode
+        # fw-default falls back to the platform factory default, which is enabled
+        # on some platforms (BlackMamba) rather than disabled.
+        expected_mode = get_platform_default_mode() if mode == PhyRecoveryConfig.FW_DEFAULT else mode
         actual_mode = output.get(PhyRecoveryConfig.MODE)
         ValidationTool.compare_values(actual_mode, expected_mode).verify_result()
 
@@ -156,7 +196,9 @@ def validate_default_config(selected_port):
     """
     Validate PHY recovery configuration has default values.
 
-    Defaults: logic-relock-mode=disabled, logic-relock-timeout=0
+    Factory defaults are platform specific - BlackMamba ships with
+    logic-relock-mode=enabled/timeout=100 - so the expected values come from
+    the device when it publishes them, falling back to disabled/0.
 
     Args:
         selected_port: Fae port object
@@ -165,17 +207,18 @@ def validate_default_config(selected_port):
         AssertionError: If validation fails
     """
     with allure.step("Check default config (logic-relock)"):
+        expected_config = get_platform_default_config()
         output_fae_port = OutputParsingTool.parse_json_str_to_dictionary(
             selected_port.port.interface.link.phy_recovery.show()
         ).get_returned_value()
 
         filtered_out = {
             key: value for key, value in output_fae_port.items()
-            if key in PhyRecoveryConfig.DEFAULT_CONFIG
+            if key in expected_config
         }
         ValidationTool.compare_dictionaries(
             filtered_out,
-            PhyRecoveryConfig.DEFAULT_CONFIG
+            expected_config
         ).verify_result()
 
 
@@ -310,14 +353,16 @@ def apply_mode_if_needed(fae_port, mode: str) -> bool:
     """
     current_mode = get_current_mode(fae_port)
 
-    # fw-default maps to disabled operationally
+    # fw-default falls back to the platform factory default, which is enabled
+    # on some platforms (BlackMamba) rather than disabled.
+    platform_default_mode = get_platform_default_mode()
     effective_current = (
-        PhyRecoveryConfig.DISABLED
+        platform_default_mode
         if current_mode == PhyRecoveryConfig.FW_DEFAULT
         else current_mode
     )
     effective_target = (
-        PhyRecoveryConfig.DISABLED
+        platform_default_mode
         if mode == PhyRecoveryConfig.FW_DEFAULT
         else mode
     )

@@ -59,7 +59,7 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
         pytest.skip("System reset bit trigger not supported on this platform")
 
     system = System(None)
-    expected_reason, expected_user = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    expected_reason, expected_user, expected_reason_type = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
 
     try:
         with allure.step('Clear system events to remove older reboot system events'):
@@ -84,18 +84,21 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
             with allure.independent_step("Check system reboot reason output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
-                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output, ["gentime", "reason", "user"]).verify_result()
+                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                    output, ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check system reboot history output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.history.show()).get_returned_value()
                 if output and len(output.keys()) > 0:
-                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output[list(output.keys())[0]],
-                                                                                      ["gentime", "reason", "user"]).verify_result()
+                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                        output[list(output.keys())[0]], ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check reboot cause"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
                 assert expected_reason in output["reason"], f"{expected_reason} not found in show reboot output"
                 assert expected_user in output["user"], f"Reboot user is {output['user']} instead of '{expected_user}'"
+                assert expected_reason_type == output["reason-type"], (
+                    f"Reboot reason-type is {output['reason-type']} instead of '{expected_reason_type}'")
 
             with allure.independent_step("Validate reboot reason and user"):
                 ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
