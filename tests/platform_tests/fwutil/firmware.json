@@ -478,15 +478,15 @@
 						"reboot": ["cold"]
 					}
 				],
-				"CPLD2": [
+				"CPLD1": [
 					{
 						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6600_LD/FUI000627/FUI000627.mpfa",
-						"version": "CPLD000439_REV0206",
+						"version": "CPLD000454_REV0400",
 						"reboot": ["power off", "cold"]
 					},
 					{
 						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6600_LD/FUI000622/FUI000622.mpfa",
-						"version": "CPLD000439_REV0206",
+						"version": "CPLD000454_REV0308",
 						"reboot": ["power off", "cold"]
 					}
 				],
