@@ -607,10 +607,10 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         dut_ip = engine.ip
         dut_ssh_port = engine.ssh_port
 
-        logger.info(f"install_image_onie: ip={dut_ip} starting onie-nos-install with image_path={image_path}")
-        with allure.step('Installing image by "onie-nos-install"'):
+        logger.info(f"install_image_onie: ip={dut_ip} starting ONIE image install with image_path={image_path}")
+        with allure.step('Installing image via ONIE (onie-nos-install or SBAT-repack sh path)'):
             SonicOnieCli(dut_ip, dut_ssh_port).install_image(image_path=image_path)
-        logger.info(f"install_image_onie: ip={dut_ip} onie-nos-install returned, switch will reboot into new image")
+        logger.info(f"install_image_onie: ip={dut_ip} ONIE install returned, switch will reboot into new image")
 
         with allure.step('Waiting for switch shutdown after reload command'):
             logger.info('Waiting for switch shutdown after reload command')

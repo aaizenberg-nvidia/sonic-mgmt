@@ -1,5 +1,8 @@
 import time
 import logging
+import os
+import shutil
+import tempfile
 import allure
 import pexpect
 import re
@@ -7,16 +10,34 @@ from retry.api import retry_call
 
 from devts.infra.tools.connection_tools.onie_engine import OnieEngine
 from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
-from ngts.constants.constants import InfraConst, PlatformTypesConstants, SonicDeployConstants
+from ngts.constants.constants import InfraConst, SonicDeployConstants, MarsConstants
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
 from ngts.helpers.run_process_on_host import run_process_on_host
-from ngts.constants.constants import MarsConstants
+from ngts.helpers.repack_sonic_bin_helper import (
+    DEFAULT_REPACK_FROM_IMAGE,
+    DEFAULT_REPACK_STAGING_DIR,
+    get_bin_grub_sbat_gen,
+    is_repacked_image_path,
+    needs_repack_for_onie_install,
+    parse_sbat_gen,
+    repack_sonic_bin,
+    resolve_local_image_path,
+)
 
 logger = logging.getLogger()
 
 BASE_ONIE_UPDATER_URL = InfraConst.HTTTP_SERVER_FIT16 + '/onie_only/{}/9600/onie-updater-x86_64-mlnx_x86-r0'
 DEFAULT_PROMPT = ["ONIE:.+ #", pexpect.EOF]
+
+INSTALL_SUCCESS_PROMPT = r'Installed.*base\s+image.*successfully'
+# mkfs.ext4 asks this when the SONiC-OS partition already has a filesystem;
+# only the direct-sh install path hits it (onie-nos-install wipes the partition).
+MKFS_PROCEED_PROMPT = r'Proceed anyway\? \(y,N\)'
+
+SH_INSTALL_EXPECT_TIMEOUT = 300
+SH_INSTALL_MAX_SILENT_PERIODS = 6
+SH_INSTALL_MAX_PROCEED_ANSWERS = 3
 
 
 class OnieInstallationError(Exception):
@@ -158,41 +179,269 @@ class SonicOnieCli:
             f'Sleeping {InfraConst.SLEEP_AFTER_RRBOOT} seconds after switch reply to ping to handle ssh session')
         time.sleep(InfraConst.SLEEP_AFTER_RRBOOT)
 
-    def install_image(self, image_path, timeout=60, num_retry=10):
-        self.confirm_onie_boot_mode_install()
+    def _onie_run_and_capture(self, cmd):
+        """Run a command on ONIE and return its output.
 
-        # restore engine after reboot
-        self.create_engine(True)
+        Send ``cmd`` and a unique sentinel together. If the session was still
+        one command behind (sentinel not yet echoed), drain with a second echo.
+        The sentinel must be unique per call: a fixed one would also match the
+        stale buffer left by the previous call's drain echo, so we would return
+        that stale output instead of this command's.
+        """
+        self._onie_cmd_seq = getattr(self, '_onie_cmd_seq', 0) + 1
+        sentinel = f'ONIE_CMD_DONE_{self._onie_cmd_seq}'
+        out, _ = self.run_cmd_set([f'{cmd}; echo {sentinel}'])
+        if sentinel not in out:
+            out, _ = self.run_cmd_set([f'echo {sentinel}'])
+        return out
 
-        prompts = ["Installed.*base\\s+image.*successfully", pexpect.TIMEOUT]
+    def _onie_file_exists(self, path):
+        marker = 'ONIE_FILE_EXISTS'
+        out = self._onie_run_and_capture(f'test -f {path} && echo {marker} || true')
+        return marker in out
 
-        full_image_path = f"{MarsConstants.HTTP_SERVER_NBU_NFS}{image_path}"
-        image_name = image_path.split('/')[-1]
-        local_image_file = '/tmp/' + image_name
+    def ensure_esp_mounted(self):
+        """Mount the ESP if needed and return the SONiC EFI dir, or None."""
+        check_paths = [
+            '/boot/efi/EFI/SONiC-OS/grubx64.efi',
+            '/UEFI/EFI/SONiC-OS/grubx64.efi',
+        ]
+        for path in check_paths:
+            if self._onie_file_exists(path):
+                logger.info(f'ensure_esp_mounted: found ESP grub at {path}')
+                return os.path.dirname(path)
 
-        logger.info('Removing existing sonic image if any')
-        self.run_cmd_set([f'rm -f "{local_image_file}"'])
-        logger.info('Starting download sonic image via http')
-        download_image_cmd = f"wget --timeout=310 --continue -O {local_image_file} {full_image_path}"
-        retry_call(self.run_cmd_set, fargs=[[download_image_cmd]], fkwargs={"custom_prompts": "100%", "timeout": 300}, tries=5, delay=2, logger=logger)
+        mount_point = '/boot/efi'
+        self.run_cmd_set([f'mkdir -p {mount_point}'])
+        grub_path = f'{mount_point}/EFI/SONiC-OS/grubx64.efi'
+        for mount_cmd in (
+            f'mount LABEL=ESP {mount_point}',
+            f'mount LABEL=EFI {mount_point}',
+            f'mount LABEL="EFI_SYSTEM" {mount_point}',
+        ):
+            self.run_cmd_set([f'{mount_cmd} || true'])
+        if self._onie_file_exists(grub_path):
+            return f'{mount_point}/EFI/SONiC-OS'
 
-        logger.info('Starting onie-nos-install sonic image')
-        stdout, pexpect_entry = self.run_cmd_set([f"onie-nos-install {local_image_file}"], prompts)
+        part_out = self._onie_run_and_capture(
+            'fdisk -l 2>/dev/null | grep "EFI System" | awk \'{print $1}\' | head -n1 || true')
+        part_match = re.search(r'(/dev/\S+)', part_out)
+        if part_match:
+            part = part_match.group(1)
+            self.run_cmd_set([f'mount {part} {mount_point} || true'])
+            if self._onie_file_exists(grub_path):
+                return f'{mount_point}/EFI/SONiC-OS'
+        return None
 
+    def get_esp_sbat_gen(self, component='grub', efi_dir=None):
+        """Return SBAT generation for grub/shim on the DUT ESP, or None."""
+        efi_dir = efi_dir or self.ensure_esp_mounted()
+        if not efi_dir:
+            logger.info('get_esp_sbat_gen: SONiC ESP grub/shim not available')
+            return None
+        efi_path = f'{efi_dir}/{component}x64.efi'
+        if not self._onie_file_exists(efi_path):
+            logger.warning(f'get_esp_sbat_gen: missing EFI binary at {efi_path}')
+            return None
+        # BusyBox grep may lack -a; fall back to stripping non-ascii.
+        out = self._onie_run_and_capture(
+            f'(grep -a -o -m1 "{component},[0-9]*" {efi_path} || '
+            f'cat {efi_path} | tr -cd "\\11\\12\\15\\40-\\176" | '
+            f'grep -o -m1 "{component},[0-9]*" || true)'
+        )
+        gen = parse_sbat_gen(out.encode('latin1', errors='replace'), component)
+        logger.info(f'get_esp_sbat_gen: {component} gen={gen} from {efi_path}')
+        return gen
+
+    def prepare_image_for_onie_install(self, image_path, device_grub_gen):
+        """Return (image_path, use_direct_sh, cleanup_dir) after optional SBAT repack."""
+        local_path = resolve_local_image_path(image_path)
+        if is_repacked_image_path(local_path):
+            return local_path, True, None
+
+        if not needs_repack_for_onie_install(device_grub_gen, None):
+            return local_path, False, None
+
+        if not os.path.isfile(local_path):
+            raise FileNotFoundError(
+                f'Candidate image is not available locally for SBAT inspection/repack: {local_path}'
+            )
+
+        image_grub_gen = get_bin_grub_sbat_gen(local_path)
+        logger.info(
+            f'ONIE install SBAT: DUT grub,{device_grub_gen}; '
+            f'candidate grub,{image_grub_gen}'
+        )
+        if not needs_repack_for_onie_install(device_grub_gen, image_grub_gen):
+            return local_path, False, None
+
+        from_image = DEFAULT_REPACK_FROM_IMAGE
+        logger.info(f'Using default repack --from-image: {from_image}')
+        if not os.path.isfile(from_image):
+            raise FileNotFoundError(
+                f'Default --from-image is not available locally: {from_image}'
+            )
+
+        os.makedirs(DEFAULT_REPACK_STAGING_DIR, exist_ok=True)
+        # Explicit chmod: makedirs mode is umask-masked / ignored if dir exists.
+        # 1777 is required under NFS root-squash (Mars runs as root → nobody).
+        try:
+            os.chmod(DEFAULT_REPACK_STAGING_DIR, 0o1777)
+        except OSError as exc:
+            logger.info(f'Could not chmod {DEFAULT_REPACK_STAGING_DIR}: {exc}')
+        if not os.access(DEFAULT_REPACK_STAGING_DIR, os.W_OK | os.X_OK):
+            raise PermissionError(
+                f'Repack staging dir is not writable: {DEFAULT_REPACK_STAGING_DIR}. '
+                f'It needs mode 1777 so any mgmt identity can stage images'
+            )
+
+        work_dir = tempfile.mkdtemp(
+            prefix=f'sonic-repack-{self.ip.replace(".", "-")}-',
+            dir=DEFAULT_REPACK_STAGING_DIR,
+        )
+        os.chmod(work_dir, 0o755)
+        try:
+            updated_image = repack_sonic_bin(local_path, from_image, work_dir)
+            os.chmod(updated_image, 0o644)
+            logger.info(f'Repacked image staged for HTTP/wget: {updated_image}')
+            return updated_image, True, work_dir
+        except Exception:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
+
+    def _wait_install_success(self, stdout, pexpect_entry, prompts, timeout, num_retry):
+        max_retry = num_retry
         while num_retry > 0:
             if pexpect_entry == 0:
                 break
             elif pexpect_entry == 1:
                 num_retry = num_retry - 1
-                pexpect_entry = self.get_pexpect_entry(prompts)
+                pexpect_entry = self.get_pexpect_entry(prompts, timeout)
+                stdout = self.get_stdout(stdout)
                 logger.info(f"Got timeout on {num_retry} time..")
-                logger.info(f"Printing output: {self.engine.before}")
             else:
                 logger.info(f'Caught pexpect entry: {pexpect_entry}')
                 raise OnieInstallationError(f"Failed to install sonic image. {stdout}")
         else:
-            logger.info(f"Did not installed image in {num_retry * timeout} seconds.")
+            logger.info(
+                f"Did not installed image in {max_retry} attempts of {timeout} seconds.")
             raise OnieInstallationError(f"Failed to install sonic image. {stdout}")
+
+    def _run_sh_install(self, local_image_file):
+        """Run ``sh <image>``, answering mkfs ``Proceed anyway?`` if it appears.
+
+        onie-nos-install never hits this prompt because it wipes the partition
+        first; the repacked/SBAT path does.
+        """
+        expect_prompts = [INSTALL_SUCCESS_PROMPT, MKFS_PROCEED_PROMPT, pexpect.TIMEOUT]
+        logger.info(f'Executing command on {self.ip}: sh {local_image_file}')
+        self.engine.sendline(f'sh {local_image_file}')
+
+        stdout = ""
+        silent_periods = SH_INSTALL_MAX_SILENT_PERIODS
+        proceed_answers = SH_INSTALL_MAX_PROCEED_ANSWERS
+        while silent_periods > 0:
+            pexpect_entry = self.get_pexpect_entry(expect_prompts, SH_INSTALL_EXPECT_TIMEOUT)
+            stdout = self.get_stdout(stdout)
+            if pexpect_entry == 0:
+                return stdout
+            if pexpect_entry == 1:
+                proceed_answers -= 1
+                if proceed_answers < 0:
+                    raise OnieInstallationError(
+                        f"mkfs kept asking 'Proceed anyway?', 'y' is not consumed. {stdout}")
+                logger.info("mkfs 'Proceed anyway?' prompt detected; answering 'y'")
+                self.engine.sendline('y')
+                continue
+            silent_periods -= 1
+            logger.info(f'No install output for {SH_INSTALL_EXPECT_TIMEOUT}s, '
+                        f'{silent_periods} periods left')
+        raise OnieInstallationError(f"Failed to install sonic image. {stdout}")
+
+    def _get_device_grub_sbat_gen(self):
+        """Return DUT ESP grub SBAT generation, or None if unavailable."""
+        try:
+            if not self.is_efi_system():
+                return None
+            efi_dir = self.ensure_esp_mounted()
+            if not efi_dir:
+                return None
+            return self.get_esp_sbat_gen('grub', efi_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f'Unable to determine DUT grub SBAT gen: {exc}')
+            return None
+
+    def _wget_image_to_onie(self, image_url, local_image_file, timeout):
+        """Fetch an image onto ONIE over HTTP (expects wget ``100%``)."""
+        logger.info(f'Downloading image to ONIE via HTTP: {image_url} -> {local_image_file}')
+        download_image_cmd = f'wget --timeout=310 --continue -O {local_image_file} {image_url}'
+        retry_call(self.run_cmd_set, fargs=[[download_image_cmd]],
+                   fkwargs={'custom_prompts': '100%', 'timeout': timeout},
+                   tries=5, delay=2, logger=logger)
+
+    def _install_image_via_sh(self, install_src, local_image_file, cleanup_dir=None):
+        """Install a repacked image via wget + ``sh`` (CMS signature is invalid)."""
+        local_src = resolve_local_image_path(install_src)
+        if not local_src.startswith('/auto/'):
+            raise AssertionError(
+                f'Repacked image must be under /auto for HTTP/wget install, got: {local_src}'
+            )
+        try:
+            with allure.step('Download updated image to ONIE via HTTP/wget'):
+                self._wget_image_to_onie(
+                    f'{MarsConstants.HTTP_SERVER_NBU_NFS}{local_src}', local_image_file, 900)
+
+            logger.info(f'Starting direct sh install of {local_image_file}')
+            with allure.step('Installing image by "sh" (repacked / SBAT-updated)'):
+                self._run_sh_install(local_image_file)
+                logger.info(
+                    'SONiC installed via sh; rebooting (direct install does not auto-reboot)'
+                )
+                self.run_cmd_set(['reboot'])
+        finally:
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def _install_image_via_onie_nos_install(self, image_path, install_src, local_image_file,
+                                            prompts, timeout, num_retry):
+        full_image_path = f"{MarsConstants.HTTP_SERVER_NBU_NFS}{image_path}"
+        resolved = resolve_local_image_path(install_src)
+        if resolved.startswith('/auto/'):
+            full_image_path = f"{MarsConstants.HTTP_SERVER_NBU_NFS}{resolved}"
+            local_image_file = '/tmp/' + os.path.basename(resolved)
+            self.run_cmd_set([f'rm -f "{local_image_file}"'])
+
+        self._wget_image_to_onie(full_image_path, local_image_file, 300)
+
+        logger.info('Starting onie-nos-install sonic image')
+        with allure.step('Installing image by "onie-nos-install"'):
+            stdout, pexpect_entry = self.run_cmd_set(
+                [f"onie-nos-install {local_image_file}"], prompts, timeout=timeout)
+            self._wait_install_success(stdout, pexpect_entry, prompts, timeout, num_retry)
+
+    def install_image(self, image_path, timeout=60, num_retry=10):
+        """Install a SONiC .bin from ONIE, repacking for SBAT when needed."""
+        self.confirm_onie_boot_mode_install()
+        # restore engine after reboot
+        self.create_engine(True)
+
+        device_grub_gen = self._get_device_grub_sbat_gen()
+
+        with allure.step('Prepare image for ONIE install (SBAT / repack if needed)'):
+            install_src, use_direct_sh, cleanup_dir = self.prepare_image_for_onie_install(
+                image_path, device_grub_gen)
+
+        local_image_file = '/tmp/' + os.path.basename(install_src)
+        logger.info('Removing existing sonic image if any')
+        self.run_cmd_set([f'rm -f "{local_image_file}"'])
+
+        if use_direct_sh:
+            self._install_image_via_sh(install_src, local_image_file, cleanup_dir)
+        else:
+            prompts = [INSTALL_SUCCESS_PROMPT, pexpect.TIMEOUT]
+            self._install_image_via_onie_nos_install(
+                image_path, install_src, local_image_file, prompts, timeout, num_retry)
+
         logger.info('SONiC installed')
         prompts = [pexpect.EOF, pexpect.TIMEOUT]
         self.get_pexpect_entry(prompts, timeout=15)
