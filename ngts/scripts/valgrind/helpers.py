@@ -23,6 +23,10 @@ assert _VALGRIND_CONF_FILE.exists(), 'valgrind.conf not found'
 VALGRIND_DIR = '/var/log/valgrind'
 
 
+class ServiceNotApplicableError(Exception):
+    """Raised when a requested service is not currently applicable to a Valgrind run."""
+
+
 class ValgrindPkg:
     def __init__(self, engine: LinuxSshEngine):
         self._engine = engine
@@ -84,14 +88,24 @@ class BaseManager:
 
     def enable_all(self, services: list[str]) -> None:
         service_failed_to_configure: list[str] = []
+        service_skipped: dict[str, str] = {}
         for service in sorted(set(services)):
             with allure.independent_step(f"Enable valgrind for {service}"):
                 try:
                     self._configure(service)
+                except ServiceNotApplicableError as error:
+                    service_skipped[service] = str(error)
+                    self._log.warning("Skipping valgrind for %s: %s", service, error)
                 except Exception as e:
                     self._log.error(f"Failed to enable valgrind for {service}: {e}")
                     service_failed_to_configure.append(service)
                     raise
+
+        if service_skipped:
+            allure.attach(
+                "Skipped Valgrind services",
+                "\n".join(f"{service}: {reason}" for service, reason in sorted(service_skipped.items())),
+            )
 
         if service_failed_to_configure:
             logger.error(
@@ -102,7 +116,8 @@ class BaseManager:
 
             assert len(service_failed_to_configure) < len(services), "All services failed to enable"
 
-        self._restart_services(sorted(set(services) - set(service_failed_to_configure)), failed_to_enable=True)
+        configured_services = set(services) - set(service_failed_to_configure) - set(service_skipped)
+        self._restart_services(sorted(configured_services), failed_to_enable=True)
 
     def disable_all(self, services: list[str]) -> Generator[str, None, None]:
         """
@@ -308,6 +323,45 @@ class ServiceManager(BaseManager):
         ''' Checks if the drop-in file exists. '''
         return self._engine.run_cmd(f"test -f '{self._get_dropin_dir(service).as_posix()}' && echo yes || echo no").strip() == "yes"
 
+    def _get_service_current_state(self, service: str) -> tuple[str, str, str]:
+        """Return the service load, active, and sub states."""
+        result: str = self._engine.run_cmd(
+            f"systemctl show {service} --property=LoadState --property=ActiveState --property=SubState --no-pager",
+            validate=False,
+        )
+        state = {}
+        for line in result.splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                state[key.strip()] = value.strip()
+
+        required_fields = ("LoadState", "ActiveState", "SubState")
+        missing_fields = [field for field in required_fields if field not in state]
+        if missing_fields:
+            raise RuntimeError(
+                f"Could not determine service state for {service}; missing {', '.join(missing_fields)} in output: {result!r}"
+            )
+
+        return state["LoadState"], state["ActiveState"], state["SubState"]
+
+    def _handle_failed_services(self, services: list[str]) -> None:
+        """Remove partial Valgrind configuration without masking the original failure."""
+        cleanup_errors: dict[str, str] = {}
+        with allure.step(f"Clean failed Valgrind services: {', '.join(services)}"):
+            for service in services:
+                try:
+                    if self._is_dropin_exists(service):
+                        self.restore_service(service, failed_to_enable=True)
+                except Exception as error:
+                    cleanup_errors[service] = str(error)
+                    self._log.error("Failed to clean Valgrind configuration for %s: %s", service, error)
+
+        if cleanup_errors:
+            allure.attach(
+                "Valgrind service cleanup errors",
+                "\n".join(f"{service}: {error}" for service, error in sorted(cleanup_errors.items())),
+            )
+
     def _configure(self, service: str) -> None:
         """
         Create a systemd drop-in for `service` that wraps its ExecStart
@@ -315,6 +369,12 @@ class ServiceManager(BaseManager):
         """
         # service is e.g. "syseepromd.service"
         svc_name = service.rsplit(".service", maxsplit=1)[0]
+
+        load_state, active_state, sub_state = self._get_service_current_state(service)
+        if load_state != "loaded" or active_state != "active" or sub_state != "running":
+            raise ServiceNotApplicableError(
+                f"service is not running (load={load_state}, active={active_state}, sub={sub_state})"
+            )
 
         service_command = self._get_service_systemd_exec_argv(service).replace(" --daemon", "")
 
