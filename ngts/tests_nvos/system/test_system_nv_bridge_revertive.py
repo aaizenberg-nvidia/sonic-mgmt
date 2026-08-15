@@ -455,17 +455,43 @@ def get_configured_node_servers(cluster, engine: LinuxSshEngine) -> set[str]:
 
 
 def ensure_dual_node_servers(cluster, engine: LinuxSshEngine, net_info: dict) -> bool:
-    """Configure a node primary server for BOTH eth0 and eth1 (dual path)."""
+    """Configure a node primary server for BOTH eth0 and eth1 (dual path).
+
+    ``node primary server`` rejects a config that mixes IPv4 and IPv6 entries,
+    so new entries must match whatever family is already configured (e.g. by
+    ``ClusterTools.start_cluster()``). If nothing is configured yet, prefer
+    IPv4 (fall back to IPv6) and take a single address per interface. If the
+    two interfaces share no common family, or the existing config already
+    mixes families, skip setup rather than submit/extend a mixed-family
+    config.
+    """
     mapped = parse_network_info(net_info)
-    desired = [
-        ip
-        for iface in (
-            NvBridgeRevertiveConsts.PRIMARY_IFACE,
-            NvBridgeRevertiveConsts.SECONDARY_IFACE,
-        )
-        for ip in mapped.get(iface, [])
-    ]
+    ifaces = (
+        NvBridgeRevertiveConsts.PRIMARY_IFACE,
+        NvBridgeRevertiveConsts.SECONDARY_IFACE,
+    )
+
+    def pick_one_per_iface(want_ipv6: bool) -> list[str]:
+        picked = [
+            next((ip for ip in mapped.get(iface, []) if IpTool.is_address_ipv6(ip) == want_ipv6), None)
+            for iface in ifaces
+        ]
+        return picked if all(picked) else []
+
     existing = get_configured_node_servers(cluster, engine)
+    existing_has_v4 = any(not IpTool.is_address_ipv6(ip) for ip in existing)
+    existing_has_v6 = any(IpTool.is_address_ipv6(ip) for ip in existing)
+
+    if existing_has_v4 and existing_has_v6:
+        with allure.step("skip dual node-server setup: existing config already mixes IPv4/IPv6"):
+            logger.warning(f"node primary server already mixes address families ({existing}); skipping")
+        return False
+
+    if existing:
+        desired = pick_one_per_iface(want_ipv6=existing_has_v6)
+    else:
+        desired = pick_one_per_iface(want_ipv6=False) or pick_one_per_iface(want_ipv6=True)
+
     added = False
     for ip in desired:
         if ip not in existing:
