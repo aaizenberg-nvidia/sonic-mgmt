@@ -26,7 +26,7 @@ logger = logging.getLogger()
 def skip_unsupported_dpc(device) -> None:
     if not isinstance(device, RosalindSwitch):
         pytest.skip("DPC voltage update is only supported on Rosalind devices")
-    if is_bug_active(5160583):
+    if is_bug_active(5223078):
         pytest.skip(f"DPC tests skipped while redmine issue 5160583 is open")
 
 
