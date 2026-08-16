@@ -156,7 +156,8 @@ class OpenApiBaseCli(BaseCli):
                 engine,
                 reboot_params=RebootParams(recovery_engine=recovery_engine, topology_obj=topology_obj,
                                            system_is_ready_timeout=system_is_ready_timeout,
-                                           track_boot_intervals=track_boot_intervals))
+                                           track_boot_intervals=track_boot_intervals),
+                device=device)
             OperationTime.record_sub_duration(SubDuration.REBOOT, time.perf_counter() - reboot_start)
 
         return result

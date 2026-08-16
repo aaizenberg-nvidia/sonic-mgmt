@@ -24,7 +24,7 @@ from ngts.nvos_tools.system.System import System
 logger = logging.getLogger(__name__)
 
 
-def recover_dut_with_remote_reboot(topology_obj, engines, wait_after_rr=None):
+def recover_dut_with_remote_reboot(topology_obj, engines, wait_after_rr=None, device=None):
     with allure.step('Execute remote reboot'):
         NvueGeneralCli(engines.dut).remote_reboot_nvue(topology_obj)
     if wait_after_rr:
@@ -33,9 +33,18 @@ def recover_dut_with_remote_reboot(topology_obj, engines, wait_after_rr=None):
     with allure.step('Ping switch until shutting down'):
         ping_till_alive(should_be_alive=False, destination_host=engines.dut.ip)
     with allure.step('Wait for switch to be up'):
-        DutUtilsTool.wait_for_system_ready_in_serial(topology_obj)
+        if device:
+            DutUtilsTool.wait_for_system_ready_in_serial(
+                topology_obj,
+                wait_timeout=device.timeout_system_is_ready,
+            )
+        else:
+            DutUtilsTool.wait_for_system_ready_in_serial(topology_obj)
         engines.dut.disconnect()
-        DutUtilsTool.wait_for_nvos_to_become_functional(engines.dut).verify_result()
+        if device:
+            device.wait_for_os_to_become_functional(engines.dut).verify_result()
+        else:
+            DutUtilsTool.wait_for_nvos_to_become_functional(engines.dut).verify_result()
 
 
 def generate_strong_password(n: int = 10) -> str:
