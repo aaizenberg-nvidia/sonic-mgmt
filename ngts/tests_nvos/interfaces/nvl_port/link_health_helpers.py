@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import time
+from functools import cache
 from typing import List, Optional
 
 import pytest
@@ -42,6 +43,7 @@ def skip_if_link_health_not_supported(devices: DevicesT) -> None:
         pytest.skip("Link health is only supported on VR Rosalind / NVL-6 (QM4) switches")
 
 
+@cache  # per-engine image capability; re-probe only matters if the image changes mid-session
 def is_link_health_feature_available(dut_engine) -> bool:
     """True when the running image exposes the aggregate link-health command."""
     output = dut_engine.run_cmd(

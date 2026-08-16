@@ -760,7 +760,7 @@ class ClusterTools:
             cluster: The Cluster object to monitor app states.
         """
         with allure.step("Running sdn factory reset and waiting for completion"):
-            sdn.factory_default.action_reset(param='force', engine=engine)
+            sdn.factory_default.action_reset(param='force', engine=engine).verify_result()
             try:
                 ClusterTools.wait_for_apps_to_be_in_wanted_state(
                     cluster, cluster_expected_state='enabled', nmx_c_expected_state='down', engine=engine)

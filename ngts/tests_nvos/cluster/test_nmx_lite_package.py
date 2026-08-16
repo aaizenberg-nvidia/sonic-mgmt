@@ -29,6 +29,7 @@ from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, ClusterSimulation
 from ngts.tests_nvos.interfaces.nvl_port.helpers import toggle_port_state
@@ -76,6 +77,7 @@ def start_cluster_and_sdn_fm_config(engines, setup_name):
 
 @pytest.mark.gpu_tel
 @pytest.mark.skip_clear_config
+@pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_config):
 
