@@ -150,7 +150,7 @@ def test_install_platform_firmware(engines, devices, test_name, topology_obj, nv
                 with allure.step("NVUE and gNMI reboot counters must match before FW install reboot"):
                     telemetry_before_fw_install = take_reboot_telemetry_snapshot(nv_command.system, gnmi_client)
                     assert_nvue_gnmi_counters_match(telemetry_before_fw_install)
-                install_new_image_fw(nv_command.platform, test_name, test_image_name, devices)
+                _, install_time = install_new_image_fw(nv_command.platform, test_name, test_image_name, devices)
             with allure.step('Verify the firmware installed successfully'):
                 verify_firmware_with_platform_cmd(nv_command.platform, version_name)
                 for gnmi_component in expand_nvue_key_to_gnmi_components(PlatformConsts.FW_ASIC, devices.dut):
@@ -175,6 +175,7 @@ def test_install_platform_firmware(engines, devices, test_name, topology_obj, nv
                         expected_details=expected_reason,
                         expected_user=expected_user,
                     )
+                install_time.verify_result()
     finally:
         with allure.step("cleanup steps"):
             with allure.step("Install original system firmware file"):
@@ -228,10 +229,8 @@ def install_new_image_fw(platform, test_name, fw_file_name, devices):
     with allure.step('new fw image installation'):
         res_obj, duration = OperationTime.save_duration('reboot with new user FW', '', test_name,
                                                         platform.firmware.asic.files.file_name[fw_file_name].action_file_install_with_reboot)
-    with allure.step('Verify operation time'):
-        OperationTime.verify_operation_time(duration, 'install user FW', devices).verify_result()
-
-    return res_obj
+    # Timing verdict is returned, not asserted here, so a slow install cannot skip the post-reboot checks.
+    return res_obj, OperationTime.verify_operation_time(duration, 'install user FW', devices)
 
 
 def install_default_image_fw(system, test_name, fw_has_changed, devices):
