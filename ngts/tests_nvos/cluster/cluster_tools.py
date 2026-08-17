@@ -822,7 +822,9 @@ class ClusterTools:
         # not the command echo.
         reset_cmd = (f"printf '%s\\n' '{password}' | sudo -S -p '' nvidia-smi -r ; "
                      f"echo GPU__RESET__\"DONE\"")
-        logger.info("GPU reset (nvidia-smi -r) starting on %s", ip_address)
+        # Log the command with the sudo password masked (never log it in plaintext).
+        logger.info("GPU reset (nvidia-smi -r) starting on %s: %s", ip_address,
+                    reset_cmd.replace(f"'{password}'", "'***'"))
         output = new_engine.send_cmd_with_retry(reset_cmd, timeout=300, retries=2,
                                                 auto_find_prompt=False,
                                                 expected_string='GPU__RESET__DONE')
@@ -1217,10 +1219,18 @@ def disabled_access_ports(func):
                     logger.info("Sleeping for 15 seconds to make sure nnx-t docker is down")
                     time.sleep(15)
                 # Execute the test function
+            # Run the test body with the API the test was parametrized with. The
+            # wrapper's cluster setup above is pinned to NVUE (and cleanup re-pins
+            # in the finally); before this line the NVUE force leaked into the test
+            # body, so random_api=OpenApi tests silently ran everything via NVUE.
+            TestToolkit.tested_api = original_api
             return func(*args, **kwargs)
         finally:
             if perform_cleanup:
                 if isinstance(devices.dut, JulietSwitch):
+                    # Cleanup (port re-enable, refresh, cluster reset) was only ever
+                    # validated via NVUE - pin it regardless of what the test body used.
+                    TestToolkit.tested_api = 'NVUE'
                     if has_access_ports and standalone_system and not has_loopbox:
                         port_name = summarize_ports(devices.dut.nvl_access_ports_list)
                         selected_port = Port(port_name, "", "")

@@ -4,6 +4,7 @@ import random
 import pytest
 
 from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.nmx.Cluster import Cluster
@@ -15,14 +16,15 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch, RosalindSwitch
 from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
     DEFAULT_TRAY_STATE,
+    TRAY_PORT_VERIFY_TRIES,
+    TRAY_PORT_VERIFY_TRIES_LTX_FORCED,
     VALID_TRAY_STATES,
-    delete_sdn_partitions_before_compute_tray_test,
     ensure_cluster_enabled,
     get_acp_ports_for_tray,
     get_all_trays,
+    get_compute_tray_slots,
     get_tray,
-    is_compute_tray,
-    is_rtf_compute_tray_scenario,
+    pick_tray_for_maintenance_change,
     pick_two_trays_for_independence_test,
     reset_all_compute_node_gpus,
     restore_tray_cleanup,
@@ -46,13 +48,14 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
                        standalone_system, has_loopbox):
     """
     Test Objective:
-    Verify that the SDN tray show commands return correct output format, that all trays
-    are displayed with their maintenance-state field, and that showing a single tray
-    matches the aggregated output.
+    Verify that the SDN tray show commands return correct output format, that all listed
+    trays have their maintenance-state field, and that showing a single tray matches the
+    aggregated output. Since 0.8 the trays view lists SWITCH trays only (compute trays
+    are filtered out — compute-tray admin state is not released to customers).
 
-    Tray count is checked against RegressionConfigurations.tray_topology for this
-    setup_name. Wrong count (e.g. 27 vs 3 on RTF) skips with a hint — not a hard fail
-    on misconfigured MNNVL_TOPOLOGY / cluster view.
+    Tray count is checked against RegressionConfigurations.tray_topology switch_nodes
+    for this setup_name. Wrong count (e.g. 27 vs 1 on RTF) skips with a hint — not a
+    hard fail on misconfigured MNNVL_TOPOLOGY / cluster view.
 
     Precondition: Cluster enabled, gRPC connection to NMX-C is up.
     """
@@ -74,9 +77,9 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
     with allure.step(f"Verify number of trays matches expected setup size ({expected_tray_count})"):
         if len(tray_ids) != expected_tray_count:
             pytest.skip(
-                f"Tray count mismatch: expected {expected_tray_count} from lab config "
-                f"(switch_nodes={tray_topology_config['switch_nodes']}, "
-                f"compute_nodes={tray_topology_config['compute_nodes']}), "
+                f"Tray count mismatch: expected {expected_tray_count} switch trays from lab "
+                f"config (switch_nodes={tray_topology_config['switch_nodes']}; since 0.8 "
+                f"compute trays are filtered out of 'nv show sdn trays'), "
                 f"got {len(tray_ids)}: {tray_ids}. Check MNNVL_TOPOLOGY / cluster discovery — "
                 f"not failing on environment mismatch.")
 
@@ -112,10 +115,11 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
 
 @disabled_access_ports
 @pytest.mark.nmx
-@pytest.mark.timeout(25 * MINUTE, func_only=True)
+@pytest.mark.timeout(60 * MINUTE, func_only=True)
 def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_sdn,
                                       chassis_info, tray_topology_config, setup_name,
-                                      standalone_system, has_loopbox):
+                                      standalone_system, has_loopbox,
+                                      ltx_force_max_iterations):
     """
     Test Objective:
     Verify that the tray maintenance state can be updated to each valid value (up, down, diag)
@@ -124,25 +128,30 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
     and Summary column "Maintenance State" in nv show interface).
     Also verify behaviour when local port admin state is down.
 
-    Tray selection (tray_topology_config):
-    - Any tray from 'nv show sdn trays' (switch or compute), including the lone switch on RTF.
-    - compute_nodes==0 (simx): any tray; no NMX topology gpuTopoInfo parsing.
+    Tray selection: SWITCH trays only — compute-tray admin state is not released to
+    customers (product decision 2026-08-05; RN note in 0.6, blocked in NMX-C API in 0.8).
+    - Labs with compute trays: the local switch tray.
+    - compute_nodes==0: any tray (all are switch trays; note the only such setup
+      today, rosalind-simx, is classified standalone and skips the whole suite).
 
-    RTF compute tray precondition:
-    - Delete all SDN partitions (e.g. default 32766) before maintenance-state changes.
+    Port verification (after settle: 60s if bug 5065628 open, else 7s): the acp ports
+    that were link-up (stable) before the first change.
 
-    After tray 'down' (switch or compute):
-    - Run nvidia-smi -r on all hosts in compute_nodes_per_system before diag/up/restore.
+    GPU reset on leaving 'down' (labs with compute nodes): by design (RM 5189276,
+    closed not-a-bug) GPU-facing acps stay Down/Polling after down->diag/up until
+    the peer GPUs are reset with nvidia-smi -r; loopback-cabled acps retrain alone.
 
-    Port verification (after settle: 60s if bug 5065628 open, else 7s):
-    - Local switch tray: all acp ports.
-    - compute_nodes==0: all local acps (no topology dig).
-    - Compute tray with GPUs in topology: acp list from gpuTopoInfo; missing GPU data -> skip.
+    LTX coverage: runs with force-max-iterations armed on all access ports (fixture
+    ltx_force_max_iterations), so every tray-driven retrain walks ALL link-training
+    iterations (6480024 class); the port-verify retry budget is widened accordingly.
 
     Precondition: Cluster enabled, gRPC connection to NMX-C is up.
     """
     cluster, sdn = cluster_and_sdn
     ensure_cluster_enabled(cluster, setup_name, devices)
+    verify_tries = (TRAY_PORT_VERIFY_TRIES_LTX_FORCED if ltx_force_max_iterations
+                    else TRAY_PORT_VERIFY_TRIES)
+    lab_has_gpus = tray_topology_config.get('compute_nodes', 0) > 0
 
     trays_output = get_all_trays(sdn)
     tray_ids = list(trays_output.keys())
@@ -150,89 +159,74 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
         pytest.skip("No trays in 'nv show sdn trays' — enable cluster and check fm_config")
 
     local_switch_slot = str(chassis_info.get('slot-number'))
-    selected_tray = random.choice(tray_ids)
-    is_switch_tray = (selected_tray == local_switch_slot)
-    tray_type = "switch" if is_switch_tray else "compute"
+    selected_tray = pick_tray_for_maintenance_change(
+        tray_ids, local_switch_slot, tray_topology_config)
+    tray_type = "switch"
     logger.info(
         "Selected tray %s (%s) for state change tests (local switch slot = %s)",
         selected_tray, tray_type, local_switch_slot)
 
-    partitions_deleted = is_rtf_compute_tray_scenario(
-        selected_tray, local_switch_slot, tray_topology_config)
-    if partitions_deleted:
-        delete_sdn_partitions_before_compute_tray_test(sdn)
-
-    affected_acps = get_acp_ports_for_tray(
-        engines, sdn, devices, selected_tray, local_switch_slot, tray_topology_config)
+    affected_acps = get_acp_ports_for_tray(devices, selected_tray, local_switch_slot)
     logger.info(
         "%s acp ports should be affected by tray %s state changes",
         len(affected_acps), selected_tray)
 
-    compute_tray_under_test = is_compute_tray(
-        selected_tray, local_switch_slot, tray_topology_config)
-
     # Pick one port for the admin-state override test (single-port test at the end)
     override_test_port = Port(random.choice(affected_acps))
+    current_tray_state = DEFAULT_TRAY_STATE
 
-    # GPU reset in finally only if we entered 'down' and have not yet recovered from it.
-    needs_gpu_reset = False
     try:
-        # Compute tray about to go 'down': the GPUs still hold NVLink resources, so NMX-C
-        # rejects the maintenance change with NMX_ST_RESOURCE_IN_USE. Reset the GPUs first
-        # to free those resources before requesting 'down'.
-        # compute_tray_under_test only: NMX_ST_RESOURCE_IN_USE is for compute trays on
-        # 'down'; switch trays are not subject to that error.
-        if compute_tray_under_test:
-            reset_all_compute_node_gpus(setup_name, cluster)
-
         # -- Set tray to DOWN: ports should go down, maintenance-state should be 'down' --
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'down'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state='down').verify_result()
-        needs_gpu_reset = True
+            current_tray_state = 'down'
         verify_tray_state(sdn, selected_tray, 'down')
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=down, maintenance=down"):
-            verify_affected_ports_state(affected_acps, expected_link_state='down', expected_maintenance_state='down')
+            verify_affected_ports_state(affected_acps, expected_link_state='down', expected_maintenance_state='down',
+                                        tries=verify_tries)
+
+        # -- Set tray to DIAG: ports should come back up, maintenance-state should be 'diag' --
+        # Leaving 'down' requires a compute GPU reset by design (RM 5189276, not-a-bug):
+        # the 'down' admin-disabled the GPU side, and GPU-facing acps stay Down/Polling
+        # on diag/up until the peer GPUs are reset. Loopback-cabled acps retrain alone.
+        if lab_has_gpus:
+            reset_all_compute_node_gpus(setup_name, cluster)
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'diag'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state='diag').verify_result()
-        # 'down' severs all inband paths to GPUs; reset is needed to go back to 'up'.
-        reset_all_compute_node_gpus(setup_name, cluster)
-        needs_gpu_reset = False
+            current_tray_state = 'diag'
         verify_tray_state(sdn, selected_tray, 'diag')
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=up, maintenance=diag"):
-            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='diag')
+            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='diag',
+                                        tries=verify_tries)
 
         # -- Set tray to UP: ports should remain up, maintenance-state should be 'up' --
         with allure.step(f"Update tray {selected_tray} ({tray_type}) to 'up'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state='up').verify_result()
+            current_tray_state = 'up'
         verify_tray_state(sdn, selected_tray, 'up')
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=up, maintenance=up"):
-            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='up')
+            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='up',
+                                        tries=verify_tries)
 
         # -- Random non-default state, then restore to default --
         random_state = random.choice(['down', 'diag'])
         with allure.step(f"Set tray {selected_tray} to '{random_state}' then restore"):
-            # Same as the first 'down': free GPU NVLink resources before a compute tray
-            # goes 'down', else NMX-C returns NMX_ST_RESOURCE_IN_USE.
-            # compute_tray_under_test only: that error is for compute trays on 'down'/'diag'.
-            if compute_tray_under_test and random_state == 'down':
-                reset_all_compute_node_gpus(setup_name, cluster)
             sdn.trays.action_update_maintenance_state(
                 tray_id=selected_tray, maintenance_state=random_state).verify_result()
-            if random_state == 'down':
-                needs_gpu_reset = True
+            current_tray_state = random_state
             verify_tray_state(sdn, selected_tray, random_state)
-
-            sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
-            verify_tray_state(sdn, selected_tray, DEFAULT_TRAY_STATE)
-            # 'down' severs all inband paths to GPUs; reset is needed to go back to 'up'.
-            if random_state == 'down':
+            # Same by-design GPU reset before leaving 'down' (restore -> up).
+            if random_state == 'down' and lab_has_gpus:
                 reset_all_compute_node_gpus(setup_name, cluster)
-                needs_gpu_reset = False
+            sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
+            current_tray_state = 'up'
+            verify_tray_state(sdn, selected_tray, DEFAULT_TRAY_STATE)
         with allure.step(f"Verify all {len(affected_acps)} affected ports: link=up, maintenance=up after restore"):
-            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='up')
+            verify_affected_ports_state(affected_acps, expected_link_state='up', expected_maintenance_state='up',
+                                        tries=verify_tries)
 
         # -- Verify port admin-state DOWN overrides tray diag --
         # Per HLD: if a port's local admin state is down, tray diag should NOT bring it up.
@@ -241,28 +235,34 @@ def test_tray_change_and_verify_state(engines, devices, random_api, cluster_and_
             logger.info(f"Port for admin-state override test: {override_test_port.name}")
 
             with allure.step(f"Set port {override_test_port.name} link state to down"):
-                override_test_port.interface.link.set(op_param_name='state', op_param_value='down', apply=True)
+                override_test_port.interface.link.state.set(
+                    op_param_name='down', apply=True, ask_for_confirmation=True).verify_result()
             Port.wait_for_port_state(override_test_port, expected_state='down')
 
             with allure.step(f"Set tray {selected_tray} to diag"):
                 sdn.trays.action_update_maintenance_state(
                     tray_id=selected_tray, maintenance_state='diag').verify_result()
+                current_tray_state = 'diag'
 
             with allure.step(f"Verify port {override_test_port.name} stays down (admin-state overrides tray diag)"):
                 Port.wait_for_port_state(override_test_port, expected_state='down')
 
-            with allure.step("Cleanup: unset port link state and restore tray"):
-                override_test_port.interface.link.unset(op_param='state', apply=True)
+            with allure.step("Cleanup: unset port link state, restore tray, verify port retrains"):
+                override_test_port.interface.link.state.unset(
+                    apply=True, ask_for_confirmation=True).verify_result()
                 sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
+                current_tray_state = 'up'
+                # Verify the port actually comes back up (forced LTX retrain ~5-6 min) —
+                # otherwise a retrain hiccup leaks a dead link into the next test.
+                verify_affected_ports_state([override_test_port.name], expected_link_state='up',
+                                            expected_maintenance_state='up', tries=verify_tries)
 
     finally:
-        restore_tray_cleanup(sdn, selected_tray, setup_name, cluster, reset_gpu=needs_gpu_reset)
-        # We destructively deleted the default SDN partition (32766) as a precondition.
-        # Restore it the same way the dedicated partition test does: an SDN factory reset
-        # makes NMX-C recreate the default partition (test_cluster_partition.py:86-101).
-        if partitions_deleted:
-            with allure.step("Restore deleted SDN partition(s) via SDN factory reset"):
-                ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster)
+        # If the test died while the tray was 'down', reset the GPUs first so the
+        # restore's down->up transition can actually retrain the GPU-facing links.
+        if current_tray_state == 'down' and lab_has_gpus:
+            reset_all_compute_node_gpus(setup_name, cluster)
+        restore_tray_cleanup(sdn, selected_tray)
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +280,13 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
     Test Objective:
     Verify that setting maintenance state on one tray does not affect other trays.
 
-    On single-switch setups (RTF), both trays are compute trays — the lone switch is never used.
+    Switch trays only (compute-tray admin state is not released to customers).
+    Requires >= 2 eligible switch trays: labs with compute trays expose only one
+    known switch tray (the local slot), and the sole switch-only setup configured
+    today (rosalind-simx) is gated out as standalone by cluster_and_sdn — so this
+    test skips everywhere until a multi-switch-tray setup is configured.
 
-    Precondition: Cluster enabled, setup has >= 2 eligible trays.
+    Precondition: Cluster enabled, setup has >= 2 eligible (switch) trays.
     """
     cluster, sdn = cluster_and_sdn
     ensure_cluster_enabled(cluster, setup_name, devices)
@@ -296,17 +300,7 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
     state_b = random.choice(VALID_TRAY_STATES)
     logger.info(f"Tray A={tray_a} -> {state_a}, Tray B={tray_b} -> {state_b}")
 
-    # Free GPU NVLink resources before a tray goes 'down', else NMX-C may return
-    # NMX_ST_RESOURCE_IN_USE. (reset_all_compute_node_gpus resets all compute nodes.)
-    if state_a == 'down' or state_b == 'down':
-        reset_all_compute_node_gpus(setup_name, cluster)
-
     try:
-        local_switch_slot = str(chassis_info.get('slot-number'))
-        partitions_deleted_a = is_rtf_compute_tray_scenario(tray_a, local_switch_slot, tray_topology_config)
-        partitions_deleted_b = is_rtf_compute_tray_scenario(tray_b, local_switch_slot, tray_topology_config)
-        if partitions_deleted_a or partitions_deleted_b:
-            delete_sdn_partitions_before_compute_tray_test(sdn)
         with allure.step(f"Set tray {tray_a} to '{state_a}' and tray {tray_b} to '{state_b}'"):
             sdn.trays.action_update_maintenance_state(
                 tray_id=tray_a, maintenance_state=state_a).verify_result()
@@ -319,11 +313,8 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
 
     finally:
         with allure.step("Restore both trays"):
-            reset_gpu = (state_a == 'down' or state_b == 'down')
-            try:
-                restore_tray_cleanup(sdn, tray_a, setup_name, cluster)
-            finally:
-                restore_tray_cleanup(sdn, tray_b, setup_name, cluster, reset_gpu=reset_gpu)
+            sdn.trays.action_restore_maintenance_state(tray_id=tray_a)
+            sdn.trays.action_restore_maintenance_state(tray_id=tray_b)
 
         with allure.step("Verify both trays restored to default"):
             verify_tray_state(sdn, tray_a, DEFAULT_TRAY_STATE)
@@ -354,20 +345,42 @@ def test_tray_bad_params(engines, devices, random_api, cluster_and_sdn, chassis_
         sdn.trays.show(random_string, should_succeed=False, exempted_err_msgs=["is not a", "Error", "Invalid"])
 
     with allure.step("Update tray with valid slot-id but invalid maintenance-state value"):
-        trays_output = get_all_trays(sdn)
-        valid_tray_id = random.choice(list(trays_output.keys()))
+        # Use the local switch slot: compute-tray admin state is blocked in the NMX-C API
+        # from 0.8, which could mask the invalid-state rejection under test here.
+        valid_tray_id = chassis_info.get('slot-number')
+        assert valid_tray_id is not None, "Could not get slot-number from platform chassis-location"
         result = sdn.trays.action_update_maintenance_state(
-            tray_id=valid_tray_id, maintenance_state=random_string)
+            tray_id=str(valid_tray_id), maintenance_state=random_string)
         result.verify_result(should_succeed=False, expected_value=["Error", "Invalid Command"])
 
     with allure.step("Update tray with non-existent slot-id"):
         # A valid-format but non-existent slot-id is rejected by NMX-C
         result = sdn.trays.action_update_maintenance_state(
             tray_id='999', maintenance_state='down')
+        # Branch on the API actually in effect, NOT on random_api:
+        # @disabled_access_ports forces tested_api to NVUE on the JulietSwitch
+        # family (RosalindRTF included), so random_api may say OpenApi while the
+        # command really runs through the NVUE CLI and returns its error format.
         expected_value = ["Error", "Action failed"]
-        if random_api == ApiType.OPENAPI:
+        if TestToolkit.tested_api == ApiType.OPENAPI:
             expected_value = ["action_error"]
         result.verify_result(should_succeed=False, expected_value=expected_value)
+
+    with allure.step("Update maintenance-state on a compute tray (not supported since 0.8)"):
+        # Compute-tray admin state is not released to customers (product decision
+        # 2026-08-05; blocked in the NMX-C API from 0.8). The block has a dedicated
+        # message, distinct from the bad-id NMX_ST_BADPARAM above. The backend
+        # generates the message, so it is the same substring under NVUE and OpenAPI.
+        compute_slots = get_compute_tray_slots(sdn)
+        if not compute_slots:
+            logger.info("No compute tray slots in partition GPU locations - skipping compute-tray check")
+        else:
+            compute_tray_id = random.choice(sorted(compute_slots))
+            result = sdn.trays.action_update_maintenance_state(
+                tray_id=compute_tray_id, maintenance_state='down')
+            result.verify_result(
+                should_succeed=False,
+                expected_value=f"Tray admin state is not supported for tray {compute_tray_id}")
 
 
 # ---------------------------------------------------------------------------

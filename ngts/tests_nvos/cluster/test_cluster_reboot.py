@@ -1,7 +1,6 @@
 import pytest
 import logging
 import pexpect
-import random
 
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -21,11 +20,8 @@ from retry.api import retry_call
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.helpers.interfaces.link_state_helpers import verify_interface_up
 from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
-    is_rtf_compute_tray_scenario,
-    delete_sdn_partitions_before_compute_tray_test,
     get_acp_ports_for_tray,
     verify_affected_ports_state,
-    restore_tray_cleanup,
 )
 
 logger = logging.getLogger()
@@ -94,27 +90,32 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
                 assert uuid not in default_partition_uuids and location not in default_partition_locations, \
                     f"uuid {uuid} still appears in default partition {ClusterConsts.DEFAULT_PARTITION_ID} although it was moved to {ClusterConsts.EMPTY_PARTITION_ID}, See current uuids: {default_partition_uuids}"
 
-        partition_deletion_flag = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
             with allure.step("Set tray maintenance-state to non-default before reboot"):
                 trays_output = OutputParsingTool.parse_show_output_to_dict(sdn.trays.show()).get_returned_value()
                 tray_ids = list(trays_output.keys())
-                if tray_ids:
-                    selected_tray = tray_ids[0]
-                    if location and location.split('.')[1] == selected_tray:
-                        selected_tray = tray_ids[-1]  # Since we know that the first and the last tray are compute nodes, take the last tray in case the first tray will not work
-                    local_switch_slot = str(chassis_info.get('slot-number'))
-                    partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
-                    if partition_deletion_flag:
-                        delete_sdn_partitions_before_compute_tray_test(sdn, excluded_partitions=[ClusterConsts.EMPTY_PARTITION_ID])
-                    affected_acps = get_acp_ports_for_tray(
-                        engines, sdn, devices, selected_tray, local_switch_slot, tray_topology_config)
-                    tray_non_default = random.choice(['down', 'diag'])
+                # Switch trays only: compute-tray admin state is not released to customers
+                # (product decision 2026-08-05; blocked in the NMX-C API from 0.8). The local
+                # slot is the only slot known to be a switch tray without topology parsing.
+                local_switch_slot = str(chassis_info.get('slot-number'))
+                if local_switch_slot in tray_ids:
+                    selected_tray = local_switch_slot
+                    affected_acps = get_acp_ports_for_tray(devices, selected_tray, local_switch_slot)
+                    # 'diag' (not 'down'): hitless — links stay up, so the reboot's LID/link
+                    # checks stay valid. 'down' would take all cabled acps down across the
+                    # reboot, and the finally-restore does not verify links retrain — a retrain
+                    # hiccup would leak a dead-link setup into the next test. 'down' coverage
+                    # lives in the tray_admin_state suite.
+                    tray_non_default = 'diag'
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
                     tray_state_set = True
                     logger.info(f"Set tray {selected_tray} to '{tray_non_default}' before reboot, "
                                 f"affecting {len(affected_acps)} acp ports")
+                else:
+                    logger.warning(
+                        f"Local switch slot {local_switch_slot} not in tray list {tray_ids} — "
+                        f"skipping the tray maintenance-state persistence step")
 
         with allure.step('Run nv action reboot system'):
             result_obj, duration = OperationTime.save_duration('reboot', '', test_name, system.reboot.action_reboot)
@@ -172,11 +173,6 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
             output = OutputParsingTool.parse_show_output_to_dict(sdn.partition.show(output_format=output_format),
                                                                  output_format=output_format).get_returned_value()
             assert ClusterConsts.EMPTY_PARTITION_ID in output.keys(), f'Partition {ClusterConsts.EMPTY_PARTITION_ID} was deleted, while its expected to be kept'
-            if partition_deletion_flag:
-                # partitions (except the empty one) were deleted before the compute-tray flow,
-                # so the default partition must stay deleted after reboot
-                assert ClusterConsts.DEFAULT_PARTITION_ID not in output.keys(), \
-                    f'Partition {ClusterConsts.DEFAULT_PARTITION_ID} was not deleted, while its expected to be deleted'
             uuids, locations = ClusterTools.uuid_location_in_partition(sdn, ClusterConsts.EMPTY_PARTITION_ID)
             assert uuid in uuids, f"uuid {uuid} is missing from partition {ClusterConsts.EMPTY_PARTITION_ID} after reboot, See current uuids: {uuids}"
             assert location in locations, f"location {location} is missing from partition {ClusterConsts.EMPTY_PARTITION_ID} after reboot. See current locations: {locations}"
@@ -187,7 +183,8 @@ def test_reboot_command(engines, devices, test_name, test_api, has_loopbox, stan
 
     finally:
         if tray_state_set:
-            restore_tray_cleanup(sdn, selected_tray, setup_name, cluster, reset_gpu=(tray_non_default == 'down'))
+            with allure.step(f"Restore tray {selected_tray} to default"):
+                sdn.trays.action_restore_maintenance_state(tray_id=selected_tray).verify_result()
         if not standalone_system:
             with allure.step("Running sdn factory reset"):
                 ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)

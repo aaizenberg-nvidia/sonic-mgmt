@@ -22,11 +22,6 @@ from ngts.tests_nvos.system.factory_reset.helpers import add_verification_data, 
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
-from ngts.tests_nvos.cluster.tray_admin_state.helpers import (
-    is_rtf_compute_tray_scenario,
-    delete_sdn_partitions_before_compute_tray_test,
-    restore_tray_cleanup,
-)
 
 logger = logging.getLogger()
 
@@ -69,24 +64,28 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
                         op_param_value=dscp_value, apply=True)
 
         tray_state_set = False
-        tray_non_default = None
-        selected_tray = None
-        tray_at_default = False
         if not standalone_system and isinstance(devices.dut, RosalindSwitch):
             with allure.step("Set tray maintenance-state to non-default before factory reset"):
                 trays_output = OutputParsingTool.parse_show_output_to_dict(sdn.trays.show()).get_returned_value()
                 tray_ids = list(trays_output.keys())
-                if tray_ids:
-                    selected_tray = tray_ids[0]
-                    local_switch_slot = str(chassis_info.get('slot-number'))
-                    partition_deletion_flag = is_rtf_compute_tray_scenario(selected_tray, local_switch_slot, tray_topology_config)
-                    if partition_deletion_flag:
-                        delete_sdn_partitions_before_compute_tray_test(sdn)
-                    tray_non_default = random.choice(['down', 'diag'])
+                # Switch trays only: compute-tray admin state is not released to customers
+                local_switch_slot = str(chassis_info.get('slot-number'))
+                if local_switch_slot in tray_ids:
+                    selected_tray = local_switch_slot
+                    # 'diag' (not 'down'): hitless — links stay up, so the factory-reset flow's
+                    # link checks stay valid. 'down' would take all cabled acps down; the reset
+                    # auto-restores the tray to 'up' but nothing verifies links retrain — a
+                    # retrain hiccup would leak a dead-link setup into the next test. 'down'
+                    # coverage lives in the tray_admin_state suite.
+                    tray_non_default = 'diag'
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
                     tray_state_set = True
                     logger.info(f"Set tray {selected_tray} to '{tray_non_default}' before factory reset")
+                else:
+                    logger.warning(
+                        f"Local switch slot {local_switch_slot} not in tray list {tray_ids} — "
+                        f"skipping the tray maintenance-state reset-to-default step")
 
         with allure.step("Run reset factory without params"):
             execute_reset_factory(engines, system, devices.dut.reset_factory, "", current_time)
@@ -145,15 +144,8 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
                 actual_tray_state = tray_output.get(ClusterConsts.MAINTENANCE_STATE)
                 assert actual_tray_state == 'up', (
                     f"Tray {selected_tray}: expected 'up' after factory reset, got '{actual_tray_state}'")
-                tray_at_default = True
 
     finally:
-        if tray_state_set:
-            # Factory reset should already put tray to 'up'; restore only if that did not happen.
-            # GPU reset still needed when pre-reset state was 'down'.
-            restore_tray_cleanup(
-                sdn, selected_tray, setup_name, cluster,
-                restore=not tray_at_default, reset_gpu=(tray_non_default == 'down'))
         if interface_wa_called:
             try:
                 next(interfaces_wa)

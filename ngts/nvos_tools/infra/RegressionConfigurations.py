@@ -82,10 +82,14 @@ class Configurations:
 
     # Per-setup tray model for SDN tray admin-state tests (RegressionConfigurations.tray_topology).
     # Keys must match Noga/pytest setup_name exactly.
-    # switch_nodes / compute_nodes: expected tray counts for test_tray_show_cmd only.
-    # Maintenance-state tests use this to choose safe trays and whether to parse NMX topology:
-    #   - switch_nodes==1 (e.g. RTF): never toggle the lone switch tray; use compute trays only.
-    #   - compute_nodes==0 (e.g. simx): no gpuTopoInfo expected; skip topology file for acp mapping.
+    # switch_nodes: expected 'nv show sdn trays' count (since 0.8 the view lists switch trays
+    # only — compute trays are filtered out). compute_nodes: lab model only (>0 gates tray
+    # selection to the local switch slot); compute trays no longer appear in the trays view.
+    # Maintenance-state tests use SWITCH trays only — compute-tray admin state is not
+    # released to customers (product decision 2026-08-05; blocked in NMX-C API from 0.8):
+    #   - compute_nodes>0: only the local switch tray is a known-switch slot; tests use it.
+    #   - compute_nodes==0: every tray is a switch tray; any may be used (note: the only
+    #     such setup today, rosalind-simx, is standalone and skips the suite entirely).
     tray_topology = {
         'NVOS_sws_rtf2_rosalind_198': {'switch_nodes': 1, 'compute_nodes': 2},
         'NVOS_2_rosalind-simx': {'switch_nodes': 2, 'compute_nodes': 0},
