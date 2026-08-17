@@ -78,6 +78,41 @@ table_parser_info = {
 
 
 @pytest.fixture(scope='module', autouse=True)
+def disable_sflow(cli_objects):
+    """
+    Disable sFlow and persist the state for the WJH tests, then restore it.
+
+    Persisting the disabled state prevents a config reload during the WJH
+    tests from enabling sFlow again.
+    """
+    sflow_was_enabled = cli_objects.dut.sflow.is_sflow_enabled()
+    if not sflow_was_enabled:
+        logger.info("sFlow is not enabled; no WJH-specific change is required.")
+
+    try:
+        if sflow_was_enabled:
+            with allure.step('Disable sFlow and save the configuration before WJH tests'):
+                logger.info('Disable sFlow and save the configuration before WJH tests')
+                cli_objects.dut.sflow.disable_sflow()
+                cli_objects.dut.general.save_configuration()
+                assert not cli_objects.dut.sflow.is_sflow_enabled(), \
+                    "sFlow should be down after disable + config save before WJH tests"
+        yield
+    finally:
+        if sflow_was_enabled:
+            try:
+                with allure.step('Restore sFlow and save the configuration after WJH tests'):
+                    assert not cli_objects.dut.sflow.is_sflow_enabled(), \
+                        "sFlow should still be down before restore after WJH tests"
+                    cli_objects.dut.sflow.enable_sflow()
+                    cli_objects.dut.general.save_configuration()
+                    assert cli_objects.dut.sflow.is_sflow_enabled(), \
+                        "sFlow should be up after enable + config save after WJH tests"
+            except Exception as err:
+                logger.error(f"Failed to restore sFlow after WJH tests: {err}")
+
+
+@pytest.fixture(scope='module', autouse=True)
 def disable_doroce(cli_objects):
     """
     Disable doroce before test in case when doroce enabled and enable back after test

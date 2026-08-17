@@ -1,3 +1,5 @@
+import re
+
 from ngts.constants.constants import SflowConsts
 
 
@@ -36,6 +38,13 @@ class SonicSflowCli:
         :return: the output of cli command
         """
         return self.engine.run_cmd(f'sudo config sflow disable')
+
+    def is_sflow_enabled(self):
+        """
+        Check whether the global sFlow admin state is up.
+        :return: True when sFlow is globally enabled, otherwise False
+        """
+        return bool(re.search(r'sFlow Admin State:\s+up', self.show_sflow()))
 
     def add_collector(self, collector, ip, port=SflowConsts.DEFAULT_UDP, vrf=SflowConsts.VRF_DEFAULT, validate=True):
         """
