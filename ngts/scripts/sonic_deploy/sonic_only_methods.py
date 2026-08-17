@@ -571,7 +571,7 @@ class SonicInstallationSteps:
         hostname = platform_params.get('host_name', '')
         assert hostname, 'No hostname provided, aborting BIOS version check'
         if hostname in BIOS_RESTORE_SKIP_HOSTS:
-            logger.info('Host %s is in BIOS restore skip list, skipping BIOS version check', hostname)
+            logger.info(f'Host {hostname} is in BIOS restore skip list, skipping BIOS version check')
             return
 
         fw_data = extract_fw_data(fw_pkg_path)
@@ -588,7 +588,7 @@ class SonicInstallationSteps:
         bios_revisions = component['BIOS']
         target_version = bios_revisions[0]['version']
         target_firmware_url = bios_revisions[0]['firmware']
-        logger.info('Target BIOS version for chassis %s: %s', chassis, target_version)
+        logger.info(f'Target BIOS version for chassis {chassis}: {target_version}')
 
         cli.cli_obj.general.verify_dockers_are_up(platform_params=platform_params)
 
@@ -598,25 +598,26 @@ class SonicInstallationSteps:
         component_versions = dict(zip(parsed[0]['Component'], parsed[0]['Version']))
         current_bios = component_versions.get('BIOS')
 
-        logger.info('Current BIOS version: %s, Target BIOS version: %s', current_bios, target_version)
+        logger.info(f'Current BIOS version: {current_bios}, Target BIOS version: {target_version}')
 
         if current_bios == target_version:
             logger.info('BIOS version matches target. No restore needed')
             return
 
         # --- BIOS mismatch detected, perform restore ---
-        with allure.step('Restoring BIOS from %s to %s' % (current_bios, target_version)):
-            logger.info('BIOS version mismatch detected. Restoring from %s to %s', current_bios, target_version)
+        with allure.step(f'Restoring BIOS from {current_bios} to {target_version}'):
+            logger.info(f'BIOS version mismatch detected. Restoring from {current_bios} to {target_version}')
 
             # Download on the NGTS host because wget and /auto are unavailable on the DUT.
-            local_fw_path = '/tmp/bios_restore.rom'
-            dut_fw_path = '/tmp/bios_restore.rom'
-            logger.info('Downloading BIOS firmware from %s to NGTS:%s', target_firmware_url, local_fw_path)
+            fw_filename = os.path.basename(target_firmware_url.rstrip('/'))
+            local_fw_path = f'/tmp/{fw_filename}'
+            dut_fw_path = local_fw_path
+            logger.info(f'Downloading BIOS firmware from {target_firmware_url} to NGTS:{local_fw_path}')
             try:
                 subprocess.run(
                     ['wget', '--timeout=60', '--continue', '-O', local_fw_path, target_firmware_url],
                     check=True)
-                logger.info('Copying BIOS firmware from NGTS:%s to DUT:%s', local_fw_path, dut_fw_path)
+                logger.info(f'Copying BIOS firmware from NGTS:{local_fw_path} to DUT:{dut_fw_path}')
                 engine.copy_file(source_file=local_fw_path, dest_file=os.path.basename(dut_fw_path),
                                  file_system='/tmp/', direction='put')
             finally:
@@ -624,8 +625,8 @@ class SonicInstallationSteps:
                     os.remove(local_fw_path)
 
             # fwutil force-reboots; engine.reload sends via send_config_set (no prompt wait).
-            install_cmd = 'sudo fwutil install chassis component BIOS fw %s -y' % dut_fw_path
-            logger.info('Running: %s', install_cmd)
+            install_cmd = f'sudo fwutil install chassis component BIOS fw {dut_fw_path} -y'
+            logger.info(f'Running: {install_cmd}')
             engine.reload([install_cmd], wait_after_ping=InfraConst.SLEEP_AFTER_RRBOOT)
 
             cli.cli_obj.general.verify_dockers_are_up(platform_params=platform_params)
@@ -636,8 +637,8 @@ class SonicInstallationSteps:
             component_versions = dict(zip(parsed[0]['Component'], parsed[0]['Version']))
             new_bios = component_versions.get('BIOS')
             assert new_bios == target_version, \
-                'BIOS version after restore is %s, expected %s' % (new_bios, target_version)
-            logger.info('BIOS successfully restored to %s', target_version)
+                f'BIOS version after restore is {new_bios}, expected {target_version}'
+            logger.info(f'BIOS successfully restored to {target_version}')
 
     @staticmethod
     def post_installation_steps(topology_obj, sonic_topo, recover_by_reboot, setup_name, platform_params,
@@ -675,7 +676,7 @@ class SonicInstallationSteps:
         # BIOS version check and restore - ensure target BIOS version before applying config
         for dut in setup_info['duts']:
             dut_engine = topology_obj.players[dut['dut_alias']]['engine']
-            with allure.step('Check and restore BIOS version on %s' % dut['dut_name']):
+            with allure.step(f'Check and restore BIOS version on {dut["dut_name"]}'):
                 SonicInstallationSteps.restore_bios_if_needed(
                     dut_engine, fw_pkg_path, platform_params, cli=dut['cli_obj'])
 
