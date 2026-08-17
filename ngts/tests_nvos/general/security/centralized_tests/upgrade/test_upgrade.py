@@ -1,5 +1,6 @@
 from typing import Dict, Generator
 
+import logging
 import pytest
 import retry
 
@@ -97,7 +98,10 @@ def test_downgrade_upgrade(base_version_realpath, target_version_realpath, devic
                 for name, checker in checkers.items():
                     if not should_skip_checker(CHECKERS_SKIP_RULES, name, setup_name):
                         with allure.independent_step(name):
-                            next(checker)
+                            try:
+                                next(checker)
+                            except StopIteration:
+                                logging.info('Checker %s finished (one-yield convention)', name)
 
     finally:
         with allure.step('cleanup'):
