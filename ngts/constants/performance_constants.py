@@ -922,6 +922,23 @@ EGRESS_PORT_GROUP_NAME = "egress_ports"
 INGRESS_PORT_GROUP_NAME = "ingress_ports"
 
 
+@dataclass
+class MinPacketSizeConfig:
+    """Minimum SRv6 bisection data packet params for one ASIC generation.
+
+    The minimum differs per ASIC generation, so it is looked up by chip type
+    rather than hardcoded.
+
+    Attributes:
+        packet_size: MRC data packet size (bytes) at the minimum.
+        mrc_num_packets: MRC data packets per stream at the minimum.
+        retransmit_num_packets: MRC retransmission packets per stream at the minimum.
+    """
+    packet_size: int
+    mrc_num_packets: int
+    retransmit_num_packets: int
+
+
 class MRCConsts:
     # Cumulus SRv6 scheduler configuration:
     # - Select one entry from CUMULUS_DWRR_PROFILES with CUMULUS_DWRR_PROFILE.
@@ -1279,6 +1296,17 @@ class MRCConsts:
             "packet_size": 3072,
             "mrc_num_packets": 10,
             "num_dummy_acls": 25,
+        },
+    }
+
+    # Minimum bisection data packet params per chip type and per traffic type.
+    # Only SRv6 traffic has a measured minimum; a chip type or traffic type absent here is skipped by the test.
+    MIN_PACKET_SIZE_BY_CHIP_TYPE = {
+        "SPC5": {
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=462, mrc_num_packets=66, retransmit_num_packets=13),
+        },
+        "SPC6": {
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=1496, mrc_num_packets=23, retransmit_num_packets=4),
         },
     }
 

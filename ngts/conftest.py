@@ -248,6 +248,10 @@ def pytest_addoption(parser):
                           ' and will set the relevant cli')
     parser.addoption('--is_ipv6', dest="is_ipv6", required=False, action="store_true", default=False,
                      help='On Performance tests, this parameter will determine if the tests run with ipv4 or ipv6')
+    parser.addoption('--min_packet_size', dest="min_packet_size", required=False, action="store_true",
+                     default=False,
+                     help='On Performance tests, when set the test runs with the minimum packet size configured '
+                          'for the chip type and traffic type instead of the default packet size')
     parser.addoption('--parameter_file_location', dest="parameter_file_location", required=False, action='store', default=None,
                      help='location of the parameter file for ar parameters optimiser')
     parser.addoption('--perf-exclude-ports', dest="perf_exclude_ports", required=False,
