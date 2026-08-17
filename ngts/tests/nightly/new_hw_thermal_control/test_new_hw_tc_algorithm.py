@@ -109,7 +109,7 @@ class TestNewTc:
 
         retry_call(_restore_files, exceptions=AssertionError, tries=10, delay=1)
 
-    def _stop_thermal_services(self):
+    def _stop_thermal_services(self, exclude_modules=None):
         """
         Stop services that write asic/module temperature sysfs files, so that
         mocked values are not overwritten. Only needed for asic/module sensors.
@@ -129,14 +129,20 @@ class TestNewTc:
         Must NOT be called when testing cpu_pack/ambient sensors: stopping
         thermalctld causes module temp files to go stale, triggering TC loop
         total_err_cnt >= 2 protection which locks PWM at 100%.
+
+        :param exclude_modules: Optional iterable of module names (e.g. ["module18"])
+            that must remain monitored by TC and therefore must NOT be blacklisted.
+            Required for test_sensor_errors when injecting a module sensor_read_error.
         """
+        exclude_modules = set(exclude_modules or [])
         file_backups = self._backup_thermal_files()
 
         # suspend thermal control to prevent sensor_read_error protection from locking PWM at 100%
         self.cli_objects.dut.hw_mgmt.suspend_thermal_control()
 
-        # Blacklist all module sensors to prevent TC loop from detecting
+        # Blacklist module sensors to prevent TC loop from detecting
         # "missing" module temp files after thermalctld is stopped.
+        # Modules under test must stay monitored (not blacklisted).
         module_files = self.dut_engine.run_cmd(
             f"ls -1 {TC_CONST.HW_THERMAL_FOLDER}/module*_temp_input 2>/dev/null"
         ).strip().splitlines()
@@ -146,6 +152,9 @@ class TestNewTc:
             if temp_file == "":
                 pytest.fail("No module temp files found")
             module_name = os.path.basename(temp_file.strip()).replace("_temp_input", "")
+            if module_name in exclude_modules:
+                logger.info(f"Skip blacklisting {module_name} (module under test)")
+                continue
             bl_file = os.path.join(TC_CONST.HW_THERMAL_FOLDER, f"{module_name}_blacklist")
             cmds.append(f"sudo touch {bl_file} && sudo chown admin {bl_file} && sudo echo 1 > {bl_file}")
             self.blacklisted_modules.append(bl_file)
@@ -342,31 +351,53 @@ class TestNewTc:
         """
         _, tc_config_dict = get_dut_supported_sensors_and_tc_config
 
+        # Restart thermal services only after MockSensors.__exit__ restores
+        # mocked/removed files (same ordering as test_temperature_sweep).
+        need_stop_services = False
         with allure.step(f"Mock {sensor_err_type}"):
-            with MockSensors(self.dut_engine, self.cli_objects) as mock_sensor:
-                if sensor_err_type.startswith("psu_err") and SENSOR_DATA["psu"]["total_number"] < 2:
-                    pytest.skip("Only one psu, skipping this test")
-                sensor_err_file, expected_pwm, mock_value = get_sensor_err_test_data(
-                    sensor_err_type, mock_sensor, tc_config_dict, self.cli_objects)
-                if sensor_err_type == "psu_err_present" and loganalyzer:
-                    psu_status_match = re.search(r"psu(\d+)_status$", sensor_err_file)
-                    assert psu_status_match, f"Unexpected PSU status file path: {sensor_err_file}"
-                    psu_id = psu_status_match.group(1)
-                    expected_psu_absence_log = rf".*ERR pmon#psud\[\d+\]: PSU {psu_id} is not present.*"
-                    for analyzer in loganalyzer.values():
-                        analyzer.ignore_regex.append(expected_psu_absence_log)
-                sensor_read_error_type = None
-                if "sensor_read_error" == sensor_err_file:
-                    sensor_read_error_type = random.choice(SENSOR_ERR_TEST_DATA["sensor_read_error"])
-                    logging.info(f"sensor read error type is {sensor_read_error_type}")
-                if "missing_file" == sensor_read_error_type:
-                    with allure.step(f"Mock remove {sensor_err_file}"):
-                        mock_sensor.remove_file(sensor_err_file)
-                else:
-                    with allure.step(f"Mock {sensor_err_file} with {mock_value}"):
-                        mock_sensor.mock_value(sensor_err_file, mock_value)
-                compare_pwd_with_expected_value(mock_sensor, expected_pwm, operator.ge)
-                verify_rpm_is_expected_value(mock_sensor, tc_config_dict)
+            try:
+                with MockSensors(self.dut_engine, self.cli_objects) as mock_sensor:
+                    if sensor_err_type.startswith("psu_err") and SENSOR_DATA["psu"]["total_number"] < 2:
+                        pytest.skip("Only one psu, skipping this test")
+                    sensor_err_file, expected_pwm, mock_value = get_sensor_err_test_data(
+                        sensor_err_type, mock_sensor, tc_config_dict, self.cli_objects)
+                    if sensor_err_type == "psu_err_present" and loganalyzer:
+                        psu_status_match = re.search(r"psu(\d+)_status$", sensor_err_file)
+                        assert psu_status_match, f"Unexpected PSU status file path: {sensor_err_file}"
+                        psu_id = psu_status_match.group(1)
+                        expected_psu_absence_log = rf".*ERR pmon#psud\[\d+\]: PSU {psu_id} is not present.*"
+                        for analyzer in loganalyzer.values():
+                            analyzer.ignore_regex.append(expected_psu_absence_log)
+
+                    # thermal_updater / thermalctld rewrite module temp files; stop them
+                    # so the injected sensor_read_error is not overwritten (same as
+                    # test_temperature_sweep). Keep the module under test un-blacklisted
+                    # so TC still monitors it and can raise the fault.
+                    module_under_test = re.search(
+                        r"(module\d+)_temp_input$", os.path.basename(sensor_err_file))
+                    need_stop_services = (
+                        sensor_err_type == "sensor_read_error" and module_under_test is not None)
+                    exclude_modules = [module_under_test.group(1)] if need_stop_services else []
+
+                    if need_stop_services:
+                        self._stop_thermal_services(exclude_modules=exclude_modules)
+
+                    sensor_read_error_type = None
+                    if sensor_err_type == "sensor_read_error":
+                        sensor_read_error_type = random.choice(
+                            SENSOR_ERR_TEST_DATA["sensor_read_error"])
+                        logging.info(f"sensor read error type is {sensor_read_error_type}")
+                    if "missing_file" == sensor_read_error_type:
+                        with allure.step(f"Mock remove {sensor_err_file}"):
+                            mock_sensor.remove_file(sensor_err_file)
+                    else:
+                        with allure.step(f"Mock {sensor_err_file} with {mock_value}"):
+                            mock_sensor.mock_value(sensor_err_file, mock_value)
+                    compare_pwd_with_expected_value(mock_sensor, expected_pwm, operator.ge)
+                    verify_rpm_is_expected_value(mock_sensor, tc_config_dict)
+            finally:
+                if need_stop_services:
+                    self._start_thermal_services()
 
     @allure.title('test sensor blacklist')
     def test_sensor_blacklist(self, get_dut_supported_sensors_and_tc_config):
