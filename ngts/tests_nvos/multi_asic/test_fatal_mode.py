@@ -52,7 +52,11 @@ fatal_event_timestamps = []
 SETTINGS = {"clear_time": 2}
 NUM_TRIES_TO_RECOVER_AT_TEARDOWN = 4
 SAI_LOG_STRING = 'Health-Check: new failure'
-SAI_LOG_TIME_WINDOW_SECONDS = 5
+# Timestamps are captured just before each injection; the kernel log line lands after it, within
+# the docker-exec + SDK-call latency (~10s observed on a fresh box). 20s covers that while staying
+# below the >=30s spacing between consecutive injections (cmd duration + 20s sleep), so a window
+# can never match a neighboring event's log line.
+SAI_LOG_TIME_WINDOW_SECONDS = 20
 WAIT_BETWEEN_EVENTS_SECONDS = 20
 
 FATAL_PROMPT = "[System_Fatal_State]"
@@ -821,6 +825,17 @@ def _simulate_event(event_id, asic, engine=None):
             "print('sim_rc=' + str(rc_sim))"
         )
         cmd = f'docker exec {container} python3 -c "{py_script}" 2>&1'
+        # Capture dut_time BEFORE the injection: the kernel logs "Health-Check: new failure"
+        # while the sx_api call is still running, so on a slow box a timestamp taken after the
+        # call returns can trail the log line by ~10s (docker-exec + sx_api_open/close overhead)
+        # and fall outside the assert_fatal_logs window. The log line can never precede this
+        # timestamp; SAI_LOG_TIME_WINDOW_SECONDS covers the injection latency after it.
+        date_json = (
+            System().datetime.show()
+            if engine is TestToolkit.engines.dut
+            else engine.run_cmd("nv show system date-time -o json", validate=True)
+        )
+        dut_time = ClockTools.get_local_time_from_show_system_date_time_output(date_json)
         output = _send_command_timing(engine, cmd)
         assert SAI_SIM_NOT_ENABLED_MARKER not in output, (
             f"sx_api_dbg_health_event_simulate rejected the call on {container}: "
@@ -836,16 +851,6 @@ def _simulate_event(event_id, asic, engine=None):
             f"sx_api_dbg_health_event_simulate(cause={cause}) returned rc={rc_sim} "
             f"on {container} (0=OK, 3=PARAM_ERROR, 13=unsupported). "
             f"Full output:\n{output}")
-        # Capture dut_time AFTER the call returns. The sx_api call returns only after the
-        # kernel has logged the "Health-Check: new failure" line, so this gives us a
-        # timestamp very close to the log entry. Capturing before the call would leave
-        # docker-exec startup overhead (~2-5s) outside the assert_fatal_logs ±5s window.
-        date_json = (
-            System().datetime.show()
-            if engine is TestToolkit.engines.dut
-            else engine.run_cmd("nv show system date-time -o json", validate=True)
-        )
-        dut_time = ClockTools.get_local_time_from_show_system_date_time_output(date_json)
         fatal_event_timestamps.append(dut_time)
 
 

@@ -7,6 +7,7 @@ by the server (counted in received-subscription-requests / total-active-subscrip
 no initial sync and no updates (NVBug 6504764). This test reproduces that scenario with a plain nv-gnmi
 service restart, independent of the fatal flow, per Nadeem's request to have it covered in the gnmi suite.
 """
+import itertools
 import logging
 import time
 
@@ -27,7 +28,11 @@ from ngts.tests_nvos.system.gnmi.gnmi_events_tools import (
 
 logger = logging.getLogger()
 
-EVENTD_PUBLISH_CMD = 'docker exec eventd events_publish_test.py -c 1'
+# event-db flood-protection (isFloodedEvent) silently drops an event identical to the latest table entry,
+# so consecutive '-c 1' publishes ("Test event with index 0") never re-enter the table on a quiet system.
+# Publishing with a count that grows on every call guarantees each publish ends with a never-seen index.
+EVENTD_PUBLISH_CMD = 'docker exec eventd events_publish_test.py -c {count}'
+_publish_seq = itertools.count(1)
 GNMI_SERVER_RESTART_CMD = 'sudo systemctl restart nv-gnmi'
 GNMI_DOCKER_UP_TRIES = 12
 GNMI_DOCKER_UP_DELAY_SECONDS = 5
@@ -106,7 +111,7 @@ def _publish_test_event_and_get_new_ids(engine, min_event_id: int) -> set:
     (verified against the events table, event-id > min_event_id).
     """
     def _publish_and_collect() -> set:
-        output = engine.run_cmd(EVENTD_PUBLISH_CMD)
+        output = engine.run_cmd(EVENTD_PUBLISH_CMD.format(count=next(_publish_seq)))
         # tolerate benign output (e.g. warnings); the events-table check below is the real success criterion
         assert 'error' not in output.lower(), f'Error publishing test event: {output}'
         time.sleep(EVENT_PUBLISH_SETTLE_SECONDS)
