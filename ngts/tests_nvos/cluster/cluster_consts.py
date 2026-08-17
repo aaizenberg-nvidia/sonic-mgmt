@@ -63,20 +63,40 @@ class ClusterConsts:
     NMX_TELEMETRY_PREFIX = 'nmx-t'
     INITIAL_APPS_PATH = '/usr/local/cluster_pkgfiles/'
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
+    # Valid rdm_config test content (approved by the nmx-c team; changes multicast rounding mode,
+    # so it is limited to upgrade/reset flows). nmx-c rejects installing EMPTY sdn config files
+    # (NVBug 6447101), so the rdm/chassis test edits below must inject real content.
+    RDM_TEST_CONFIG_LINES = ['[rdm]',
+                             'rdm_rm_native_8_bit 1',
+                             'rdm_rm_mixed_8_bit 1',
+                             'rdm_rm_native_16_bit 1',
+                             'rdm_rm_mixed_16_bit 1',
+                             'rdm_rm_deterministic_mode 1']
+    # chassis_mapping line format: 'chassisId<index> <13-char REAL chassis S/N>' - the S/N must be
+    # the system's real one (nv show platform chassis-location), otherwise GFM never goes operational.
+    # Call sites must format with chassis_sn=ClusterTools.get_chassis_sn().
     CONFIG_FILES_CHANGE = {'sm_config': "true",
                            'fm_config': "sudo sed -i \"/^GFM_WAIT_TIMEOUT_SEC=/c\\GFM_WAIT_TIMEOUT_SEC=350\" {file_path}",
-                           'rdm_config': "true",
-                           'chassis_mapping': "true",
+                           # guarded append: at most once, and never onto a file that already carries [rdm]
+                           'rdm_config': "sudo bash -c 'grep -q \"^\\[rdm\\]\" {file_path} || printf \"" + '\\n'.join(RDM_TEST_CONFIG_LINES) + "\\n\" >> {file_path}'",
+                           # append only when the file has no chassisId entries (standalone generates it
+                           # empty - NVBug 6447101); on real clusters the generated mapping already has
+                           # chassisId1..N lines and a duplicate chassisId1 would corrupt the mapping
+                           'chassis_mapping': "sudo bash -c 'grep -q \"^chassisId\" {file_path} || echo \"chassisId1 {chassis_sn}\" >> {file_path}'",
                            'telemetry': "true"}
     EXPECTED_LINE_TO_BE_PRESERVED_AFTER_UPGRADE = {'sm_config': "",
                                                    'fm_config': "GFM_WAIT_TIMEOUT_SEC=350",
-                                                   'rdm_config': "",
-                                                   'chassis_mapping': "",
+                                                   'rdm_config': RDM_TEST_CONFIG_LINES[-1],
+                                                   'chassis_mapping': "chassisId1",
                                                    'telemetry': ""}
     CONFIG_FILES_CONTENT_CHANGE = {
         'sm_config': lambda content: content,
         'fm_config': lambda content: re.sub(r'^GFM_WAIT_TIMEOUT_SEC=.*$', 'GFM_WAIT_TIMEOUT_SEC=350', content, flags=re.MULTILINE),
-        'rdm_config': lambda content: content,
+        # newline-neutral: mirrors the cat output of the appended file (no leading blank line when the
+        # initial content is empty, no trailing newline - netmiko strips the trailing prompt line)
+        'rdm_config': lambda content: ((content + '\n') if content.strip() else '') + '\n'.join(ClusterConsts.RDM_TEST_CONFIG_LINES),
+        # chassis_mapping expected content needs the runtime chassis S/N; the content verifier
+        # currently skips chassis_mapping, so the transformation stays identity.
         'chassis_mapping': lambda content: content,
         'telemetry': lambda content: content
     }
