@@ -189,7 +189,7 @@ def test_show_system_image(original_version, engines, devices):
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
-@pytest.mark.timeout(30 * MINUTE, func_only=True)
+@pytest.mark.timeout(40 * MINUTE, func_only=True)
 def test_downgrade_upgrade(release_name, random_api, original_version, devices, engines, downgrade_version_realpath,
                            target_version_realpath, dut_ipv6_addr, ib_router, topology_obj, test_name):
     """
@@ -310,6 +310,9 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                                          operation_label=OperationTimeConsts.IMAGE_UPGRADE)
                 upgrade_succeeded = True
 
+            with allure.step('Verify image boot next multiple changes'):
+                verify_image_boot_next_multiple_changes(system)
+
             with allure.step('Verify configuration preserved after upgrade'):
                 run_post_upgrade_cheks(topology_obj, engines, ib_router)
 
@@ -336,15 +339,16 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                 with allure.step('Verify MTU preserved after upgrade'):
                     InterfaceConfigurationTool.verify_and_cleanup_mtu(mtu_info)
 
-            if upgrade_succeeded and json_acl_rules is not None:
-                with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
-                    system_helpers.verify_acl_rules_preserved(
-                        json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
-            if upgrade_succeeded and cp_acl_bindings is not None:
-                with allure.independent_step(
-                    'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
-                ):
-                    system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
+            with allure.step('Verify ACL JSON and control-plane ACL bindings preserved after upgrade'):
+                if upgrade_succeeded and json_acl_rules is not None:
+                    with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
+                        system_helpers.verify_acl_rules_preserved(
+                            json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
+                if upgrade_succeeded and cp_acl_bindings is not None:
+                    with allure.independent_step(
+                        'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
+                    ):
+                        system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
 
         with allure.step('Clear ACL persistence mangle state (if any)'):
             system_helpers.clear_acl_configs(acl_persist_mangle_state, dut_engine=engines.dut)
@@ -392,6 +396,37 @@ def test_system_image_upload(engines, release_name, random_api, original_version
         with allure.step("Delete file from switch"):
             system.image.files.delete_files([image_name]).verify_result()
             system.image.files.verify_show_files_output(unexpected_files=[image_name])
+
+
+def verify_image_boot_next_multiple_changes(system):
+    """Verify rapid boot-next changes take effect without changing the current image."""
+    with allure.step("Read the image state after the install"):
+        before_boot_next = system.image.get_image_field_values()
+        current_partition_num = before_boot_next[ImageConsts.CURRENT_IMG]
+        current_partition = ImageConsts.PARTITION + current_partition_num
+        other_partition = get_next_partition_id(current_partition)
+        other_partition_num = other_partition.replace(ImageConsts.PARTITION, '')
+
+    with allure.step(f"Verify that boot next image is the current image {current_partition} after the install"):
+        assert before_boot_next[ImageConsts.NEXT_IMG] == current_partition_num, \
+            f"Boot next is expected to be the current image {current_partition_num} after install, " \
+            f"but it is {before_boot_next[ImageConsts.NEXT_IMG]}"
+
+    boot_next_sequence = [other_partition, current_partition, other_partition, current_partition]
+    for change_index, partition in enumerate(boot_next_sequence, start=1):
+        expected_next_num = other_partition_num if partition == other_partition else current_partition_num
+
+        with allure.step(f"Boot next change {change_index}: set boot next to {partition}"):
+            system.image.action_boot_next(partition).verify_result()
+            after_boot_next = system.image.get_image_field_values()
+
+        with allure.step(f"Verify that boot next change {change_index} moved the next image to {partition}"):
+            assert after_boot_next[ImageConsts.NEXT_IMG] == expected_next_num, \
+                f"Failed to set {partition} to boot next on change {change_index}, " \
+                f"current boot-next {after_boot_next[ImageConsts.NEXT_IMG]}"
+            assert after_boot_next[ImageConsts.CURRENT_IMG] == current_partition_num, \
+                f"Current image is expected to stay {current_partition_num} on change {change_index}, " \
+                f"but it is {after_boot_next[ImageConsts.CURRENT_IMG]}"
 
 
 @pytest.mark.checklist
@@ -983,7 +1018,7 @@ def verify_system_image_gnmi_matches_nvue(engines, devices, system=None):
                     )
 
 
-def normalize_image_name(image_name):
+def normalize_image_name(image_name) -> str:
     return image_name.replace("-amd64", "").replace(".bin", "")
 
 
@@ -1134,10 +1169,18 @@ def _restore_original_image(
     test_name='',
     devices=None,
 ):
-    expected_image = normalize_image_name(original_images[original_image_partition][ImageConsts.BUILD_ID])
-    if _get_running_image(system) == expected_image:
-        logger.info("DUT already running original image (%s), skipping restore", expected_image)
+    # Restore installs target_version_realpath when it is given, so the "nothing to do"
+    # check must compare against that image and not against the pre-test one.
+    if target_version_realpath:
+        expected_image = normalize_image_name(target_version_realpath.split("/")[-1])
+    else:
+        expected_image = normalize_image_name(original_images[original_image_partition][ImageConsts.BUILD_ID])
+
+    running_image = _get_running_image(system)
+    if running_image == expected_image:
+        logger.info("DUT already running expected image (%s), skipping restore", expected_image)
         return
+    logger.info("DUT running image %s, restoring %s", running_image, expected_image)
 
     if target_version_realpath:
         image_name = target_version_realpath.split("/")[-1]
@@ -1255,12 +1298,12 @@ def get_image_data_and_fetch_random_image_files(release_name, system, images_amo
     return original_images, original_image, original_image_partition, partition_id_for_new_image, images_name
 
 
-def get_image_data_and_fetch_base_image(system, base_version):
+def get_image_data_and_fetch_base_image(system, base_version, timeout=None):
     original_images, original_image, original_image_partition, partition_id_for_new_image = get_image_data(system)
 
     with allure.step(f"Fetch image {base_version}"):
         _ = TestToolkit.engines['sonic_mgmt']
-        system.image.action_fetch(path=base_version).verify_result()
+        system.image.action_fetch(path=base_version, timeout=timeout).verify_result()
     image_name = base_version.split("/")[-1]
     return original_images, original_image, original_image_partition, partition_id_for_new_image, image_name
 

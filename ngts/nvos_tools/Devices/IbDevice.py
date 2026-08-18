@@ -2940,7 +2940,12 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
             'julietscaleout generate_tech_support': 165,
             'reboot with new user FW': 450 if is_bug_active(4854038) else 390,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+
+            # The synchronous "nv action install" portion (before reboot/recovery).
+            # Custom for Rosalind to allow for the longer install time. Based on long install times.
+            OperationTimeConsts.IMAGE_INSTALL_OPERATION_ROW: 180,
         })
+
         if is_bug_active(4694678):
             power_cycle_increase_timeout = 60
             # Make sure all operations that depend on power cycle have a longer timeout because of the bug 4694678.
