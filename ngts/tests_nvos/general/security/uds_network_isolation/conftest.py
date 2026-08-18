@@ -28,6 +28,8 @@ from ngts.tests_nvos.general.security.uds_network_isolation import constants as 
 from ngts.tests_nvos.general.security.uds_network_isolation.helpers import (
     parse_ss_listeners,
     extract_listening_ports,
+    install_nmap,
+    is_nmap_installed,
     run_ss_tulpn,
     run_ss_unix,
 )
@@ -62,6 +64,27 @@ def internal_probe_ports(is_xdr) -> Dict[int, str]:
         uds_constants.INTERNAL_PROBE_PORTS_XDR if is_xdr
         else uds_constants.INTERNAL_PROBE_PORTS_NVLINK
     )
+
+
+@pytest.fixture(scope="session")
+def scanner_engine(engines) -> LinuxSshEngine:
+    """External host used for nmap scans, with nmap installed."""
+    engine = getattr(engines, "sonic_mgmt", None) or getattr(engines, "server", None)
+    if engine is None:
+        pytest.skip("No external engine (sonic-mgmt or server) available to run nmap")
+
+    with allure.step("Verify nmap installation on scanner host"):
+        if is_nmap_installed(engine):
+            return engine
+
+    for attempt in range(1, 4):
+        with allure.step(f"attempt {attempt}: install nmap on scanner host"):
+            install_nmap(engine)
+        with allure.step("verify nmap is installed"):
+            if is_nmap_installed(engine):
+                return engine
+
+    raise AssertionError("failed to install nmap on scanner host")
 
 
 # ── UDS path list (flattened from components) ────────────────────────────────

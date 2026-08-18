@@ -145,12 +145,13 @@ def _test_remarkable_logs(engine, testing, log_count, log_priority, threshold_fi
         2. apply configuration
         3. run show fae system log remarkable-logs - save as remarkable_los_output
         4. validate all fields have expected values
-        5. run error/storm script
-        6. run nv action rotate system log
-        7. validate new file exist
-        8. rerun steps 5-7 (5 times)
-        9. run error/storm script
-        10. validate new file does not exist
+        5. exhaust first-saved-boot-logs rotations (boot window uses boot_log only)
+        6. run error/storm script
+        7. run nv action rotate system log
+        8. validate new file exist
+        9. rerun steps 6-8 (5 times)
+        10. run error/storm script without clearing threshold
+        11. validate new file does not exist
     :param testing:
     :param log_count:
     :param log_priority:
@@ -162,14 +163,10 @@ def _test_remarkable_logs(engine, testing, log_count, log_priority, threshold_fi
     system = System()
 
     command = f"for i in {{1..{log_count}}}; do logger -p {log_priority} \"Welcome $i times\"; done"
-    with allure.step(f"rotate logs and check current files in remarkable logs folder"):
+    with allure.step(f"check current files in remarkable logs folder"):
         engine.run_cmd("cat /tmp/remarkable_threshold_error_last_run")
         engine.run_cmd("cat /tmp/remarkable_threshold_notice_last_run")
         engine.run_cmd("ls /var/log | grep remarkable_logs")
-        engine.run_cmd("ls /var/log/remarkable_logs_1")
-        system.log.rotate_logs()
-        system.log.rotate_logs()
-        time.sleep(8)   # Pause to allow for log rotation completion; two consecutive rotations may delay rsyslog.service restart.
         engine.run_cmd("ls /var/log/remarkable_logs_1")
 
     with allure.step(f"configure rate, clean-time, logs-number and time-window for {testing}"):
@@ -192,6 +189,16 @@ def _test_remarkable_logs(engine, testing, log_count, log_priority, threshold_fi
         expected_values = new_values
         ValidationTool.validate_fields_values_in_output(output_dict=system_output, expected_fields=expected_fields,
                                                         expected_values=expected_values).verify_result()
+
+    # HLD: first X rotations since boot are saved only as boot_log.X.gz (no storm/error duplicate).
+    # Exhaust that window before expecting error_log / storm_prints_log filenames.
+    with allure.step("exhaust first-saved-boot-logs rotations"):
+        boot_rotations = int(system_output.get(RemarkableLogsConsts.FIRST_SAVED_BOOT_LOGS, "2"))
+        for _ in range(boot_rotations):
+            system.log.rotate_logs()
+        time.sleep(8)  # allow rsyslog to settle after consecutive rotations
+        engine.run_cmd("ls /var/log/remarkable_logs_1")
+
     try:
         with allure.step("simulate errors issue in logs 5 times"):
             for i in range(5):

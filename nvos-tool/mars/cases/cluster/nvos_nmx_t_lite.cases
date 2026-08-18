@@ -103,6 +103,17 @@
         </cmd>
     </case>
 
+    <case>
+        <name> Peer Port Hostname Change </name>
+        <info></info>
+        <tout> 900 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/cluster/test_nmx_lite_package.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_hostname_change --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --ansible_inventory_file=[[conf:extra_info.ansible_inventory_file:False]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
 
 </CASEDEF>
 

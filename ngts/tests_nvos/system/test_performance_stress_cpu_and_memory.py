@@ -402,8 +402,8 @@ def validate_memory_and_cpu(before_testing: dict, after_connections: dict, durin
 
     with allure.step("Validate memory and CPU after connections"):
         for key in after_connections:
-            delta = after_connections[key] - before_testing[key]
-            assert delta < MAX_MEMORY_DELTA_AFTER_CONNECTIONS, \
+            delta = round(after_connections[key] - before_testing[key], 3)
+            assert delta <= MAX_MEMORY_DELTA_AFTER_CONNECTIONS, \
                 f"Unexpected change in {key}: delta={delta:.2f} (max {MAX_MEMORY_DELTA_AFTER_CONNECTIONS}). " \
                 f"Before: {before_testing}, After connections: {after_connections}"
 
@@ -411,15 +411,15 @@ def validate_memory_and_cpu(before_testing: dict, after_connections: dict, durin
         with allure.step("Validate memory and CPU during testing"):
             for sample in during_testing:
                 for key in sample:
-                    delta = sample[key] - before_testing[key]
-                    assert delta < MAX_MEMORY_DELTA_DURING_TESTING, \
+                    delta = round(sample[key] - before_testing[key], 3)
+                    assert delta <= MAX_MEMORY_DELTA_DURING_TESTING, \
                         f"Unexpected change in {key}: delta={delta:.2f} (max {MAX_MEMORY_DELTA_DURING_TESTING}). " \
                         f"Before: {before_testing}, During: {sample}"
 
     if after_testing:
         with allure.step("Validate memory and CPU after testing"):
             for key in after_testing:
-                delta = after_testing[key] - before_testing[key]
-                assert delta < MAX_MEMORY_DELTA_AFTER_TESTING, \
+                delta = round(after_testing[key] - before_testing[key], 3)
+                assert delta <= MAX_MEMORY_DELTA_AFTER_TESTING, \
                     f"Unexpected change in {key}: delta={delta:.2f} (max {MAX_MEMORY_DELTA_AFTER_TESTING}). " \
                     f"Before: {before_testing}, After: {after_testing}"

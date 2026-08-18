@@ -3,7 +3,7 @@ import random
 
 from ngts.ngts_types import CleanUpT, DevicesT
 from ngts.nvos_constants import constants_nvos as consts_nv
-from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as ib_consts
+from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as nv_consts
 from ngts.nvos_tools.infra import Fae
 from ngts.nvos_tools.infra import NvosTestToolkit as TestToolkit
 from ngts.nvos_tools.infra import ValidationTool
@@ -57,7 +57,7 @@ def test_fae_link_training(devices: DevicesT, fae_objs: tuple[Fae.Fae, Fae.Fae],
                 apply=True,
                 ask_for_confirmation=True,
             ).verify_result()
-        interface_helpers.wait_and_verify_link(port_objs, timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
+        interface_helpers.wait_and_verify_link(port_objs, timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         with allure.step("Verify link-training params"):
             for fae in fae_objs:
                 with allure.step(f"Verify port {fae.port.name}"):
@@ -83,7 +83,7 @@ def test_fae_link_training(devices: DevicesT, fae_objs: tuple[Fae.Fae, Fae.Fae],
                 apply=True,
                 ask_for_confirmation=True,
             ).verify_result()
-        interface_helpers.wait_and_verify_link(port_objs, timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_DISABLED)
+        interface_helpers.wait_and_verify_link(port_objs, timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_DISABLED)
         with allure.step("Verify link-training params"):
             for fae in fae_objs:
                 with allure.step(f"Verify port {fae.port.name}"):
@@ -132,7 +132,7 @@ def test_fae_link_training_fail_action(
                     apply=True,
                     ask_for_confirmation=True,
                 ).verify_result()
-            interface_helpers.wait_and_verify_link(port_objs, timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
+            interface_helpers.wait_and_verify_link(port_objs, timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
             with allure.step("Verify link-training params"):
                 for fae in fae_objs:
                     with allure.step(f"Verify port {fae.port.name}"):
@@ -193,7 +193,7 @@ def test_fae_link_training_negotiation(
             apply=True,
             ask_for_confirmation=True,
         ).verify_result()
-        interface_helpers.wait_and_verify_link(port_objs, timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
+        interface_helpers.wait_and_verify_link(port_objs, timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         with allure.step(f"Verify port {fae_port_1.port.name}"):
             ValidationTool.ValidationTool.compare_nested_dictionary_content(
                 fae_port_1.interface.link.link_training.parse_show_operational_applied(),
@@ -224,7 +224,7 @@ def test_fae_link_training_negotiation(
             apply=True,
             ask_for_confirmation=True,
         ).verify_result()
-        interface_helpers.wait_and_verify_link(port_objs, timeout=ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
+        interface_helpers.wait_and_verify_link(port_objs, timeout=nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED)
         with allure.step(f"Verify port {fae_port_1.port.name}"):
             ValidationTool.ValidationTool.compare_nested_dictionary_content(
                 fae_port_1.interface.link.link_training.parse_show_operational_applied(),
@@ -307,8 +307,17 @@ def test_link_training_force_max_iterations(
                     apply=True,
                     ask_for_confirmation=True,
                 ).verify_result()
-            link_up_timeout = ib_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED
-            interface_helpers.wait_and_verify_link(port_objs, timeout=link_up_timeout)
+            link_up_timeout = nv_consts.InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED
+            additional_diag = (
+                nv_consts.IbInterfaceConsts.LINK_DIAGNOSTICS_LOW_BER
+                if value == consts_nv.LinkTrainingConsts.ForceMaxIterations.ENABLED.value
+                else None
+            )
+            interface_helpers.wait_and_verify_link(
+                port_objs,
+                timeout=link_up_timeout,
+                additional_expected_link_diagnostic_status=additional_diag,
+            )
             with allure.step("Verify link-training params"):
                 for port in port_objs:
                     with allure.step(f"Verify port {port.name}"):

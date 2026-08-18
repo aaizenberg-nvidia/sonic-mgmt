@@ -29,7 +29,7 @@ pytestmark = [
 
 BMC_SHORTEST_PASSWD_LEN = 12
 BMC_LONGEST_PASSWD_LEN = 20
-BMC_DUMP_FILENAME = "bmc_dump_{}.tar.xz"
+BMC_DUMP_FILENAME = "bmc_dump_{}.tar.zst"
 BMC_DUMP_PATH = "/tmp"
 LATEST_BMC_VERSION_IDX = 0
 OLD_BMC_VERSION_IDX = 1

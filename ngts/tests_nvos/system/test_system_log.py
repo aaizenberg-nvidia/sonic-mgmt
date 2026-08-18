@@ -474,7 +474,7 @@ def test_log_files_rotation_force(engines):
 @pytest.mark.system
 @pytest.mark.log
 @pytest.mark.simx
-def test_log_components(engines):
+def test_log_components(engines, devices):
     """
     Check all fields in components command, check all components can be set/unset with all log levels
 
@@ -485,7 +485,7 @@ def test_log_components(engines):
     """
 
     default_log_level_nvue = "info"
-    list_with_all_components = LogComponentsConsts.COMPONENTS_LIST
+    list_with_all_components = devices.dut.log_components_list
     list_with_all_log_levels = LogComponentsConsts.LOG_LEVEL_LIST
     with allure.step("Create System object"):
         system = System(None)
@@ -766,8 +766,13 @@ def test_log_idle(engines):
         (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO systemd\[\d+\]\: sysstat-collect.service: Deactivated successfully.*[\n]?', 1),
         (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO systemd\[\d+\]\: logrotate.service: Deactivated successfully.*[\n]?', 1),
         (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO systemd.*Deactivated successfully.*[\n]?', 10),
+        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO nv-bridge#nv-bridge\[\d+\]\:[^\n]*[\n]?', None),
         # healthd runs approximately every 3 seconds, calculate expected iterations
-        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO healthd\[\d+\]\: System health takes [\d\.]+ seconds for one iteration[\n]?', math.ceil(idle_duration_sec / 3))
+        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO healthd\[\d+\]\: System health takes [\d\.]+ seconds for one iteration[\n]?', math.ceil(idle_duration_sec / 3)),
+        # dhclient patterns. added to accommodate multiple dhcp servers on the mgmt VLAN
+        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO dhclient\[\d+\]: XMT: Request on \S+, interval \d+ms\.[\n]?', 2),
+        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO dhclient\[\d+\]: RCV: Advertise message on \S+ from [0-9a-fA-F:]+\.[\n]?', None),
+        (r'\w{3}\s+\d+\s+\d+\:\d+\:[\d\.]+\s+[\w\-]+\s+INFO dhclient\[\d+\]: Packet received, but nothing done with it\.[\n]?', None),
     ]
 
     with allure.step("Create System object"):

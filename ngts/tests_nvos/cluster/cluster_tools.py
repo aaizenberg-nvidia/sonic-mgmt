@@ -11,8 +11,8 @@ import retry
 import time
 import re
 
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
-from ngts.nvos_constants.constants_nvos import IbConsts, OutputFormat, SystemConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
+from ngts.nvos_constants.constants_nvos import ChassisLocationConsts, IbConsts, OutputFormat, SystemConsts
 from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
@@ -24,15 +24,54 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.tests_nvos.helpers import redmine_helpers
+from ngts.tests_nvos.helpers.interfaces.link_state_helpers import verify_interface_up
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.nmx.Sdn import Sdn
+from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.ib.Ib import Ib
 
 logger = logging.getLogger(__name__)
 
 
 class ClusterTools:
+
+    # Well-formed 13-char serial for standalone trays whose EEPROM reports chassis-sn 'N/A'.
+    # On such 1-rack systems chassis_mapping is not consumed and GFM is non-operational anyway
+    # (bug 4207869), so a synthetic serial only needs to satisfy the file-format validation.
+    # TODO: confirm with the nmx-c team that this is acceptable on N/A-serial standalone trays.
+    STANDALONE_FALLBACK_CHASSIS_SN = '1234567890123'
+
+    @staticmethod
+    def get_chassis_sn():
+        """
+        Real chassis S/N from 'nv show platform chassis-location'. Used to build a valid
+        chassis_mapping line ('chassisId1 <sn>') - a fake S/N keeps GFM from going operational.
+        Falls back to a well-formed synthetic serial when the tray reports 'N/A' (plain standalone).
+        """
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            Platform().chassis_location.show()).get_returned_value()
+        chassis_sn = output.get(ChassisLocationConsts.CHAS_SN)
+        if not chassis_sn or chassis_sn == ChassisLocationConsts.NA:
+            return ClusterTools.STANDALONE_FALLBACK_CHASSIS_SN
+        return chassis_sn
+
+    @staticmethod
+    def config_edit_expected_to_change(file_type, initial_content):
+        """
+        Whether CONFIG_FILES_CHANGE[file_type] is expected to actually modify the file.
+        The rdm/chassis edits are guarded appends that intentionally no-op when the file already
+        carries the section/entries (real clusters generate them populated), so the
+        'content changed vs initial' assertions must not run for those cases.
+        """
+        if ClusterConsts.CONFIG_FILES_CHANGE[file_type] == 'true':
+            return False
+        initial = initial_content or ''
+        if file_type == 'chassis_mapping':
+            return 'chassisId' not in initial
+        if file_type == 'rdm_config':
+            return '[rdm]' not in initial
+        return True
 
     @staticmethod
     def stop_start_app(cluster, engine, devices, has_loopbox, setup_name, standalone_system):
@@ -42,7 +81,7 @@ class ClusterTools:
                     ClusterTools.verify_app_is_up(engine, app)
                     if app == ClusterConsts.NMX_CONTROLLER and (has_loopbox or not standalone_system):
                         ClusterTools.verify_lid_value(devices, engine=engine)
-                        ClusterTools.verify_interface_up(devices, has_loopbox, setup_name, engine=engine)
+                        verify_interface_up(devices, has_loopbox, setup_name, engine=engine)
                 with allure.step("Running 'nv show cluster apps running' command and verifying output"):
                     if app == ClusterConsts.NMX_CONTROLLER and redmine_helpers.is_bug_active(4207869) and standalone_system:
                         pass
@@ -63,7 +102,7 @@ class ClusterTools:
                 ClusterTools.verify_app_is_up(engine, app)
                 if app == ClusterConsts.NMX_CONTROLLER and (has_loopbox or not standalone_system):
                     ClusterTools.verify_lid_value(devices, engine=engine)
-                    ClusterTools.verify_interface_up(devices, has_loopbox, setup_name, engine=engine)
+                    verify_interface_up(devices, has_loopbox, setup_name, engine=engine)
                 with allure.step("Running 'nv show cluster apps running' command and verifying output"):
                     if app == ClusterConsts.NMX_CONTROLLER and redmine_helpers.is_bug_active(4207869) and standalone_system:
                         pass
@@ -302,74 +341,13 @@ class ClusterTools:
                         ib.device.show(op_param=device, dut_engine=engine)).get_returned_value()
 
                 if IbConsts.DEVICE_ASIC_PREFIX in device:
-                    assert dev_output['lid'] > 0, "Invalid number of lid"
-
-    @staticmethod
-    def verify_interface_up(devices, has_loopbox, setup_name, engine=None):
-        # Build list of interface types to check based on what actually exists
-        interface_types = []
-
-        if setup_name in Configurations.non_standalone_systems:
-            # Non-standalone systems: only check access ports
-            interface_types = ['acp']
-        elif has_loopbox:
-            # Loopbox systems: check FNM and access ports (if they exist)
-            # Check if device actually has regular FNM ports (not just internal FNM)
-            if hasattr(devices.dut, 'nvl_fnm_ports') and devices.dut.nvl_fnm_ports:
-                interface_types.append('fnm')
-            interface_types.append('acp')
-
-        for interface_type in interface_types:
-            port_type = 'fnm' if interface_type == 'fnm' else ''
-            selected_port = Tools.RandomizationTool.select_random_port(
-                dut_engine=engine,
-                requested_ports_logical_state=NvosConsts.LINK_LOG_STATE_ACTIVE,
-                requested_ports_type=port_type,
-                interface_type=interface_type).get_returned_value()
-            output_dictionary = Tools.OutputParsingTool.parse_show_interface_link_output_to_dictionary(
-                selected_port.interface.link.show(dut_engine=engine)).get_returned_value()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_STATE,
-                                                              expected_value=NvosConsts.LINK_STATE_UP).verify_result()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_LOGICAL_PORT_STATE,
-                                                              expected_value=IbInterfaceConsts.LINK_LOGICAL_PORT_STATE_ACTIVE).verify_result()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE,
-                                                              expected_value=IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE_LINK_UP).verify_result()
-
-        if hasattr(devices.dut, 'nvl_trunk_ports_list') and devices.dut.nvl_trunk_ports_list:
-            with allure.step("Verify switch ports state - that are connected to transceivers"):
-                ClusterTools().verify_external_interfaces_state_up_and_active(devices)
-
-    @staticmethod
-    def get_all_interfaces_with_transceivers(devices, engine=None):
-        interfaces = []
-        platform = Platform()
-        present_transceivers = platform.transceiver.get_list_of_connected_transceivers(dut_engine=engine)
-
-        for transceiver in present_transceivers:
-            interfaces.extend([interface for interface in devices.dut.nvl_trunk_ports_list if interface.startswith(f"{transceiver}p")])
-            # This way, if sw1 is present and sw10 is not, we will not take sw10. because we force sw1p so sw10p falls.
-        return interfaces
-
-    @staticmethod
-    def verify_external_interfaces_state_up_and_active(devices, engine=None):
-        interfaces = ClusterTools().get_all_interfaces_with_transceivers(devices, engine=engine)
-        for interface in interfaces:
-            selected_port = Port(interface, "", "")
-            # Verify fields.
-            output_dictionary = Tools.OutputParsingTool.parse_show_interface_link_output_to_dictionary(
-                selected_port.interface.link.show(dut_engine=engine)).get_returned_value()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_STATE,
-                                                              expected_value=NvosConsts.LINK_STATE_UP).verify_result()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_LOGICAL_PORT_STATE,
-                                                              expected_value=IbInterfaceConsts.LINK_LOGICAL_PORT_STATE_ACTIVE).verify_result()
-            Tools.ValidationTool.verify_field_value_in_output(output_dictionary=output_dictionary,
-                                                              field_name=IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE,
-                                                              expected_value=IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE_LINK_UP).verify_result()
+                    lid = dev_output.get('lid')
+                    if lid is None:
+                        # New schema: guid/lid nested under ib-subnet.<subnet-name>
+                        subnets = dev_output.get(IbConsts.DEVICE_ASIC_SUBNET_KEY, {})
+                        subnet_entry = subnets.get(IbConsts.DEVICE_ASIC_DEFAULT_SUBNET, {})
+                        lid = subnet_entry.get('lid')
+                    assert lid is not None and lid > 0, "Invalid number of lid"
 
     @staticmethod
     def start_stop_cluster(cluster, setup_name, output_format, engine=None):
@@ -594,12 +572,53 @@ class ClusterTools:
         return random.choice(valid_gpus)
 
     @staticmethod
-    def collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus):
+    def _log_zero_uuid_debug_info(sdn, engine, zero_uuid_gpus, setup_name=None):
+        """Log show output and compute GPU UUIDs to help debug uuid=0."""
+        try:
+            locations = sorted(loc for _, loc in zero_uuid_gpus)
+            logger.info("GPUs with uuid=0 at location(s) %s", locations)
+            if sdn is not None:
+                logger.info("Debug zero-uuid: nv show sdn trays:\n%s", sdn.trays.show(dut_engine=engine))
+            if engine is not None:
+                logger.info(
+                    "Debug zero-uuid: nv show interface -o json:\n%s",
+                    Interface(parent_obj=None).show(output_format=OutputFormat.json, dut_engine=engine))
+            if setup_name:
+                nodes = Configurations.compute_nodes_per_system.get(setup_name)
+                if nodes:
+                    total_nodes = len(nodes)
+                    for idx, node in enumerate(nodes, start=1):
+                        ip_address = node['ip_address']
+                        password = node['password']
+                        compute_engine = LinuxSshEngine(ip_address, node['username'], password)
+                        cmd = (f"printf '%s\\n' '{password}' | sudo -S -p '' nvidia-smi -q 2>&1 ; "
+                               f"echo GPU__UUID__\"DONE\"")
+                        logger.info(
+                            'Debug zero-uuid: compute node %d/%d (%s): running nvidia-smi -q',
+                            idx, total_nodes, ip_address)
+                        output = compute_engine.send_cmd_with_retry(
+                            cmd, timeout=120, retries=2, auto_find_prompt=False,
+                            expected_string='GPU__UUID__DONE')
+                        clean_output = "\n".join(
+                            line for line in (output or "").splitlines()
+                            if "GPU__UUID__DONE" not in line).strip()
+                        logger.info(
+                            'Debug zero-uuid: compute node %d/%d (%s) nvidia-smi -q output:\n%s',
+                            idx, total_nodes, ip_address, clean_output or "(no output)")
+        except Exception as exc:
+            logger.warning('Debug zero-uuid: failed to collect debug info: %s', exc)
+
+    @staticmethod
+    def collect_zero_uuid_gpus(partitions_mapping, zero_uuid_gpus, sdn=None, engine=None, setup_name=None):
         """Scan all partitions and record any GPUs with uuid=0 into the tracker set."""
+        found_zero_uuid = False
         for partition_id, gpu_list in partitions_mapping.items():
             for uuid, location in gpu_list:
                 if str(uuid) == "0":
                     zero_uuid_gpus.add((uuid, location))
+                    found_zero_uuid = True
+        if found_zero_uuid:
+            ClusterTools._log_zero_uuid_debug_info(sdn, engine, zero_uuid_gpus, setup_name=setup_name)
 
     @staticmethod
     def assert_no_zero_uuid_gpus(zero_uuid_gpus):
@@ -741,7 +760,7 @@ class ClusterTools:
             cluster: The Cluster object to monitor app states.
         """
         with allure.step("Running sdn factory reset and waiting for completion"):
-            sdn.factory_default.action_reset(param='force', engine=engine)
+            sdn.factory_default.action_reset(param='force', engine=engine).verify_result()
             try:
                 ClusterTools.wait_for_apps_to_be_in_wanted_state(
                     cluster, cluster_expected_state='enabled', nmx_c_expected_state='down', engine=engine)
@@ -803,7 +822,9 @@ class ClusterTools:
         # not the command echo.
         reset_cmd = (f"printf '%s\\n' '{password}' | sudo -S -p '' nvidia-smi -r ; "
                      f"echo GPU__RESET__\"DONE\"")
-        logger.info("GPU reset (nvidia-smi -r) starting on %s", ip_address)
+        # Log the command with the sudo password masked (never log it in plaintext).
+        logger.info("GPU reset (nvidia-smi -r) starting on %s: %s", ip_address,
+                    reset_cmd.replace(f"'{password}'", "'***'"))
         output = new_engine.send_cmd_with_retry(reset_cmd, timeout=300, retries=2,
                                                 auto_find_prompt=False,
                                                 expected_string='GPU__RESET__DONE')
@@ -1078,6 +1099,33 @@ class ClusterTools:
                 app_status = output[app]['status']
                 assert app_status == 'ok', f"App {app} status is {app_status} instead of 'ok'"
 
+    @staticmethod
+    def update_nmx_c_manager_state(cluster, state):
+        manager = cluster.apps.app_name[ClusterConsts.NMX_CONTROLLER].manager
+
+        def get_state():
+            output = OutputParsingTool.parse_show_output_to_dict(manager.show()).get_returned_value()
+            return output.get("state")
+
+        with allure.step(f"Update NMX-C manager state to {state}"):
+            if get_state() == state:
+                logger.info(f"NMX-C manager is already {state}. Skipping update")
+                return
+
+            manager.action_update(state=state)
+
+            max_retries, retry_delay = 5, 5
+            for attempt in range(max_retries):
+                if get_state() == state:
+                    logger.info(f"NMX-C manager state changed to {state}")
+                    return
+                if attempt < max_retries - 1:
+                    logger.info(f"NMX-C manager not yet {state} "
+                                f"(attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+
+            assert get_state() == state, f"NMX-C manager was not updated to {state}"
+
 
 def summarize_switch_ports(ports_list):
     # Dictionary to store ranges for each prefix
@@ -1171,10 +1219,18 @@ def disabled_access_ports(func):
                     logger.info("Sleeping for 15 seconds to make sure nnx-t docker is down")
                     time.sleep(15)
                 # Execute the test function
+            # Run the test body with the API the test was parametrized with. The
+            # wrapper's cluster setup above is pinned to NVUE (and cleanup re-pins
+            # in the finally); before this line the NVUE force leaked into the test
+            # body, so random_api=OpenApi tests silently ran everything via NVUE.
+            TestToolkit.tested_api = original_api
             return func(*args, **kwargs)
         finally:
             if perform_cleanup:
                 if isinstance(devices.dut, JulietSwitch):
+                    # Cleanup (port re-enable, refresh, cluster reset) was only ever
+                    # validated via NVUE - pin it regardless of what the test body used.
+                    TestToolkit.tested_api = 'NVUE'
                     if has_access_ports and standalone_system and not has_loopbox:
                         port_name = summarize_ports(devices.dut.nvl_access_ports_list)
                         selected_port = Port(port_name, "", "")

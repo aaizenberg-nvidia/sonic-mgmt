@@ -623,7 +623,10 @@ def validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list, al
             Tools.ValidationTool.compare_values(gnmi_client_output.lower(), command[GnmiConsts.COMPARISON_KEY][
                 redis_output].lower()).verify_result()
         elif allowed_range_in_bytes is not None:
-            result = abs(int(gnmi_client_output) - int(redis_output))
+            # gNMI serializes uint64 byte-count leaves (disk-total-size, memory-used, ...)
+            # in scientific notation (e.g. '1.55994918912e+11') for values >= ~1e11.
+            # Product bug rejected as WontFix in Redmine #5073631, so accept float form here.
+            result = abs(int(float(gnmi_client_output)) - int(redis_output))
             assert 0 <= result <= allowed_range_in_bytes, (
                 f"gNMI output: {gnmi_client_output} is not within {allowed_range_in_bytes} to "
                 f"redis output:{redis_output} for field: {prefix_and_path[1]}")

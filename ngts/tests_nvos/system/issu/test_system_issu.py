@@ -225,7 +225,7 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
             player, dut_engine, dut_device, target_version)
 
     with allure.step('Pre issu installation steps'):
-        (traffic_start_time, interface_dict, ip_list, mtu_info,
+        (traffic_start_time, interface_dict, ip_list, mtu_info, ssd_should_auto_update,
          json_acl_rules, cp_acl_bindings, acl_persist_mangle_state) = pre_issu_installation_steps(
             engines, devices, target_version, scp_host_creds, issu_base_version=issu_base_version)
 
@@ -246,7 +246,7 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
     with allure.step('Post issu installation steps'):
         post_issu_installation_steps(engines, devices, target_version, fw_version,
                                      interface_dict, traffic_start_time, ip_list, test_name,
-                                     mtu_info=mtu_info,
+                                     mtu_info=mtu_info, ssd_should_auto_update=ssd_should_auto_update,
                                      json_acl_rules=json_acl_rules, cp_acl_bindings=cp_acl_bindings,
                                      acl_persist_mangle_state=acl_persist_mangle_state)
 
@@ -880,7 +880,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         that matches the running image's NVUE schema. Falls back to ``target_version`` only when
         the caller did not supply it (legacy callers).
     :return: ``traffic_start_time``, ``interface_output``, ``ip_list``, ``mtu_info``,
-        ``json_acl_rules``, ``cp_acl_bindings``, ``acl_persist_mangle_state``.
+        ``ssd_should_auto_update``, ``json_acl_rules``, ``cp_acl_bindings``, ``acl_persist_mangle_state``.
     """
     system = System()
     interface = Interface(parent_obj=None)
@@ -933,6 +933,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         assert issu_status == IssuConsts.IssuStatus.NO_ISSU.value, \
             f"ISSU status is {issu_status}, instead of: {IssuConsts.IssuStatus.NO_ISSU.value}"
 
+    ssd_should_auto_update = False
     with allure.step('Downgrade SSD firmware to test auto-upgrade during ISSU'):
         _, _, latest_version_name = FWComponentsTool.get_fw_component_version_latest(FW_COMPONENT_SSD)
         if latest_version_name is not None:
@@ -943,6 +944,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
             # Downgrade SSD firmware to previous version
             _, previous_filename, previous_version_name = FWComponentsTool.get_fw_component_version_previous(FW_COMPONENT_SSD)
             SSDTool.downgrade_ssd_firmware(engines, ssd_component, previous_filename, previous_version_name)
+            ssd_should_auto_update = True
         else:
             logger.info('SSD downgrade skipped: non supported SSD model')
 
@@ -979,13 +981,13 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
             dut_engine=dut_engine, mangle_state=acl_persist_mangle_state)
         logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
 
-    return (traffic_start_time, interface_output, ip_list, mtu_info,
+    return (traffic_start_time, interface_output, ip_list, mtu_info, ssd_should_auto_update,
             json_acl_rules, cp_acl_bindings, acl_persist_mangle_state)
 
 
 def post_issu_installation_steps(engines, devices, target_version, fw_expected,
                                  interface_dict, traffic_start_time, ip_list, test_name='',
-                                 mtu_info=None,
+                                 mtu_info=None, ssd_should_auto_update=False,
                                  json_acl_rules=None, cp_acl_bindings=None,
                                  acl_persist_mangle_state=None):
     """

@@ -1,12 +1,15 @@
+import base64
 import json
 import logging
 import os
+import time
 from datetime import datetime
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
 from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 
 logger = logging.getLogger()
@@ -92,6 +95,46 @@ class FilesTool:
 
         info = f"File {file_path} {'exists' if file_exists else 'does not exist'}"
         return ResultObj(file_exists, info=info)
+
+    @staticmethod
+    def read_json_file(engine, file_path: str) -> dict:
+        """Read and parse a JSON file from the DUT (via sudo); returns the parsed dict."""
+        with allure.step(f"read json file {file_path}"):
+            raw = engine.run_cmd(f"sudo cat {file_path}; echo")
+            return OutputParsingTool.parse_json_str_to_dictionary(raw).get_returned_value()
+
+    @staticmethod
+    def read_text_file(engine, file_path: str) -> str:
+        """Return the raw contents of *file_path* on the DUT ("" when it is absent).
+
+        Unlike read_file_content, a missing file yields an empty string (via ``|| true``)
+        instead of the cat error text, so callers can treat absence as "no content".
+        """
+        return engine.run_cmd(f"sudo cat {file_path} 2>/dev/null || true")
+
+    @staticmethod
+    def write_json_file(engine, file_path: str, data: dict) -> None:
+        """Write *data* as JSON to *file_path* on the DUT (via sudo tee).
+
+        The payload is base64-encoded so arbitrary JSON (single quotes, nested blobs)
+        survives the shell without quoting bugs.
+        """
+        with allure.step(f"write json file {file_path}"):
+            b64 = base64.b64encode(json.dumps(data).encode()).decode("ascii")
+            engine.run_cmd(f"echo {b64} | base64 -d | sudo tee {file_path} > /dev/null")
+
+    @staticmethod
+    def wait_for_file(engine, file_path: str, timeout: int = 60, poll_interval: int = 3) -> None:
+        """Poll until *file_path* exists on the DUT, else raise AssertionError."""
+        with allure.step(f"wait up to {timeout}s for {file_path} to exist"):
+            start = time.monotonic()
+            while time.monotonic() - start < timeout:
+                # ignore_result(): a missing file mid-poll is expected and must not
+                # leave a failed ResultObj for the verify_result_objects teardown.
+                if FilesTool.file_exists_sudo(engine, file_path).ignore_result():
+                    return
+                time.sleep(poll_interval)
+            raise AssertionError(f"{file_path} was not (re)created within {timeout}s")
 
     @staticmethod
     def read_file_content(engine, file_path: str, use_sudo: bool = True) -> ResultObj:

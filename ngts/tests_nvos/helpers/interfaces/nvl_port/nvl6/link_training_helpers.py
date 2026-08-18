@@ -1,6 +1,6 @@
 from ngts.ngts_types import DevicesT, OperationalAppliedT
 from ngts.nvos_constants import constants_nvos as consts_nv
-from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as ib_consts
+from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as nv_consts
 from ngts.nvos_tools.infra import Fae
 from ngts.nvos_tools.infra import ValidationTool
 from ngts.tests_nvos.helpers.interfaces import interface_helpers
@@ -34,7 +34,7 @@ def cleanup_link_training(devices: DevicesT, fae_objs: tuple[Fae.Fae, ...]) -> N
             fae.interface.link.link_training.unset(apply=True, ask_for_confirmation=True).verify_result()
             # force-max-iterations is a non-FAE knob, so it must be reverted via the regular Port path
             port.interface.link.link_training.unset(apply=True, ask_for_confirmation=True).verify_result()
-        interface_helpers.wait_and_verify_link(ports_objs, timeout=devices.dut.expected_operation_durations.get(ib_consts.InternalNvosConsts.ACP_PORT_GOES_UP))
+        interface_helpers.wait_and_verify_link(ports_objs, timeout=devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP))
         with allure.step("Verify link-training params"):
             for fae in fae_objs:
                 with allure.step(f"Verify port {fae.port.name}"):

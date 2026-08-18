@@ -7,7 +7,7 @@ from retry import retry
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst
+from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, IbConsts
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -488,8 +488,14 @@ def _check_lids(dut_engines):
     for _, dut_engine in dut_engines.items():
         out = OutputParsingTool.parse_show_output_to_dict(ib.device.show(dut_engine=dut_engine)).get_returned_value()
         for _, asic_data in out.items():
-            if "lid" in asic_data:
-                assert asic_data["lid"] != 0, "Some ASICs do not have LIDs allocated to them."
+            lid = asic_data.get("lid")
+            if lid is None:
+                # New schema: lid nested under ib-subnet.<subnet-name>
+                subnets = asic_data.get(IbConsts.DEVICE_ASIC_SUBNET_KEY, {})
+                subnet_entry = subnets.get(IbConsts.DEVICE_ASIC_DEFAULT_SUBNET, {})
+                lid = subnet_entry.get("lid")
+            if lid is not None:
+                assert lid != 0, "Some ASICs do not have LIDs allocated to them."
 
 
 @retry(Exception, tries=30, delay=5)

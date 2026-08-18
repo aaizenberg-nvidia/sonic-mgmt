@@ -2,11 +2,13 @@ import pytest
 import logging
 
 from ngts.nvos_tools.platform.Platform import Platform
+from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_constants.constants_nvos import PlatformConsts, SystemConsts, CumulusConsts
 from ngts.nvos_tools.infra.SudoScope import sudo_scope_if
+from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 
 
 @pytest.fixture(scope='module')
@@ -19,6 +21,13 @@ def skip_for_fanless_setup(devices):
 
 
 logger = logging.getLogger()
+
+
+def skip_unsupported_dpc(device) -> None:
+    if not isinstance(device, RosalindSwitch):
+        pytest.skip("DPC voltage update is only supported on Rosalind devices")
+    if is_bug_active(5223078):
+        pytest.skip(f"DPC tests skipped while redmine issue 5160583 is open")
 
 
 @pytest.fixture(scope='function')

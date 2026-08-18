@@ -184,6 +184,7 @@ rosalind-chipless-117      ansible_host=10.7.145.117 ansible_hostv6="" sonic_ver
 rosalind-eb2-164      ansible_host=10.7.145.164 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 rosalind-nvos-2166      ansible_host=10.220.12.166 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 rosalind-mec-2164      ansible_host=10.220.12.164 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
+rosalind-mec-2165      ansible_host=10.220.12.165 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 rosalind-nvos-2182      ansible_host=10.220.12.182 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 rosalind-nvos-2184      ansible_host=10.220.12.184 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 rosalind-c03-2243      ansible_host=10.220.12.243 ansible_hostv6="" sonic_version=v2 hwsku="ACS-N6100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000

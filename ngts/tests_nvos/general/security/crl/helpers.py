@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 class ApiCrlValidator(CrlValidator):
     """API/REST CRL validator."""
 
+    # Allow nginx to finish reload after mTLS/CRL apply before client traffic.
+    _API_SETTLE_AFTER_APPLY_SEC = 5
+
     @property
     def _feature_resource(self):
         return self.system.api
@@ -36,6 +39,7 @@ class ApiCrlValidator(CrlValidator):
         self._feature_resource.set(CERTIFICATE, server_cert.name).verify_result()
         self._feature_resource.mtls.set(CA_CERTIFICATE, client_ca.cacert_name).verify_result()
         self._feature_resource._general_cli_wrapper.apply_config(engines.dut)
+        time.sleep(self._API_SETTLE_AFTER_APPLY_SEC)
 
     def _do_bind_crl(self, crl_name: str, ask_confirm: bool, should_succeed: bool) -> None:
         self._feature_resource.mtls.set("crl", crl_name, apply=True, ask_for_confirmation=ask_confirm).verify_result(
@@ -43,7 +47,7 @@ class ApiCrlValidator(CrlValidator):
         )
 
     def _post_bind_crl(self) -> None:
-        pass
+        time.sleep(self._API_SETTLE_AFTER_APPLY_SEC)
 
     def _verify_crl_bound(self, crl_name: str) -> None:
         output = self._feature_resource.mtls.parse_show()
@@ -52,6 +56,7 @@ class ApiCrlValidator(CrlValidator):
 
     def _do_unbind_crl(self) -> None:
         self._feature_resource.mtls.unset("crl", apply=True).verify_result()
+        time.sleep(self._API_SETTLE_AFTER_APPLY_SEC)
 
     def _do_cleanup(self) -> None:
         self._feature_resource.unset(apply=True).verify_result()

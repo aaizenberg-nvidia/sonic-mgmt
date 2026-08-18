@@ -93,14 +93,21 @@ def _firmware_install_test(devices, platform: Platform, image_details, engines, 
 
     try:
         with allure.step(f"Installing BURN image {burn_filename}"):
-            result, _ = OperationTime.save_duration(
+            result, operation_duration = OperationTime.save_duration(
                 "install CPLD (BURN)", '', test_cpld_upgrade.__name__,
                 platform.firmware.cpld.files.file_name[burn_filename].action_file_install,
                 dut_engine=engines.dut, force=False)
             result.verify_result()
 
-            with allure.step(f"verify operation time for install cpld {burn_filename!r} (duration: {result.duration})"):
-                result.verify_duration(devices.dut.expected_operation_durations['install cpld'])
+            with allure.step(
+                f"verify operation time for install cpld {burn_filename!r} "
+                f"(duration: {operation_duration})"
+            ):
+                OperationTime.verify_operation_time(
+                    operation_duration,
+                    'install cpld',
+                    threshold=devices.dut.expected_operation_durations['install cpld'],
+                ).verify_result()
 
             if has_refresh_image:
                 try:
@@ -115,7 +122,7 @@ def _firmware_install_test(devices, platform: Platform, image_details, engines, 
                     DutUtilsTool.wait_on_system_reboot(
                         engines.dut, reboot_params=reboot_params, device=devices.dut)
             else:
-                recover_dut_with_remote_reboot(topology_obj, engines)
+                recover_dut_with_remote_reboot(topology_obj, engines, device=devices.dut)
 
             with allure.step(f"Asserting install was successful"):
                 firmware_shown = OutputParsingTool.parse_json_str_to_dictionary(platform.firmware.show()).get_returned_value()

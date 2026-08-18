@@ -29,7 +29,7 @@ def cleanup_stress_mode(engines, nv_command):
     """
     # Setup: Ensure stress mode is disabled before test starts
     with allure.step("Setup: Ensure stress mode is disabled"):
-        set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED)
+        set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED, tolerate_missing_disabled=True)
         validate_health_status(HealthConsts.OK)
 
     nv_command.system.log.rotate_logs()
@@ -37,5 +37,5 @@ def cleanup_stress_mode(engines, nv_command):
 
     # Teardown: Ensure stress mode is disabled after test completes
     with allure.step("Cleanup: Disable stress mode"):
-        set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED)
+        set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED, tolerate_missing_disabled=True)
         validate_health_status(HealthConsts.OK)

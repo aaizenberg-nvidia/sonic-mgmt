@@ -6,7 +6,7 @@ import logging
 
 from ngts.constants.constants import BugHandlerConst
 from ngts.scripts.pbi import allure_helpers
-from ngts.scripts.pbi.models import LABug, TestResult
+from ngts.scripts.pbi.models import LABug, TestRuntime, TestResult
 
 logger = logging.getLogger(__name__)
 
@@ -14,47 +14,53 @@ logger = logging.getLogger(__name__)
 # **********************************************************************************************************************
 # Log Analyzer Helper Functions
 # **********************************************************************************************************************
-def parse_loganalyzer_bugs(tests: list[TestResult], base_url: str) -> list[LABug]:
-    result: list[LABug] = []
+def parse_test_runtimes(tests: list[TestResult], base_url: str) -> list[TestRuntime]:
+    result: list[TestRuntime] = []
 
     for test in tests:
-        handler_results = _collect_bug_handler_attachments(test, base_url)
-        if not handler_results:
-            continue
-
-        bugs_occurrences: defaultdict[str, int] = defaultdict(int)
-        bug_handler_runtime_mins: defaultdict[str, float] = defaultdict(float)
-
-        for entry in handler_results:
-            bug_id = str(entry.get("bug_id", "")).strip()
-            if not bug_id:
-                continue
-            bugs_occurrences[bug_id] += 1
-            bug_handler_runtime_mins[bug_id] += float(entry.get("runtime_mins", 0))
-
         setup_mins, test_body_mins, teardown_mins = allure_helpers.get_stage_runtime_mins(test, base_url)
         loganalyzer_runtime_mins = allure_helpers.get_allure_step_runtime_mins(test, base_url, "afterStages", "loganalyzer::0")
 
-        for bug_id, occurrences in bugs_occurrences.items():
-            result.append(
+        bugs: list[LABug] = []
+        handler_results = _collect_bug_handler_attachments(test, base_url)
+        if handler_results:
+            bugs_occurrences: defaultdict[str, int] = defaultdict(int)
+            bug_handler_runtime_mins: defaultdict[str, float] = defaultdict(float)
+
+            for entry in handler_results:
+                bug_id = str(entry.get("bug_id", "")).strip()
+                if not bug_id:
+                    continue
+                bugs_occurrences[bug_id] += 1
+                bug_handler_runtime_mins[bug_id] += float(entry.get("runtime_mins", 0))
+
+            bugs = [
                 LABug(
-                    test_name=test.test_name,
-                    test_url=test.test_url,
-                    test_runtime_mins=setup_mins + test_body_mins + teardown_mins,
-                    setup_mins=setup_mins,
-                    test_body_mins=test_body_mins,
-                    teardown_mins=teardown_mins,
-                    la_runtime_mins=loganalyzer_runtime_mins,
                     bug_id=bug_id,
                     occurrences=occurrences,
                     bug_handler_runtime_mins=bug_handler_runtime_mins.get(bug_id),
+                    test_url=test.test_url,
                 )
+                for bug_id, occurrences in bugs_occurrences.items()
+            ]
+            logger.info(
+                "Parsed %d LA bug(s) for %s from %d attachment(s)",
+                len(bugs),
+                test.test_name,
+                len(handler_results),
             )
-        logger.info(
-            "Parsed %d LA bug(s) for %s from %d attachment(s)",
-            len(bugs_occurrences),
-            test.test_name,
-            len(handler_results),
+
+        result.append(
+            TestRuntime(
+                test_name=test.test_name,
+                test_url=test.test_url,
+                test_runtime_mins=setup_mins + test_body_mins + teardown_mins,
+                setup_mins=setup_mins,
+                test_body_mins=test_body_mins,
+                teardown_mins=teardown_mins,
+                la_runtime_mins=loganalyzer_runtime_mins,
+                bugs=bugs,
+            )
         )
 
     return result

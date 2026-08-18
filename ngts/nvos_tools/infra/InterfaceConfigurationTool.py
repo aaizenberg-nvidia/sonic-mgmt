@@ -167,10 +167,15 @@ class InterfaceConfigurationTool:
 
         current_speed_value = current_link_dict[IbInterfaceConsts.LINK_SPEED]
         device = TestToolkit.get_device()
-        supported_speeds = device.supported_nvl_speeds if hasattr(device, 'supported_nvl_speeds') else []
+        if hasattr(device, 'get_configurable_nvl_speeds'):
+            supported_speeds = device.get_configurable_nvl_speeds()
+        elif hasattr(device, 'supported_nvl_speeds'):
+            supported_speeds = device.supported_nvl_speeds
+        else:
+            supported_speeds = []
 
         logger.info(f"Current speed value of port '{port_name}' is: {current_speed_value}")
-        logger.info(f"Supported NVL speeds for {port_name}: {supported_speeds}")
+        logger.info(f"Configurable NVL speeds for {port_name}: {supported_speeds}")
 
         return current_speed_value, supported_speeds
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import base64
 import logging
 import random
 import pytest
@@ -549,6 +550,11 @@ def test_stats_reliability(engines: EnginesT, devices: DevicesT, test_api: str):
             engine.run_cmd("sudo systemctl restart stats-reportd")
             with allure.step("Wait 15 seconds..."):
                 time.sleep(StatsConsts.SLEEP_15_SECONDS)
+            # Remove stale rotated <cat>.csv.old files: they survive the stats-reportd restart
+            # and are legitimate rotation artifacts, but an unlisted <cat>.csv.old (fan/power/
+            # temperature/... rotate depending on timing) trips the "extra files" assertion.
+            # Clear them so the check validates only the freshly-regenerated base <cat>.csv files.
+            engine.run_cmd("sudo rm -f /var/stats/*.old")
             check_category_internal_files_exist(engine, category_list)
 
         with allure.step("Perform system reboot"):

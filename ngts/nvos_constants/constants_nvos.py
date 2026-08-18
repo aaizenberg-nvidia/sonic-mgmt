@@ -4,7 +4,6 @@ import re
 from enum import Enum
 from pathlib import Path
 from typing import List, TypedDict
-import re
 
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import ADMIN
 
@@ -171,6 +170,11 @@ class NvosConst:
     DOCKER_PER_ASIC_LIST = ['syncd-ibv0', 'swss-ibv0', 'database']
     NV_GNMI_DOCKER = 'nv-gnmi'
     NV_UMF_DOCKER = 'nv-umf'
+    # Dockers allowed to start only after the system reports ready - polled instead of
+    # required immediately. Every other docker must be up the moment the system is ready.
+    LATE_START_DOCKERS = (NV_GNMI_DOCKER,)
+    DOCKERS_UP_TIMEOUT = 40
+    DOCKERS_UP_POLL_INTERVAL = 5
     SYM_MGR_SERVICES = ['configmgrd.service', 'countermgrd.service', 'portsyncmgrd.service']
     PORT_STATUS_LABEL = 'admin_status'
     PORT_CONFIG_DB_TABLES_PREFIX = "IB_PORT"
@@ -1533,8 +1537,8 @@ class PhyRoleConsts:
         def operational(cls):
             return [cls.PRIMARY.value, cls.SECONDARY.value]
 
-    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES = (PhyRole.PRIMARY, PhyRole.SECONDARY)
-    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT
+    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES: tuple[str, ...] = (PhyRole.PRIMARY.value, PhyRole.SECONDARY.value)
+    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT.value
 
     CONSTANT_ROLE: str = 'constant-role'
 
@@ -1546,7 +1550,7 @@ class PhyRoleConsts:
         def all(cls):
             return [member.value for member in cls]
 
-    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED
+    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED.value
 
 
 class LowPowerConsts:
@@ -1566,9 +1570,12 @@ class LowPowerConsts:
     FAE_FIELDS = {
         PEC_DURATION: {"values": range(0, 65535), "default": 379},
         PEC_RECAL_PERIOD: {"values": range(0, 65535), "default": 8008},
-        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION}
+        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION.value}
     }
 
+    STATE_DEFAULT: str = NvosConst.DISABLED
+
+    COUNTERS: str = 'counters'
     L1_TOTAL_ENTRIES: str = 'l1-total-entries'
     AVERAGE_LOCAL_FULL_BW_EXIT: str = 'average-local-full-bw-exit'
     ALL_COUNTERS: list[str] = [L1_TOTAL_ENTRIES, AVERAGE_LOCAL_FULL_BW_EXIT]
@@ -2066,6 +2073,7 @@ class RebootConsts:
     PSU_OFF = "psu-off"
     REBOOT_REASON_POWER_CYCLE = 'Power Cycle'
     REBOOT_REASON_RESET_BIT = "System reset"
+    REBOOT_REASON_TYPE_CRITICAL_ERROR = "critical-error"
     REMOTE_REBOOT = "remote-reboot"
     INSTALL_FW = "install-fw"
     RESET_BIT = "reset_bit"
@@ -2226,6 +2234,16 @@ class ClusterConsts:
     INITIAL_EXPECTED_APPS = [NMX_CONTROLLER, NMX_TELEMETRY]
     INITIAL_APPS_PATH = '/usr/local/cluster_pkgfiles/'
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
+
+
+class OtlpConsts:
+    ENDPOINT = "endpoint"
+    CRL = "crl"
+    ENCRYPTION = "encryption"
+    CERT_ID = "cert-id"
+    CA_CERT_ID = "cacert-id"
+    CRL_ID = "crl-id"
+    MODE = "mode"
 
 
 class SyslogSeverityLevels:
@@ -2706,7 +2724,6 @@ class LogComponentsConsts:
         "sai_api_switch",
         SYMMETRY_MANAGER,
         "syncd",
-        GPU_TELEMETRY,
         PEER_TELEMETRY,
     ]
     CRITICAL = "critical"
@@ -3176,6 +3193,41 @@ class PackageConsts:
     REMOTE_URL = 'remote-url'
 
 
+class LinkHealthConsts:
+    """NVLink link-health indication (QM4 / NVL-6 Rosalind only)."""
+    LINK = 'link'
+    HEALTH = 'health'
+    LINK_HEALTH = 'link-health'
+    STATE = 'state'
+    ATTENTION_TRIGGER_CODE = 'attention-trigger-code'
+    SINCE = 'since'
+    STATE_HEALTHY = 'healthy'
+    STATE_ATTENTION = 'attention'
+    STATE_NA = 'n/a'
+    VALID_STATES = frozenset({STATE_HEALTHY, STATE_ATTENTION, STATE_NA})
+    GNMI_PATH_STATE = 'infiniband/link-health/state'
+    GNMI_PATH_STATUS = 'infiniband/link-health/state/status'
+    GNMI_PATH_ATTENTION_TRIGGER_CODE = 'infiniband/link-health/state/attention-trigger-code'
+    GNMI_PATH_ATTENTION_SINCE = 'infiniband/link-health/state/attention-since'
+    GNMI_PREFIX_TEMPLATE = 'interfaces/interface[name={port_name}]'
+    GNMI_PEER_PREFIX_TEMPLATE = 'peer-port/interfaces/interface[name={peer_port_name}]'
+    GNMI_STATUS_UNSPECIFIED = 'UNSPECIFIED'
+    GNMI_STATUS_HEALTHY = 'HEALTHY'
+    GNMI_STATUS_UNHEALTHY = 'UNHEALTHY'
+    GNMI_VALID_STATUSES = frozenset({
+        GNMI_STATUS_UNSPECIFIED,
+        GNMI_STATUS_HEALTHY,
+        GNMI_STATUS_UNHEALTHY,
+    })
+    ATTENTION_POLL_TIMEOUT_SEC = 25
+    ATTENTION_POLL_INTERVAL_SEC = 2
+    ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_ATTENTION_CMD'
+    GPU_ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_GPU_ATTENTION_CMD'
+    GPU_LOCAL_PORT_MAP_ENV = 'NVOS_LINK_HEALTH_GPU_LOCAL_PORT_MAP'
+    COUNTERS_LINK_HEALTH_FIELD = 'link_health'
+    COUNTERS_ATTENTION_REASON_FIELD = 'attention_reason'
+
+
 class PeerPortConsts:
     GPU_TELEMETRY_SERVICE = "gpu-telemetry"
     NMX_T_LITE_SERVICE = "nmx-t-lite"
@@ -3195,6 +3247,8 @@ class PeerPortConsts:
                                      ApiType.OPENAPI: {"under_limit": LOWER_INTERVAL_ERR_MSG,
                                                        "over_limit": HIGHER_INTERVAL_ERR_MSG}}
     ASSOCIATED_SWITCH_PORT = "associated-switch-port"
+    HOSTNAME = "hostname"
+    EXPECTED_GPU_HOSTNAME = "GR100"
 
 
 class StoDebug:

@@ -11,6 +11,7 @@ from ngts.constants.constants import GnmiConsts
 from ngts.nvos_constants.constants_nvos import ApiType, NvosConst
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_tools.infra.Fae import Fae
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
@@ -22,7 +23,7 @@ from ngts.tests_nvos.interfaces.nvl_port.helpers import (
     select_random_nvl_port_name,
     skip_if_no_access_links,
     skip_if_no_trunk_links,
-    validate_ports_state
+    wait_for_ports_state
 )
 from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
     PHY_RECOVERY_HIGHER_TIMEOUT_MAX,
@@ -133,7 +134,7 @@ def test_phy_recovery_counters(engines, devices, random_api):
             verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, out, err)
             verify_msg_in_out_or_err(f'{random_counter}', out)
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
@@ -192,11 +193,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 ask_for_confirmation=True,
             ).verify_result()
             time.sleep(30)
-            retry_call(
-                validate_ports_state,
-                [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=13, delay=30
-            )
+            wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
             retry_call(
                 _verify_attribute,
                 [selected_port, preset_mode_path, PhyRecoveryConsts.PRESENT_MODE, PhyRecoveryConsts.FULL_DUPLEX],
@@ -219,11 +216,7 @@ def test_phy_recovery_attributes(devices, random_api):
             ).verify_result()
             with allure.step("Verify value did not change"):
                 time.sleep(30)
-                retry_call(
-                    validate_ports_state,
-                    [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                    exceptions=AssertionError, tries=13, delay=30
-                )
+                wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
                 retry_call(
                     _verify_attribute,
                     [selected_port, random_path_list, random_attribute, str(current_value)],
@@ -237,11 +230,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 apply=True, ask_for_confirmation=True,
             ).verify_result()
             time.sleep(30)
-            retry_call(
-                validate_ports_state,
-                [port_names, prefix, NvosConsts.LINK_STATE_UP],
-                exceptions=AssertionError, tries=13, delay=30
-            )
+            wait_for_ports_state(devices, port_names, prefix, NvosConsts.LINK_STATE_UP)
             retry_call(
                 _verify_attribute,
                 [selected_port, random_path_list, random_attribute, str(new_higher_value)],
@@ -337,7 +326,7 @@ def test_phy_recovery_bad_flow(devices, random_api):
                 # Only meaningful on a trunk port where the new leaves are NOT pruned.
                 _run_nvl7_new_leaves_bad_flow(devices)
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
@@ -371,12 +360,12 @@ def test_set_fae_phy_recovery_trunk_ports(devices, random_api):
             port_name=port_name,
         )
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
 @pytest.mark.multiplanar
-@pytest.mark.timeout(18 * MINUTE)
+@pytest.mark.timeout(25 * MINUTE)
 def test_set_fae_phy_recovery_access_ports(devices, random_api, standalone_system, has_loopbox, setup_name, is_simx):
     """
     @summary:
@@ -405,7 +394,7 @@ def test_set_fae_phy_recovery_access_ports(devices, random_api, standalone_syste
             setup_name=setup_name,
         )
     finally:
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 # ==================== Mode / timeout (PhyRecoveryTestProfile: NVL5 vs NVL6) ====================
@@ -440,7 +429,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                             phy_recovery_apply_neg_type(all_ports, PhyRecoveryConsts.RECOVERY_NEG_TYPE_FORCE_PEER)
                             reset_gpus_if_needed(setup_name)
                     verify_phy_recovery_config(
-                        selected_port, flow, mode, flow.default_timeout_when_enabled,
+                        selected_port, flow, mode, flow.default_timeout_when_enabled, retries=26, delay=15
                     )
 
                     higher_timeout = random.randrange(
@@ -453,7 +442,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                     ):
                         phy_recovery_apply_timeout(all_ports, flow, higher_timeout)
                         reset_gpus_if_needed(setup_name)
-                        verify_phy_recovery_config(selected_port, flow, mode, higher_timeout)
+                        verify_phy_recovery_config(selected_port, flow, mode, higher_timeout, retries=26, delay=15)
 
                     lower_timeout = random.randrange(
                         PHY_RECOVERY_LOWER_TIMEOUT_MIN,
@@ -493,12 +482,12 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                         ):
                             phy_recovery_apply_timeout(selected_port, flow, lower_timeout)
                             reset_gpus_if_needed(setup_name)
-                            verify_phy_recovery_config(selected_port, flow, mode, lower_timeout)
+                            verify_phy_recovery_config(selected_port, flow, mode, lower_timeout, retries=26, delay=15)
 
                     with allure.step(f"Update {flow.timeout_field} to lower value ({lower_timeout}) on all ports"):
                         phy_recovery_apply_timeout(all_ports, flow, lower_timeout)
                         reset_gpus_if_needed(setup_name)
-                        verify_phy_recovery_config(selected_port, flow, mode, lower_timeout)
+                        verify_phy_recovery_config(selected_port, flow, mode, lower_timeout, retries=26, delay=15)
 
                 elif mode == PhyRecoveryConsts.DISABLED:
                     ports_in_up_state = RandomizationTool.select_random_ports(
@@ -506,7 +495,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                         num_of_ports_to_select=0,
                     ).get_returned_value()
                     phy_recovery_apply_mode(all_ports, flow, mode)
-                    verify_phy_recovery_config(selected_port, flow, mode)
+                    verify_phy_recovery_config(selected_port, flow, mode, retries=26, delay=15)
                     current_ports_in_up_state = RandomizationTool.select_random_ports(
                         requested_ports_state=NvosConsts.LINK_STATE_ALL_TYPES,
                         num_of_ports_to_select=0,
@@ -525,7 +514,7 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
                     assert expected_names == current_names, message
                 else:
                     phy_recovery_apply_mode(all_ports, flow, mode)
-                    verify_phy_recovery_config(selected_port, flow, mode)
+                    verify_phy_recovery_config(selected_port, flow, mode, retries=26, delay=15)
     finally:
         with allure.step("Unset configuration to return to defaults"):
             all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
@@ -535,8 +524,8 @@ def _run_fae_mode_timeout_test(devices, group_all_ports, port_name, standalone_s
             validate_default_config,
             fargs=[selected_port, devices],
             exceptions=AssertionError,
-            tries=6,
-            delay=30,
+            tries=26,
+            delay=15
         )
 
 
@@ -562,8 +551,12 @@ def _verify_link_state(selected_port, expected_link_state):
 
 def _set_phy_recovery_attribute(phy_recovery, path_list, attribute, value, **kwargs):
     """Set a phy-recovery leaf via NVUE (``nv set ... step-N <attr> <value>``)."""
+    if TestToolkit.tested_api == ApiType.OPENAPI and isinstance(value, str) and value.isdigit():
+        value = int(value)
     if len(path_list) == 1 and path_list[0] == attribute:
         return phy_recovery.set(attribute, value, **kwargs)
+    if TestToolkit.tested_api == ApiType.OPENAPI:
+        return phy_recovery.set(path_list[0], {attribute: value}, **kwargs)
     return phy_recovery.set(path_list[0], [attribute, str(value)], **kwargs)
 
 

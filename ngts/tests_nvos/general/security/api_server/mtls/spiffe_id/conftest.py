@@ -1,11 +1,11 @@
-from typing import List
+from typing import List, Optional
 
 import pytest
 
 from ngts.nvos_constants.constants_nvos import UserRole
 from ngts.nvos_tools.system.System import System
-from ngts.tests_nvos.general.security.helpers import set_new_random_users, delete_all_imported_cas, \
-    delete_all_imported_certs
+from ngts.tests_nvos.general.security.helpers import cleanup_aaa_users, set_new_random_users, \
+    delete_all_imported_cas, delete_all_imported_certs
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tools.test_utils import allure_utils as allure
 
@@ -22,9 +22,10 @@ def local_monitor_users() -> List[UserInfo]:
     return users
 
 
-def cleanup_spiffe():
+def cleanup_spiffe(users: Optional[List[UserInfo]] = None):
     with allure.step('cleanup spiffe test'):
         System().api.unset(apply=True).verify_result()
+        cleanup_aaa_users(users)
         delete_all_imported_cas()
         delete_all_imported_certs()
 

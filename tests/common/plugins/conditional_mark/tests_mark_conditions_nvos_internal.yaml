@@ -583,13 +583,6 @@ ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
     - https://redmine.mellanox.com/issues/4543350
     - '''juliet'' in testbed'
 
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_phy_recovery_attributes:
-  skip:
-    reason: 'Feature in not fully supported, remove ignore once support is applied.
-      (If Rosalind-Surrogate: test will not be supported for QTM3)'
-    conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
-
 tests_nvos/platform/test_platform_asic_power_telemetry.py::test_platform_asic_power_telemetry_default_fields_values:
   skip:
     reason: '[NVOS - Design] Bug SW #4718752: [Telemetry][Rosalind] Missed ''nv show
@@ -667,7 +660,7 @@ tests_nvos/cluster/nmx_simulator_tests/test_simulated_cluster_partition.py:
       - "('juliet' not in testbed and 'rosalind' not in testbed)"
       - "'juliet-148' in testbed"
       - "'sws-rtf2-rosalind-198' in testbed"
-      - https://redmine.mellanox.com/issues/5149287
+      - ('juliet' in testbed and https://redmine.mellanox.com/issues/5170528)
 
 tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
   skip:
@@ -680,12 +673,6 @@ tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
     - '''juliet-52'' not in testbed'
 
 tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_trunk_ports:
-  skip:
-    reason: serdes-eq-mode is not supported on Rosalind systems
-    conditions:
-    - '''rosalind'' in testbed'
-
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_access_ports:
   skip:
     reason: serdes-eq-mode is not supported on Rosalind systems
     conditions:
@@ -724,9 +711,13 @@ tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
 
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4975521'
+    reason: 'Testcase skipped due to RM issues: https://redmine.mellanox.com/issues/4975521,
+      https://redmine.mellanox.com/issues/5158907 (rosalind only) - nmx-telemetry show
+      exposes controller-only log-stream and otlp fields'
+    conditions_logical_operator: or
     conditions:
       - https://redmine.mellanox.com/issues/4975521
+      - "https://redmine.mellanox.com/issues/5158907 and 'rosalind' in testbed"
 
 tests_nvos/cluster/test_sdn_cmd_run.py::test_sdn_get_cmd:
   skip:
@@ -783,4 +774,17 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     reason: "Tray admin state is only supported on VR200/Rosalind and later"
     conditions:
       - "'rosalind' not in testbed"
+
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_set_unset_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_forced_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
 ########################## NVOS IGNORE END ##########################

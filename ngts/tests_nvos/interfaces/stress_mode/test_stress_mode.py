@@ -37,7 +37,7 @@ from .helpers import (
     post_stress_checks
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.stress_mode

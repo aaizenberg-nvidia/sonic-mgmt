@@ -22,9 +22,14 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     RebootReasonCategory,
     assert_nvue_gnmi_counters_match,
-    gnmi_client_for_dut,
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
+)
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_trigger,
+    recover_nvl_link_health_prep,
+    try_build_gnmi_client,
+    verify_nvl_link_health_after_factory_reset,
 )
 
 
@@ -65,45 +70,71 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
     system = System()
     cluster = Cluster()
     expected_reason, expected_user = devices.dut.reboot_reason_dict[RebootConsts.FACTORY_RESET]
-    gnmi_client = gnmi_client_for_dut(engines.dut, devices.dut)
+    gnmi_client = try_build_gnmi_client(
+        engines.dut.ip,
+        devices.dut.default_username,
+        devices.dut.default_password,
+    )
 
     with allure.step('pre factory reset steps'):
         apply_and_save_port, current_time, just_apply_port, health_status, machine_type, not_apply_port, \
             username, init_cluster_status = factory_reset_no_params_pre_steps(engines, platform_params, system, devices,
                                                                               has_loopbox, setup_name, standalone_system)
 
-    with allure.step("NVUE and gNMI reboot counters must match before factory reset"):
-        telemetry_before = take_reboot_telemetry_snapshot(system, gnmi_client)
-        assert_nvue_gnmi_counters_match(telemetry_before)
-
-    with allure.step("Run reset factory without params"):
-        with serial_analyzer.stage('Reset-factory'):
-            duration = execute_reset_factory(engines, system, devices.dut.reset_factory, "", current_time, test_name=test_name)
-
-    ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
-
-    with allure.step("Verify NVUE and gNMI reboot telemetry after factory reset"):
-        verify_reboot_telemetry_after_reboot(
-            snapshot_before=telemetry_before,
-            system=system,
-            gnmi_client=gnmi_client,
-            expected_category=RebootReasonCategory.USER_INITIATED,
-            expected_details=expected_reason,
-            expected_user=expected_user,
-            reset_factory=True,
+    telemetry_before = None
+    if gnmi_client is not None:
+        with allure.step("NVUE and gNMI reboot counters must match before factory reset"):
+            telemetry_before = take_reboot_telemetry_snapshot(system, gnmi_client)
+            assert_nvue_gnmi_counters_match(telemetry_before)
+    else:
+        logger.warning(
+            'gnmic unavailable after install attempt; skipping pre factory-reset gNMI telemetry checks'
         )
 
-    with allure.step('post factory reset steps'):
-        factory_reset_no_params_post_steps(apply_and_save_port, engines, just_apply_port, health_status,
-                                           machine_type, not_apply_port, system, init_cluster_status, has_loopbox,
-                                           devices, setup_name, standalone_system)
-        RegressionConfigurations.configure_ports_to_legacy(engine=engines.dut, apply=True, throw_exception=True)
+    link_health_context = prepare_nvl_link_health_before_trigger(
+        devices, engines.dut, test_name
+    )
 
-    with allure.step("Verify the cleanup done successfully"):
-        verify_cleanup_done(engines.dut, current_time, system, username, ib_router=ib_router)
+    try:
+        with allure.step("Run reset factory without params"):
+            with serial_analyzer.stage('Reset-factory'):
+                duration = execute_reset_factory(engines, system, devices.dut.reset_factory, "", current_time, test_name=test_name)
 
-    with allure.step("Verify the setup is functional"):
-        verify_the_setup_is_functional(system, engines)
+        ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
+
+        if gnmi_client is not None and telemetry_before is not None:
+            with allure.step("Verify NVUE and gNMI reboot telemetry after factory reset"):
+                verify_reboot_telemetry_after_reboot(
+                    snapshot_before=telemetry_before,
+                    system=system,
+                    gnmi_client=gnmi_client,
+                    expected_category=RebootReasonCategory.USER_INITIATED,
+                    expected_details=expected_reason,
+                    expected_user=expected_user,
+                    reset_factory=True,
+                )
+        else:
+            logger.warning(
+                'gnmic unavailable after install attempt; skipping post factory-reset gNMI telemetry checks'
+            )
+
+        with allure.step('post factory reset steps'):
+            factory_reset_no_params_post_steps(apply_and_save_port, engines, just_apply_port, health_status,
+                                               machine_type, not_apply_port, system, init_cluster_status, has_loopbox,
+                                               devices, setup_name, standalone_system)
+            RegressionConfigurations.configure_ports_to_legacy(engine=engines.dut, apply=True, throw_exception=True)
+
+        with allure.step("Verify the cleanup done successfully"):
+            verify_cleanup_done(engines.dut, current_time, system, username, ib_router=ib_router)
+
+        with allure.step("Verify the setup is functional"):
+            verify_the_setup_is_functional(system, engines)
+
+        verify_nvl_link_health_after_factory_reset(link_health_context, devices, engines.dut)
+    finally:
+        # A completed reset wipes the prepped state; an aborted one leaves the
+        # admin-down port and the latched attention behind.
+        recover_nvl_link_health_prep(link_health_context, devices, test_name)
 
     with allure.step("Verify operation time"):
         OperationTime.verify_operation_time(duration, devices.dut.reset_factory, devices).verify_result()
