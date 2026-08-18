@@ -412,12 +412,17 @@ def dump_container_diagnostics(conn, container_name, setup_type):
     }
     # hide=True: keep the (potentially large) diagnostic output out of the MARS console log;
     # it lives in the archive instead.
-    conn.run("rm -rf {0} && mkdir -p {0}".format(staging_dir), warn=True, hide=True)
-    for filename, cmd in diagnostics.items():
-        conn.run("{{ {0}; }} > {1}/{2} 2>&1".format(cmd, staging_dir, filename), warn=True, hide=True)
-    conn.run("mkdir -p {}".format(nfs_dir), warn=True, hide=True)
-    conn.run("tar -czf {0} -C {1} .".format(archive_path, staging_dir), warn=True, hide=True)
-    conn.run("rm -rf {}".format(staging_dir), warn=True, hide=True)
+    try:
+        conn.run("rm -rf {0} && mkdir -p {0}".format(staging_dir), warn=True, hide=True, in_stream=False)
+        for filename, cmd in diagnostics.items():
+            conn.run("{{ {0}; }} > {1}/{2} 2>&1".format(cmd, staging_dir, filename),
+                     warn=True, hide=True, in_stream=False)
+        conn.run("mkdir -p {}".format(nfs_dir), warn=True, hide=True, in_stream=False)
+        conn.run("tar -czf {0} -C {1} .".format(archive_path, staging_dir), warn=True, hide=True, in_stream=False)
+        conn.run("rm -rf {}".format(staging_dir), warn=True, hide=True, in_stream=False)
+    except Exception as err:
+        logger.error("Diagnostics collection for {} failed: {}".format(container_name, err))
+        return
     logger.error("Diagnostics for {} archived to {}".format(container_name, archive_path))
     logger.error("################### End diagnostics for {} ###################".format(container_name))
 
@@ -428,7 +433,10 @@ def cleanup_dangling_docker_images(test_server):
      Therefore any images being used in a container,
      whether they have been exited or currently running, will NOT be affected.
     """
-    test_server.run("docker system prune --all -f", warn=True)
+    try:
+        test_server.run("docker system prune --all -f", warn=True, in_stream=False)
+    except Exception as err:
+        logger.warning("Failed to prune dangling docker images, continuing: {}".format(err))
 
 def get_setup_type(topology_file_path):
     if topology_file_path and 'stm_nvos' in topology_file_path:
