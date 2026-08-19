@@ -4082,6 +4082,7 @@ class PortiaSurrogateNex(PortiaSwitch):
 
     def _init_constants(self):
         super()._init_constants()
+        self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-nex.json"
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7210_ld-r0")
         self.show_platform_output.update({
@@ -4093,7 +4094,7 @@ class PortiaSurrogateNex(PortiaSwitch):
         self.platform_environment_fan_values = {}
         self.platform_inventory_switch_values.update({
             "hardware-version": None,
-            "model": ExpectedString(regex="920-9K51W-02L7-GS0"),
+            "model": ExpectedString(regex="920-9K51W-02L7-SR0"),
         })
 
 
@@ -4105,6 +4106,7 @@ class PortiaSurrogateNpo(PortiaNpoSwitch):
 
     def _init_constants(self):
         super()._init_constants()
+        self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-npo.json"
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7410_ld-r0")
         self.show_platform_output.update({
@@ -4114,7 +4116,10 @@ class PortiaSurrogateNpo(PortiaNpoSwitch):
     def _init_platform_lists(self):
         super()._init_platform_lists()
         self.platform_environment_fan_values = {}
-        self.platform_inventory_switch_values.update({"hardware-version": None})
+        self.platform_inventory_switch_values.update({
+            "hardware-version": None,
+            "model": ExpectedString(regex="920-9K57E-00L7-SR0"),
+        })
 
 
 # -------------------------- Caiman Switch ----------------------------
