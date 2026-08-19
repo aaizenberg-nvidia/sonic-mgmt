@@ -23,6 +23,7 @@ from ngts.tests_nvos.interfaces.nvl_port.helpers import (
     select_random_nvl_port_name,
     skip_if_no_access_links,
     skip_if_no_trunk_links,
+    validate_ports_state,
     wait_for_ports_state
 )
 from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
@@ -759,7 +760,7 @@ def test_nvl7_phy_recovery_counters_debug(engines, devices, random_api):
             _verify_nvl7_debug_counters_default(selected_port, devices)
     finally:
         _nvl7_cleanup(selected_port)
-        restore_nvl_speed(speed_info)
+        restore_nvl_speed(devices, speed_info)
 
 
 @pytest.mark.interface
