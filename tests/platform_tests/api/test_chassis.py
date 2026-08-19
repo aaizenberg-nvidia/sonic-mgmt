@@ -102,6 +102,16 @@ class TestChassisApi(PlatformApiTestBase):
     """Platform API test cases for the Chassis class"""
     inv_files = None
 
+    @pytest.fixture(autouse=True)
+    def skip_bmc_blocklisted_tests(self, request, tbinfo):
+        topo_type = (tbinfo.get("topo", {}).get("type") or "").lower()
+        if "bmc" not in topo_type:
+            return
+
+        test_name = request.function.__name__
+        if test_name in BMC_SKIPPED_CHASSIS_TESTS:
+            pytest.skip("Skipped on BMC: {} is in BMC skip list".format(test_name))
+
     #
     # Helper functions
     #
