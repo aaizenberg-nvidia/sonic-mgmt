@@ -12009,6 +12009,20 @@
   inv_name: lab
   comment: Mellanox MEC testbed
 
+- conf-name: slm-174-t1-isolated-d28u4
+  group-name: vm-t1
+  topo: t1-isolated-d28u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-174
+  ptf_ip: 10.220.207.47/22
+  ptf_ipv6:
+  server: server_23
+  vm_base: VM2301
+  dut:
+    - slm-174
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
 - conf-name: slm-18-ptp-130
   group-name: vm-t1
   topo: ptp-130

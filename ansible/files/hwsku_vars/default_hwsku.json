@@ -206,6 +206,10 @@
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",
         "support_hwsku": ["Mellanox-SN6600_LD-P128C2", "Mellanox-SN6600_LD-P64O128C2"]
     },
+    "slm-174_setup": {
+        "default_hwsku": "Mellanox-SN6600_LD-P128C2",
+        "support_hwsku": ["Mellanox-SN6600_LD-P128C2"]
+    },
     "slm-16_setup": {
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",
         "support_hwsku": ["Mellanox-SN6600_LD-P128C2"]
