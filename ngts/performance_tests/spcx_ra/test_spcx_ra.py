@@ -100,6 +100,17 @@ class ChipBandwidth:
             for Cumulus max-breakout mloop ports. When set, jinja skips the
             default link-phy include on data ports and applies this speed on
             mloop ports.
+        low_ar_threshold: Per-config AR low-congestion threshold
+            (``congestion_thresh_lo``). Left None to take the per-chip default
+            — ``PerfConsts.LOW_AR_THRESHOLD_SPC6`` on SPC6 and
+            ``PerfConsts.LOW_AR_THRESHOLD`` on older generations. Set
+            explicitly on SPC6 entries.
+        mid_ar_threshold: Per-config AR mid-congestion threshold
+            (``congestion_thresh_med``), defaulting to
+            ``PerfConsts.MED_AR_THRESHOLD``. Overridden on SPC6 entries.
+        high_ar_threshold: Per-config AR high-congestion threshold
+            (``congestion_thresh_hi``), defaulting to
+            ``PerfConsts.HIGH_AR_THRESHOLD``. Overridden on SPC6 entries.
     """
 
     port_split: int
@@ -109,6 +120,9 @@ class ChipBandwidth:
     ibm_bw_skip_redmine_issue: Optional[int] = None
     skip_first_iteration_redmine_issue: Optional[int] = None
     link_phy_speed: Optional[str] = None
+    low_ar_threshold: Optional[int] = None
+    mid_ar_threshold: int = PerfConsts.MED_AR_THRESHOLD
+    high_ar_threshold: int = PerfConsts.HIGH_AR_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -270,8 +284,12 @@ class LanesConfig:
                  else chip_speed_config.port_split)
         conf_args = {
             "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
-            "congestion_thresh_lo": (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                     else PerfConsts.LOW_AR_THRESHOLD),
+            "congestion_thresh_lo": (chip_speed_config.low_ar_threshold
+                                     if chip_speed_config.low_ar_threshold is not None
+                                     else (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
+                                           else PerfConsts.LOW_AR_THRESHOLD)),
+            "congestion_thresh_med": chip_speed_config.mid_ar_threshold,
+            "congestion_thresh_hi": chip_speed_config.high_ar_threshold,
             "two_sided_ar": True,
             "is_ipv6": is_ipv6,
             "is_ipv4": is_ipv4,
@@ -910,6 +928,9 @@ class TestSpcXRA_4x_lanes(_SpcXRATestBase):
                 port_split=1,
                 port_speed_bps="800000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_800G_x1["SPC6"],
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
             ),
         },
     )
@@ -935,6 +956,9 @@ class TestSpcXRA_2x_lanes(_SpcXRATestBase):
                 port_split=2,
                 port_speed_bps="400000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_400G_x2["SPC6"],
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
             ),
         },
     )
@@ -960,6 +984,9 @@ class TestSpcXRA_1x_lanes(_SpcXRATestBase):
                 # Cumulus max-breakout mloop ports need an explicit phy speed
                 # (same pattern as Yehuda's SPC6 x8 NVUE bring-up).
                 link_phy_speed="200G",
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
             ),
         },
     )
