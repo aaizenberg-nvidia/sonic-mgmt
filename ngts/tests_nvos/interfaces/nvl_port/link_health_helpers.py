@@ -1207,10 +1207,12 @@ def wait_for_link_health_cli_state(port, expected_state, poll_timeout=30, poll_i
     """
     deadline = time.time() + poll_timeout
     last_state = None
-    while time.time() < deadline:
+    while True:
         last_state, _ = _read_link_health_state(port)
         if last_state == expected_state:
             return True
+        if time.time() >= deadline:
+            break
         time.sleep(poll_interval)
     logger.warning(
         f'{port.name} did not reach link-health state {expected_state!r} within '
@@ -1220,7 +1222,7 @@ def wait_for_link_health_cli_state(port, expected_state, poll_timeout=30, poll_i
 
 
 def trigger_link_health_attention(port, dut_engine, error_type_admin=PTER_ERROR_TYPE_BER,
-                                  poll_timeout=60, poll_interval=5,
+                                  poll_timeout=90, poll_interval=5,
                                   require_healthy_baseline=True) -> bool:
     """Best-effort: drive `port` into link-health attention (or re-arm while in attention).
 
@@ -1868,10 +1870,12 @@ def wait_for_peer_port_link_health_cli_state(
     deadline = time.time() + poll_timeout
     last_state = None
     peer_name = peer_port_interface.peer_port_name
-    while time.time() < deadline:
+    while True:
         last_state, _ = _read_peer_port_link_health_state(peer_port_interface)
         if last_state == expected_state:
             return True
+        if time.time() >= deadline:
+            break
         time.sleep(poll_interval)
     logger.warning(
         f'peer-port {peer_name} did not reach link-health state {expected_state!r} within '

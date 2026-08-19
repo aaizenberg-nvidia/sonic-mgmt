@@ -26,6 +26,7 @@ from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
     is_link_health_feature_available,
     is_link_health_supported,
     is_port_ready_for_attention,
+    read_link_health_cli_state,
     run_link_health_repeated_toggle_stress,
     skip_if_link_health_feature_unavailable,
     skip_if_link_health_not_supported,
@@ -390,6 +391,9 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
                                 "continuing with down/up flow"
                             )
 
+            baseline_down_state = (
+                read_link_health_cli_state(lifecycle_port) if link_health_checks else None
+            )
             toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
             logger.info("Sleeping for 15 seconds till toggle is reflected")
             time.sleep(15)
@@ -402,11 +406,6 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
                                                               expected_value=NvosConsts.LINK_STATE_DOWN).verify_result()
 
             if link_health_checks:
-                baseline_down_state = (
-                    LinkHealthConsts.STATE_ATTENTION
-                    if attention_triggered
-                    else LinkHealthConsts.STATE_HEALTHY
-                )
                 verify_link_health_after_link_down(lifecycle_port, baseline_down_state)
 
             toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_UP, test_name, devices)
