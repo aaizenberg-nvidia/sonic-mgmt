@@ -453,7 +453,7 @@ def get_action_based_on_no_action_results(bug_handler_file_result, branch, bug_h
     if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
         cur_version = bug_handler_params["duthost"].os_version
         ticket_id = get_ticket_id(bug_handler_file_result)
-        ticket_status = access_redmine_cache([ticket_id], use_active_status=False)
+        ticket_status = access_redmine_cache([ticket_id], use_active_status=False).get(str(ticket_id), '')
 
         if ticket_status == "Closed":
             # When the script for getting fixed image is ready for RC image,
