@@ -3,6 +3,7 @@ import logging
 import shutil
 import allure
 import pytest
+import re
 
 from ngts.scripts.code_coverage.code_coverage_consts import NvosConsts, SharedConsts
 from ngts.nvos_tools.infra.JenkinsTool import JenkinsQueryBuilder, JenkinsTool
@@ -13,6 +14,7 @@ from ngts.ngts_types import EnginesT, TopologyT
 
 logger = logging.getLogger(__name__)
 
+_CONFIG_FILES = (Path(__file__).parent / 'config_files').resolve().absolute()
 python_job_name = "NVOS_Python_upload_results_to_sonar"
 cpp_job_name = "NVOS_C_upload_results_to_sonar"
 
@@ -39,10 +41,8 @@ def test_upload_results_to_sonar(target_version: str, results_path: Path) -> Non
             cpp_results_path = results_path / SharedConsts.C_DIR
             logger.info(f"cpp results path: {cpp_results_path}")
 
-            branch_name = _get_branch_name(python_results_path.as_posix())
+            branch_name, commit_id = _get_branch_and_commit_id(results_path)
             logger.info(f"branch name: {branch_name}")
-
-            commit_id = _get_commit_id(python_results_path.as_posix())
             logger.info(f"commit id: {commit_id}")
 
         client = JenkinsTool(project_job_path=SharedConsts.JENKINS_SONAR_PROJECT_PATH)
@@ -59,7 +59,8 @@ def test_upload_results_to_sonar(target_version: str, results_path: Path) -> Non
                 general_job_params
                 .project("NVOS-Python")
                 .coverage_folder(python_results_path)
-                .exclude_file_path(f"{NvosConsts.DEST_PATH}/exclude_lists/coverage_python_exclude.conf")
+                .include_file_path(_CONFIG_FILES / 'nvos_coverage_python_include.conf')
+                .exclude_file_path(_CONFIG_FILES / 'nvos_coverage_python_exclude.conf')
                 .build()
             )
             client.trigger_with_query(python_job_name, python_job_params)
@@ -69,6 +70,8 @@ def test_upload_results_to_sonar(target_version: str, results_path: Path) -> Non
                 general_job_params
                 .project("NVOS_CPP")
                 .coverage_folder(cpp_results_path)
+                .include_file_path(_CONFIG_FILES / 'nvos_coverage_cpp_include.conf')
+                .exclude_file_path(_CONFIG_FILES / 'nvos_coverage_cpp_exclude.conf')
                 .build()
             )
             client.trigger_with_query(cpp_job_name, cpp_job_params)
@@ -113,61 +116,31 @@ def test_copy_unitests_results(engines: EnginesT, target_version: str, topology_
             logger.info(f"Unitests results: {dest}")
 
 
-def _get_branch_name(target_version: str) -> str:
+def _get_branch_and_commit_id(results_path: Path) -> tuple[str, str]:
     """
-    Extract branch name from a coverage path.
+    Extract the Sonar branch and git commit ID from a coverage results path.
 
     Args:
-        target_version: Path like '/auto/sw_system_project/NVOS_INFRA/coverage/nvos-25-02-5000_25.02.4936-029/c_coverage_origin'
+        results_path: Coverage directory named using the branch and build version.
 
     Returns:
-        str: Branch name like 'nvos-25-02-5000'
+        tuple containing the prefixed Sonar branch and unmodified git commit ID.
 
     Examples:
-        '/auto/sw_system_project/NVOS_INFRA/coverage/nvos-25-02-5000_25.02.4936-029/c_coverage_origin' -> 'nvos-25-02-5000'
+        'nvos-25-03-0800_25.03.0720' -> ('rel-nvos-25-03-0800', 'nvos-25-03-0800_25.03.0720')
+        'dev-system-alarms_dev-system-alarms-005' -> ('fb-dev-system-alarms', 'dev-system-alarms_dev-system-alarms-005')
     """
-    import re
+    commit_id = results_path.name
+    release_match = re.fullmatch(
+        r"(?P<branch>nvos-(?P<major>\d{2})-(?P<minor>\d{2})-\d{4})_"
+        r"(?P=major)\.(?P=minor)\.\d{4}(?:-\d{3})?",
+        commit_id,
+    )
+    if release_match:
+        return f"rel-{release_match.group('branch')}", commit_id
 
-    # Pattern to match nvos branch format like nvos-25-02-5000
-    pattern = r'/.+[-_](\d+[-.]\d+[-.]\d+)'
+    feature_match = re.fullmatch(r"(?P<branch>dev-.+)_(?P=branch)-\d{3}", commit_id)
+    if feature_match:
+        return f"fb-{feature_match.group('branch')}", commit_id
 
-    if grep := re.search(pattern, target_version):
-        result = f"nvos-{grep.group(1)}"
-        logger.debug(f"{result=!r}")
-        release: str = TestToolkit.version_to_release(result)
-        logger.debug(f'{release=!r}')
-        return release
-    else:
-        raise ValueError(f"Could not extract branch name from path: {target_version}")
-
-
-def _get_version_name(target_version: str) -> str:
-    """
-    Extract version name from a coverage path.
-
-    Args:
-        target_version: Path like '/auto/sw_system_release/nos/nvos/25.02.4936-029/amd64/dev/nvos-coverage-amd64-25.02.4936-029.bin'
-
-    Returns:
-        str: Version name like '25.02.4936-029'
-
-    Examples:
-        '/auto/sw_system_release/nos/nvos/25.02.4936-029/amd64/dev/nvos-coverage-amd64-25.02.4936-029.bin' -> '25.02.4936-029'
-        '/auto/sw_system_release/nos/nvos/25.02.2000/amd64/dev/nvos-coverage-amd64-25.02.2000.bin' -> '25.02.2000'
-    """
-    import re
-
-    # Pattern to match version format like 25.02.4936-029 or 25.02.2000
-    pattern = r'\d+\.\d+\.\d+(?:-\d+)?'
-    match = re.search(pattern, target_version)
-
-    if match:
-        return match.group(0)
-    else:
-        raise ValueError(f"Could not extract version name from path: {target_version}")
-
-
-def _get_commit_id(target_version: str) -> str:
-    version_name = _get_version_name(target_version)
-    branch_name = _get_branch_name(target_version)
-    return branch_name + "_" + version_name
+    raise ValueError(f"Could not extract branch name and commit ID from coverage path: {results_path}")

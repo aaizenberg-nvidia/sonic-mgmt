@@ -8,9 +8,10 @@ import time
 import os
 import re
 
+from devts.infra.tools.connection_tools.linux_ssh_engine import ProxySshEngine
+
 from ngts.scripts.code_coverage.code_coverage_consts import SharedConsts, NvosConsts, SonicConsts
 from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
-from devts.infra.tools.connection_tools.linux_ssh_engine import ProxySshEngine
 from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
