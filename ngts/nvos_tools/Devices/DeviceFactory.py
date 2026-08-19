@@ -19,6 +19,7 @@ from ngts.nvos_tools.Devices.IbDevice import (GorillaSwitch, GorillaSwitchBF3, C
                                               TaipanSwitch, TaipanSingleAsicSwitch, PortiaSwitch, PortiaSimx,
                                               PortiaCpoSwitch, PortiaCpoSimx, PortiaCpoTASimx,
                                               PortiaNpoSwitch, PortiaNpoSimx, PortiaNpoTASimx,
+                                              PortiaSurrogateNex, PortiaSurrogateNpo,
                                               RosalindSA, RosalindRTF)
 
 logger = logging.getLogger()
@@ -88,6 +89,8 @@ class DeviceFactory:
             "N7400_LD - Portia": PortiaNpoSwitch,
             "N7400_LD_simx - Portia": PortiaNpoSimx,
             "N7400_LD_TA_simx - Portia": PortiaNpoTASimx,
+            "N7210_LD - PortiaSurrogateNex": PortiaSurrogateNex,
+            "N7410_LD - PortiaSurrogateNpo": PortiaSurrogateNpo,
         }
 
     @staticmethod

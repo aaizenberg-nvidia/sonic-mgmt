@@ -3911,17 +3911,10 @@ class PortiaCpoSwitch(PortiaSwitch):
         self.show_platform_output.update({
             PlatformConsts.SYSTEM_TYPE: "N7300_LD",
         })
-        # sw scale-out ports are 1-lane NVL7 simplex (200G PAM-4 per lane), unlike
-        # the inherited 2-lane 400G trunk ports - confirm exact string on DUT
+        # sw scale-out ports are 1-lane NVL7 simplex (200G PAM-4 per lane)
         self.nvl_trunk_port_speed = '200G'
 
-        # ---- NVL7 CPO trunk-port PHY recovery (HLD_NVOS_CPO_PHY_RECOVERY_NVL7) ----
-        # The 5 new leaves + "counters debug" node are supported ONLY on CPO NVL7 (this class and
-        # its subclasses; is_cpo_capable() True). N7200 and N7400 keep them pruned.
-        # Debug step-counters default to 0 (before any recovery / after clear); source of truth for
-        # the counters-debug default assertion.
         self.default_phy_recovery_debug_counters = dict(PhyRecoveryConsts.NVL7_DEFAULT_DEBUG_COUNTERS)
-        # Un-prune the new leaves + counters debug (they ARE supported on CPO trunk ports).
         for cmd in PhyRecoveryConsts.NVL7_PRUNED_COMMANDS:
             if cmd in self.unsupported_commands_list:
                 self.unsupported_commands_list.remove(cmd)
@@ -4016,6 +4009,49 @@ class PortiaNpoTASimx(SimxDevice, PortiaNpoSwitch):
         self.show_platform_output.update({
             PlatformConsts.SYSTEM_TYPE: "N7400_LD_TA",
         })
+
+
+class PortiaSurrogateNex(PortiaSwitch):
+    """Two-ASIC Portia NEX surrogate tray (N7210_LD): no fans."""
+
+    def __init__(self, asic_amount=2):
+        super().__init__(asic_amount=asic_amount)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7210_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7210_LD",
+        })
+
+    def _init_platform_lists(self):
+        super()._init_platform_lists()
+        self.platform_environment_fan_values = {}
+        self.platform_inventory_switch_values.update({
+            "hardware-version": None,
+            "model": ExpectedString(regex="920-9K51W-02L7-GS0"),
+        })
+
+
+class PortiaSurrogateNpo(PortiaNpoSwitch):
+    """Two-ASIC Portia NPO surrogate tray (N7410_LD): no fans."""
+
+    def __init__(self, asic_amount=2):
+        super().__init__(asic_amount=asic_amount)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7410_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7410_LD",
+        })
+
+    def _init_platform_lists(self):
+        super()._init_platform_lists()
+        self.platform_environment_fan_values = {}
+        self.platform_inventory_switch_values.update({"hardware-version": None})
 
 
 # -------------------------- Caiman Switch ----------------------------
