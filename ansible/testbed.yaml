@@ -15019,6 +15019,37 @@
   auto_recover: 'False'
   comment: BMC dual-mgmt testbed for slm-233
 
+- conf-name: slm-113-bmc-dual-mgmt
+  group-name: slm113bm
+  topo: bmc-dual-mgmt
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-113
+  ptf_ip: 10.220.189.254/22
+  ptf_ipv6:
+  server: server_98
+  vm_base:
+  dut:
+    - slm-113-bmc
+    - slm-113
+  bmc_host: slm-113
+  inv_name: lab
+  auto_recover: 'False'
+  comment: BMC dual-mgmt testbed for slm-113
+
+- conf-name: slm-113-ptp-64
+  group-name: vm-t1
+  topo: ptp-64
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-113-ptp
+  ptf_ip: 10.220.189.254/22
+  ptf_ipv6:
+  server: server_98
+  vm_base:
+  dut:
+    - slm-113
+  inv_name: lab
+  comment: Mellanox MTR testbed
+
 - conf-name: slm-113-ptf-any
   group-name: vm-t1
   topo: ptf-any

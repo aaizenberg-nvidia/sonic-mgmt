@@ -490,6 +490,7 @@ slm-31      ansible_host=10.220.13.31 ansible_hostv6="fe80::dc73:fcff:feb2:477e"
 slm-233      ansible_host=10.220.13.233 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 slm-233-bmc      ansible_host=10.193.67.233 sonic_version=v2 hwsku="NVIDIA-AST2700-BMC" sonic_hw_platform=arm64-aspeed_nvidia_ast2700_bmc-r0 asic_type=aspeed mgmt_subnet_mask_length=19 vm_base=VM0000
 slm-113      ansible_host=10.220.13.113 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
+slm-113-bmc      ansible_host=10.193.67.113 sonic_version=v2 hwsku="NVIDIA-AST2700-BMC" sonic_hw_platform=arm64-aspeed_nvidia_ast2700_bmc-r0 asic_type=aspeed mgmt_subnet_mask_length=19 vm_base=VM0000
 sws-cham6s-4      ansible_host=10.220.14.28 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="ACS-SN6810_LD" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 
 [sonic_sn2700_40]
