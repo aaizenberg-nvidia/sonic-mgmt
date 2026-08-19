@@ -50,6 +50,25 @@ class TestResult:
 
 @dataclasses.dataclass
 class LABug:
+    bug_id: str
+    occurrences: int
+    bug_handler_runtime_mins: float
+    test_url: str
+
+    def to_db_values(
+        self, test_name: str, session_id: str, setup_name: str, target_version: str, branch: str
+    ) -> str:
+        escaped_test_name = test_name.replace("'", "''") if test_name else ""
+        escaped_bug_url = self.test_url.replace("'", "''") if self.test_url else ""
+        return (
+            f"('{escaped_test_name}', '{escaped_bug_url}', '{self.bug_id}', '{BUG_URL_PREFIX}{self.bug_id}', '{self.occurrences}', "
+            f"{self.bug_handler_runtime_mins}, '{branch}', '{session_id}', '{setup_name}', "
+            f"'{target_version}', '{datetime.date.today()!s}')"
+        )
+
+
+@dataclasses.dataclass
+class TestRuntime:
     test_name: str
     test_url: str
     test_runtime_mins: float
@@ -57,16 +76,15 @@ class LABug:
     test_body_mins: float
     teardown_mins: float
     la_runtime_mins: float
-    bug_id: str
-    occurrences: int
-    bug_handler_runtime_mins: float
+    bugs: list[LABug] = dataclasses.field(default_factory=list)
 
     def to_db_values(self, session_id: str, setup_name: str, target_version: str, branch: str) -> str:
+        escaped_test_name = self.test_name.replace("'", "''") if self.test_name else ""
+        escaped_test_url = self.test_url.replace("'", "''") if self.test_url else ""
         return (
-            f"('{self.test_name}', '{self.test_url}', {self.test_runtime_mins}, '{session_id}', '{setup_name}', {self.setup_mins}, "
-            f"{self.test_body_mins}, {self.teardown_mins}, {self.la_runtime_mins}, "
-            f"'{target_version}', '{branch}', '{datetime.date.today()!s}', "
-            f"'{self.bug_id}', '{BUG_URL_PREFIX}{self.bug_id}', '{self.occurrences}', {self.bug_handler_runtime_mins})"
+            f"('{escaped_test_name}', '{escaped_test_url}', '{setup_name}', '{target_version}', '{session_id}', "
+            f"{self.test_runtime_mins}, {self.setup_mins}, {self.test_body_mins}, {self.teardown_mins}, "
+            f"{self.la_runtime_mins}, '{branch}', '{datetime.date.today()!s}')"
         )
 
 

@@ -18,27 +18,36 @@ import time
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import ApiType, ClusterApps
 from ngts.nvos_tools.infra.NvBridgeTool import NvBridgeTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OpenSslSClient import OpenSslSClient
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.nmx.Cluster import Cluster
+from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts as ClusterTestConsts
+from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 from ngts.tests_nvos.general.security.certificate.CertInfo import CertInfo
 from ngts.tests_nvos.general.security.nmx_cert.constants import (
     NV_BRIDGE_SERVER_PORT,
     EncryptionMode,
 )
-from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 from ngts.tests_nvos.general.security.nmx_cert.helpers import (
     enable_cluster,
+    enable_cluster_app_manager_state,
+    verify_manager_show,
 )
-from ngts.tests_nvos.general.security.nv_bridge.conftest import BridgeCrlCerts, BridgeSpiffeCerts
 from ngts.tests_nvos.general.security.nv_bridge.helpers import (
+    BRIDGE_CROSS_FUNC_REBOOT_SETTLE_TIME,
+    BridgeCrlCerts,
+    BridgeSpiffeCerts,
+    configure_bridge_internal_mtls,
     reset_cluster_app,
     rotate_cluster_internal_and_verify,
     rotate_system_internal_and_verify,
+    save_config_and_reboot,
+    update_cluster_internal_encryption,
     verify_cluster_app_internal_cert_files,
     verify_cluster_app_internal_crl_show,
     verify_cluster_app_internal_has_empty_defaults,
@@ -244,12 +253,13 @@ def test_bridge_cluster_encryption_set(
 
     with allure.step(f"Update cluster apps {app_name} internal encryption to mtls"):
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -268,6 +278,192 @@ def test_bridge_cluster_encryption_set(
             expect_cacert=bridge_cert.cacert_name,
             expect_encryption=EncryptionMode.MTLS,
         )
+
+
+def _verify_bridge_connection_up(cluster: Cluster, engine) -> None:
+    ClusterTools.wait_for_apps_to_be_in_wanted_state(
+        cluster,
+        cluster_expected_state="enabled",
+        nmx_c_expected_state="up",
+        engine=engine,
+    )
+    verify_nv_bridge_has_connection(engine, expect_connection=True)
+
+
+@pytest.mark.system
+@pytest.mark.security
+@pytest.mark.nmx
+@pytest.mark.reboot
+@pytest.mark.track_serial_console
+@pytest.mark.usefixtures(
+    "enable_cluster",
+    "restore_cluster_app_internal_config",
+    "restore_system_internal_config",
+)
+def test_bridge_cluster_internal_mtls_reboot_connectivity(
+    engines,
+    random_api,
+    restore_cluster_app_internal_config,
+    import_certs_with_alt: tuple[CertInfo, CertInfo, CertInfo],
+):
+    """
+    Test Objective: Verify cluster internal mTLS connection is restored after reboot.
+
+    Test Flow:
+    1. Configure system + cluster internal mTLS
+    2. Verify nv-bridge connection is up
+    3. Save config and reboot
+    4. Verify nv-bridge connection comes back up
+    """
+    TestToolkit.tested_api = random_api
+    cluster = Cluster()
+    system = System()
+    app_name = restore_cluster_app_internal_config
+    bridge_cert, _, _ = import_certs_with_alt
+
+    configure_bridge_internal_mtls(system, cluster, app_name, bridge_cert, engines.dut)
+
+    with allure.step("Verify connection is up before reboot"):
+        _verify_bridge_connection_up(cluster, engines.dut)
+
+    save_config_and_reboot(engines)
+
+    with allure.step("Verify connection comes back up after reboot"):
+        _verify_bridge_connection_up(cluster, engines.dut)
+
+
+@pytest.mark.system
+@pytest.mark.security
+@pytest.mark.nmx
+@pytest.mark.reboot
+@pytest.mark.track_serial_console
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.usefixtures(
+    "enable_cluster",
+    "restore_cluster_app_internal_config",
+    "restore_system_internal_config",
+)
+def test_bridge_cluster_internal_mtls_reboot_cross_functionality(
+    engines,
+    devices,
+    test_api,
+    restore_cluster_app_internal_config,
+    import_certs_with_alt: tuple[CertInfo, CertInfo, CertInfo],
+    import_manager_certs: dict[str, CertInfo],
+):
+    """
+    Test Objective: Verify internal mTLS + manager mTLS / log stream / SDN survive reboot,
+    and that disabling mTLS persists across a second reboot while the connection stays up.
+
+    Test Flow:
+    1. Configure system/cluster internal mTLS and verify connection
+    2. Configure NMX manager mTLS, NMX-C log stream, and SDN generate
+    3. Save+reboot; verify shows and connection
+    4. Disable all mTLS, save+reboot; verify disabled state and healthy connection
+    """
+    TestToolkit.tested_api = test_api
+    cluster = Cluster()
+    system = System()
+    sdn = Sdn()
+    app_name = restore_cluster_app_internal_config
+    bridge_cert, _, _ = import_certs_with_alt
+
+    configure_bridge_internal_mtls(system, cluster, app_name, bridge_cert, engines.dut)
+    with allure.step("Verify connection is up before cross functionality"):
+        _verify_bridge_connection_up(cluster, engines.dut)
+
+    player = engines.sonic_mgmt
+    protocol = ClusterTestConsts.PROTOCOL_RSYSLOG
+    port = ClusterTestConsts.NMXC_LOG_STREAM_PORT[protocol]
+    # Product expects rsyslog remote-url as hostname:port (no credentials).
+    stream = f"{protocol} {player.ip}:{port}"
+    stream_show = f"{player.ip}:{port}"
+
+    with allure.step("Configure manager mTLS, log stream, and SDN"):
+        for mgr_app, cert in import_manager_certs.items():
+            if mgr_app not in devices.dut.expected_cluster_apps:
+                continue
+            manager = cluster.apps.app_name[mgr_app].manager
+            enable_cluster_app_manager_state(manager)
+            manager.certificate.action_update(cert.name).verify_result()
+            manager.ca_certificate.action_update(cert.cacert_name).verify_result()
+            manager.encryption.action_update(EncryptionMode.MTLS).verify_result()
+        cluster.apps.app_name[ClusterApps.NMX_CONTROLLER].logstream.action_update_cluster_log_stream(
+            stream=stream,
+        ).verify_result()
+        # Generates SDN files and validates them via show (existing ClusterTools helper).
+        ClusterTools.get_all_apps_config_files_paths(sdn, devices, engine=engines.dut)
+
+    save_config_and_reboot(engines, settle_time=BRIDGE_CROSS_FUNC_REBOOT_SETTLE_TIME)
+
+    with allure.step("Verify mTLS + cross-func persisted after first reboot"):
+        verify_system_internal_show(
+            expect_cert=bridge_cert.name,
+            expect_cacert=bridge_cert.cacert_name,
+            expect_encryption=EncryptionMode.MTLS,
+            dut_engine=engines.dut,
+        )
+        verify_cluster_app_internal_show(
+            app_name,
+            expect_cert=bridge_cert.name,
+            expect_cacert=bridge_cert.cacert_name,
+            expect_encryption=EncryptionMode.MTLS,
+            dut_engine=engines.dut,
+        )
+        for mgr_app, cert in import_manager_certs.items():
+            if mgr_app not in devices.dut.expected_cluster_apps:
+                continue
+            verify_manager_show(
+                mgr_app,
+                expect_cert=cert.name,
+                expect_cacert=cert.cacert_name,
+                expect_encryption=EncryptionMode.MTLS,
+            )
+        logstream_out = cluster.apps.app_name[ClusterApps.NMX_CONTROLLER].logstream.show(
+            exempted_err_msgs="Error",
+        )
+        assert "The requested item does not exist." not in logstream_out, "NMX-C log stream missing after reboot"
+        parsed = OutputParsingTool.parse_json_str_to_dictionary(logstream_out).get_returned_value()
+        assert parsed["protocol"] == protocol, f"Unexpected log stream protocol: {parsed['protocol']}"
+        assert parsed["remote-url"] == stream_show, f"Unexpected log stream remote-url: {parsed['remote-url']}"
+        _verify_bridge_connection_up(cluster, engines.dut)
+
+    with allure.step("Disable all mTLS"):
+        system.internal.encryption.action_update(EncryptionMode.DISABLED).verify_result()
+        update_cluster_internal_encryption(cluster, app_name, EncryptionMode.DISABLED, engines.dut)
+        for mgr_app in import_manager_certs:
+            if mgr_app not in devices.dut.expected_cluster_apps:
+                continue
+            cluster.apps.app_name[mgr_app].manager.encryption.action_update(
+                EncryptionMode.DISABLED,
+            ).verify_result()
+
+    save_config_and_reboot(engines, settle_time=BRIDGE_CROSS_FUNC_REBOOT_SETTLE_TIME)
+
+    with allure.step("Verify mTLS stayed disabled after second reboot, connection healthy"):
+        verify_system_internal_show(
+            expect_cert=bridge_cert.name,
+            expect_cacert=bridge_cert.cacert_name,
+            expect_encryption=EncryptionMode.DISABLED,
+            dut_engine=engines.dut,
+        )
+        verify_cluster_app_internal_show(
+            app_name,
+            expect_cert=bridge_cert.name,
+            expect_cacert=bridge_cert.cacert_name,
+            expect_encryption=EncryptionMode.DISABLED,
+            dut_engine=engines.dut,
+        )
+        for mgr_app, cert in import_manager_certs.items():
+            if mgr_app not in devices.dut.expected_cluster_apps:
+                continue
+            verify_manager_show(
+                mgr_app,
+                expect_cert=cert.name,
+                expect_cacert=cert.cacert_name,
+                expect_encryption=EncryptionMode.DISABLED,
+            )
+        _verify_bridge_connection_up(cluster, engines.dut)
 
 
 @pytest.mark.system
@@ -489,12 +685,13 @@ def test_bridge_main_flow(
         app.internal.certificate.action_update(bridge_cert.name).verify_result()
         app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -699,12 +896,13 @@ def test_bridge_cluster_encryption_negative(
     with allure.step(f"Update cluster apps {app_name} with matching cert and ca-cert"):
         app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
         app.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
-        # Cluster app internal is mTLS, but system internal is still default, so nmxc-conn stays down until
-        # system internal is also configured.
+        # Enabling cluster app internal mTLS on its own no longer brings nmxc-conn down: nmx-c stays up
+        # even while system internal is still at its default (system internal config is not required for
+        # the cluster app internal connection to remain up).
         ClusterTools.wait_for_apps_to_be_in_wanted_state(
             cluster,
             cluster_expected_state="enabled",
-            nmx_c_expected_state="down",
+            nmx_c_expected_state="up",
             engine=engines.dut,
         )
         time.sleep(1)
@@ -1688,9 +1886,7 @@ def test_bridge_upgrade_reboot_persistence_crl_spiffe(
         )
 
     with allure.step("Save config and reboot DUT"):
-        NvueGeneralCli.save_config(engines.dut)
-        System().action_reboot("force", engine=engines.dut).verify_result()
-        engines.dut.disconnect()
+        save_config_and_reboot(engines)
 
     with allure.step("Wait for cluster readiness after reboot"):
         wait_for_cluster_app_update(cluster, engines.dut)

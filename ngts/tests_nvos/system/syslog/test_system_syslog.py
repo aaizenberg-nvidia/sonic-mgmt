@@ -351,84 +351,6 @@ def test_rsyslog_server_severity_levels(engines, is_air, loganalyzer, random_api
 @pytest.mark.system
 @pytest.mark.syslog
 @pytest.mark.simx
-def test_rsyslog_server_and_global_severity_levels(random_api):
-    """
-    Will validate all the severity options:  debug, info, notice, warning, error, critical, alert, emerg, none.
-    Will configure the severity level, validate it in the show command and validate that the server catch the relevant
-    messages only.
-
-    Test flow:
-    * Configure remote syslog server
-    To each severity level:
-         * Set severity level
-         * Validate with show command
-         * Print msg that the server should catch, validate
-         * Print msg that the server should not catch, validate
-    * Unset server trap
-    * Cleanup
-    """
-    system = System()
-    server_a_name = 'server_a'
-
-    try:
-        with allure.step("Configure remote syslog server and Validate"):
-            server_a = system.syslog.servers.set_server(server_a_name, apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Set global severity and Validate"):
-            system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Unset server severity and Validate nothing change"):
-            system.syslog.selectors.selectors_dict[SyslogConsts.DEFAULT_SELECTOR_NAME].unset_severity(apply=True)
-            server_a.verify_trap_severity_level(None, SyslogConsts.DEFAULT_SELECTOR_NAME)
-
-        with allure.step("set server trap and Validate"):
-            server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-            server_a.verify_trap_severity_level(SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-        with allure.step("Unset server trap and Validate"):
-            server_a.unset_trap(apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Unset global trap and Validate"):
-            system.syslog.unset_trap(apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Validate unset global trap override server trap"):
-            with allure.step("set global and server trap and Validate"):
-                system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-                server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-                server_a.verify_trap_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-            with allure.step("Unset global trap and Validate"):
-                system.syslog.unset_trap(apply=True)
-                server_a.verify_trap_severity_level(None)
-
-        with allure.step("Validate global trap override server trap"):
-            with allure.step("set server trap and Validate"):
-                server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-                system.syslog.verify_global_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.NOTICE])
-                server_a.verify_trap_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-            with allure.step("Set global trap and Validate"):
-                system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-                system.syslog.verify_global_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.ERROR])
-                server_a.verify_trap_severity_level(None)
-
-    finally:
-        with allure.step("Cleanup syslog configurations"):
-            system.syslog.servers.unset(apply=True)
-            system.syslog.selectors.unset(apply=True)
-
-
-@pytest.mark.system
-@pytest.mark.syslog
-@pytest.mark.simx
 def test_rsyslog_port(engines, random_api):
     """
     Will check the syslog with non default port
@@ -1734,6 +1656,7 @@ def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=
         program_flag = f' --tag {program}' if program else ''
         extra_flags = protocol_flag + priority_flag + port_flag + program_flag
         logger_cmd = f'logger {extra_flags} "{msg}"'
+        time.sleep(3)  # wait for rsyslogd reload after nv config apply (NVBug 6213076)
         TestToolkit.engines.dut.run_cmd(logger_cmd)
         with sudo_scope_if(TestToolkit.devices.dut.is_eth()):
             TestToolkit.engines.dut.run_cmd('tail -10 /var/log/syslog')

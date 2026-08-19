@@ -357,6 +357,11 @@ class IpTool:
             return False
 
     @staticmethod
+    def iptables_binary(address: str) -> str:
+        """Return the iptables binary matching the address family ('ip6tables' for IPv6)."""
+        return "ip6tables" if IpTool.is_address_ipv6(address) else "iptables"
+
+    @staticmethod
     def get_ipv6_type(ipv6_addr: str) -> Ipv6Type:
         """
         Determine the type of an IPv6 address.

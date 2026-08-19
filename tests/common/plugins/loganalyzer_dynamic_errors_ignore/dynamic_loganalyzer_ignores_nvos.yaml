@@ -775,8 +775,11 @@
       Redmine:
         - 3544347
 
+# NVOS - expected when restoring cert while encryption is still active (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR nvued:.*ERROR: lifecycle\.py:.*user_config\.json data: {.*} does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/nmx_cert/test_cluster_app_mngr_security.py::test_restore_cluster_app_mngr_cert_fail_when_in_encryption_mode
@@ -847,6 +850,13 @@
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/platform_certificate/test_platform_certificate.py::test_upload_platform_certificate_bad_url
+
+# NVOS SECURITY - IMA error flows intentionally exercise bad SCP upload destinations
+- Errors_list:
+    - '.*ERR nvued:.*ERROR:.*Failed to upload file.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/general/security/ima/test_ima.py::test_ima_error_flows
 
 # NVOS SECURITY
 - Errors_list:
@@ -1477,9 +1487,11 @@
         - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
         - tests_nvos/system/test_system_health.py::test_simulate_health_problem_with_user_config_file
 
-# NVOS Security
+# NVOS Security - expected when restoring cert while encryption is still active (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR nvued:   ERROR: lifecycle\.py:.* user_config\.json data: {.*} does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nmx_cert/test_nmx_cert.py::test_restore_cert_when_in_encryption_mode
@@ -2116,8 +2128,11 @@
     - Affected_test_cases:
       - tests_nvos/platform/test_platform_ps_redundancy.py::test_platform_ps_redundancy_functionality
 
+# NVOS - expected when updating RBAC without encryption first (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR.*does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/nmx_rbac/test_nmx_rbac.py::test_update_rbac_file_without_encryption
@@ -2165,6 +2180,11 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/system/test_system_ztp.py::test_ztp_provisioning_script_negative
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json
+        - tests_nvos/system/test_system_ztp.py::test_ztp_connectivity_check
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json_complex
+        - tests_nvos/system/test_system_ztp.py::test_ztp_startup_file_commands_list
+        - tests_nvos/system/test_system_ztp.py::test_ztp_nmx_negative
 
 # NVOS: Expected logs
 - Errors_list:
@@ -2342,6 +2362,8 @@
 # NMX package good flow: nv-bridge Version mismatch during package swap (error expected)
 - Errors_list:
     - '.*WARNING nv-bridge#nv-bridge.*Version mismatch: daemon version.*vs server version.*'
+    - '.*WARNING nv-bridge#nv-bridge.*Hello gRPC refused.*'
+    - '.*ERR nv-bridge#nv-bridge.*[handle_connection_end] -E- Invalid or missing connection-id metadata.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/cluster/test_nmx_package.py::test_nmx_package_good_flow
@@ -2418,3 +2440,10 @@
   Conditions:
   - Redmine:
     - 3669272
+
+# nv-bridge encryption negative: expected CA validation failure for internal certificate
+- Errors_list:
+    - '.*ERR nvued:.*ERROR: JobsThread nos.funits.cue_cluster_v\d+.lifecycle lifecycle.py:\d+ Internal certificate cannot be validated by the CA certificate.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_negative

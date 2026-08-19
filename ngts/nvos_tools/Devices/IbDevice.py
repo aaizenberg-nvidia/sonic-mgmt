@@ -17,6 +17,7 @@ from ngts.nvos_constants.constants_nvos import (
     HealthConsts,
     IbConsts,
     ImageConsts,
+    LogComponentsConsts,
     MultiPlanarConsts,
     NvosConst,
     OperationTimeConsts,
@@ -61,7 +62,10 @@ from ngts.tests_nvos.general.security.nmx_cert.constants import (
     CA_CERTIFICATE,
     CERTIFICATE,
     CRL,
+    ENDPOINT,
     ENCRYPTION,
+    PROTOCOL,
+    REMOTE_URL,
     Defaults,
 )
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
@@ -82,6 +86,7 @@ class IbSwitch(BaseSwitch):
         super().__init__(switch_type=switch_type, asic_amount=asic_amount, switch_class=switch_class)
         self.port_type = self.switch_type.lower()
         self.supports_mtu_testing = True
+        self.single_fw_pkg_supported = False
         self.documents_path = None
         self.documents_files = None
         self._init_sensors_dict()
@@ -306,7 +311,9 @@ class IbSwitch(BaseSwitch):
         self.led_list = ['FAN1', 'FAN2', 'FAN3', 'FAN4', 'FAN5', 'FAN6', "PSU_STATUS", "STATUS", "UID"]
 
     def _init_system_lists(self):
+        super()._init_system_lists()
         self.user_fields = ['admin', 'monitor']
+        self.log_components_list = LogComponentsConsts.COMPONENTS_LIST
 
     def _init_security_lists(self):
         super()._init_security_lists()
@@ -432,6 +439,7 @@ class IbSwitch(BaseSwitch):
         self.primary_ipoib_interface = IbConsts.IPOIB_INT.format(self.asic_amount - 1)
         self.multi_asic_system = False
         self.multi_planar = False
+        self.port_range_group_separator = ''
         self.login_pattern = NvosConst.INSTALL_SUCCESS_PATTERN
         self.install_patterns = {self.login_pattern: 0, "NOS install successful": 1}
         self.ib_host_player = 'ha'
@@ -497,7 +505,8 @@ class IbSwitch(BaseSwitch):
             RebootConsts.PSU_OFF: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
         # Reset-bit reboot trigger, shared by all IB switches (Taipan, Crocodile, ...).
         # Subclasses can override or clear it if their platform doesn't support it.
@@ -960,6 +969,7 @@ class GorillaSwitch(IbSwitch):
         self.transceivers_tables_name = "TRANSCEIVER_FIRMWARE_INFO"
         self.transceiver_list = [f'sw{a + 1}' for a in range(32)]
         self.supports_tpm_testing = False
+        self.supports_ima_testing = False
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
@@ -1231,7 +1241,8 @@ class BlackMambaDGXSwitch(BlackMambaSwitch):
 
     def _init_fan_list(self):
         super()._init_fan_list()
-        self.fan_list = list(set(self.fan_list) - {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"})
+        remove = {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"}
+        self.fan_list = [f for f in self.fan_list if f not in remove]
 
     def _init_led_list(self):
         super()._init_led_list()
@@ -1621,6 +1632,7 @@ class CrocodileSwitch(IbSwitch):
         self.unsupported_commands_list.extend(["nv show ib device ASIC3",
                                                "nv show ib device ASIC4"])
         self.memory_speed = 2667  # in MT/s
+        self.port_range_group_separator = ','
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
@@ -1776,6 +1788,16 @@ class NvLinkSwitch(IbSwitch):
         super().__init__(switch_type=NvosConst.NVL_SWITCH_TYPE, asic_amount=asic_amount,
                          switch_class=NvosConst.JULIET_SWITCH)
         self.supports_mtu_testing = False
+
+    def get_configurable_nvl_speeds(self):
+        """
+        NVL speeds safe to configure in tests.
+
+        Defaults to supported_nvl_speeds (what the DUT advertises). Platforms that
+        advertise a speed but cannot safely configure it without extra setup should
+        override this (see RosalindRTF).
+        """
+        return list(getattr(self, 'supported_nvl_speeds', []))
 
     def _init_interface_lists(self):
         super()._init_interface_lists()
@@ -1976,7 +1998,8 @@ class JulietSwitch(NvLinkSwitch):
             RebootConsts.POWER_BUTTON: (SystemConsts.REBOOT_REASON_POWER_BUTTON, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
 
         self.power_cycle_type = 'juliet-power-cycle'
@@ -2778,6 +2801,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
+        self.single_fw_pkg_supported = True
 
     def get_spdm_components(self, setup_name: str) -> list[str]:
         """
@@ -3004,14 +3028,10 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                           "nv show platform environment psu",
                                           "nv show system profile",
                                           "nv show sdn transceivers",
-                                          # delayed-recovery only supported on croc+mamba
-                                          "nv set fae interface {port} link delayed-recovery",
                                           "nv set fae interface {port} link phy-recovery logic-relock-mode",
                                           "nv set fae interface {port} link phy-recovery logic-relock-timeout",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-mode",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-timeout",
-                                          # link-training only supported on juliet
-                                          "nv set fae interface {port} link link-training",
                                           "nv set fae interface {port} link low-power state",
                                           "nv unset fae interface {port} link low-power state"]
         # NVL7 CPO trunk-port PHY-recovery leaves + counters debug are pruned on NVL6.
@@ -3215,10 +3235,10 @@ class RosalindSwitch(RosalindSurrogateSwitch):
     def _init_constants(self):
         super()._init_constants()
         self.asic_type = NvosConst.NVL6
-        self.supported_nvl_speeds = ['200G', '328G', '345G', '360G', '378G', '400G']  # Rosalind supports all speeds
+        self.supported_nvl_speeds = ['200G', '328G']  # Only approved speeds.
         # MHz -> NVL link speeds allowed for that FAE core-clock (operational profile).
         self.fae_supported_core_clocks = {
-            755: ['400G', '360G', '328G'],
+            755: ['328G'],
             800: self.supported_nvl_speeds,
         }
         self.default_core_clock = 800
@@ -3229,11 +3249,30 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             ALTERNATE_CERTIFICATE: Defaults.ALTERNATE_CERTIFICATE,
             CA_CERTIFICATE: Defaults.CACERT,
             CERTIFICATE: Defaults.CERT,
-            CRL: "",
+            CRL: Defaults.CRL,
             ENCRYPTION: Defaults.ENCRYPTION,
         }
         for app_name, app_data in self.cluster_app.items():
             self.cluster_app[app_name] = {**app_data, "internal": internal_defaults.copy()}
+
+        # Only nmx-controller exposes log-stream and OTLP configuration in its show output.
+        self.cluster_app[ClusterConsts.NMX_CONTROLLER].update({
+            "log-stream": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                PROTOCOL: Defaults.PROTOCOL,
+                REMOTE_URL: Defaults.REMOTE_URL,
+            },
+            "otlp": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                ENDPOINT: Defaults.ENDPOINT,
+            },
+        })
 
         # Rosalind has nmx-telemetry-agent
         self.has_nmx_telemetry_agent = True
@@ -3761,10 +3800,10 @@ class RosalindRTF(RosalindSwitch):
     def __init__(self):
         super().__init__(asic_amount=4)
 
-    def _init_constants(self):
-        super()._init_constants()
-        # RosalindRTF will support 200G - GPU configuration is needed
-        self.supported_nvl_speeds.remove('200G')
+    def get_configurable_nvl_speeds(self):
+        # DUT still advertises 200G in supported_nvl_speeds, but configuring it on RTF
+        # needs GPU-side setup — exclude from speed-change tests.
+        return [s for s in self.supported_nvl_speeds if s != IbInterfaceConsts.XDR_SLOW_SPEED]
 
 
 # -------------------------- Portia Switch ----------------------------

@@ -3,6 +3,7 @@ from typing import Dict, Optional
 import concurrent.futures
 from pathlib import Path
 import datetime
+import fcntl
 import logging
 import os
 import random
@@ -187,6 +188,43 @@ def pytest_collection_modifyitems(config, items):
     run_nvos_pytest_items_modification(config, items)
 
 
+def _get_empty_allure_step_name(session):
+    project_id = session.config.getoption('--allure_server_project_id', default=None)
+    if project_id:
+        return project_id
+    args = getattr(session.config, 'args', None) or []
+    return ','.join(os.path.basename(str(arg)) for arg in args) or 'unknown-step'
+
+
+def _get_current_pytest_cmd(session):
+    return 'pytest {}'.format(' '.join(session.config.invocation_params.args))
+
+
+def _record_empty_allure_step(session, reason):
+    record = {
+        'step_name': _get_empty_allure_step_name(session),
+        'setup_name': session.config.getoption('--setup_name', default=None) or '',
+        'session_id': session.config.getoption('--session_id', default=None) or '',
+        'mars_key_id': session.config.getoption('--mars_key_id', default=None) or '',
+        # Set by the MARS run_db per-case <pre> (set_environment_variables) from
+        # [[run_time:mars_last_case_name]] / [[run_time:test_name]] / [[run_time:db_name]];
+        # empty outside a run_db case context.
+        'db_name': os.environ.get('MARS_DB_NAME', ''),
+        'case_name': os.environ.get('MARS_CASE_NAME', ''),
+        'test_name': os.environ.get('MARS_TEST_NAME', ''),
+        'pytest_cmd': _get_current_pytest_cmd(session),
+        'reason': reason,
+    }
+    project_id = session.config.getoption('--allure_server_project_id', default=None) or 'unknown'
+    file_path = InfraConst.CASE_INCLUDE_EMPTY_ALLURE_STEPS_TMPL.format(project_id)
+    with open(file_path, 'a') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.write(json.dumps(record) + '\n')
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def pytest_collection_finish(session: pytest.Session):
     """Fail explicitly when a MARS-managed run selects zero tests.
 
@@ -210,6 +248,8 @@ def pytest_collection_finish(session: pytest.Session):
     if keyword:
         filters.append(f"-k '{keyword}'")
     filter_desc = ' '.join(filters) if filters else 'no marker/keyword filters'
+
+    _record_empty_allure_step(session, filter_desc)
 
     pytest.exit(
         f"CI/Regression run (session_id={session_id}) selected 0 tests with {filter_desc}. "
@@ -1558,12 +1598,17 @@ def update_fw_versions_json_file(fw_versions_json_file):
 
 
 @pytest.fixture
-def handle_la_marker_in_manufacture(engines, loganalyzer):
+def handle_la_marker_in_manufacture(request, engines: EnginesT, loganalyzer: dict):
     """
     When the test ends, injects the log-analyzer test-start marker as the first line in the log.
     This is intended for tests that cause all log files to be deleted, e.g. by manufacture or factory-reset.
     This fixture calls the 'loganalyzer' fixture just to ensure that these 2 fixtures run in the correct order.
     """
+    if request.config.getoption("--disable_loganalyzer") or "disable_loganalyzer" in request.keywords:
+        logging.info("Log analyzer is disabled")
+        yield
+        return
+
     try:
         marker = engines.dut.run_cmd(r"grep -oE '\S+ \S+ start-LogAnalyzer-.*' " + SyslogConsts.SYSLOG_LOG_PATH,
                                      validate=True).splitlines()[-1]

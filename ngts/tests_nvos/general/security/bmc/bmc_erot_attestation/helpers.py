@@ -48,6 +48,11 @@ def randomize_hex_str(length: int = VALID_NONCE_LEN) -> str:
     return random_valid_nonce
 
 
+def _strip_odata_keys(data: dict) -> dict:
+    """Drop Redfish/OData metadata keys (e.g. @odata.type) before NV-BMC compares."""
+    return {k: v for k, v in data.items() if '@odata' not in k}
+
+
 def randomize_non_hex_str(length: int = VALID_NONCE_LEN) -> str:
     idx_for_non_hex_char = random.randint(0, length)
     prefix = ''.join(random.choice('0123456789ABCDEFabcdef') for _ in range(idx_for_non_hex_char))
@@ -163,14 +168,15 @@ def verify_cert_data_same_as_directly_from_bmc(erot_name: str, nv_cert: dict):
             dut_engine.run_cmd(f'echo "" >> {output_file}')
             bmc_cert_file_content = dut_engine.run_cmd(f'cat {output_file}')
             bmc_cert = OutputParsingTool.parse_json_str_to_dictionary(bmc_cert_file_content).get_returned_value()
-            bmc_cert = {k: v for k, v in bmc_cert.items() if '@odata' not in k}
+            bmc_cert = _strip_odata_keys(bmc_cert)
             dut_engine.run_cmd(f'rm -f {output_file}')
             bmc_cert[SpdmConsts.Component.Certificates.CERT_STRING] = clean_cert_str(
                 bmc_cert[SpdmConsts.Component.Certificates.CERT_STRING])
             nv_cert[SpdmConsts.Component.Certificates.CERT_STRING] = clean_cert_str(
                 nv_cert[SpdmConsts.Component.Certificates.CERT_STRING])
         with allure.step('compare the data of nv and bmc'):
-            ValidationTool.compare_dictionaries(nv_cert, bmc_cert).verify_result()
+            ValidationTool.compare_dictionaries(
+                _strip_odata_keys(nv_cert), bmc_cert).verify_result()
 
 
 def clean_cert_str(cert_str: str) -> str:
@@ -216,7 +222,8 @@ def verify_measurements_data_same_as_directly_from_bmc(erot_name: str, nv_measur
             bmc_measurements_file_content = dut_engine.run_cmd(f'cat {output_file}')
             bmc_measurements = OutputParsingTool.parse_json_str_to_dictionary(
                 bmc_measurements_file_content).get_returned_value()
-            bmc_measurements = {k: v for k, v in bmc_measurements.items() if '@odata' not in k}
+            bmc_measurements = _strip_odata_keys(bmc_measurements)
+            nv_measurements = _strip_odata_keys(nv_measurements)
             dut_engine.run_cmd(f'rm -f {output_file}')
         with allure.step('compare the data of nv and bmc'):
             ValidationTool.compare_dictionaries(nv_measurements, bmc_measurements).verify_result()

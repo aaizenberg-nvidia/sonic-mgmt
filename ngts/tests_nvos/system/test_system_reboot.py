@@ -25,6 +25,11 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
 )
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_trigger,
+    recover_nvl_link_health_prep,
+    verify_nvl_link_health_after_reboot,
+)
 from ngts.tools.test_utils import allure_utils as allure
 from retry.api import retry_call
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
@@ -59,11 +64,16 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
         pytest.skip("System reset bit trigger not supported on this platform")
 
     system = System(None)
-    expected_reason, expected_user = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    expected_reason, expected_user, expected_reason_type = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    link_health_context = None
 
     try:
         with allure.step('Clear system events to remove older reboot system events'):
             system.events.action(ActionConsts.CLEAR)
+
+        link_health_context = prepare_nvl_link_health_before_trigger(
+            devices, engines.dut, test_name
+        )
 
         start_time = time.perf_counter()
 
@@ -84,18 +94,21 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
             with allure.independent_step("Check system reboot reason output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
-                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output, ["gentime", "reason", "user"]).verify_result()
+                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                    output, ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check system reboot history output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.history.show()).get_returned_value()
                 if output and len(output.keys()) > 0:
-                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output[list(output.keys())[0]],
-                                                                                      ["gentime", "reason", "user"]).verify_result()
+                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                        output[list(output.keys())[0]], ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check reboot cause"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
                 assert expected_reason in output["reason"], f"{expected_reason} not found in show reboot output"
                 assert expected_user in output["user"], f"Reboot user is {output['user']} instead of '{expected_user}'"
+                assert expected_reason_type == output["reason-type"], (
+                    f"Reboot reason-type is {output['reason-type']} instead of '{expected_reason_type}'")
 
             with allure.independent_step("Validate reboot reason and user"):
                 ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
@@ -103,7 +116,12 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
             with allure.independent_step("Verify reboot time is within expected range"):
                 OperationTime.verify_operation_time(duration, "reset bit", devices).verify_result()
 
+            verify_nvl_link_health_after_reboot(
+                link_health_context, devices, engines.dut, test_name
+            )
+
     finally:
+        recover_nvl_link_health_prep(link_health_context, devices, test_name)
         if not ping_device(engines.dut.ip):
             logger.info("system is off and will now remote reboot the switch")
             NvueGeneralCli(TestToolkit.engines.dut).remote_reboot_nvue(topology_obj)

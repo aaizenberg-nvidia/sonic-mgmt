@@ -28,6 +28,7 @@ from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.test_api_mtls_sp
     import_cas_safely,
     import_certs_safely,
     setup_test,
+    spiffe_setup_users,
 )
 from ngts.tests_nvos.general.security.gnmi_server.mtls.spiffe_id.conftest import (
     system_cleanup,
@@ -997,7 +998,7 @@ def gnmi_spiffe_factory_reset_no_params_check():
         with allure.step("verify after factory reset"):
             check_spiffe_negative(engines, setup, users_should_exist=False)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1055,7 +1056,7 @@ def gnmi_spiffe_factory_reset_keep_basic_check():
 
             check_spiffe_positive(engines, setup, verify_config=False)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1090,7 +1091,7 @@ def gnmi_spiffe_factory_reset_keep_all_config_check():
         with allure.step("verify after factory reset"):
             check_spiffe_positive(engines, setup)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1129,6 +1130,6 @@ def gnmi_spiffe_upgrade_check():
 
             check_spiffe_positive(engines, setup)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call

@@ -61,6 +61,7 @@ def test_cluster_sdn(engines, devices, random_api, has_loopbox, standalone_syste
             initial_config_contents[file_type] = engines.dut.run_cmd("sudo cat {}".format(file_path))
 
         with allure.step('Upload initial configurations'):
+            chassis_sn = ClusterTools.get_chassis_sn()
             for file_type, path_to_file in config_files_paths.items():
                 app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
                 sdn.config.apps.app_name[app].type.file_type[file_type].files.file_name[
@@ -76,7 +77,8 @@ def test_cluster_sdn(engines, devices, random_api, has_loopbox, standalone_syste
                 engines.sonic_mgmt.run_cmd("sudo cp {} {}".format(initial_configs_paths_to_restore[file_type], dummy_file_path))
                 uploaded_files.append(dummy_file_path)
 
-                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=dummy_file_path)
+                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                    file_path=dummy_file_path, chassis_sn=chassis_sn)
                 engines.sonic_mgmt.run_cmd(edit_cmd)
 
                 path_to_config[file_type] = dummy_file_path
@@ -117,12 +119,17 @@ def test_cluster_sdn(engines, devices, random_api, has_loopbox, standalone_syste
                 if file_type == 'chassis_mapping' and is_bug_active(4222718):
                     continue
                 assert set(current_config_content.split('\n')) == set(expected_config_content.split('\n')), f"Config file was not loaded properly. Expected content {expected_config_content}, Actual content: {current_config_content}"
-                if ClusterConsts.CONFIG_FILES_CHANGE[file_type] != 'true':
+                if ClusterTools.config_edit_expected_to_change(file_type, initial_config_contents[file_type]):
                     assert set(current_config_content.split('\n')) != set((initial_config_contents[file_type]).split('\n')), f"Current content has not changed, still same as in init state. init: {initial_config_contents[file_type]}, \ncurrent{current_config_content}"
 
         with allure.step("Install initial configurations"):
             # Only iterate over file types that were actually saved
             for file_type in initial_configs_paths_to_restore.keys():
+                if not initial_config_contents.get(file_type, '').strip():
+                    # nmx-c rejects installing empty config files (bug 6447101) - the empty initial
+                    # state is restored by the sdn factory reset in the teardown instead
+                    logger.info(f"Skipping restore of {file_type}: initial file was empty")
+                    continue
                 app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
                 sdn.config.apps.app_name[app].type.file_type[file_type].action_fetch_sdn(initial_configs_paths_to_restore[file_type])
                 conf_file_name = initial_configs_paths_to_restore[file_type].split('/')[-1]
@@ -162,6 +169,11 @@ def test_cluster_sdn(engines, devices, random_api, has_loopbox, standalone_syste
             with allure.step("Install initial configurations"):
                 # Only iterate over file types that were actually saved
                 for file_type in initial_configs_paths_to_restore.keys():
+                    if not initial_config_contents.get(file_type, '').strip():
+                        # nmx-c rejects installing empty config files (bug 6447101) - the empty
+                        # initial state is restored by the sdn factory reset below instead
+                        logger.info(f"Skipping restore of {file_type}: initial file was empty")
+                        continue
                     app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
                     sdn.config.apps.app_name[app].type.file_type[file_type].action_fetch_sdn(initial_configs_paths_to_restore[file_type])
                     conf_file_name = initial_configs_paths_to_restore[file_type].split('/')[-1]

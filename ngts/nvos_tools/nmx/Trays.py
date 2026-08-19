@@ -26,8 +26,9 @@ class Trays(BaseComponent):
         """
         engine = engine if engine else TestToolkit.engines.dut
         with allure.step(f'Update tray {tray_id} maintenance state to {maintenance_state}'):
-            return SendCommandTool.execute_command(self._cli_wrapper.action_update_sdn_trays_maintenance_state,
-                                                   engine, self.get_resource_path(), tray_id, maintenance_state)
+            return self._cli_wrapper.action_update_sdn_trays_maintenance_state(engine, self.get_resource_path(),
+                                                                               tray_id=tray_id,
+                                                                               maintenance_state=maintenance_state)
 
     def action_restore_maintenance_state(self, tray_id='', engine=None):
         """
@@ -36,8 +37,8 @@ class Trays(BaseComponent):
         """
         engine = engine if engine else TestToolkit.engines.dut
         with allure.step(f'Restore tray {tray_id} maintenance state to default'):
-            return SendCommandTool.execute_command(self._cli_wrapper.action_restore_sdn_trays_maintenance_state,
-                                                   engine, self.get_resource_path(), tray_id)
+            return self._cli_wrapper.action_restore_sdn_trays_maintenance_state(engine, self.get_resource_path(),
+                                                                                tray_id=tray_id)
 
 
 class Tray(BaseComponent):

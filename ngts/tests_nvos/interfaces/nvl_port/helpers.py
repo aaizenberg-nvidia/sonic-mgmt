@@ -1,3 +1,4 @@
+import math
 import random
 import re
 import pytest
@@ -12,10 +13,11 @@ from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.tests_nvos.helpers.interfaces.link_state_helpers import get_all_interfaces_with_transceivers
 from ngts.tools.test_utils.allure_utils import step as allure_step
-from ngts.nvos_tools.ib.InterfaceConfiguration import nvos_consts as ib_consts
+from ngts.nvos_tools.ib.InterfaceConfiguration import nvos_consts as nv_consts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
-from ngts.ngts_types import DevicesT, EnginesT
+from ngts.ngts_types import DevicesT, EnginesT, LinkDiagnosticT
 from ngts.nvos_constants.constants_nvos import NvosConst
 from ngts.nvos_tools.infra.IbnetdiscoverTool import IbnetdiscoverTool
 from ngts.tools.test_utils import allure_utils as allure
@@ -35,11 +37,11 @@ def toggle_port_state(selected_port, port_state, test_name, devices):
     selected_port.interface.link.state.set(
         op_param_name=port_state, apply=True, ask_for_confirmation=True,
     ).verify_result()
-    is_acp_up = selected_port.name.startswith('acp') and port_state == ib_consts.NvosConsts.LINK_STATE_UP
-    operation = ib_consts.InternalNvosConsts.ACP_PORT_GOES_UP if is_acp_up else f'port goes {port_state}'
+    is_acp_up = selected_port.name.startswith('acp') and port_state == nv_consts.NvosConsts.LINK_STATE_UP
+    operation = nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP if is_acp_up else f'port goes {port_state}'
     timeout_kwargs = {}
     if is_acp_up:
-        acp_timeout = devices.dut.expected_operation_durations.get(ib_consts.InternalNvosConsts.ACP_PORT_GOES_UP)
+        acp_timeout = devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP)
         if acp_timeout:
             timeout_kwargs = {'timeout': acp_timeout}
     with allure_step(f"Wait till port {selected_port} is {port_state}"):
@@ -52,7 +54,7 @@ def toggle_port_state(selected_port, port_state, test_name, devices):
         OperationTime.verify_operation_time(duration, operation, devices).verify_result()
 
 
-def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, state=ib_consts.NvosConsts.LINK_STATE_UP):
+def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP):
     port_requirements = PortRequirements()
     port_requirements.set_port_speed(speed)
     port_requirements.set_port_state(state)
@@ -61,7 +63,33 @@ def validate_ports_state_and_speed(speed, expected_ports: list, prefix: str, sta
     ValidationTool.validate_subset_in_superset(expected_ports, actual_ports).verify_result()
 
 
-def validate_ports_state(expected_ports: list, prefix: str, state=ib_consts.NvosConsts.LINK_STATE_UP):
+def acp_link_up_timeout(devices) -> int:
+    """Device budget for an acp port to link up (Rosalind/NVL6: 375s, Juliet/NVL5: 30s)."""
+    return devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.ACP_PORT_GOES_UP,
+                                                        nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT)
+
+
+def group_link_up_timeout(devices, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP) -> int:
+    """Budget for a port group to reach state. Only acp ports going up link up slowly."""
+    if prefix != 'acp' or state != nv_consts.NvosConsts.LINK_STATE_UP:
+        return nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT
+    return acp_link_up_timeout(devices)
+
+
+def wait_for_ports_state_and_speed(devices, speed, expected_ports: list, prefix: str, delay: int = 15):
+    """Wait for ports to reach speed and up state, within the port type's link-up budget."""
+    retry_call(validate_ports_state_and_speed, [speed, expected_ports, prefix], exceptions=AssertionError,
+               tries=math.ceil(group_link_up_timeout(devices, prefix) / delay) + 1, delay=delay)
+
+
+def wait_for_ports_state(devices, expected_ports: list, prefix: str,
+                         state=nv_consts.NvosConsts.LINK_STATE_UP, delay: int = 15):
+    """Wait for ports to reach state, within the same budget as wait_for_ports_state_and_speed."""
+    retry_call(validate_ports_state, [expected_ports, prefix, state], exceptions=AssertionError,
+               tries=math.ceil(group_link_up_timeout(devices, prefix, state) / delay) + 1, delay=delay)
+
+
+def validate_ports_state(expected_ports: list, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP):
     port_requirements = PortRequirements()
     port_requirements.set_port_state(state)
     actual_ports = [port.name for port in Port.get_list_of_ports(port_requirements_object=port_requirements) if port.name.startswith(prefix)]
@@ -83,7 +111,7 @@ def select_random_nvl_port_name(devices, prefix=None):
 
 def skip_if_no_trunk_links(devices):
     if isinstance(devices.dut, JulietSwitch):
-        has_any_connected_transceivers = bool(ClusterTools.get_all_interfaces_with_transceivers(devices))
+        has_any_connected_transceivers = bool(get_all_interfaces_with_transceivers(devices))
         if isinstance(devices.dut, JulietNonScaleoutSwitch) or not has_any_connected_transceivers:
             pytest.skip("Skipping test - no connected trunk ports")
 
@@ -117,15 +145,26 @@ def skip_if_fec_measure_not_supported(devices: DevicesT) -> None:
     pytest.skip("fec-measure-mode is not supported on this device (requires QTM4/NVL6 Rosalind)")
 
 
-EXPECTED_LINK_DIAGNOSTIC_STATUS = {'0': {'status': 'No issue was observed'}}
+def verify_link_diagnostic(
+    ports: list[Port],
+    expected_link_diagnostic_status: LinkDiagnosticT = nv_consts.IbInterfaceConsts.LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT,
+    additional_link_diagnostic_status: LinkDiagnosticT | list[LinkDiagnosticT] | None = None,
+) -> None:
+    expected_link_diagnostic_status: LinkDiagnosticT = expected_link_diagnostic_status.copy()
+    if additional_link_diagnostic_status:
+        if isinstance(additional_link_diagnostic_status, dict):
+            additional_link_diagnostic_status = [additional_link_diagnostic_status]
+        for additional in additional_link_diagnostic_status:
+            expected_link_diagnostic_status.update(additional)
 
-
-def verify_link_diagnostic(ports: list[Port]) -> None:
     for port in ports:
         port_diagnostics = port.interface.link.diagnostics.parse_show()
-        assert port_diagnostics == EXPECTED_LINK_DIAGNOSTIC_STATUS, (
+        assert all(
+            expected_link_diagnostic_status.get(code) == status
+            for code, status in port_diagnostics.items()
+        ), (
             f"Port {port.name} diagnostics value is {port_diagnostics} "
-            f"- expected {EXPECTED_LINK_DIAGNOSTIC_STATUS}"
+            f"- expected one of {expected_link_diagnostic_status}"
         )
 
 
@@ -192,10 +231,13 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
         A (new_speed, port_obj, original_speed, port_names) tuple for restore_nvl_speed,
         or None if no change was made.
     """
-    supported_speeds = getattr(devices.dut, 'supported_nvl_speeds', [])
+    if hasattr(devices.dut, 'get_configurable_nvl_speeds'):
+        supported_speeds = devices.dut.get_configurable_nvl_speeds()
+    else:
+        supported_speeds = getattr(devices.dut, 'supported_nvl_speeds', [])
     if not supported_speeds:
         if required:
-            pytest.skip("No supported_nvl_speeds available on device")
+            pytest.skip("No configurable NVL speeds available on device")
         return None
 
     candidates = [s for s in supported_speeds if s not in (exclude_speeds or [])]
@@ -208,33 +250,27 @@ def setup_nvl_speed(devices, exclude_speeds=None, required=False):
     original_speed = getattr(devices.dut, 'access_port_speed', '400G')
 
     candidates = [s for s in candidates if s != original_speed]
+    port_obj = Port(f'acp1-{len(port_names)}')
     if not candidates:
         if required:
-            pytest.skip(f"No speed change possible (current: {original_speed}, excluded: {exclude_speeds})")
-        return None
+            logger.error(f"No speed change possible (current: {original_speed}, excluded: {exclude_speeds})")
+        return (original_speed, port_obj, original_speed, port_names)
 
     new_speed = random.choice(candidates)
 
     with allure.step(f"Set all access ports to {new_speed}"):
-        port_obj = Port(f'acp1-{len(port_names)}')
         port_obj.interface.link.set(
             op_param_name='speed', op_param_value=new_speed,
             ask_for_confirmation=True, apply=True
         ).verify_result()
         prefix = re.match(r'[a-zA-Z]+', port_names[0]).group() if port_names else 'acp'
-        retry_call(
-            validate_ports_state_and_speed,
-            [new_speed, port_names, prefix],
-            exceptions=AssertionError,
-            tries=6,
-            delay=30,
-        )
+        wait_for_ports_state_and_speed(devices, new_speed, port_names, prefix)
 
     logger.info(f"Speed changed from {original_speed} to {new_speed}")
     return (new_speed, port_obj, original_speed, port_names)
 
 
-def restore_nvl_speed(speed_info):
+def restore_nvl_speed(devices, speed_info):
     """Restore NVL port speed to default."""
     if speed_info is None:
         return
@@ -244,5 +280,4 @@ def restore_nvl_speed(speed_info):
         ports_obj.interface.link.unset(
             op_param='speed', apply=True, ask_for_confirmation=True
         ).verify_result()
-        retry_call(validate_ports_state_and_speed, [default_speed, port_names, prefix],
-                   exceptions=AssertionError, tries=6, delay=30)
+        wait_for_ports_state_and_speed(devices, default_speed, port_names, prefix)

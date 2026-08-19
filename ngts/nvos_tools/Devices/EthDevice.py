@@ -200,6 +200,7 @@ class EthSwitch(BaseSwitch):
         self.disk_minimum_free_space = 5.5  # Gig
         self.ib_ports_num = 32
         self.supports_tpm_testing = False
+        self.supports_ima_testing = False
         # Note: expected_operation_durations is populated via _init_expected_operation_durations()
         self.asic_numbers = [f"ASIC{i}" for i in range(1, self.asic_amount + 1)]
         self.constants.system['system'].remove(SystemConsts.PRODUCT_RELEASE)
@@ -334,6 +335,7 @@ class EthSwitch(BaseSwitch):
                              "TEMPERATURE": self.temperature_sensors}
 
     def _init_system_lists(self):
+        super()._init_system_lists()
         self.user_fields = ['root', 'cumulus']
 
     def _init_security_lists(self):

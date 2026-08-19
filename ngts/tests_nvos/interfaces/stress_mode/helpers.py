@@ -12,39 +12,37 @@ The helpers are organized into functional groups:
 
 All functions follow single-responsibility principle for better testability.
 """
+from __future__ import annotations
 
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+
+from infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
 
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RegisterTool import RegisterTool
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
-from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.system.System import System
-from ngts.nvos_tools.infra.Fae import Fae
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
-from ngts.nvos_constants.constants_nvos import HealthConsts, NvosConst, LogsSources
+from ngts.nvos_constants.constants_nvos import HealthConsts, LogsSources
 from ngts.tools.test_utils import allure_utils as allure
 
 from .constants import (
     StressModeConsts,
     FlexCounterConsts,
-    FatalModeConsts,
     PowerSavingConsts,
     DatabaseConsts
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
 # Stress Mode Control Functions
 # ============================================================================
 
-def set_stress_mode_state(engine, state: str) -> None:
+def set_stress_mode_state(engine: ProxySshEngine, state: str, tolerate_missing_disabled: bool = False) -> None:
     """
     Set stress mode state in STATE_DB.
 
@@ -57,17 +55,29 @@ def set_stress_mode_state(engine, state: str) -> None:
 
     Example:
         >>> set_stress_mode_state(engines.dut, StressModeConsts.STATE_ENABLED)
-        >>> set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED)
+        >>> set_stress_mode_state(engines.dut, StressModeConsts.STATE_DISABLED, tolerate_missing_disabled=True)
     """
     action = "Enable" if state == StressModeConsts.STATE_ENABLED else "Disable"
     with allure.step(f"{action} stress mode in STATE_DB"):
+        state_exists = DatabaseTool.sonic_db_cli_exists(
+            engine=engine,
+            asic="",
+            db_name=DatabaseConsts.STATE_DB,
+            db_config=StressModeConsts.STATE_DB_TABLE,
+        )
+
+        if tolerate_missing_disabled and state == StressModeConsts.STATE_DISABLED and not state_exists:
+            logger.info(f'Stress mode key "{StressModeConsts.STATE_DB_TABLE}" is absent; treating it as already disabled')
+            return
+
         DatabaseTool.sonic_db_cli_hset(
             engine=engine,
             asic="",
             db_name=DatabaseConsts.STATE_DB,
             db_config=StressModeConsts.STATE_DB_TABLE,
             param=StressModeConsts.STATE_FIELD,
-            value=state
+            value=state,
+            allow_create=True
         )
         logger.info(f"Stress mode {state}")
 
@@ -130,7 +140,7 @@ def disable_and_validate_stress_mode(engine) -> None:
 # ============================================================================
 
 
-def get_available_flex_counter_tables(engine, asic: str = "asic0") -> List[str]:
+def get_available_flex_counter_tables(engine, asic: str = "asic0") -> list[str]:
     """
     Retrieve all flex counter table names from FLEX_COUNTER_DB for a specific ASIC.
 
@@ -142,7 +152,7 @@ def get_available_flex_counter_tables(engine, asic: str = "asic0") -> List[str]:
         asic: ASIC identifier (default: "asic0")
 
     Returns:
-        List of table names without prefix (e.g., ['PORT_STAT_COUNTER', 'PORT_AMBER_PDDR'])
+        list of table names without prefix (e.g., ['PORT_STAT_COUNTER', 'PORT_AMBER_PDDR'])
 
     Example:
         >>> tables = get_available_flex_counter_tables(engines.dut, "asic0")
@@ -164,7 +174,7 @@ def get_available_flex_counter_tables(engine, asic: str = "asic0") -> List[str]:
         return tables
 
 
-def get_flex_counter_status(engine, asic: str = "asic0", table_name: str = None) -> Dict[str, str]:
+def get_flex_counter_status(engine, asic: str = "asic0", table_name: str = None) -> dict[str, str]:
     """
     Retrieve flex counter configuration for a specific table.
 
@@ -177,7 +187,7 @@ def get_flex_counter_status(engine, asic: str = "asic0", table_name: str = None)
         table_name: Table name (e.g., 'PORT_STAT_COUNTER'). Defaults to PORT_STAT_COUNTER if None
 
     Returns:
-        Dict with configuration fields as keys and their values (e.g., {'FLEX_COUNTER_STATUS': 'enable'})
+        dict with configuration fields as keys and their values (e.g., {'FLEX_COUNTER_STATUS': 'enable'})
 
     Example:
         >>> config = get_flex_counter_status(engines.dut, 'asic0', 'PORT_STAT_COUNTER')
@@ -233,7 +243,7 @@ def get_flex_counter_status(engine, asic: str = "asic0", table_name: str = None)
         return config
 
 
-def get_all_flex_counter_status(engine, asic: str = "asic0") -> Dict[str, Dict[str, str]]:
+def get_all_flex_counter_status(engine, asic: str = "asic0") -> dict[str, dict[str, str]]:
     """
     Retrieve flex counter configurations for all tables on a specific ASIC.
 
@@ -270,7 +280,7 @@ def get_all_flex_counter_status(engine, asic: str = "asic0") -> Dict[str, Dict[s
         return all_configs
 
 
-def capture_base_db_config(engine, device) -> Dict:
+def capture_base_db_config(engine, device) -> dict:
     """
     Capture baseline database configuration before stress mode.
 
@@ -279,7 +289,7 @@ def capture_base_db_config(engine, device) -> Dict:
         device: Device instance with ASIC information
 
     Returns:
-        Dict containing baseline flex counter configurations
+        dict containing baseline flex counter configurations
         Structure:
         {
             'flex_counter': {
@@ -316,7 +326,7 @@ def capture_base_db_config(engine, device) -> Dict:
 # MST Device Functions
 # ============================================================================
 
-def get_mst_devices(engine) -> List[str]:
+def get_mst_devices(engine) -> list[str]:
     """
     Get list of MST devices on the system.
 
@@ -324,7 +334,7 @@ def get_mst_devices(engine) -> List[str]:
         engine: DUT engine instance
 
     Returns:
-        List of MST device paths (e.g., ['/dev/mst/mt54004_pciconf0', ...])
+        list of MST device paths (e.g., ['/dev/mst/mt54004_pciconf0', ...])
 
     Example:
         >>> devices = get_mst_devices(engines.dut)
@@ -557,7 +567,7 @@ def simulate_events(engine, asic: int) -> None:
 # ============================================================================
 
 
-def validate_config_matches_baseline(current_config: Dict, baseline_config: Dict,
+def validate_config_matches_baseline(current_config: dict, baseline_config: dict,
                                      config_name: str) -> None:
     """
     Validate that current configuration exactly matches the baseline.
@@ -637,7 +647,7 @@ def validate_health_status(expected_status: str) -> None:
 # Common Test Flow Functions
 # ============================================================================
 
-def pre_stress_checks(engine, device) -> Dict:
+def pre_stress_checks(engine, device) -> dict:
     """
     Perform pre-stress mode checks and capture baseline configuration.
 
@@ -651,7 +661,7 @@ def pre_stress_checks(engine, device) -> Dict:
         device: Device instance with ASIC information
 
     Returns:
-        Dict: Baseline configuration with structure:
+        dict: Baseline configuration with structure:
             {
                 'flex_counter': {
                     'asic0': {'PORT_STAT_COUNTER': {...}, ...},
@@ -735,7 +745,7 @@ def validate_stress_mode_effects(engine, device) -> None:
                 logger.info(f"L1 power saving validation failed: {e}")
 
 
-def post_stress_checks(engine, device, baseline_config: Dict) -> None:
+def post_stress_checks(engine, device, baseline_config: dict) -> None:
     """
     Perform post-stress mode checks and validate full baseline restoration.
 

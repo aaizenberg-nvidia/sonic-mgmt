@@ -38,9 +38,9 @@ class SpdmConsts:
             SIGNING_ALGO = "SigningAlgorithm"
             VERSION = "Version"
             fields = [HASHING_ALGO, SIGNED_MEASUREMENTS, SIGNING_ALGO, VERSION]
+            # SignedMeasurements may be empty until generate.
             initial_values: dict[str, str] = {
                 HASHING_ALGO: TPM_ALG_SHA_384,
-                SIGNED_MEASUREMENTS: NOT_EMPTY,
                 SIGNING_ALGO: TPM_ALG_ECDSA_ECC_NIST_P384,
                 VERSION: SPDM_VERSION_1_1_0,
             }

@@ -3,11 +3,13 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
+from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_tools.infra.GrpcCmdBuilder import GrpcCmdBuilder
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
@@ -33,6 +35,103 @@ class NvBridgeConsts:
     # Cluster Stop/Start App on Rosalind takes ~50-60s; bridge bootstrap a few more.
     HELLO_READY_TIMEOUT_SEC = 120
     HELLO_READY_POLL_INTERVAL_SEC = 5
+
+
+class NvBridgeRevertiveConsts:
+    """On-box paths, fields and constants used by the NVBridge revertive-mode tests."""
+
+    # --- Config directory & generated file ---------------------------
+    CONFIG_DIR = "/etc/nv-bridge"
+
+    NETWORK_INFO_PATH = f"{CONFIG_DIR}/network-info.json"
+    ADDRESS_HISTORY_LOG = "/var/log/network-info-history.log"
+
+    # network_info.json schema.
+    NET_INTERFACES_KEY = "network_interfaces"
+    NET_IFACE_NAME = "name"
+    NET_IFACE_IPS = "ip_addresses"
+    PRIMARY_IFACE = "eth0"
+    SECONDARY_IFACE = "eth1"
+
+    # --- mgmtportsyncd  -----------------------------------------
+    MACHINE_CONF = "/host/machine.conf"
+    DEVICE_PLATFORM_JSON = "/usr/share/sonic/device/{platform}/platform.json"
+    PLATFORM_CAPABILITIES_KEY = "capabilities"
+    PLATFORM_SUPPORTED_KEY = "nv-bridge-supported"
+    PLATFORM_SUPPORTED_VALUE = "yes"
+    PLATFORM_MGMT_IF_COUNT_KEY = "mgmt_if_count"
+    PLATFORM_READ_RETRIES = 10
+
+    # --- nvb-s process / service --------------------------------------------
+    NVB_SERVER_SERVICE = "nv-bridge.service"
+    NVB_SERVER_PORT = NvBridgeConsts.NV_BRIDGE_PORT
+
+    # --- REST API (served by nvb-s) -----------------------------------------
+    REST_SOCKET = "/var/run/nv-bridge/restapi_listen_port.sock"
+    REST_BASE_URL = "http://localhost"
+    REST_CONFIG_NETWORK_INFO = "/config/network-info"
+    REST_ACTION_SWITCHOVER = "/action/switch-over"
+    REST_CONFIG_BODY = {"key": "network_info", "value": ""}
+
+    # --- `nv show system nv-bridge` fields ----------------------------------
+    SHOW_STATE = SystemConsts.NV_BRIDGE_STATE
+    SHOW_SERVER_ID = "server-id"
+    SHOW_REVERTIVE_MODE = "nvlink-revertive-mode"
+    # Forward-compat: current nvb-s has no top-level active-interface field, so
+    # get_active_interface() derives it from the connection server-address. Kept
+    # as a fast-path in case a future build exposes it directly.
+    SHOW_ACTIVE_INTERFACE = "active-interface"
+    CONN_ACTIVE = SystemConsts.NV_BRIDGE_CLIENT_ACTIVE          # active/standby
+    CONN_SERVER_ADDRESS = SystemConsts.NV_BRIDGE_SERVER_ADDRESS
+    CONN_IS_HEALTHY = "is-healthy"
+    STATE_ACTIVE = "active"
+
+    # server-id looks like: chassis-sn-3210987654321-tray-index-1
+    SERVER_ID_RE = re.compile(r"^chassis-sn-\S+-tray-index-\d+$")
+
+    # --- Revertive-mode policy values --------------------------------
+    MODE_NON_REVERTIVE = "non-revertive"
+    MODE_REVERT_PRIMARY = "primary"
+    MODE_REVERT_SECONDARY = "secondary"
+    REVERTIVE_MODE_ACTION = (
+        "nv action update cluster apps nmx-controller nvlink-revertive-mode {mode}"
+    )
+
+    # --- Manual switch-over targets (see System.NvBridge.action_switch_over) -
+    TARGET_PRIMARY = "primary"      # -> eth0
+    TARGET_SECONDARY = "secondary"  # -> eth1
+    REST_SWITCHOVER_ADDRESSES_KEY = "addresses"
+
+    HTTP_OK = 200
+    HTTP_BAD_REQUEST = 400
+    HTTP_CONFLICT = 409
+    HEALTHY_NO = "no"
+    SERVER_DOWN_HINTS = (
+        "unreachable",
+        "server down",
+        "not reachable",
+        "refused",
+        "failed",
+        "error",
+    )
+    UNHEALTHY_TIMEOUT_SEC = 30
+
+    # --- Upgrade / downgrade --------------------------
+    MGMTPORTSYNCD_SERVICE = "mgmtportsyncd.service"
+    FILE_REBUILD_TIMEOUT_SEC = 60
+    UNKNOWN_TOP_LEVEL_KEY = "future_top_level_field"
+    UNKNOWN_IFACE_KEY = "future_iface_field"
+
+    # --- Diagnostics / support package ----------------
+    HISTORY_LOG_TIMEOUT_SEC = 30
+
+    # --- Timing --------------------------------------------------------------
+    SWITCHOVER_TIMEOUT_SEC = 60
+    POLL_INTERVAL_SEC = 3
+    RELOAD_SETTLE_SEC = 5
+    STABLE_OBSERVE_SEC = 20
+    CONNECTIONS_READY_TIMEOUT_SEC = 60
+    RTT_DEGRADE_MS = 500
 
 
 @dataclass
@@ -283,3 +382,18 @@ def verify_nv_bridge_has_connection(
         raise AssertionError(
             f"NV-Bridge connection state mismatch after {timeout}s. Expected connection={expect_connection}, got connections={connections}"
         )
+
+
+def parse_network_info(net_info: dict) -> dict[str, list[str]]:
+    """Return ``{iface: [ips]}`` from a parsed network-info.json document."""
+    return {
+        e[NvBridgeRevertiveConsts.NET_IFACE_NAME]: e[NvBridgeRevertiveConsts.NET_IFACE_IPS]
+        for e in net_info.get(NvBridgeRevertiveConsts.NET_INTERFACES_KEY, [])
+    }
+
+
+def get_interface_ips(net_info: dict | None, interface: str) -> list[str]:
+    """Return the IPs mapped to *interface* in network-info.json (or [])."""
+    if not net_info:
+        return []
+    return parse_network_info(net_info).get(interface, [])

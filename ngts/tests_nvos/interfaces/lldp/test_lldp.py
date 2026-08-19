@@ -712,7 +712,7 @@ def _restore_mgmt_ports_after_flapping(mgmt_port_names, serial_engine, engines, 
 
 
 def _verify_lldp_running(lldp, engine):
-    if TestToolkit.devices.dut.is_ib():
+    if TestToolkit.devices.dut.is_ib() or TestToolkit.devices.dut.is_nvl():
         with allure.step("Verify lldp container is running"):
             lldp_running = engine.run_cmd('docker inspect --format \'{{.State.Running}}\' lldp')
             assert lldp_running == 'true', 'The lldp docker container is down'
@@ -753,8 +753,8 @@ def _verify_lldp_running_and_neighbors_present(lldp, engine, device):
 
 def _verify_lldp_not_running(lldp, engine, device):
     with allure.step("Verify lldp container is not running"):
-        if TestToolkit.devices.dut.is_ib():
-            if is_redmine_issue_active(4868603):
+        if TestToolkit.devices.dut.is_ib() or TestToolkit.devices.dut.is_nvl():
+            if TestToolkit.devices.dut.is_ib() and is_redmine_issue_active(4868603):
                 time.sleep(5)
 
             def _check_lldp_container_stopped():

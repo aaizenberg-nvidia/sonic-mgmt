@@ -121,7 +121,7 @@ def _upgrade_downgrade(*, base: helpers.SystemPackage, target: helpers.SystemPac
         System().image.action_uninstall(params="force", verify_res=False)
 
     with allure.step(f"Update system to {base.nvos.name!r}"):
-        register_cleanup(partial(helpers.remove_added_fw_files, devices))
+        register_cleanup(partial(helpers.remove_added_fw_files, devices, delete_platform_firmware_files=True))
         helpers.update_system_fw(devices, engines, base, topology_obj, provisioning)
 
     if load_config:  # case of downgrade we don't load config

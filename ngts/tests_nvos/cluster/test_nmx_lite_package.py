@@ -1,16 +1,27 @@
 import json
 import random
 import re
+import shlex
+import string
+import time
 
 import pytest
 import logging
 from retry import retry
 from retry.api import retry_call
+from infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
-from ngts.nvos_constants.constants_nvos import ApiType, PeerPortConsts, LogComponentsConsts, HealthConsts
+from ngts.nvos_constants.constants_nvos import (
+    ApiType,
+    HealthConsts,
+    LinkHealthConsts,
+    LogComponentsConsts,
+    PeerPortConsts,
+)
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.nmx.PeerPort import PeerPort
@@ -18,8 +29,22 @@ from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, ClusterSimulation
+from ngts.tests_nvos.interfaces.nvl_port.helpers import toggle_port_state
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    _read_link_health_state,
+    _read_peer_port_link_health_state,
+    find_active_peer_switch_pair_for_attention,
+    is_link_health_feature_available,
+    is_link_health_supported,
+    trigger_link_health_attention_first,
+    verify_link_health_after_link_down,
+    verify_link_health_state_valid,
+    verify_peer_link_health_independent_of_switch_attention,
+    verify_peer_port_link_health_show,
+)
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -43,23 +68,25 @@ def start_cluster_and_sdn_fm_config(engines, setup_name):
 
     finally:
         with allure.step("Reset sdn fm config"):
+            with allure.step("Reset sdn factory default"):
+                ClusterTools.reset_sdn_factory_default_and_wait_for_restart(Sdn(), cluster, engine=engines.dut)
 
             with allure.step("Disable cluster"):
                 ClusterTools.stop_cluster(cluster, engine=engines.dut)
 
-            with allure.step("Reset sdn factory default"):
-                ClusterTools.reset_sdn_factory_default_and_wait_for_restart(Sdn(), cluster, engine=engines.dut)
-
 
 @pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
+@pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
-def test_peer_port_show(engines, test_api):
+def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_config):
 
     TestToolkit.tested_api = test_api
     peer_port = PeerPort(parent_obj=None)
 
     with allure.step(f"Validate 'nv show peer-port' command"):
-        OutputParsingTool.parse_json_str_to_dictionary(peer_port.show()).verify_result()
+        peer_port_list_output = OutputParsingTool.parse_json_str_to_dictionary(peer_port.show()).verify_result()
+        assert peer_port_list_output, "peer-port list is empty"
 
     with allure.step(f"Get list of peer ports"):
         peer_ports = peer_port.get_list_of_ports()
@@ -70,6 +97,55 @@ def test_peer_port_show(engines, test_api):
         for port in peer_ports:
             with allure.step(f"Validate show commands for Peer Port {port.peer_port_name}"):
                 helper_validate_peer_port_show(port)
+                if is_link_health_supported(devices) and is_link_health_feature_available(engines.dut):
+                    verify_peer_port_link_health_show(port)
+
+
+@pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
+@pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+def test_peer_port_hostname_change(engines, test_api, setup_name, start_cluster_and_sdn_fm_config):
+    TestToolkit.tested_api = test_api
+
+    compute_nodes = Configurations.compute_nodes_per_system.get(setup_name)
+    assert compute_nodes, f"setup '{setup_name}' has no compute_nodes_per_system"
+
+    hostname_changes = []
+    test_hostname_random_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    test_hostname_random_id = re.sub(r'gpu|nvidia', '', test_hostname_random_id, flags=re.IGNORECASE)  # Because NMX-T trims these markers
+    if not test_hostname_random_id:
+        test_hostname_random_id = str(random.randint(100000, 999999))
+
+    try:
+        with allure.step("Change hostnames on all compute node GPUs"):
+            for compute_node in compute_nodes:
+                for gpu_id in helper_list_nvidia_gpu_ids(compute_node):
+                    test_hostname = f"NVOS-TEST-{test_hostname_random_id}-{gpu_id}"
+                    hostname_changes.append((compute_node, gpu_id, test_hostname))
+
+                    with allure.step(f"Set hostname to {test_hostname} on GPU {gpu_id} ({compute_node['ip_address']}) via nvidia-smi"):
+                        helper_nvidia_smi_hostname(compute_node, gpu_id, 'set', test_hostname)
+
+                    with allure.step(f"Verify nvidia-smi --get-hostname returns {test_hostname} for GPU {gpu_id} on {compute_node['ip_address']}"):
+                        get_hostname_output = helper_nvidia_smi_hostname(compute_node, gpu_id, 'get')
+                        assert test_hostname in get_hostname_output, (
+                            f"Expected hostname {test_hostname} in nvidia-smi output, got: {get_hostname_output}"
+                        )
+
+        test_hostnames = {test_hostname for _, _, test_hostname in hostname_changes}
+        with allure.step(f"Wait for all peer ports to show hostnames {test_hostnames}"):
+            helper_wait_for_all_peer_ports_with_hostname(test_hostnames)
+
+    finally:
+        with allure.step(f"Restore hostnames to {PeerPortConsts.EXPECTED_GPU_HOSTNAME} on all compute node GPUs via nvidia-smi"):
+            for compute_node, gpu_id, _test_hostname in hostname_changes:
+                with allure.step(f"Restore hostname to {PeerPortConsts.EXPECTED_GPU_HOSTNAME} on GPU {gpu_id} ({compute_node['ip_address']})"):
+                    helper_nvidia_smi_hostname(
+                        compute_node, gpu_id, 'set', PeerPortConsts.EXPECTED_GPU_HOSTNAME
+                    )
+
+        with allure.step(f"Wait for all peer ports to restore hostname to {PeerPortConsts.EXPECTED_GPU_HOSTNAME}"):
+            helper_wait_for_all_peer_ports_with_hostname(PeerPortConsts.EXPECTED_GPU_HOSTNAME)
 
 
 @pytest.mark.gpu_tel
@@ -244,8 +320,9 @@ def test_gpu_telemetry_log_level_set(engines, test_api):
 
 
 @pytest.mark.gpu_tel
+@pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
-def test_peer_port_disconnect(engines, test_api):
+def test_peer_port_disconnect(engines, test_api, start_cluster_and_sdn_fm_config):
 
     TestToolkit.tested_api = test_api
     peer_port = PeerPort(parent_obj=None)
@@ -281,6 +358,92 @@ def test_peer_port_disconnect(engines, test_api):
     with allure.step(f"Check the peer port shall be available from list of peer ports"):
         helper_find_port_in_peer_ports(peer_port, random_peer_port, True)
 
+    with allure.step(f"Verify hostname after peer port {random_peer_port.peer_port_name} is restored"):
+        peer_port_show = OutputParsingTool.parse_json_str_to_dictionary(
+            random_peer_port.peer_port.show()).verify_result()
+        helper_verify_peer_port_hostname(peer_port_show, random_peer_port.peer_port_name)
+
+
+@pytest.mark.gpu_tel
+def test_link_health_switch_state_vs_peer_status(engines, devices, test_name):
+    """Correlate switch-side down/attention behavior with the associated peer port.
+
+    Asserted semantics:
+        - switch admin down: the peer leaves the peer-port list, and comes back
+          when the switch port is brought up again.
+        - switch attention: the link stays up, so the peer stays in the list and
+          keeps its own state (``healthy`` or ``n/a``) - a switch-side latch must
+          never mirror onto the GPU peer path (PP-07, separate telemetry feeds).
+    """
+    dut_engine = engines.dut
+    if not (is_link_health_supported(devices) and is_link_health_feature_available(dut_engine)):
+        pytest.skip('Link-health feature not available on this platform')
+
+    peer_port = PeerPort(parent_obj=None)
+    peer_intf, switch_port = find_active_peer_switch_pair_for_attention(peer_port)
+    if peer_intf is None:
+        pytest.skip(
+            'No Active + healthy peer/switch pair available for switch<->peer correlation'
+        )
+    peer_name = peer_intf.peer_port_name
+
+    switch_down = False
+    switch_attention = False
+    try:
+        with allure.step(f'Baseline: switch {switch_port.name} and peer {peer_name}'):
+            sw_state, _ = _read_link_health_state(switch_port)
+            peer_state, _ = _read_peer_port_link_health_state(peer_intf)
+            verify_link_health_state_valid(peer_state, peer_name)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+            logger.info(
+                f'CORRELATION baseline: switch {switch_port.name}={sw_state!r}, '
+                f'peer {peer_name}={peer_state!r}'
+            )
+
+        with allure.step(
+            f'Switch {switch_port.name} admin down -> peer {peer_name} removed from peer-port list'
+        ):
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+            switch_down = True
+            time.sleep(15)
+            verify_link_health_after_link_down(switch_port, LinkHealthConsts.STATE_HEALTHY)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=False)
+            logger.info(
+                f'CORRELATION switch-down: switch {switch_port.name} is down -> '
+                f'peer {peer_name} removed from peer-port list'
+            )
+
+        with allure.step(f'Restore switch {switch_port.name} up -> peer {peer_name} re-appears'):
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+            switch_down = False
+            time.sleep(15)
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+
+        with allure.step(
+            f'Switch {switch_port.name} attention -> observe peer {peer_name}'
+        ):
+            worked = trigger_link_health_attention_first(switch_port, dut_engine)
+            if worked is None:
+                pytest.skip(
+                    f'Could not induce switch-side attention on {switch_port.name}; '
+                    'cannot evaluate switch-attention vs peer correlation'
+                )
+            switch_attention = True
+            peer_state, peer_out = verify_peer_link_health_independent_of_switch_attention(
+                peer_intf, switch_port
+            )
+            helper_find_port_in_peer_ports(peer_port, peer_intf, available=True)
+            logger.info(
+                f'CORRELATION switch-attention: switch {switch_port.name} is attention, '
+                f'peer {peer_name} link-health={peer_state!r} (output={peer_out!r})'
+            )
+    finally:
+        with allure.step(f'Recover switch {switch_port.name} via down/up'):
+            if switch_attention or not switch_down:
+                toggle_port_state(switch_port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+                time.sleep(10)
+            toggle_port_state(switch_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+
 
 def helper_fae_peer_port_disable_enable(fae):
     with allure.step(f"Validate set enable peer-port state command"):
@@ -314,7 +477,9 @@ def helper_validate_peer_port_show(peer_port_interface):
         OutputParsingTool.parse_json_str_to_dictionary(peer_port_interface.show_peer_port()).verify_result()
 
     with allure.step(f"Validate 'nv show peer-port <port>' for Port {peer_port_interface.peer_port_name}"):
-        OutputParsingTool.parse_json_str_to_dictionary(peer_port_interface.peer_port.show()).verify_result()
+        peer_port_detail_output = OutputParsingTool.parse_json_str_to_dictionary(
+            peer_port_interface.peer_port.show()).verify_result()
+        helper_verify_peer_port_hostname(peer_port_detail_output, peer_port_interface.peer_port_name)
 
     with allure.step(f"Validate 'nv show peer-port <port> counters' for Port {peer_port_interface.peer_port_name}"):
         OutputParsingTool.parse_json_str_to_dictionary(peer_port_interface.peer_port.counters.show()).verify_result()
@@ -343,6 +508,90 @@ def helper_validate_peer_port_show(peer_port_interface):
                      f" {peer_port_interface.peer_port_name}"):
         OutputParsingTool.parse_json_str_to_dictionary(peer_port_interface.peer_port.link.phy.health.histogram.show()).\
             verify_result()
+
+
+def helper_verify_peer_port_hostname(port_output, port_name="", expected_hostname=None):
+    expected_hostname = expected_hostname or PeerPortConsts.EXPECTED_GPU_HOSTNAME
+    step_name = f"Verify hostname for {port_name}" if port_name else "Verify hostname"
+    with allure.step(step_name):
+        ValidationTool.verify_field_value_in_output(
+            port_output,
+            PeerPortConsts.HOSTNAME,
+            expected_hostname,
+        ).verify_result()
+
+
+def helper_exec_on_compute_node(compute_node, cmd, use_sudo=False):
+    ip_address = compute_node['ip_address']
+    username = compute_node['username']
+    password = compute_node['password']
+    engine = LinuxSshEngine(ip_address, username, password)
+
+    if use_sudo:
+        remote_cmd = (
+            f"printf '%s\\n' '{password}' | sudo -S -p '' sh -c {shlex.quote(cmd)}"
+        )
+    else:
+        remote_cmd = cmd
+
+    full_cmd = f"{remote_cmd} ; echo COMPUTE__CMD__\"DONE\""
+    output = engine.send_cmd_with_retry(
+        full_cmd, timeout=60, retries=2,
+        auto_find_prompt=False,
+        expected_string='COMPUTE__CMD__DONE')
+    return "\n".join(
+        line for line in (output or "").splitlines()
+        if "COMPUTE__CMD__DONE" not in line).strip()
+
+
+def helper_list_nvidia_gpu_ids(compute_node):
+    output = helper_exec_on_compute_node(compute_node, "nvidia-smi -L")
+    gpu_ids = []
+    for line in (output or "").splitlines():
+        match = re.match(r'GPU (\d+):', line)
+        if match:
+            gpu_ids.append(int(match.group(1)))
+    assert gpu_ids, f"No GPUs found on compute node {compute_node['ip_address']}: {output!r}"
+    return gpu_ids
+
+
+@retry(AssertionError, tries=12, delay=5)
+def helper_wait_for_all_peer_ports_with_hostname(expected_hostnames):
+    if isinstance(expected_hostnames, str):
+        expected_hostnames = {expected_hostnames}
+
+    peer_port = PeerPort(parent_obj=None)
+    list_output = OutputParsingTool.parse_json_str_to_dictionary(peer_port.show()).verify_result()
+    total_peer_ports = len(list_output)
+    assert total_peer_ports, "peer-port list is empty"
+
+    matching_peer_ports = [
+        peer_port_name
+        for peer_port_name, port_data in list_output.items()
+        if port_data.get(PeerPortConsts.HOSTNAME) in expected_hostnames
+    ]
+    assert len(matching_peer_ports) == total_peer_ports, (
+        f"Expected all {total_peer_ports} peer ports with hostname in {expected_hostnames}"
+    )
+
+
+def helper_nvidia_smi_hostname(compute_node, gpu_id, hostname_op, hostname=None):
+    if hostname_op == 'set':
+        assert hostname, "hostname is required for set operation"
+        hostname_args = f"--set-hostname {hostname}"
+    elif hostname_op == 'get':
+        hostname_args = "--get-hostname"
+    else:
+        raise ValueError(f"Unsupported nvidia-smi hostname operation: {hostname_op}")
+
+    nvidia_smi_cmd = f"nvidia-smi -i {gpu_id} {hostname_args}"
+    use_sudo = hostname_op == 'set'
+    output = helper_exec_on_compute_node(compute_node, nvidia_smi_cmd, use_sudo=use_sudo)
+    logger.info(
+        "nvidia-smi -i %s %s on %s output:\n%s",
+        gpu_id, hostname_args, compute_node['ip_address'], output
+    )
+    return output
 
 
 @retry(AssertionError, tries=3, delay=4)

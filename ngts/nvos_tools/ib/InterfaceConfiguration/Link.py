@@ -17,6 +17,7 @@ class LinkMgmt(BaseComponent):
         BaseComponent.__init__(self, parent=parent_obj, path='/link')
         self.state = BaseComponent(self, path='/state')
         self.diagnostics = BaseComponent(self, path='/diagnostics')
+        self.health = BaseComponent(self, path='/health')
         self.stats = MgmtStats(self)
         self.phy = Phy(self)
         self.plan_ports = BaseComponent(self, path='/plan-ports')

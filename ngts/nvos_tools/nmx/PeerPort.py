@@ -91,6 +91,7 @@ class Link(BaseComponent):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/link')
         self.phy = Phy(self)
+        self.health = BaseComponent(self, path='/health')
 
 
 class Nvl(BaseComponent):
