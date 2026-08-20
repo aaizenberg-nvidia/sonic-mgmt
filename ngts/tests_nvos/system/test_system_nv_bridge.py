@@ -321,16 +321,19 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
 
             msg = f"File content is invalid. content: {file_content}"
 
-            hostname = engines.dut.run_cmd(f"hostname")
-            assert f'"nvbdUuid": "{hostname}' in file_content, msg
+            with allure.step("Verify hostname in state file"):
+                hostname = engines.dut.run_cmd(f"hostname")
+                assert f'"nvbdUuid": "{hostname}' in file_content, msg
 
             if show_data.get("connections"):
-                server_id = show_data.get("server-id", "")
-                assert f'"nvbsUuid": "{server_id}"' in file_content, msg
+                with allure.step("Verify server id in state file"):
+                    server_id = show_data.get("server-id", "")
+                    assert f'"nvbsUuid": "{server_id}"' in file_content, msg
 
-                conn = next(iter(show_data["connections"].values()))
-                server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
-                assert f'"nvbsAddress": "{server_address}"' in file_content, msg
+                with allure.step("Verify server address in state file"):
+                    conn = next(iter(show_data["connections"].values()))
+                    server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
+                    assert f'"nvbsAddress": "{server_address}"' in file_content, msg
 
     finally:
         with allure.step("Delete generated files"):
