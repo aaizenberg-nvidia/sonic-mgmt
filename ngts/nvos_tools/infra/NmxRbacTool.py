@@ -114,6 +114,35 @@ class NmxRbacTool:
             self.cluster_app.manager.encryption.action_update(encryption_mode).verify_result()
         return server_cert, client_ca_cert
 
+    def unbind_nmx_certs(self):
+        """
+        Release the certs bound by :meth:`prepare_nmx_certs` from the app manager.
+
+        ``nv action delete system security certificate`` refuses to remove a cert that an application still
+        references ("is currently being used by the following applications"), so the binding has to be
+        released before the certs can be deleted.
+
+        Encryption is released first: mTLS requires a bound cert/CA pair, so releasing those while the mode
+        is still mTLS is rejected. Each field is released independently and failures are only logged - a
+        factory reset may already have cleared the binding, this runs in teardown where raising would mask
+        the real failure, and one field failing must not leave the others bound.
+        """
+        manager = self.cluster_app.manager
+        fields_to_release = (("encryption", manager.encryption),
+                             ("certificate", manager.certificate),
+                             ("ca_certificate", manager.ca_certificate))
+        with allure.step(f"Unbind certs from {self.cluster_app.app_name} manager"):
+            for field_name, field in fields_to_release:
+                failure = None
+                try:
+                    result = field.action_restore().ignore_result()
+                    if not result.result:
+                        failure = result.info or "the restore action reported failure without details"
+                except Exception as e:
+                    failure = e
+                if failure:
+                    logging.warning(f"Failed to release {field_name} on {self.cluster_app.app_name} manager: {failure}")
+
     def _run_grpc_client(self, host: str, endpoint: str, user: UserInfo, client_cert: CertInfo, client_cacert: CertInfo, port: int = None, expect_success: bool = True, proto_path: str = ""):
         payload: Dict[str, str] = {"gatewayId": "sasha",
                                    "major_version": "PROTO_MSG_MAJOR_VERSION", "minor_version": "PROTO_MSG_MINOR_VERSION"}

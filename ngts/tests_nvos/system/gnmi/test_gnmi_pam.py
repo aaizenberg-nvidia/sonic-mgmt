@@ -92,21 +92,15 @@ def _wait_until_at_least_one_gnmi_tcp_connection_closed_on_dut(
         f'least {MAX_GNMI_SUBSCRIBERS} (last count={_count_established_gnmi_tcp_on_dut(dut_engine)}, peak={peak})')
 
 
-def _verify_capabilities_failed_when_slots_busy(out: str, err: str) -> None:
-    """Valid client may see slot exhaustion or RPC failure depending on gnmi-server behavior."""
+def _verify_valid_client_refused_while_server_busy(out: str, err: str) -> None:
+    """Assert the probe hit one of the ways a client learns the server is too busy to authenticate it."""
     text = (out or '') + (err or '')
-    for msg in (
-            GnmicErr.NO_SUBSCRIBER_SLOT_AVAILABLE,
-            GnmicErr.REQUEST_FAILED,
-            GnmicErr.RPC_ERROR,
-            GnmicErr.AUTH_FAIL,
-            GnmicErr.HANDSHAKE_FAIL,
-            GnmicErr.RCV_ERROR,
-            GnmicErr.AUTH_SERVICE_UNAVAILABLE,
-    ):
+    for msg in GnmicErr.SERVER_TOO_BUSY_ERRS:
         if msg in text:
             return
-    pytest.fail(f'expected a gnmi failure indicating overload or RPC error; out={out!r} err={err!r}')
+    pytest.fail(
+        f'expected the valid client to be refused while the authentication path was loaded, with one of '
+        f'{GnmicErr.SERVER_TOO_BUSY_ERRS}.\nout: {out}\nerr: {err}')
 
 
 def _start_invalid_gnmi_stream_clients_background(
@@ -604,29 +598,36 @@ def test_gnmi_auth_failing_clients_ddos(engines, local_adminuser):
 @pytest.mark.gnmi
 def test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected(engines, local_adminuser):
     """
-    verify that while all subscriber slots are consumed by failing-auth gnmi clients, a valid client cannot connect
+    Verify that one valid gNMI client is blocked after 10 bad-credential clients make the server busy.
 
-    1. start MAX_GNMI_BAD_SUBSCRIBERS bad-credential STREAM clients on a background thread.
-    2. after a gated number of bad clients have started, run valid gnmic capabilities (overlaps remaining launches).
-    3. join the launcher thread, then expect capabilities failure (overload / RPC).
+    1. Start ``MAX_GNMI_SUBSCRIBERS`` (10) STREAM clients with bad credentials.
+    2. Send one capabilities request with valid credentials.
+    3. Verify that the valid request is refused because the server is busy.
     """
     selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
+    invalid_clients: List[Popen] = []
 
-    bad_bg = _plain_bad_gnmi_clients_background_thread(
-        engines.dut.ip, selected_port.name, max_bad_subscribers=MAX_GNMI_BAD_SUBSCRIBERS)
     try:
-        with allure.step('start bad creds clients in background thread'):
-            _plain_bad_gnmi_background_start_and_wait_ready(bad_bg)
-        with allure.step('run gnmi client with valid creds while bad clients are launching/running'):
-            out, err = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, local_adminuser.username,
-                                  local_adminuser.password).gnmic_capabilities(skip_cert_verify=True,
-                                                                               wait_till_done=True)
-        with allure.step('expect failure'):
-            _verify_capabilities_failed_when_slots_busy(out, err)
-        with allure.step('wait for bad clients launch thread to finish'):
-            _plain_bad_gnmi_background_join_and_assert_done(bad_bg)
+        with allure.step(f'start {MAX_GNMI_SUBSCRIBERS} gnmi clients with bad credentials'):
+            # Hold the owner for the whole test: CmdRunner.__del__ terminates its live processes.
+            invalid_clients, _invalid_client_owner = _start_invalid_gnmi_stream_clients_background(
+                engines.dut.ip,
+                selected_port.name,
+                max_subscribers=MAX_GNMI_SUBSCRIBERS,
+                processes=invalid_clients,
+            )
+            assert len(invalid_clients) == MAX_GNMI_SUBSCRIBERS
+        with allure.step('send one capabilities request with valid credentials'):
+            out, err = GnmiClient(
+                engines.dut.ip,
+                GnmiConsts.GNMI_DEFAULT_PORT,
+                local_adminuser.username,
+                local_adminuser.password,
+            ).gnmic_capabilities(skip_cert_verify=True, wait_till_done=True)
+        with allure.step('verify that the valid client is blocked'):
+            _verify_valid_client_refused_while_server_busy(out, err)
     finally:
-        _plain_bad_gnmi_background_cleanup(bad_bg)
+        _terminate_gnmic_processes(invalid_clients)
 
 
 @pytest.mark.system
@@ -684,9 +685,10 @@ def test_gnmi_auth_failing_clients_exhaust_slots_mtls_spiffe_valid_client_succee
     ``MAX_GNMI_BAD_SUBSCRIBERS`` background clients continuously attempt subscribe with wrong username/password.
 
     Rationale:
-    - In plain PAM-only flow (``test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected``), many bad
-      clients may consume subscriber slots and a valid PAM client can be rejected.
-    - In mTLS + SPIFFE flow, we expect the valid SPIFFE client to complete ``capabilities`` successfully.
+    - In plain PAM-only flow (``test_gnmi_auth_failing_clients_exhaust_slots_valid_client_rejected``), the bad
+      clients keep the authentication service busy and a valid PAM client is refused.
+    - In mTLS + SPIFFE flow, the valid client authenticates by certificate rather than through that service,
+      so we expect it to complete ``capabilities`` successfully.
 
     Steps:
     1. Build SPIFFE test setup (users, SPIFFE mappings, server cert, client certs/CA import).
