@@ -1,15 +1,26 @@
-import allure
 import logging
 import os
 import time
 from datetime import datetime
-from typing import List
 
+import allure
 import pexpect
-
-from packaging.version import Version
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
-from ngts.nvos_constants.constants_nvos import NvosConst, FansConsts, PlatformConsts, CumulusConsts, OperationTimeConsts, SystemConsts, ApiType, NtpConsts, TcpDumpConsts, RebootConsts, ImageConsts
+from packaging.version import Version
+
+from ngts.cli_wrappers.nvue.cumulus.cumulus_general_cli import CumulusGeneralCli
+from ngts.nvos_constants.constants_nvos import (
+    ApiType,
+    CumulusConsts,
+    FansConsts,
+    ImageConsts,
+    NtpConsts,
+    NvosConst,
+    PlatformConsts,
+    RebootConsts,
+    SystemConsts,
+    TcpDumpConsts,
+)
 from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -19,7 +30,6 @@ from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 from ngts.tools.test_utils.nvos_config_utils import clear_cl_conf
-from ngts.cli_wrappers.nvue.cumulus.cumulus_general_cli import CumulusGeneralCli
 
 logger = logging.getLogger()
 
@@ -68,11 +78,9 @@ class EthSwitch(BaseSwitch):
         return lldp_dict[TcpDumpConsts.LLDP_PORT_DESCRIPTION]
 
     def get_default_nvue_config(self, dut_engine=None):
-        default_conf = NvosConst.DEFAULT_CL_CONFIG
-        default_conf["interface"] = NvosConst.DEFAULT_CL_IFACE_CONFIG
-        return default_conf
+        return {**NvosConst.DEFAULT_CL_CONFIG, "interface": NvosConst.DEFAULT_CL_IFACE_CONFIG}
 
-    def show_setup_versions(self, dut_engine: LinuxSshEngine = None):
+    def show_setup_versions(self, dut_engine: LinuxSshEngine):
         with allure.step('Show setup versions'):
             system = System(force_api=ApiType.NVUE)
             platform = Platform()
@@ -176,7 +184,7 @@ class EthSwitch(BaseSwitch):
 
         # System image constants for ETH devices
         self.nfs_server = CumulusConsts.CL_NFS_SERVER
-        self.upload_path = '://{}:{}@{}/tmp/'.format(NvosConst.ROOT_USER, NvosConst.ROOT_PASSWORD, NvosConst.FIT70)
+        self.upload_path = f'://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/'
         self.default_username = SystemConsts.DEFAULT_USER_CL
 
         self.voltage_sensors = ["PMIC-1-PSU-12V-RAIL-IN", "PMIC-2-PSU-12V-RAIL-IN",
@@ -244,11 +252,7 @@ class EthSwitch(BaseSwitch):
         )
 
     def get_upload_prefix(self):
-        return "://{}:{}@{}/tmp/".format(
-            NvosConst.ROOT_USER,
-            NvosConst.ROOT_PASSWORD,
-            NvosConst.FIT70
-        )
+        return f"://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/"
 
     def wait_for_os_to_become_functional(self, engine, find_prompt_tries=60, find_prompt_delay=10):
         with allure.step('Wait for OS to become functional'):
@@ -259,12 +263,12 @@ class EthSwitch(BaseSwitch):
             result_obj = DutUtilsTool.wait_for_cumulus_to_become_functional(engine)
             return result_obj
 
-    def reload_device(self, engine, cmd_set, validate=False):
+    def reload_device(self, engine, cmd_list, validate=False):
         with allure.step('Reload device'):
-            # If cmd_set has multiple commands (command + confirmation), handle interactively
-            if isinstance(cmd_set, list) and len(cmd_set) > 1:
-                command = cmd_set[0]
-                confirmation = cmd_set[1]
+            # If cmd_list has multiple commands (command + confirmation), handle interactively
+            if isinstance(cmd_list, list) and len(cmd_list) > 1:
+                command = cmd_list[0]
+                confirmation = cmd_list[1]
                 # Send command and wait for confirmation prompt
                 output = engine.engine.send_command_expect(
                     command,
@@ -276,9 +280,9 @@ class EthSwitch(BaseSwitch):
                 return output
             else:
                 # Single command, no confirmation needed
-                return engine.run_cmd_set(cmd_set, validate=False)
+                return engine.run_cmd_set(cmd_list, validate=False)
 
-    def get_mgmt_ports(self) -> List[str]:
+    def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
 
     def get_admins_group(self):
@@ -421,7 +425,7 @@ class EthSwitch(BaseSwitch):
             except Exception as e:
                 logger.warning(f'Error during object-based AAA cleanup, falling back to CLI: {e}')
                 # Fallback to raw CLI commands if needed
-                engine = TestToolkit.engines.dut
+                engine = TestToolkit.get_engine()
                 engine.run_cmd('nv unset system aaa authentication', validate=False)
                 engine.run_cmd('nv config apply -y', validate=False)
 

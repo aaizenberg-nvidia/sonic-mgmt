@@ -3,7 +3,7 @@ import os
 import re
 from enum import Enum
 from pathlib import Path
-from typing import List, TypedDict
+from typing import TypedDict
 
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import ADMIN
 
@@ -1658,6 +1658,10 @@ class ImageConsts:
                                        'fit70')
     SCP_PATH_SERVER = 'scp://{username}:{password}@{ip}{path}'
     NVOS_RELEASE_25_02_1000 = "25.02.1000"
+    BASE_IMAGE_VERSION_TO_INSTALL = "nvos-amd64-{pre_release_name}.bin"
+    BASE_IMAGE_VERSION_TO_INSTALL_PATH = (
+        "/auto/sw_system_release/nos/nvos/{pre_release_name}/amd64/{base_image}"
+    )
     CL_RELEASE_5_16_0 = "5.16.0"
     CL_BASE_IMAGE_VERSION_TO_INSTALL = "cumulus-linux-mlx-amd64.bin"
     CL_BASE_IMAGE_VERSION_TO_INSTALL_PATH = "/devenv/release/{pre_release_name}/passed-mlx-amd64/build/images/{base_image}"

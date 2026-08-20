@@ -3,10 +3,10 @@ import math
 import os
 import time
 from collections import namedtuple
-from typing import List
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from devts.infra.tools.linux_tools.linux_tools import scp_file
+
 from ngts.nvos_constants.constants_nvos import (
     ActionConsts,
     CableCartridgeConsts,
@@ -29,9 +29,17 @@ from ngts.nvos_constants.constants_nvos import (
     TcpDumpConsts,
 )
 from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
-from ngts.nvos_tools.Devices.SwitchCapabilities import CpoCapability, NoPSUCapability, PortiaCpoCapability, \
-    SwitchCapabilityHandler
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, InternalNvosConsts, PhyRecoveryConsts
+from ngts.nvos_tools.Devices.SwitchCapabilities import (
+    CpoCapability,
+    NoPSUCapability,
+    PortiaCpoCapability,
+    SwitchCapabilityHandler,
+)
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import (
+    IbInterfaceConsts,
+    InternalNvosConsts,
+    PhyRecoveryConsts,
+)
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.FilesTool import FilesTool
@@ -56,14 +64,13 @@ from ngts.tests_nvos.constants import (
     MINUTE,
 )
 from ngts.tests_nvos.general.post_upgrade_switch.constants import InstallSteps
-from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.tests_nvos.general.security.nmx_cert.constants import (
     ALTERNATE_CERTIFICATE,
     CA_CERTIFICATE,
     CERTIFICATE,
     CRL,
-    ENDPOINT,
     ENCRYPTION,
+    ENDPOINT,
     PROTOCOL,
     REMOTE_URL,
     Defaults,
@@ -71,6 +78,7 @@ from ngts.tests_nvos.general.security.nmx_cert.constants import (
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
+from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_config_utils import clear_conf
 from ngts.tools.test_utils.nvos_general_utils import get_version_info
@@ -169,11 +177,7 @@ class IbSwitch(BaseSwitch):
         return lldp_dict[TcpDumpConsts.LLDP_PORT_ID]
 
     def get_upload_prefix(self):
-        return "://{}:{}@{}/tmp/".format(
-            NvosConst.ROOT_USER,
-            NvosConst.ROOT_PASSWORD,
-            NvosConst.FIT70,
-        )
+        return f"://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/"
 
     def get_default_password_by_version(self, version: str):
         version_num, _ = get_version_info(version)
@@ -190,11 +194,9 @@ class IbSwitch(BaseSwitch):
                                                  subfiles_pattern=PlatformConsts.VOLTAGE_FILES_PATTERN)
 
     def get_default_nvue_config(self, dut_engine=None):
-        default_conf = NvosConst.DEFAULT_CONFIG
-        default_conf["interface"] = NvosConst.DEFAULT_NVOS_IFACE_CONFIG
-        return default_conf
+        return {**NvosConst.DEFAULT_CONFIG, "interface": NvosConst.DEFAULT_NVOS_IFACE_CONFIG}
 
-    def show_setup_versions(self, dut_engine: LinuxSshEngine = None):
+    def show_setup_versions(self, dut_engine: LinuxSshEngine):
         outputs = {
             'system version': dut_engine.run_cmd('nv show system version', timeout=30),
             'platform firmware': dut_engine.run_cmd('nv show platform firmware', timeout=30),
@@ -490,8 +492,7 @@ class IbSwitch(BaseSwitch):
         self.default_user_name = SystemConsts.DEFAULT_USER_ADMIN
         # System image constants for IB devices
         self.nfs_server = SystemConsts.NBU_NFS_SERVER
-        self.upload_path = '://{}:{}@{}/tmp/'.format(
-            NvosConst.ROOT_USER, NvosConst.ROOT_PASSWORD, NvosConst.FIT70)
+        self.upload_path = f'://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/'
         self.default_username = SystemConsts.DEFAULT_USER_ADMIN
         self.release_name = ImageConsts.NVOS_RELEASE_25_02_1000
         self.list_of_leakages = []
@@ -1310,6 +1311,7 @@ class BlackMambaDGXSwitch(BlackMambaSwitch):
 
 
 class TaipanSwitch(IbSwitch):
+    els_index_to_ga: dict[int, int]
 
     def __init__(self, switch_class=NvosConst.TAIPAN_SWITCH):
         super().__init__(asic_amount=4, switch_class=switch_class)
@@ -1384,8 +1386,8 @@ class TaipanSwitch(IbSwitch):
             'ISSU CPU max downtime': 135,
         })
         self.memory_speed = 2667  # in MT/s
-        self.memory_size: List[float] = [30.73]
-        self.supported_disk_list: List[SSDConsts.SSDType] = [SSDConsts.VIRTIUM_VTPM24CEXI08_BM110006]
+        self.memory_size: list[float] = [30.73]
+        self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.VIRTIUM_VTPM24CEXI08_BM110006]
         # Taipan-specific constants
         self.number_of_transceivers = 18
         self.transceivers_tables_name = "TRANSCEIVER_INFO"
@@ -1435,7 +1437,7 @@ class TaipanSwitch(IbSwitch):
         self.fnm_link_speed = '800G'
         self.fnm_internal_link_speed = '50G'
 
-    def get_mgmt_ports(self) -> List[str]:
+    def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
 
     def _init_eth0_speeds(self):
