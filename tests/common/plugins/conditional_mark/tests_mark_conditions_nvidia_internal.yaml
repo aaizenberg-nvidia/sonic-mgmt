@@ -846,6 +846,42 @@ platform_tests/daemon/test_bmcctld.py::TestBmcctldDaemon::test_bmc_reboot_does_n
     conditions:
     - "'bmc' in topo_type and ('r-salamandra-01' in testbed or 'slm-chipless-2700a1-146' in testbed)"
 
+platform_tests/api/test_component.py::TestComponentApi::test_get_presence:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_model:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_serial:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_status:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_position_in_parent:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_is_replaceable:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
 platform_tests/api/test_chassis.py::TestChassisApi::test_thermals:
   skip:
     reason: "Skipped due to RM issue https://redmine.mellanox.com/issues/4258556"
