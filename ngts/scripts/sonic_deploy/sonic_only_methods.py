@@ -673,12 +673,13 @@ class SonicInstallationSteps:
         ansible_path = setup_info['ansible_path']
         cli = SonicInstallationSteps.get_dut_cli(setup_info)
 
-        # BIOS version check and restore - ensure target BIOS version before applying config
-        for dut in setup_info['duts']:
-            dut_engine = topology_obj.players[dut['dut_alias']]['engine']
-            with allure.step(f'Check and restore BIOS version on {dut["dut_name"]}'):
-                SonicInstallationSteps.restore_bios_if_needed(
-                    dut_engine, fw_pkg_path, platform_params, cli=dut['cli_obj'])
+        if not is_air:
+            # BIOS version check and restore - ensure target BIOS version before applying config
+            for dut in setup_info['duts']:
+                dut_engine = topology_obj.players[dut['dut_alias']]['engine']
+                with allure.step(f'Check and restore BIOS version on {dut["dut_name"]}'):
+                    SonicInstallationSteps.restore_bios_if_needed(
+                        dut_engine, fw_pkg_path, platform_params, cli=dut['cli_obj'])
 
         for dut in setup_info['duts']:
             cli = dut['cli_obj']
