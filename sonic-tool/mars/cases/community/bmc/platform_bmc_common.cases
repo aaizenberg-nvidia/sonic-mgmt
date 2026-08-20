@@ -156,17 +156,6 @@
         </cmd>
     </case>
 
-    <case>
-        <info> Test Thermal API Case </info>
-        <name> platform_api_thermal </name>
-
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 2400 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/api/test_thermal.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
     <!-- Mellanox does not support this test case for now, all test case in this
             section will be skipped during run time.
     -->
@@ -232,16 +221,6 @@
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/daemon/test_syseepromd.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Test psud </info>
-        <name> test_psud </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/daemon/test_psud.py </static_args>
              </params>
         </cmd>
     </case>
@@ -369,24 +348,6 @@
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_process_reboot_cause.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <ignore>
-            <!-- daily case -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
-        <info> Test sensord </info>
-        <name> test_sensord </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/daemon/test_sensord.py </static_args>
              </params>
         </cmd>
     </case>
