@@ -38,7 +38,8 @@ def get_all_setups_platform():
 def filter_canonical_setups(canonical_setups_platforms):
     keys_to_remove = []
     for setup_name, platform in canonical_setups_platforms.items():
-        if setup_name in ResultUploaderConst.NON_STANDARD_NAMED_SETUPS:
+        # Keep sonic_slm-* (e.g. sonic_slm-110); regex below only matches sonic_<codename>_
+        if setup_name in ResultUploaderConst.NON_STANDARD_NAMED_SETUPS or setup_name.startswith("sonic_slm-"):
             continue
         match = re.search(r"sonic_(\w+)_", setup_name)
         if setup_name.startswith("CI") or not match:

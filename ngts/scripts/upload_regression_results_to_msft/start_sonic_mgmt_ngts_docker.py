@@ -54,29 +54,27 @@ def init_logger(log_level):
 
 
 def create_secrets_vars_script(container_name):
-    export_env_var_script_path = "/tmp/{CONTAINER_NAME}_export_env_var.sh".format(CONTAINER_NAME=container_name)
     env_file_script_path = "/tmp/{CONTAINER_NAME}_env_file.sh".format(CONTAINER_NAME=container_name)
-    if os.path.exists(export_env_var_script_path):
-        os.popen("rm -f {SCRIPT_PATH}".format(SCRIPT_PATH=export_env_var_script_path))
     regex = r"variableName: (.*)"
     file_dir_path = os.path.dirname(os.path.realpath(__file__))
     sonic_secrets_template_path = os.path.join(file_dir_path, "build/sonic_secret_template.yaml")
     with open(sonic_secrets_template_path) as f:
         sonic_secrets_template_content = f.read()
     env_vars = re.findall(regex, sonic_secrets_template_content)
-    script_content = ["#!/bin/bash\n"]
-    env_file_content = ["#!/bin/bash\n"]
+    env_file_content = []
     for env_var in env_vars:
         env_var_value = os.getenv(env_var)
-        script_content.append("export {env_var}=\'{env_var_value}\'\n".format(env_var=env_var,
-                                                                              env_var_value=env_var_value))
         env_file_content.append("{env_var}={env_var_value}\n".format(env_var=env_var,
                                                                      env_var_value=env_var_value))
-    with open(export_env_var_script_path, 'w') as f:
-        f.writelines(script_content)
-    with open(env_file_script_path, 'w') as f:
+    file_descriptor = os.open(
+        env_file_script_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    with os.fdopen(file_descriptor, 'w') as f:
         f.writelines(env_file_content)
-    return export_env_var_script_path
+    os.chmod(env_file_script_path, 0o600)
+    return env_file_script_path
 
 
 def pull_image(ngts_version):
@@ -132,18 +130,6 @@ def check_container_started(container_name, max_retries=3):
     raise AssertionError("Failed to start container %s after tried %d times." % (container_name, max_retries))
 
 
-def config_secrets_on_container(secrets_vars_script_path, container_name):
-    logger.info("Configure container after starting it")
-    copy_script_cmd = "sudo docker cp {SCRIPT_PATH} " \
-                      "{CONTAINER_NAME}:/etc/profile.d/".format(SCRIPT_PATH=secrets_vars_script_path,
-                                                                CONTAINER_NAME=container_name)
-    os.popen(copy_script_cmd)
-    update_bashrc_cmd = "sudo docker exec {container_name} bash -c " \
-                        "\"cat /etc/profile.d/{container_name}_export_env_var.sh >>" \
-                        " /root/.bashrc\"".format(container_name=container_name)
-    os.popen(update_bashrc_cmd)
-
-
 def copy_sonic_mgmt_to_container(container_name):
     logger.info("Create a specific path in the docker container")
     create_path_cmd = "sudo docker exec --tty {container_name} /bin/mkdir " \
@@ -186,10 +172,10 @@ def copy_sonic_mgmt_to_container(container_name):
 def create_sonic_mgmt_ngts_docker(ngts_version, container_name):
     image_name = pull_image(ngts_version)
     container_mountpoints = get_container_mountpoints()
-    secrets_vars_script_path = create_secrets_vars_script(container_name)
+    create_secrets_vars_script(container_name)
     logger.info("Try to remove existing docker container anyway")
     os.popen("sudo docker rm -f {CONTAINER_NAME}".format(CONTAINER_NAME=container_name))
-    cmd = "sudo docker run -d {CONTAINER_MOUNTPOINTS} " \
+    cmd = "sudo docker run -d --security-opt seccomp=unconfined {CONTAINER_MOUNTPOINTS} " \
           "--name {CONTAINER_NAME} {IMAGE_NAME}:{IMAGE_TAG}".format(CONTAINER_MOUNTPOINTS=container_mountpoints,
                                                                     CONTAINER_NAME=container_name,
                                                                     IMAGE_NAME=image_name,
@@ -198,7 +184,6 @@ def create_sonic_mgmt_ngts_docker(ngts_version, container_name):
     logger.info("Created container, wait a few seconds for it to start")
     time.sleep(5)
     check_container_started(container_name)
-    config_secrets_on_container(secrets_vars_script_path, container_name)
     copy_sonic_mgmt_to_container(container_name)
 
 

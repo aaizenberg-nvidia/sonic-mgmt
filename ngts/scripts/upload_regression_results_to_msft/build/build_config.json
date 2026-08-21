@@ -9,7 +9,13 @@
     "VAULT_HCL_TEMPLATE=/auto/sw_regression/system/SONIC/MARS/conf/jenkins_vault.hcl",
     "VAULT_URL=https://prod.vault.nvidia.com",
     "VAULT_CREDENTIALS_ID=vault-sonic-approle-prod",
-    "SECRETS_YAML_SONIC=ngts/scripts/upload_regression_results_to_msft/build/sonic_secret_template.yaml"
+    "SECRETS_YAML_SONIC=ngts/scripts/upload_regression_results_to_msft/build/sonic_secret_template.yaml",
+    "CLONE_DEPTH=500",
+    "REGRESSION_MAIL_GITHUB_AUTHORS=illia-kotvitskyi,echuawu,congh-nvidia,JibinBao,nhe-NV,weiguo-nvidia,wenjwang-nv,xixuej,zypgithub,CalK16,fzjalfred,amadeoaiz,AharonMalkin,AntonHryshchuk,dprital,emouyal,gshemesh2,IdanharelNV,Itamar-Yair,RapaportOded,OriTrabelsi,rotem-zahavi-NV,Sarah5567,ytzur1",
+    "REGRESSION_MAIL_RC_STATUS_REPOSITORY=nvidia-sonic/sonic-buildimage",
+    "REGRESSION_MAIL_RC_STATUS_REF=",
+    "REGRESSION_MAIL_RC_STATUS_TAG=",
+    "INFERENCE_API_KEY=sk-heWmCaigSimXagCIak0mBA"
   ],
   "timeout": "1",
   "phases": [
@@ -62,6 +68,11 @@
               "branch": "${branch}",
               "command": "${command}",
               "parameters": "${parameters}",
+              "regression_mail_to": "${regression_mail_to}",
+              "regression_mail_github_authors": "${REGRESSION_MAIL_GITHUB_AUTHORS}",
+              "regression_mail_rc_status_repository": "${REGRESSION_MAIL_RC_STATUS_REPOSITORY}",
+              "regression_mail_rc_status_ref": "${REGRESSION_MAIL_RC_STATUS_REF}",
+              "regression_mail_rc_status_tag": "${REGRESSION_MAIL_RC_STATUS_TAG}",
               "container_name": "sonic-mgmt-${USER}"
           },
           "skip": false,
