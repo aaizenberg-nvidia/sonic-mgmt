@@ -1018,7 +1018,7 @@ class DeployDpuHelper:
         try:
             with allure.step('Install BFB image on all DPUs'):
                 output = dut_engine.run_cmd(
-                    f"sudo sonic-bfb-installer.sh -r {rshim_value} -b {dest_file} -v")
+                    f"sudo sonic-bfb-installer.sh -r {rshim_value} -b {dest_file} -v", validate=True)
                 failures = []
                 for index in dpu_index_list:
                     pattern = f"{index}.*Installation Successful"
