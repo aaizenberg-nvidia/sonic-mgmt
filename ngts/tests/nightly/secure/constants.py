@@ -18,7 +18,7 @@ class SecureBootConsts:
     SIG_MISMATCH_PROD_IMAGE_PATH = f"{SIG_MISMATCH_BASE_PATH}/sonic-mellanox-mismatch-prod-sig.bin"
     EFI_PARTITION_CMD = "fdisk -l | grep \"EFI System\" | awk \'{print $1}\'"
     LAST_OCCURENCE_REGEX = "({})(?!.*\1)"
-    VMILUNZ_REGEX = '(vmlinuz-.*-amd64)'
+    VMILUNZ_REGEX = r'(vmlinuz-\S+-amd64)(?=\s|$|_origin)'
     VMILUNZ_DIR = '/boot/'
     INVALID_SIGNATURE = ["Invalid signature detected",
                          "Malformed binary after Attribute Certificate Table",
