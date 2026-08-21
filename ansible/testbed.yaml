@@ -11777,10 +11777,25 @@
   vm_base:
   dut:
     - r-salamandra-01-bmc
+    - r-salamandra-01
   bmc_host: r-salamandra-01
   inv_name: lab
   auto_recover: 'False'
   comment: BMC dual-mgmt testbed for r-salamandra-01
+
+- conf-name: r-salamandra-01-ptp-64
+  group-name: vm-t1
+  topo: ptp-64
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-salamandra-01-ptp
+  ptf_ip: 10.213.86.105/16
+  ptf_ipv6:
+  server: server_3
+  vm_base:
+  dut:
+    - r-salamandra-01
+  inv_name: lab
+  comment: Mellanox MTR testbed
 
 - conf-name: salamandra-chipless-109-ptf-any
   group-name: vm-t1
@@ -12120,6 +12135,20 @@
   inv_name: lab
   auto_recover: 'False'
   comment: BMC dual-mgmt testbed for slm-233
+
+- conf-name: slm-233-ptp-64
+  group-name: vm-t1
+  topo: ptp-64
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-233-ptp
+  ptf_ip: 10.220.163.254/22
+  ptf_ipv6:
+  server: server_97
+  vm_base:
+  dut:
+    - slm-233
+  inv_name: lab
+  comment: Mellanox MTR testbed
 
 - conf-name: slm-113-bmc-dual-mgmt
   group-name: slm113bm
