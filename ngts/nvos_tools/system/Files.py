@@ -1,8 +1,10 @@
 import logging
+import threading
 from typing import Dict, Iterable
 
 from ngts.nvos_constants.constants_nvos import ActionConsts, ActionParamConsts, SystemConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.DefaultDict import DefaultDict
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -72,8 +74,8 @@ class File(BaseComponent):
             return SendCommandTool.execute_command(self._cli_wrapper.show_file, engine, self.file_name,
                                                    exit_cmd).get_returned_value()
 
-    def action_upload(self, upload_path) -> ResultObj:
-        return self.action(ActionConsts.UPLOAD, (ActionParamConsts.REMOTE_URL, upload_path))
+    def action_upload(self, upload_path, timeout=None) -> ResultObj:
+        return self.action(ActionConsts.UPLOAD, (ActionParamConsts.REMOTE_URL, upload_path), timeout=timeout)
 
     def action_delete(self, engine=None) -> ResultObj:
         return self.action(ActionConsts.DELETE, engine=engine)
@@ -100,6 +102,60 @@ class File(BaseComponent):
         result = self.action(ActionConsts.INSTALL, flags=flags, send_user_confirmation=send_user_confirmation,
                              reboot_params=reboot_params, expected_output=expected_output, timeout=timeout)
         return result
+
+    def cpld_refresh_install(self, reboot_params, device=None, engine=None, force=True) -> ResultObj:
+        """
+        Dedicated install path for a CPLD REFRESH image.
+
+        The REFRESH image is unique: it reboots the switch WITHOUT emitting a reboot
+        message. The generic action() path (NVUE and OpenAPI both) waits for that
+        message - OpenAPI polls an unbounded action-status GET that never completes
+        here, so a normal install hangs for many minutes until the outer pytest
+        timeout, even though the switch reboots and recovers fine.
+
+        So instead of waiting for a response that never comes, fire the install off
+        the critical path and recover the switch exactly like a plain reboot: wait
+        for the mgmt port to go down and come back up (DutUtilsTool.wait_on_system_reboot).
+
+        The fire runs in a daemon thread bound to the SAME engine/device as the
+        recovery below, so in a multi-DUT run (or any code that swaps
+        TestToolkit.active_dut) the install and the mgmt-port wait target one DUT.
+
+        The thread calls the CLI wrapper's action() DIRECTLY, not BaseComponent.action():
+        the latter runs its own "unexpected reboot" recovery (wait_on_system_reboot)
+        whenever the port drops, which would race the main thread's recovery below
+        (double disconnect, competing serial/port polls). Firing the wrapper keeps the
+        install command/authentication identical for both APIs while leaving recovery
+        solely to the main thread. The call never returns cleanly (the switch reboots
+        out from under it) and is abandoned; any resulting exception is expected and
+        only logged.
+        """
+        engine = engine or TestToolkit.get_engine()
+        try:
+            device = device or TestToolkit.get_device()
+        except BaseException:
+            device = None
+        resource_path = self.get_resource_path()
+        flags = [ActionParamConsts.FORCE] if force else []
+        cli_wrapper = self._cli_wrapper  # resolve here (main thread) to avoid a tested_api race in the thread
+
+        def _fire_install():
+            try:
+                # The switch reboots out from under this call, so the install never emits a
+                # reboot message and the wrapper returns a False ResultObj. Recovery is verified
+                # by the main thread, so discard this one with ignore_result - otherwise the
+                # verify_result_objects teardown fixture collects the abandoned failed result and
+                # fails the test (it raises every unchecked False ResultObj). This runs once per
+                # install - NVUE (previous fw) then OpenAPI (latest fw) - clearing both.
+                cli_wrapper.action(ActionConsts.INSTALL, resource_path, None, flags, {}, engine,
+                                   True, None, SystemConsts.REBOOT_RESPONSE_MESSAGES, device).ignore_result()
+            except BaseException as e:
+                logger.info(f"CPLD REFRESH install fire-thread ended (expected on reboot): {e}")
+
+        with allure.step(f"Fire CPLD REFRESH install without waiting for completion: {resource_path}"):
+            threading.Thread(target=_fire_install, name='cpld-refresh-install', daemon=True).start()
+        with allure.step("Recover switch via mgmt-port down/up (REFRESH reboot emits no message)"):
+            return DutUtilsTool.wait_on_system_reboot(engine, reboot_params=reboot_params, device=device)
 
     def action_generate(self, new_name) -> ResultObj:
         """Generate token info from this file (e.g., for CRDT debug-image)."""

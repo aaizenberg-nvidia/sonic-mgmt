@@ -39,12 +39,18 @@ cumulus_owner = "lharo"
 logger = logging.getLogger()
 
 
+@pytest.fixture(scope='function')
+def cleanup_sdk_dumps_teardown(engines):
+    yield
+    cleanup_sdk_dumps(engines.dut)
+
+
 @pytest.mark.timeout(50 * MINUTE)
 @pytest.mark.system
 @pytest.mark.checklist
 @pytest.mark.reset_factory
 def test_reset_factory_without_params(engines, devices, topology_obj, platform_params, random_api, has_loopbox,
-                                      setup_name, standalone_system, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router):
+                                      setup_name, standalone_system, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router, cleanup_sdk_dumps_teardown):
     """
     Validate reset factory without params cleanup done as expected
 
@@ -149,7 +155,7 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
 @pytest.mark.system
 @pytest.mark.checklist
 @pytest.mark.reset_factory
-def test_reset_factory_keep_basic(engines, devices, random_api, test_name, serial_log_analyzers, ib_router):
+def test_reset_factory_keep_basic(engines, devices, random_api, test_name, serial_log_analyzers, ib_router, cleanup_sdk_dumps_teardown):
     """
     Validate reset factory with keep basic param cleanup done as expected
 
@@ -205,7 +211,7 @@ def test_reset_factory_keep_basic(engines, devices, random_api, test_name, seria
 @pytest.mark.system
 @pytest.mark.checklist
 @pytest.mark.reset_factory
-def test_reset_factory_keep_all_config(engines, devices, random_api, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router):
+def test_reset_factory_keep_all_config(engines, devices, random_api, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router, cleanup_sdk_dumps_teardown):
     """
     Validate reset factory with keep all config param cleanup done as expected
 
@@ -260,7 +266,7 @@ def test_reset_factory_keep_all_config(engines, devices, random_api, test_name, 
 @pytest.mark.system
 @pytest.mark.checklist
 @pytest.mark.reset_factory
-def test_reset_factory_keep_only_files(engines, devices, random_api, test_name, serial_log_analyzers, ib_router):
+def test_reset_factory_keep_only_files(engines, devices, random_api, test_name, serial_log_analyzers, ib_router, cleanup_sdk_dumps_teardown):
     """
     Validate reset factory with keep only files param cleanup done as expected
 
@@ -307,7 +313,7 @@ def test_reset_factory_keep_only_files(engines, devices, random_api, test_name, 
 @pytest.mark.cumulus
 @pytest.mark.system
 @pytest.mark.checklist
-def test_error_flow_reset_factory_with_params(random_api, engines, devices, topology_obj):
+def test_error_flow_reset_factory_with_params(random_api, engines, devices, topology_obj, cleanup_sdk_dumps_teardown):
     """
     This test is a temporary test - will be changed for GA
     :return:
@@ -334,3 +340,31 @@ def get_last_status_line(system):
             return system.health.history.retry_get_health_history_file_summary_line()
         except BaseException:
             return ""
+
+
+def cleanup_sdk_dumps(engine):
+    """
+    engine: LinuxSshEngine - The engine to cleanup sdk dumps from.
+    Returns: None - No return value.
+    flow :
+        1. Run 'find', For SDK dump file detection.
+        2. set is_need_to_cleanup to True if find command output is not empty
+            and exit code is 0 means SDK dump files exist
+        3. assert exit code is 0 inside independent step(team implement)
+            so that the test will continue if the assert fails
+        4. clean if SDK dump files exist
+
+    searching paths: /var/log/mellanox/sdk*
+    """
+    ls_cmd = "ls /var/log/mellanox/sdk* 2>/dev/null || true"
+    rm_cmd = "rm -rf /var/log/mellanox/sdk* 2>/dev/null || true"
+
+    with allure.step("independent parent step"):
+        with allure.independent_step("detect sdk (files and directories) to cleanup and delete them , assert about deletion if found"):
+            ls_output = engine.run_cmd(ls_cmd)
+            logger.info(f"ls_output={ls_output}")
+            if ls_output and ls_output != "" and ls_output.strip() != "" and "No such file or directory" not in ls_output:
+                logger.info(f"Found sdk files to cleanup  \n ls_cmd={ls_cmd}")
+                engine.run_cmd(rm_cmd)
+                logger.info(f"delete command executed \n rm_cmd={rm_cmd}")
+                logger.info(f"Found sdk files to cleanup \n ls_output={ls_output}")

@@ -1285,6 +1285,29 @@ class PlatformConsts:
     TRANSCEIVER_CABLE_TYPE = 'cable-type'
     TRANSCEIVER_CABLE_OPTICAL_MODULE = 'Optical module'
     TRANSCEIVER_CABLE_COPPER_CABLE = 'Copper cable'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED = 'supported-cable-ib-speed'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NA = 'N/A'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NAMES = ('sdr', 'fdr', 'edr', 'hdr', 'ndr', 'xdr')
+    TRANSCEIVER_VENDOR_PN = 'vendor-pn'
+    # Per-vendor-pn rules for the supported-cable-ib-speed leaf. Each entry has:
+    #   required : speeds that MUST appear in the reported comma-joined tokens
+    #   forbidden: speeds that MUST NOT appear (catches FW spurious-bit bugs)
+    # Unlisted PNs fall back to the well-formed structure check only.
+    # Speeds sourced from the NVIDIA Quantum-X800 XDR portfolio, the XDR Modules
+    # Confluence page, the Approved Cable List, and Wolverine2-Arcus2 bug
+    # SW #6453983 / Redmine #4660953. All 980-9IAxx-00XMxx entries below are
+    # XDR-generation OSFP modules/cables; MCP4Y10-N001-FTF is a Quantum-2 NDR
+    # copper cable and must not advertise XDR.
+    _XDR_ONLY = {'required': {'xdr'}, 'forbidden': {'sdr', 'fdr', 'edr', 'hdr', 'ndr'}}
+    TRANSCEIVER_IB_SPEED_RULES_BY_PN = {
+        '980-9IAH1-00XM00': _XDR_ONLY,
+        '980-9IAH' 'B-00XM0N': _XDR_ONLY,  # split literal - shared aspell dict
+        '980-9IAM3-00XD2A': _XDR_ONLY,
+        '980-9IAS0-00XM0N': _XDR_ONLY,
+        '980-9IAU6-00XM0M': _XDR_ONLY,
+        '980-9IAU9-00XM0G': _XDR_ONLY,
+        'MCP4Y10-N001-FTF': {'required': {'ndr'}, 'forbidden': {'xdr'}},
+    }
     EROTS_LIST = ['ERoT_BMC_0', 'ERoT_CPU_0', 'ERoT_FPGA_0', 'ERoT_NVSwitch_0', 'ERoT_NVSwitch_1']
     INV_STATE = 'state'
     INV_OK = 'ok'
@@ -1796,6 +1819,7 @@ class NtpConsts:
     SERVER_FAILED = 'DNS resolution failed'
     USER_CONFIG = 'user-config'
     MULTIPLE_SERVERS_NUMBER = 11
+    SET_SERVERS_LOG_MSG = 'NtpCfg: Set servers'  # hostcfgd syslog line marking NTP server config applied
     CONFIG_TIME_DIFF_THRESHOLD = 2.5  # [sec]
     SHOW_TIME_DIFF_THRESHOLD = 0.5  # [sec]
     SYNCHRONIZE_NEW_LISTEN_TIME = 20  # [sec]
@@ -2500,118 +2524,6 @@ class OperationTimeConsts:
     TEST_NAME_COL = 'test_name'
     SESSION_ID_COL = 'session_id'
     DATE_COL = 'date'
-
-    # Operation labels used by save_duration / row-name lookups in expected_operation_durations.
-    IMAGE_INSTALL = 'image install'
-    IMAGE_UPGRADE = 'image upgrade'
-    IMAGE_DOWNGRADE = 'image downgrade'
-    IMAGE_INSTALL_OPERATION_ROW = 'image install (operation)'
-
-
-class StatsConsts:
-    class State(Enum):
-        ENABLED = 'enabled'
-        DISABLED = 'disabled'
-
-    SLEEP_15_SECONDS = 15  # [sec]
-    SLEEP_20_SECONDS = 20  # [sec]
-    SLEEP_40_SECONDS = 40  # [sec]
-    SLEEP_1_MINUTE = 60  # [sec]
-    SLEEP_3_MINUTES = 180  # [sec]
-    SLEEP_5_MINUTES = 300  # [sec]
-    STATE = 'state'
-    STATE_DEFAULT = State.ENABLED.value
-    INTERVAL = 'interval'
-    INTERVAL_DEFAULT = '5'  # [min]
-    INTERVAL_MIN = '1'  # [min]
-    HISTORY_DURATION = 'history-duration'
-    HISTORY_DURATION_DEFAULT = '365'  # [days]
-    HISTORY_DURATION_MIN = '1'  # [days]
-    GENERATE_ALL_TIME_MAX = 2  # [sec]
-    CATEGORY_STATE_DISABLED = {STATE: State.DISABLED.value}
-    CATEGORY_MIN_DICT = {
-        STATE: STATE_DEFAULT,
-        INTERVAL: INTERVAL_MIN,
-        HISTORY_DURATION: HISTORY_DURATION_MIN
-    }
-    CATEGORY_MIN_DISABLED_DICT = {
-        STATE: State.DISABLED.value,
-        INTERVAL: INTERVAL_MIN,
-        HISTORY_DURATION: HISTORY_DURATION_MIN
-    }
-
-    LOG_MSG_UNSET_STATS = "PATCH /nvue_v1/system/stats"
-    LOG_MSG_SET_CATEGORY1 = "INFO stats-reportd: got config change "
-    LOG_MSG_SET_CATEGORY2 = ": {'enabled': 'true', 'history_duration': '365', 'interval': '1'}"
-    LOG_MSG_PATCH_CATEGORY = "PATCH /nvue_v1/system/stats/category/"
-
-    LOG_MSG_ERROR_DB = "..."  # TODO: Update message (parameter not found in redis DB)...
-
-    INVALID_CATEGORY_NAME = 'invalid_category_name'
-    ALL_CATEGORIES = 'all'
-    INVALID_STATE = 'invalid_state'
-    INVALID_INTERVAL_LOW = 0
-    INVALID_INTERVAL_HIGH = 1441
-    INVALID_HISTORY_DURATION_LOW = 0
-    INVALID_HISTORY_DURATION_HIGH = 366
-    INVALID_FILE_NAME = 'file_not_exists.csv'
-    INVALID_SHOW_CATEGORY = 'The requested item does not exist.'
-
-    TEMP_PATH = '/auto/rdmzsysgwork/shared/test_utilities/tmp/5b5931e6aac04bd39499372ef73fbf31'
-    INTERNAL_PATH = "/tmp"
-    OLD_SAMPLES_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/old_samples/"
-    BIG_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/big_file/"
-    HUGE_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/huge_file/"
-    NO_HEADER_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/no_header_file/"
-    MAX_SIZE_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/max_size/"
-    GENERATED_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/generated/"
-    RESULTS_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/results/"
-    INTERNAL_CAT_PATH = "/var/stats"
-    TEMP_FOLDER = "/auto/sw_regression/system/NVOS/MARS/results/"
-    HEADER_HOSTNAME = "# Hostname:         "
-    HEADER_GROUP = "# Statistic group:  "
-    HEADER_TIME = "# Started sampling: "
-    TIMESTAMP_FORMAT = "%b-%d %Y %H:%M:%S"
-    SYSTEM_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
-    MAX_ROWS_TO_SCAN = 300
-    CONST_HEADER_ROWS = 8
-    BIG_FILE_NUM_OF_LINES = 600026
-
-    TEMP_MIN = 15  # [Celsius]
-    TEMP_MAX = 90  # [Celsius]
-    MGMT_INT_MIN = 0  # [Bytes/sec]
-    MGMT_INT_MAX = 10000  # [Bytes/sec]
-    FAN_MIN = 0  # [%]
-    FAN_MAX = 100  # [%]
-    PWR_PSU_VOLT_MIN = 0  # [V] TODO: Update
-    PWR_PSU_VOLT_MAX = 300  # [V] TODO: Update
-    PWR_PSU_CUR_MIN = 0  # [A] TODO: Update
-    PWR_PSU_CUR_MAX = 100  # [A] TODO: Update
-    ASIC_PWR_WATT_MIN = 400  # [Watt]
-    ASIC_PWR_WATT_MAX = 600  # [Watt]
-    CPU_FREE_RAM_MIN = 30  # [%]
-    CPU_FREE_RAM_MAX = 100  # [%]
-    CPU_UTIL_MIN = 0  # [%]
-    CPU_UTIL_MAX = 60  # [%]
-    CPU_REBOOT_CNT_MIN = 0
-    CPU_REBOOT_CNT_MAX = 100
-    DISK_FREE_SPACE_MIN = 30  # [%]
-    DISK_FREE_SPACE_MAX = 99  # [%]
-    DISK_RMN_LIFE_MIN = 70  # [%]
-    DISK_RMN_LIFE_MAX = 100  # [%]
-    DISK_FAIL_CNT_MIN = 0
-    DISK_FAIL_CNT_MAX = 0
-    DISK_TOTAL_LBA_RW_MIN = 10000
-    DISK_TOTAL_LBA_RW_MAX = 4294967295
-    VOLTAGE_GENERAL_MIN = 0
-    VOLTAGE_GENERAL_MAX = 100
-    VOLTAGE_PSU_MIN = 0
-    VOLTAGE_PSU_MAX = 300
-
-    GENERATE = 'generate'
-    DELETE = 'delete'
-    UPLOAD = 'upload'
-    CLEAR = 'clear'
 
     # Operation labels used by save_duration / row-name lookups in expected_operation_durations.
     IMAGE_INSTALL = 'image install'

@@ -1,60 +1,15 @@
 import pytest
 import logging
-import re
-from collections import defaultdict
 from retry.api import retry_call
 
 from ngts.nvos_constants.constants_nvos import ConfState
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, TxBwLossMonitorConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, IbInterfaceConsts, TxBwLossMonitorConsts
 from ngts.tests_nvos.interfaces.nvl_port.helpers import skip_if_no_access_links
 from ngts.tests_nvos.interfaces.zombie_link import get_zombie_link_manager
 from ngts.tools.test_utils import allure_utils as allure
-
-
-_PORT_SEG_RE = re.compile(r'([a-zA-Z]+)(\d+)')
-
-
-def _build_port_range(ports):
-    """Compress a port list into a NVUE-friendly range string, per port group.
-
-    Partitions ports by their leading prefix (e.g. ``swA`` vs ``swB`` on
-    Crocodile) so each group emits its own ``<prefix>{mn}-{mx}`` chain
-    independently. Within a group, segments keep the order they appear in
-    the port name. Single-value numeric segments are collapsed to just the
-    number (so ``['sw1p1', ..., 'sw144p1']`` yields ``sw1-144p1``, not
-    ``sw1-144p1-1`` which NVUE rejects).
-
-    Examples:
-    - ``['acp1', ..., 'acp72']``                       -> ``acp1-72``
-    - ``['sw1p1', ..., 'sw144p1']``                    -> ``sw1-144p1``
-    - ``['sw1p1', 'sw1p2', ..., 'sw72p2']``            -> ``sw1-72p1-2``
-    - ``['swA1p1', ..., 'swB18p2']`` (multi-group)     -> ``swA1-18p1-2swB1-18p1-2``
-    """
-    # Group by the first prefix in each port (e.g. 'swA' vs 'swB'), and within
-    # each group accumulate numeric sets per subsequent prefix.
-    group_segments = defaultdict(lambda: defaultdict(set))
-    group_order = {}
-    for port in ports:
-        tokens = _PORT_SEG_RE.findall(port)
-        if not tokens:
-            continue
-        group = tokens[0][0]
-        for prefix, num in tokens:
-            group_segments[group][prefix].add(int(num))
-        group_order.setdefault(group, [pref for pref, _ in tokens])
-
-    parts = []
-    for group, prefixes in group_segments.items():
-        for prefix in group_order[group]:
-            numbers = prefixes[prefix]
-            if not numbers:
-                continue
-            mn, mx = min(numbers), max(numbers)
-            parts.append(f"{prefix}{mn}-{mx}" if mn != mx else f"{prefix}{mn}")
-    return ''.join(parts)
 
 
 logger = logging.getLogger()
@@ -266,7 +221,7 @@ def test_tx_bw_loss_monitor_range(engines, devices, random_api, standalone_syste
     """
     Verify tx-bandwidth-loss-monitor state can be set on a range of ports
     (e.g. ``acp1-72`` on NVL5/NVL6, ``sw1-144p1`` on Taipan, ``sw1-72p1-2`` on
-    Black Mamba, ``swA1-18p1-2swB1-18p1-2`` on Crocodile).
+    Black Mamba, ``swA1-18p1-2,swB1-18p1-2`` on Crocodile).
 
     The manager picks the platform-appropriate port list (see
     ``managers.py``): NVL access ports when available, otherwise the
@@ -288,7 +243,7 @@ def test_tx_bw_loss_monitor_range(engines, devices, random_api, standalone_syste
         skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
 
     with allure.step("Build port range"):
-        port_range = _build_port_range(ports_under_test)
+        port_range = zombie_link_manager.build_port_range(ports_under_test)
         all_ports = Fae(port_name=port_range)
 
     with allure.step("Select a link-up port for single-port verification"):
@@ -363,6 +318,16 @@ def test_tx_bw_loss_monitor_fnm_port(engines, devices, random_api, zombie_link_m
     with allure.step("Select a random FNM port"):
         fnm_port_name = RandomizationTool.select_random_value(fnm_ports).get_returned_value()
         selected_port = Fae(port_name=fnm_port_name)
+
+    with allure.step(f"Verify FNM port {fnm_port_name} is link-up before exercising the monitor"):
+        # The tx-bandwidth-loss monitor reports 'N/A' when the port is not up, so
+        # the monitor-status assertions below are meaningless on a down FNM port.
+        # Gate on the real precondition (link state) rather than the monitor itself.
+        link_state = OutputParsingTool.parse_show_interface_link_output_to_dictionary(
+            selected_port.port.interface.link.show()).get_returned_value().get(IbInterfaceConsts.LINK_STATE)
+        if link_state != NvosConsts.LINK_STATE_UP:
+            pytest.skip(f"FNM port {fnm_port_name} is not up (state={link_state}); "
+                        "tx-bw-loss monitor is N/A - skipping")
 
     monitor = _get_monitor(selected_port)
 

@@ -78,6 +78,14 @@ from ngts.tests_nvos.interfaces.ib_phy_recovery.helpers import (
     kill_traffic_processes,
 )
 
+# logic-relock is XDR-scoped: a port that trained at a lower generation reports the
+# firmware default instead of the platform default, so the tests that assert the
+# platform default must select on the negotiated ib-speed.
+XDR_SKIP_REASON = (
+    "no UP IB port reports ib-speed xdr - logic-relock defaults are XDR-scoped, "
+    "and ib-speed is only reported once the port is Active"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -137,14 +145,15 @@ def test_ib_phy_recovery_go_once(engines, devices, random_api):
 
     system = System()
 
-    with allure.step("Good flow: Select a random IB port in LINK-UP state"):
+    with allure.step("Good flow: Select a random XDR IB port in LINK-UP state"):
         port_result = RandomizationTool.select_random_port(
             requested_ports_state=NvosConsts.LINK_STATE_UP,
-            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE
+            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE,
+            requested_ib_speed=IbInterfaceConsts.XDR
         )
         if not port_result.result:
             port_result.ignore_result()
-            pytest.skip(f"Skipping test - no IB ports in UP state: {port_result.info}")
+            pytest.skip(f"Skipping test - {XDR_SKIP_REASON}: {port_result.info}")
         selected_port = port_result.get_returned_value()
         logger.info(f"Selected IB port for go-once test: {selected_port.name}")
 
@@ -194,13 +203,15 @@ def test_ib_phy_recovery_attributes(devices, random_api):
     """
     TestToolkit.tested_api = random_api
 
-    with allure.step("Select an IB port for test"):
+    with allure.step("Select an XDR IB port for test"):
         port_result = RandomizationTool.select_random_port(
             requested_ports_state=NvosConsts.LINK_STATE_UP,
-            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE
+            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE,
+            requested_ib_speed=IbInterfaceConsts.XDR
         )
         if not port_result.result:
-            pytest.skip(f"Skipping test - {port_result.info}")
+            port_result.ignore_result()
+            pytest.skip(f"Skipping test - {XDR_SKIP_REASON}: {port_result.info}")
         selected_port = Fae(port_name=port_result.get_returned_value().name)
 
     with allure.step("Validate PHY recovery has default values"):
@@ -319,14 +330,15 @@ def test_ib_set_fae_phy_recovery(devices, random_api, test_name):
         # Create Fae object for ALL ports (using range)
         all_ports = Fae(port_name=all_ports_range)
 
-    with allure.step("Select a random IB port for verification"):
+    with allure.step("Select a random XDR IB port for verification"):
         port_result = RandomizationTool.select_random_port(
             requested_ports_state=NvosConsts.LINK_STATE_UP,
-            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE
+            requested_ports_type=IbInterfaceConsts.IB_PORT_TYPE,
+            requested_ib_speed=IbInterfaceConsts.XDR
         )
         if not port_result.result:
             port_result.ignore_result()
-            pytest.skip(f"Skipping test - {port_result.info}")
+            pytest.skip(f"Skipping test - {XDR_SKIP_REASON}: {port_result.info}")
 
         # Single port for verification
         verification_port_name = port_result.get_returned_value().name

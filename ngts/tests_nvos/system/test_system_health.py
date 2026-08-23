@@ -67,6 +67,8 @@ SINGLE_INSTANCE_COMPONENTS = [
 
 # ASIC health simulation via STATE_DB (thermalctld stopped so value is not overwritten)
 _HEALTH_POLL_WAIT_SEC = 70
+# nv show fae health is only reliable after the DUT has been up for this long
+_FAE_HEALTH_MIN_UPTIME_SEC = 360
 _ASIC_TEMP_UNHEALTHY = "999"
 _ASIC_TEMP_HEALTHY = "30"
 _STATE_DB_TEMPERATURE_PREFIX = "TEMPERATURE_INFO|"
@@ -81,6 +83,17 @@ def _inject_asic_temperature(engines, instance_id, temp_value):
     table_key = f"{_STATE_DB_TEMPERATURE_PREFIX}{instance_id}"
     DatabaseTool.sonic_db_cli_hset(
         engines.dut, "", DatabaseConst.STATE_DB_NAME, table_key, "temperature", temp_value)
+
+
+def ensure_min_uptime(engine, min_uptime_sec=_FAE_HEALTH_MIN_UPTIME_SEC):
+    """Sleep only the residual time until DUT uptime reaches min_uptime_sec."""
+    uptime = float(engine.run_cmd("awk '{print $1}' /proc/uptime").strip())
+    remaining = min_uptime_sec - uptime
+    if remaining <= 0:
+        logger.info(f"DUT uptime {uptime:.0f}s already >= {min_uptime_sec}s; no wait")
+        return
+    logger.info(f"DUT uptime {uptime:.0f}s; waiting {remaining:.0f}s before FAE health check")
+    time.sleep(remaining)
 
 
 def _wait_health_cycle():
@@ -323,69 +336,6 @@ def test_reboot_test(validate_health_history, verify_no_kernel_errors, engines):
     with allure.step("Verify system health status and status-led after reboot"):
         system.validate_health_status(
             HealthConsts.OK, expected_led=expected_led)
-
-
-@pytest.mark.bug(redmine=4969519, note="show system health intermittent failure")
-@pytest.mark.system
-@pytest.mark.air
-@pytest.mark.health
-def test_show_system_health(devices):
-    """
-    Validate all the show system health commands
-        Test flow:
-            1. validate nv show system health cmd
-            2. validate nv show system cmd
-            3. validate nv show fae health cmd
-            4. validate nv show system health history cmd
-            5. validate nv show system health history files cmd
-            6. validate nv show system health history files <file> cmd
-    """
-
-    system = System()
-
-    with allure.step("Validate \"nv show system health\" cmd"):
-        logger.info("Validate \"nv show system health\" cmd")
-        health_output = OutputParsingTool.parse_json_str_to_dictionary(system.health.show()).get_returned_value()
-        ValidationTool.validate_all_values_exists_in_list([HealthConsts.STATUS, HealthConsts.STATUS_LED], health_output.keys()).verify_result()
-        system.validate_health_status(HealthConsts.OK)
-        verify_health_status_and_led(system, HealthConsts.OK)
-
-    with allure.step("Validate health status with \"nv show system\" cmd"):
-        logger.info("Validate health status with \"nv show system\" cmd")
-        system_output = OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
-        ValidationTool.verify_field_exist_in_json_output(system_output, [SystemConsts.HEALTH]).verify_result()
-        verify_expected_health_status(system_output[SystemConsts.HEALTH], HealthConsts.STATUS, OK)
-    with allure.step("Validate \"nv show fae health\" cmd"):
-        logger.info("Validate \"nv show fae health\" cmd")
-        detail_health_output = OutputParsingTool.parse_json_str_to_dictionary(Fae().health.show()).get_returned_value()
-        ValidationTool.validate_all_values_exists_in_list([HealthConsts.STATUS, HealthConsts.STATUS_LED, HealthConsts.MONITOR_LIST],
-                                                          detail_health_output).verify_result()
-        verify_expected_health_status(detail_health_output, HealthConsts.STATUS, OK)
-        monitor_dict = sort_monitor_list(detail_health_output[HealthConsts.MONITOR_LIST])
-        assert len(monitor_dict[NOT_OK]) == 0, "Expected not to have \"Not OK\" devices, cause the health status is OK,\n" \
-            "but those devices are not OK : {}".format(monitor_dict[NOT_OK])
-        ValidationTool.validate_all_values_exists_in_list(devices.dut.health_components,
-                                                          detail_health_output[HealthConsts.MONITOR_LIST].keys()).verify_result()
-
-    with allure.step("Validate \"nv show system health history\" cmd"):
-        logger.info("Validate \"nv show system health history\" cmd")
-        health_history_output = system.health.history.show()
-        assert system.health.history.get_last_status_from_health_file(health_history_output) == OK, "Last status in the health report file is Not OK but expected to be OK"
-
-    with allure.step("Validate \"nv show system health history files\" cmd"):
-        logger.info("Validate \"nv show system health history files\" cmd")
-        health_history_files = OutputParsingTool.parse_json_str_to_dictionary(system.health.history.files.show()).get_returned_value()
-        files_amount = len(health_history_files)
-        assert files_amount in [1, 2], "Unexpected amount of history files.\n Expected: 1 or 2 , but got {}".format(files_amount)
-        assert HealthConsts.HEALTH_FIRST_FILE in health_history_files, "Expect to have {} as health file, but have those files {}"\
-            .format(HealthConsts.HEALTH_FIRST_FILE, health_history_files)
-        if files_amount == 2:
-            assert HealthConsts.HEALTH_SECOND_FILE in health_history_files, "Expect to have {} as health file, but have those files {}" \
-                .format(HealthConsts.HEALTH_SECOND_FILE, health_history_files)
-
-        health_history_file_output = system.health.history.show_health_report_file(HealthConsts.HEALTH_FIRST_FILE)
-        # first line in the health report output is the cmd itself, so we will compared just the file itself.
-        assert health_history_file_output.split("\n", 2)[2] == health_history_output.split("\n", 2)[2], "The first health file does not show the same info as the default cmd"
 
 
 @pytest.mark.system
@@ -1297,6 +1247,71 @@ def test_simulate_health_problem_with_docker_stop(devices, engines, reset_health
     with allure.step("Clear system health component unhealthy counters"):
         system.health.component.action(ActionConsts.CLEAR)
         time.sleep(5)
+
+
+@pytest.mark.bug(redmine=4969519, note="show system health intermittent failure")
+@pytest.mark.system
+@pytest.mark.air
+@pytest.mark.health
+def test_show_system_health(devices, engines):
+    """
+    Validate all the show system health commands
+        Test flow:
+            1. validate nv show system health cmd
+            2. validate nv show system cmd
+            3. validate nv show fae health cmd
+            4. validate nv show system health history cmd
+            5. validate nv show system health history files cmd
+            6. validate nv show system health history files <file> cmd
+    """
+
+    system = System()
+
+    with allure.step("Validate \"nv show system health\" cmd"):
+        logger.info("Validate \"nv show system health\" cmd")
+        health_output = OutputParsingTool.parse_json_str_to_dictionary(system.health.show()).get_returned_value()
+        ValidationTool.validate_all_values_exists_in_list([HealthConsts.STATUS, HealthConsts.STATUS_LED], health_output.keys()).verify_result()
+        system.validate_health_status(HealthConsts.OK)
+        verify_health_status_and_led(system, HealthConsts.OK)
+
+    with allure.step("Validate health status with \"nv show system\" cmd"):
+        logger.info("Validate health status with \"nv show system\" cmd")
+        system_output = OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
+        ValidationTool.verify_field_exist_in_json_output(system_output, [SystemConsts.HEALTH]).verify_result()
+        verify_expected_health_status(system_output[SystemConsts.HEALTH], HealthConsts.STATUS, OK)
+    with allure.step("Validate \"nv show fae health\" cmd"):
+        logger.info("Validate \"nv show fae health\" cmd")
+        # FAE health needs ~6 min uptime after boot; wait only the residual if needed
+        ensure_min_uptime(engines.dut)
+        detail_health_output = OutputParsingTool.parse_json_str_to_dictionary(Fae().health.show()).get_returned_value()
+        ValidationTool.validate_all_values_exists_in_list([HealthConsts.STATUS, HealthConsts.STATUS_LED, HealthConsts.MONITOR_LIST],
+                                                          detail_health_output).verify_result()
+        verify_expected_health_status(detail_health_output, HealthConsts.STATUS, OK)
+        monitor_dict = sort_monitor_list(detail_health_output[HealthConsts.MONITOR_LIST])
+        assert len(monitor_dict[NOT_OK]) == 0, "Expected not to have \"Not OK\" devices, cause the health status is OK,\n" \
+            "but those devices are not OK : {}".format(monitor_dict[NOT_OK])
+        ValidationTool.validate_all_values_exists_in_list(devices.dut.health_components,
+                                                          detail_health_output[HealthConsts.MONITOR_LIST].keys()).verify_result()
+
+    with allure.step("Validate \"nv show system health history\" cmd"):
+        logger.info("Validate \"nv show system health history\" cmd")
+        health_history_output = system.health.history.show()
+        assert system.health.history.get_last_status_from_health_file(health_history_output) == OK, "Last status in the health report file is Not OK but expected to be OK"
+
+    with allure.step("Validate \"nv show system health history files\" cmd"):
+        logger.info("Validate \"nv show system health history files\" cmd")
+        health_history_files = OutputParsingTool.parse_json_str_to_dictionary(system.health.history.files.show()).get_returned_value()
+        files_amount = len(health_history_files)
+        assert files_amount in [1, 2], "Unexpected amount of history files.\n Expected: 1 or 2 , but got {}".format(files_amount)
+        assert HealthConsts.HEALTH_FIRST_FILE in health_history_files, "Expect to have {} as health file, but have those files {}"\
+            .format(HealthConsts.HEALTH_FIRST_FILE, health_history_files)
+        if files_amount == 2:
+            assert HealthConsts.HEALTH_SECOND_FILE in health_history_files, "Expect to have {} as health file, but have those files {}" \
+                .format(HealthConsts.HEALTH_SECOND_FILE, health_history_files)
+
+        health_history_file_output = system.health.history.show_health_report_file(HealthConsts.HEALTH_FIRST_FILE)
+        # first line in the health report output is the cmd itself, so we will compared just the file itself.
+        assert health_history_file_output.split("\n", 2)[2] == health_history_output.split("\n", 2)[2], "The first health file does not show the same info as the default cmd"
 
 
 def validate_system_event(system, latest_event_id, events_to_search):

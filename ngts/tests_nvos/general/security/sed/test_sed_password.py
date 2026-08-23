@@ -8,6 +8,7 @@ from ngts.ngts_types import DevicesT
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.general.security.constants import SecurityConsts
 from ngts.tests_nvos.helpers.general_helpers import run_ssh_cmd_with_rc
 from ngts.tools.test_utils import allure_utils as allure
 
@@ -17,10 +18,10 @@ from ngts.tools.test_utils import allure_utils as allure
 def test_change_sed_password(engines, devices: DevicesT, sed_default_password, random_api, tpm_tool):
     """
     @summary:
-        Verify that change SED password works via nv action both for NVUE and OpenAPI
+        Verify that the maximum-length SED password works via NVUE and OpenAPI.
 
         Steps:
-        1. Set a new SED password via nv action
+        1. Set a valid 127-character SED password via nv action
         2. Verify the password is working via sed util.
         3. Check that tpm primary and secondary bank have this password.
         4. Reboot the system and verify nvos works.
@@ -28,7 +29,7 @@ def test_change_sed_password(engines, devices: DevicesT, sed_default_password, r
     """
     switch: LinuxSshEngine = engines.dut
     system = System()
-    new_sed_password = "test_sed_password"
+    new_sed_password = "A" * SecurityConsts.SED_MAX_PASSWORD_LENGTH
 
     _verify_tpm_banks_password(tpm_tool, sed_default_password, device=devices.dut)
 
@@ -120,15 +121,17 @@ def test_back_new_pass(engines, devices: DevicesT, sed_default_password, tpm_too
 def test_password_length_negative(engines, devices: DevicesT, sed_default_password, tpm_tool):
     """
     @summary:
-        Verify that change SED password works only with passwords from 8 to 250 chars
+        Verify that invalid SED passwords are rejected.
 
         Steps:
-        1. Try to set a new SED password via nv action
-        2. See it fails
+        1. Try to set a 128-character SED password and expect failure
+        2. Try to set a too-short SED password via nv action and expect failure
+        3. Try to set a password containing whitespace and expect failure
     """
     system = System()
-    long_pass = generate_random_string_with_length(251, 502)
-    short_pass = generate_random_string_with_length(1, 7)
+    long_pass = "A" * (SecurityConsts.SED_MAX_PASSWORD_LENGTH + 1)
+    short_pass = generate_random_string_with_length(1, SecurityConsts.SED_MIN_PASSWORD_LENGTH - 1)
+    whitespace_pass = "bad pass word"
 
     _verify_tpm_banks_password(tpm_tool, sed_default_password, device=devices.dut)
 
@@ -139,6 +142,11 @@ def test_password_length_negative(engines, devices: DevicesT, sed_default_passwo
 
     with allure.step(f"Try to set short SED password via nv action {short_pass}"):
         system.security.action_change_sed_password(short_pass).verify_result(should_succeed=False)
+
+    _verify_tpm_banks_password(tpm_tool, sed_default_password, device=devices.dut)
+
+    with allure.step(f"Try to set SED password containing whitespace via nv action {whitespace_pass}"):
+        system.security.action_change_sed_password(whitespace_pass).verify_result(should_succeed=False)
 
     _verify_tpm_banks_password(tpm_tool, sed_default_password, device=devices.dut)
 

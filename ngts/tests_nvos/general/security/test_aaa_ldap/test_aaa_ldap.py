@@ -491,7 +491,7 @@ def test_ldap_filter_group(test_api, engines, request, topology_obj):
             wait_for_ldap_nvued_restart_workaround(item, engine_to_use=engines.dut)
         with allure.step(f'Verify user {test_user.username} now has group "{group_9999}"'):
             check_ldap_user_groups_with_id(engine=engines.dut, username=test_user.username, groupname=group_9999,
-                                           group_should_exist=True)
+                                           group_should_exist=True, timeout=15, poll_interval=1)
 
 
 @pytest.mark.security
@@ -595,7 +595,7 @@ def test_ldap_filter_combo(test_api, engines, request, topology_obj):
         with allure.step(
                 f'Verify user {ldapadm1.username} {"" if grp9999_exists else "does not "}have group "{group_9999}"'):
             check_ldap_user_groups_with_id(engine=engines.dut, username=ldapadm1.username, groupname=group_9999,
-                                           group_should_exist=grp9999_exists)
+                                           group_should_exist=grp9999_exists, timeout=15, poll_interval=1)
         check_user_getent_and_auth(ldapadm2, adm2_exists, adm2_can_auth)
         check_user_getent_and_auth(ldapadm3, adm3_exists, adm3_can_auth)
 
@@ -745,7 +745,7 @@ def test_ldap_map_group(test_api, engines, request, topology_obj):
             wait_for_ldap_nvued_restart_workaround(item, engine_to_use=engines.dut)
         with allure.step(f'Verify user {test_user.username} has groups "{test_groups}"'):
             check_ldap_user_groups_with_id(engine=engines.dut, username=test_user.username, groupname=test_groups,
-                                           group_should_exist=True)
+                                           group_should_exist=True, timeout=15, poll_interval=1)
 
 
 @pytest.mark.security

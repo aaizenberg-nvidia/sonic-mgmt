@@ -1,5 +1,6 @@
 from typing import Dict, Generator
 
+import logging
 import pytest
 import retry
 

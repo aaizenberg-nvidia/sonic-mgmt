@@ -27,7 +27,9 @@ def grep_log_lines_after_datetime(engine: LinuxSshEngine, expression: str, start
                 raise ValueError(f'{start_time=} but should be in format {StatsConsts.SYSTEM_TIME_FORMAT}')
 
         log_lines = []
-        grep_flags = f'-{"" if case_sensitive else "i"}{"E" if extended_regex else "e"}'
+        # -a is required: syslog may contain NUL bytes (ANSI progress output of "nv action" commands),
+        # and without it grep reports "binary file matches" and drops every match after the first NUL.
+        grep_flags = f'-a{"" if case_sensitive else "i"}{"E" if extended_regex else "e"}'
         escaped_expression = "'" + expression.replace("'", r"'\''") + "'"
 
         # grep all lines with expression

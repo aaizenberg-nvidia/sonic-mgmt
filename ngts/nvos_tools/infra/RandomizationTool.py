@@ -33,12 +33,15 @@ class RandomizationTool:
 
     @staticmethod
     def select_random_port(dut_engine=None, requested_ports_state=NvosConsts.LINK_STATE_UP,
-                           requested_ports_logical_state=None, requested_ports_type=None, interface_type=''):
+                           requested_ports_logical_state=None, requested_ports_type=None, interface_type='',
+                           requested_ib_speed=None):
         """
         Select and return a random port
         :param requested_ports_state: required port state
         :param dut_engine: ssh dut engine.
         :param requested_ports_type: the state of all selected ports should be - requested_ports_type
+        :param requested_ib_speed: required negotiated ib-speed (e.g. 'xdr'). Ports that do
+            not report ib-speed at all are excluded - see select_random_ports.
         :return: Port object in returned_value of ResultObject
         """
         if not dut_engine:
@@ -53,7 +56,8 @@ class RandomizationTool:
                                                            requested_ports_state=requested_ports_state,
                                                            requested_ports_type=requested_ports_type,
                                                            requested_ports_logical_state=requested_ports_logical_state,
-                                                           num_of_ports_to_select=1, interface_type=interface_type)
+                                                           num_of_ports_to_select=1, interface_type=interface_type,
+                                                           requested_ib_speed=requested_ib_speed)
         if result_obj.result:
             result_obj.returned_value = result_obj.returned_value[0]
         return result_obj
@@ -62,7 +66,8 @@ class RandomizationTool:
     def select_random_ports(requested_ports_state=NvosConsts.LINK_STATE_UP,
                             requested_ports_type=None,
                             requested_ports_logical_state=None,
-                            num_of_ports_to_select=1, port_requirements_object=None, dut_engine=None, dut_device=None, interface_type=''):
+                            num_of_ports_to_select=1, port_requirements_object=None, dut_engine=None, dut_device=None,
+                            interface_type='', requested_ib_speed=None):
         """
         Select and return list of random ports
         if num_of_ports_to_select is 0, all relevant ports will be selected
@@ -71,6 +76,10 @@ class RandomizationTool:
         :param num_of_ports_to_select: number of ports to select
         :param port_requirements_object: PortRequirements object
         :param dut_engine: ssh dut engine
+        :param requested_ib_speed: required negotiated ib-speed (e.g. 'xdr'). Matched strictly:
+            ib-speed is only reported once a port is Active, and a caller asking for a
+            specific negotiated speed cannot treat "not reported" as a match, so ports
+            that omit the field are excluded rather than accepted.
         :return: a list of Port objects in returned_value of ResultObject
         """
         with allure.step('Choose {num_of_ports_to_select} random ports with provided requirements'.format(
@@ -111,6 +120,8 @@ class RandomizationTool:
             port_requirements_object.set_port_state(requested_ports_state)
             port_requirements_object.set_port_type(requested_ports_type)
             port_requirements_object.set_port_logical_state(requested_ports_logical_state)
+            if requested_ib_speed:
+                port_requirements_object.set_port_ib_speed(requested_ib_speed, strict=True)
 
             logging.info("Get a list of relevant ports")
             all_relevant_ports = Port.get_list_of_ports(dut_engine, port_requirements_object)

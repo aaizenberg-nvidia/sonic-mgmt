@@ -34,10 +34,15 @@ class PortRequirements:
                                  IbInterfaceConsts.TYPE: ""}
     port_requirements = None
     interface_type = ''
+    strict_fields = None
 
     def __init__(self, interface_type=''):
         self.port_requirements = self.default_port_requirements.copy()
         self.interface_type = interface_type  # Port type refers to "internal/external/fnm ports"
+        # Requirements that a port must report explicitly. By default a requirement
+        # whose field is absent from the port output is treated as satisfied; fields
+        # listed here reject such a port instead.
+        self.strict_fields = set()
 
     def __str__(self):
         return self.__class__.__name__ + "=" + str({k: v for k, v in self.port_requirements.items() if v})
@@ -51,8 +56,20 @@ class PortRequirements:
     def set_port_speed(self, speed):
         self.port_requirements[IbInterfaceConsts.LINK_SPEED] = speed
 
-    def set_port_ib_speed(self, ib_speed):
+    def set_port_ib_speed(self, ib_speed, strict=False):
+        """
+        Require a negotiated ib-speed (e.g. ``xdr``).
+
+        :param strict: when True, a port that does not report ib-speed at all is
+            rejected rather than accepted. ib-speed only appears once the port is
+            Active, so a caller that needs the negotiated speed cannot treat
+            "not reported" as a match.
+        """
         self.port_requirements[IbInterfaceConsts.LINK_IB_SPEED] = ib_speed
+        if strict:
+            self.strict_fields.add(IbInterfaceConsts.LINK_IB_SPEED)
+        else:
+            self.strict_fields.discard(IbInterfaceConsts.LINK_IB_SPEED)
 
     def set_port_state(self, state):
         self.port_requirements[IbInterfaceConsts.LINK_STATE] = state
@@ -150,6 +167,10 @@ class Port(BaseComponent):
                         if not any(port_details[field_name] == expected_state for expected_state in port_requirements_list):
                             select_port = False
                             break
+                    elif port_requirements_list and field_name in (port_requirements_object.strict_fields or ()) \
+                            and port_details.get(field_name) != port_requirements_list:
+                        select_port = False
+                        break
                     elif port_requirements_list and field_name in port_details.keys() and port_details[field_name] != port_requirements_list:
                         select_port = False
                         break

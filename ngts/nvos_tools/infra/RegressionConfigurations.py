@@ -41,8 +41,8 @@ class Configurations:
         "10.7.148.249": ['sw61p1', 'sw67p1'],
 
         # Black Mamba DGX
-        "10.7.145.81": ['sw1p1', 'sw2p1'],
-        "10.7.145.82": ['sw1p1', 'sw2p1'],
+        "10.7.145.81": ['sw5p1', 'sw21p1'],
+        "10.7.145.82": ['sw5p1', 'sw21p1'],
 
         # Crocodile
         "10.7.148.94": ['swA1p1', 'swA2p1'],
@@ -60,18 +60,15 @@ class Configurations:
         "10.7.145.39": ['sw14p1', 'sw43p1'],
     }
 
-    juliet_systems_with_loopbox = ["NVOS_juliet_10_7_148_136", "NVOS_juliet_10_7_148_184",
-                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_surrogate_10_7_145_54", "NVOS_rosalind_spil_1",
-                                   "NVOS_rosalind_skt_1", "NVOS_rosalind_eb1_10", "NVOS_rosalind_eb2_2102", "NVOS_juliet_10_7_148_126",
-                                   "NVOS_rosalind_eb1_2152", "NVOS_rosalind_eb2_164", "NVOS_rosalind_eb2_2124"]
     juliet_systems_with_loopbox = ["NVOS_surrogate_10_7_145_41", "NVOS_juliet_10_7_148_136", "NVOS_juliet_10_7_148_184",
-                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_juliet_10_7_148_126"]
+                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_surrogate_10_7_145_54",
+                                   "NVOS_rosalind_spil_1", "NVOS_rosalind_skt_1", "NVOS_rosalind_eb1_10",
+                                   "NVOS_rosalind_eb2_2102", "NVOS_juliet_10_7_148_126", "NVOS_rosalind_eb1_2152",
+                                   "NVOS_rosalind_eb2_164", "NVOS_rosalind_eb2_2124"]
 
     non_standalone_systems = ['NVOS_juliet_10_7_148_148', 'NVOS_sws_rtf2_rosalind_198']
 
     doca_traffic_systems = ['NVOS_taipan_10_7_145_34', 'NVOS_bm_10_220_12_132']
-
-    systems_with_wrong_shunt_resistor = ['NVOS_juliet_10_7_148_128', 'NVOS_juliet_10_7_148_144']
 
     systems_with_wrong_shunt_resistor = ['NVOS_juliet_10_7_148_128', 'NVOS_juliet_10_7_148_144']
 

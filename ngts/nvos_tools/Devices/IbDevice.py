@@ -479,11 +479,11 @@ class IbSwitch(BaseSwitch):
                                                        'system.profile']
         self.techsupport_etc_empty_files_to_ignore = ['ifstatelock', '.lock', 'base', 'tail', 'installed', 'rules.v4',
                                                       'rules.v6', 'gnmi-server_reconcile', 'lsb_release', 'usr.sbin.haveged',
-                                                      'nvidia_modprobe', '.placeholder', 'installed', '.pwd.lock',
+                                                      'nvidia_modprobe', '.placeholder', '.pwd.lock',
                                                       'verification_test', 'opasswd.old', 'opasswd', 'sbin.dhclient', 'reload.lock',
                                                       'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable',
                                                       'peer_telemetry_enable', '10-ztp-log-forwarding.conf',
-                                                      'event_db.json']
+                                                      'event_db.json', 'accept_eula_version']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
         self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
@@ -1554,22 +1554,6 @@ class TaipanSwitch(IbSwitch):
         with allure.step('Wait for auto-reboot to complete after FW crash'):
             logger.info("CPO system - FW crash triggers auto-reboot, waiting for system recovery")
             DutUtilsTool.wait_on_system_reboot(engine, device=self)
-
-
-# -------------------------- Taipan Single Asic Switch ----------------------------
-class TaipanSingleAsicSwitch(TaipanSwitch):
-
-    def __init__(self):
-        super().__init__(switch_class=NvosConst.TAIPAN_SINGLE_ASIC_SWITCH)
-
-    def _init_constants(self):
-        super()._init_constants()
-        self.number_of_transceivers = 4
-        self.transceivers_tables_name = "TRANSCEIVER_INFO"
-        self.transceiver_list = [f'els{a + 1}' for a in range(4)] + ['fnm1'] + [f'oe{b + 18}' for b in range(18)]
-
-    def _init_psu_list(self):
-        self.psu_list = []
 
 
 # -------------------------- Crocodile Switch ----------------------------

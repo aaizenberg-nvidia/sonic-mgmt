@@ -8,7 +8,6 @@ from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_constants.constants_nvos import FansConsts
 from ngts.nvos_constants.constants_nvos import OutputFormat
 from ngts.nvos_constants.constants_nvos import PlatformConsts, HealthConsts, ActionConsts, SystemConsts
-from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.nvos_tools.infra.FilesTool import TempFileOnEngine
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -19,6 +18,7 @@ from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.test_system_health import verify_health_status_and_led
 from ngts.tests_nvos.helpers import redmine_helpers
+from ngts.tests_nvos.platform.helpers import get_available_temperature_sensor_list
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
 
@@ -308,24 +308,6 @@ def test_show_platform_environment_temperature(engines, devices, random_api):
         verify_sensor_group_by_tolerance(output, PlatformConsts.FW_ASIC)
     if devices.dut.psu_list:
         verify_sensor_group_by_tolerance(output, PlatformConsts.ENV_PSU.upper())
-
-
-def get_available_temperature_sensor_list(device: BaseDevice):
-    with allure.step('Get temperature-sensor list'):
-        try:
-            if device.psu_list:
-                missing_psus = [psu.replace('PSU', 'PSU-') for psu in Platform().environment.get_available_psus(invert=True)]
-            else:
-                missing_psus = []
-            output = [sensor for sensor in device.temperature_sensors if not any(psu in sensor for psu in missing_psus)]
-            logger.info("Available temperature sensors: " + str(output))
-            return output
-        except AssertionError as e:
-            if "'psu' is not one of" in str(e):
-                # then it's a Juliet or similar switch
-                return device.temperature_sensors
-            else:
-                raise
 
 
 @pytest.mark.platform

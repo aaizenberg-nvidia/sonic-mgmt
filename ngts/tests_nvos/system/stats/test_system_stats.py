@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
-import base64
 import logging
 import random
-import pytest
 import time
 import os
+
+import pytest
 
 from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
 from ngts.ngts_types import DevicesT, EnginesT
@@ -21,6 +21,7 @@ from ngts.tests_nvos.system.stats.stats_helpers import (
     check_category_internal_files_exist,
     install_internal_file,
     install_out_of_window_file,
+    create_old_samples_internal_file,
     remove_internal_files,
     uses_per_day_layout,
     current_category_file,
@@ -46,6 +47,7 @@ from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tests_nvos.platform.helpers import get_available_temperature_sensor_list
 
 logger = logging.getLogger(__name__)
 
@@ -430,13 +432,7 @@ def test_system_stats_performance(engines: EnginesT, devices: DevicesT, test_api
                                             save_config, TestToolkit.engines.dut).verify_result()
 
         with allure.step("Create category internal file with old samples"):
-            file_path = StatsConsts.OLD_SAMPLES_PATH + name + '.csv'
-            player_engine.upload_file_using_scp(dest_username=devices.dut.default_username,
-                                                dest_password=devices.dut.default_password,
-                                                dest_folder=StatsConsts.INTERNAL_PATH,
-                                                dest_ip=engines.dut.ip,
-                                                local_file_path=file_path)
-            install_internal_file(engine, name, age_days=int(StatsConsts.HISTORY_DURATION_MIN) + 1)
+            create_old_samples_internal_file(engine, name)
 
         with allure.step("Perform system reboot"):
             system.reboot.action_reboot(params='force').verify_result()
@@ -930,11 +926,13 @@ def test_system_stats_big_files(engines: EnginesT, devices: DevicesT, random_api
             with allure.step("Wait for stats-reportd to finish cleaning up the huge file"):
                 wait_for_stats_file_cleanup(engine, 'temperature')
 
-            with allure.step("Get Temperature header number of lines"):
-                temperature_header_num_of_lines = get_header_number_of_lines(engines, 'temperature')
-                assert temperature_header_num_of_lines >= devices.dut.stats_temperature_header_num_of_lines, \
-                    (f"temperature header number of lines ({temperature_header_num_of_lines}) is lower than the "
-                     f"expected minimum number of lines: {devices.dut.stats_temperature_header_num_of_lines}")
+        with allure.step("Get Temperature header number of lines"):
+            temperature_header_num_of_lines = get_header_number_of_lines(engines, 'temperature')
+            expected_temperature_header_num_of_lines = \
+                len(get_available_temperature_sensor_list(devices.dut)) + StatsConsts.CONST_HEADER_ROWS
+            assert temperature_header_num_of_lines == expected_temperature_header_num_of_lines, \
+                (f"temperature header number of lines ({temperature_header_num_of_lines}) is not equal to the "
+                 f"expected number of lines: {expected_temperature_header_num_of_lines}")
 
             with allure.step("Validate creating new category file when file size is over 600MB"):
                 validate_number_of_lines_in_external_file(engines, system, 'temperature',

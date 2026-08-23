@@ -209,8 +209,13 @@ def test_ztp_image(engines: EnginesT, devices: DevicesT):
 
             with allure.step("Check ztp status for uninstall image"):
                 _wait_until_ztp_step_status(system, '02-image', SystemConsts.ZTP_STATUS_SUCCESS)
-                output_dictionary = system.image.parse_show()
-                assert output_dictionary['partition2']['build-id'] is None, 'Image not uninstalled'
+
+                @retry.retry(AssertionError, tries=60, delay=5)
+                def _verify_partition2_cleared():
+                    output_dictionary = system.image.parse_show()
+                    assert output_dictionary['partition2']['build-id'] is None, 'Image not uninstalled'
+
+                _verify_partition2_cleared()
 
 
 def _restore_port_up(selected_port: Port) -> None:

@@ -179,19 +179,39 @@ def clear_accounting_logs_on_servers(accounting_server_mngrs: list[AaaServerMana
                 )
 
 
-def _prepare_accounting_logs_for_medium(accounting_server_mngrs: list[AaaServerManager], medium: str) -> None:
-    settle_seconds = 1
-    if medium == AuthMedium.OPENAPI:
-        settle_seconds = 2
+def wait_for_accounting_logs_drained(accounting_server_mngrs: list[AaaServerManager], grep: list[str],
+                                     timeout_sec: float = ACCOUNTING_DRAIN_TIMEOUT_SEC,
+                                     settle_sec: float = ACCOUNTING_DRAIN_SETTLE_SEC) -> bool:
+    """
+    @summary: Drain leftover accounting records (matching ``grep``) before taking a per-medium baseline.
 
-    with allure.step(f'Wait {settle_seconds} seconds for pending accounting logs before {medium}'):
-        time.sleep(settle_seconds)
-    clear_accounting_logs_on_servers(accounting_server_mngrs)
+        TACACS session-teardown records from the *previous* auth medium can be written with a delay.
+        A fixed sleep before clearing the logs cannot guarantee they all landed, so a late record can
+        arrive *after* clear+baseline and get wrongly counted against the next medium (e.g. OpenAPI,
+        which must produce no logs). Instead of a fixed sleep, repeatedly clear the logs and verify
+        nothing matching ``grep`` reappears within ``settle_sec``. Once the (per-user) logs stay empty
+        for a full settle interval, the previous burst has drained and the baseline is trustworthy.
 
-    if medium == AuthMedium.OPENAPI:
-        with allure.step('Wait 1 second and clear accounting logs again before OpenApi'):
-            time.sleep(1)
-        clear_accounting_logs_on_servers(accounting_server_mngrs)
+    @param accounting_server_mngrs: server managers whose accounting logs are drained
+    @param grep: grep terms identifying the relevant records (e.g. [switch_hostname, client_username])
+    @param timeout_sec: bounded upper limit to wait for the drain to complete (best-effort on timeout)
+    @param settle_sec: interval the matching logs must stay empty after a clear to be considered drained
+    @return: True if drained within the timeout, False if the timeout was reached (best-effort)
+    """
+    with allure.step(f'Drain leftover accounting logs (grep: {grep}, timeout: {timeout_sec}s)'):
+        deadline = time.time() + timeout_sec
+        while True:
+            clear_accounting_logs_on_servers(accounting_server_mngrs)
+            time.sleep(settle_sec)  # give any in-flight records from the previous medium time to land
+            leftover = [mngr for mngr in accounting_server_mngrs
+                        if mngr.tail_accounting_logs(grep=grep).logs]
+            if not leftover:
+                return True
+            if time.time() >= deadline:
+                logger.warning(f'Accounting logs did not drain within {timeout_sec}s; '
+                               f'still seeing records on servers: {[mngr.ip for mngr in leftover]}')
+                return False
+            logger.info(f'Accounting logs still arriving on {[mngr.ip for mngr in leftover]}; clearing again')
 
 
 def wait_for_accounting_logs_drained(accounting_server_mngrs: list[AaaServerManager], grep: list[str],
@@ -649,22 +669,46 @@ def check_ldap_user_with_getent_passwd(engine: ProxySshEngine, username: str, us
             assert any(row.startswith(f'{username}:') for row in rows) == user_should_exist, err_msg
 
 
-def check_ldap_user_groups_with_id(engine: ProxySshEngine, username: str, groupname: str, group_should_exist: bool) -> None:
-    with allure.step('Get id output'):
-        cmd = f'id {username}'
-        output = engine.run_cmd(cmd)
-
+def check_ldap_user_groups_with_id(engine: ProxySshEngine, username: str, groupname: str,
+                                   group_should_exist: bool, timeout: float = 0,
+                                   poll_interval: float = 1) -> None:
     groups = [groupname] if isinstance(groupname, str) else groupname
-    if group_should_exist:
-        violating_groups = [group for group in groups if f'({group})' not in output]
-    else:
-        violating_groups = [group for group in groups if f'({group})' in output]
+    cmd = f'id {username}'
+    deadline = time.monotonic() + timeout
+    output = ''
+    violating_groups = list(groups)
 
-    assert not violating_groups, (f'some groups violating the expectations.\n'
-                                  f'groups that expected{"" if group_should_exist else " not"} to exist for user "{username}": {groups}\n'
-                                  f'violating groups: {violating_groups}\n'
-                                  f'cmd: {cmd}\n'
-                                  f'full output: {output}')
+    with allure.step('Get id output'):
+        while True:
+            output = engine.run_cmd(cmd)
+            if group_should_exist:
+                violating_groups = [group for group in groups if f'({group})' not in output]
+            else:
+                violating_groups = [group for group in groups if f'({group})' in output]
+
+            if not violating_groups:
+                return
+
+            if time.monotonic() >= deadline:
+                timeout_note = (
+                    f'timed out after {timeout}s waiting for LDAP user groups to reach expected state.\n'
+                    if timeout > 0 else ''
+                )
+                raise AssertionError(
+                    f'{timeout_note}'
+                    f'some groups violating the expectations.\n'
+                    f'groups that expected{"" if group_should_exist else " not"} '
+                    f'to exist for user "{username}": {groups}\n'
+                    f'violating groups: {violating_groups}\n'
+                    f'cmd: {cmd}\n'
+                    f'full output: {output}'
+                )
+
+            logging.info(
+                'LDAP groups %s have not reached the expected state for user %s; retrying in %ss',
+                violating_groups, username, poll_interval,
+            )
+            time.sleep(poll_interval)
 
 
 # ==================== FIPS Mode Management Functions ====================

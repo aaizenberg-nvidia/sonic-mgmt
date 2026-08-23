@@ -4,11 +4,10 @@ import re
 import time
 import retry
 from datetime import datetime, timezone
-from datetime import datetime
 from dateutil import parser
 
 from ngts.constants.constants import LinuxConsts
-from ngts.nvos_constants.constants_nvos import HealthConsts, NvosConst, ApiType, SystemConsts
+from ngts.nvos_constants.constants_nvos import HealthConsts, NvosConst, ApiType, SystemConsts, RemarkableLogsConsts
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.Tools import Tools
@@ -25,6 +24,15 @@ KEEP_ALL_CONFIG = "keep all-config"
 KEEP_ONLY_FILES = "keep only-files"
 KEEP_BASIC = "keep basic"
 DO_NOT_CHECK_DOCKERS = ['snmp']
+KEEP_SDK_FILES = "keep sdk-files"
+
+
+@retry.retry(RuntimeError, tries=4, delay=5)
+def _retry_docker_inspect(engine, docker_name):
+    output = engine.run_cmd(r"docker inspect -f \{\{'.Created'\}\} " + docker_name)
+    if "Error" in output:
+        raise RuntimeError(output)
+    return output
 
 
 @retry.retry(RuntimeError, tries=4, delay=5)
@@ -225,9 +233,21 @@ def verify_cleanup_done_for_ib(engine, time_before_rf, system, username, param='
 
     with allure.step("Verify tech-support files were deleted"):
         if param != KEEP_ONLY_FILES:
-            output = engine.run_cmd("ls /var/dump")
+            output = engine.run_cmd(f"sudo ls {SystemConsts.TECHSUPPORT_FILES_PATH} 2>/dev/null || true")
             if output and "No such file or directory" not in output:
-                errors += "\ntech-support files were not deleted: {}".format(output)
+                errors += f"\ntech-support files were not deleted from {SystemConsts.TECHSUPPORT_FILES_PATH}: {output}"
+
+    with allure.step("Verify /var/dump was cleaned up"):
+        if param != KEEP_ONLY_FILES:
+            output = engine.run_cmd("ls /var/dump/ 2>/dev/null || true")
+            if output and "No such file or directory" not in output:
+                errors += f"\n/var/dump was not cleaned up after factory reset: {output}"
+
+    with allure.step("verify cleanup for sdk files in paths matching to pattern: /var/log/mellanox/sdk*"):
+        if param != KEEP_SDK_FILES:
+            output = engine.run_cmd("ls /var/log/mellanox/sdk* 2>/dev/null || true")
+            if output and "No such file or directory" not in output:
+                errors += f"\n/var/log/mellanox/sdk* was not cleaned up after factory reset: {output}"
 
     with allure.step("Verify old stats internal files were deleted"):
         if param != KEEP_ONLY_FILES:

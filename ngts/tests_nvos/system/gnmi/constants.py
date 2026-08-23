@@ -28,6 +28,10 @@ STREAM_SUBSCRIBE_WINDOW_SEC = 8
 # gnmic SAMPLE stream-mode interval (one result-set per interval).
 STREAM_SUBSCRIBE_SAMPLE_INTERVAL = '1s'
 
+# Wider than STREAM_SUBSCRIBE_WINDOW_SEC: the window starts at launch and the server registers
+# subscriptions serially, so the last subscriber starts streaming seconds in.
+STREAM_SUBSCRIBE_LOAD_WINDOW_SEC = 20
+
 
 # PAM / load tests: wrong credentials for background ``gnmic`` clients (must not match a real user)
 GNMI_INVALID_AUTH_CLIENT_USERNAME = 'abc'

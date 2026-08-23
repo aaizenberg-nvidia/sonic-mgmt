@@ -48,6 +48,9 @@ def test_techsupport_show_and_since(engines, test_name, random_api, devices, ser
     file1 = None
     folder = None
 
+    with allure.step("Cleanup sdk files before running the test"):
+        engines.dut.run_cmd("sudo rm -rf /var/log/mellanox/sdk* 2>/dev/null || true")
+
     with allure.step('Test techsupport show and since functionality'):
         # --- INVALID DATE HANDLING (no generation) ---
         with allure.independent_step('Invalid date handling'):

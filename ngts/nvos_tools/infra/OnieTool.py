@@ -126,11 +126,6 @@ class OnieTool:
         version = ProvisionConsts.VERSIONS_DICT[dev_type]['version']
         logger.info(f"Selected provisioning version: {version}")
         return ProvisionConsts.VERSIONS_DICT[dev_type]['provisioning_url']
-        if OnieTool.is_opn(topology_obj):
-            dev_type = OnieTool.get_device_type(topology_obj)
-            version = ProvisionConsts.VERSIONS_DICT[dev_type]['version']
-            logger.info(f"Selected provisioning version: {version}")
-            return ProvisionConsts.VERSIONS_DICT[dev_type]['provisioning_url']
 
     @staticmethod
     def run_provisioning(serial_engine, filename):

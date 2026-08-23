@@ -40,8 +40,10 @@ class TagSearchContext:
 class NvosGitTool:
     """Tool for NVOS git repository operations."""
 
-    # Pre-cloned nvos repo (synced by cron: /auto/sw_system_project/NVOS_INFRA/scripts/git_pull_chipsim.sh)
-    DEFAULT_NVOS_REPO_PATH = "/auto/sw_system_project/NVOS_INFRA/ChipSim/nvos-master/nvos"
+    # Pre-cloned nvos repo, refreshed hourly by /auto/sw_system_project/NVOS_INFRA/nvos-cache/pull.sh
+    # from an owner's cron. Fetches --tags --prune from gitlab-master so newly cut branches
+    # like nvos-25-03-1000 land automatically. Override with $NVOS_GIT_REPO_PATH if needed.
+    DEFAULT_NVOS_REPO_PATH = "/auto/sw_system_project/NVOS_INFRA/nvos-cache/nvos"
 
     # FW version patterns in fw.mk (pre-compiled for performance)
     FW_PATTERNS = {
@@ -54,18 +56,28 @@ class NvosGitTool:
     VERSION_FROM_FILENAME_PATTERN = re.compile(r'nvos-amd64-(\d+\.\d+\.\d+(?:-\d+)?)')
     VERSION_FROM_PATH_PATTERN = re.compile(r'/(\d+\.\d+\.\d+(?:-\d+)?)/amd64/')
 
+    # Env var override: precedence is explicit repo_path > $NVOS_GIT_REPO_PATH > default.
+    # Useful when the shared clone at DEFAULT_NVOS_REPO_PATH is stale or not writable
+    # and a user-owned mirror (refreshed by their own cron) is preferred.
+    ENV_REPO_PATH = "NVOS_GIT_REPO_PATH"
+
     def __init__(self, repo_path: str | None = None):
         """
         Initialize NvosGitTool.
 
         Args:
-            repo_path: Path to NVOS git repository. Uses default if not provided.
+            repo_path: Path to NVOS git repository. If not provided, falls back to
+                $NVOS_GIT_REPO_PATH, then to DEFAULT_NVOS_REPO_PATH.
 
         Example:
             >>> git_tool = NvosGitTool()
             >>> git_tool = NvosGitTool("/custom/path/to/nvos")
         """
-        self.repo_path = Path(repo_path or self.DEFAULT_NVOS_REPO_PATH)
+        self.repo_path = Path(
+            repo_path or
+            os.environ.get(self.ENV_REPO_PATH) or
+            self.DEFAULT_NVOS_REPO_PATH
+        )
 
     # Class-level temp directory to avoid race conditions between instances
     _tmp_home = None

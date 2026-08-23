@@ -28,7 +28,9 @@ from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.tests_nvos.helpers import redmine_helpers
 from ngts.nvos_tools.acl.acl import Acl, AclID
 from ngts.nvos_tools.acl.rule import RuleID
-
+from ngts.tests_nvos.acl.test_acl_basic import (
+    unset_default_control_plane_acls, set_default_control_plane_acls
+)
 logger = logging.getLogger(__name__)
 
 SLEEP_TIME = 5
@@ -731,6 +733,10 @@ def configure_validate_dscp_acl_value(engines: EnginesT, devices: DevicesT, acl_
         output = OutputParsingTool.parse_dscp_value_from_acl(engines, acl_obj, acl_id, rule_id_1)
         ValidationTool.verify_field_value_in_output(output, AclConsts.DSCP, random_dscp_value).verify_result()
 
+    # acl-default-outbound ends with a blanket accept on eth+ in the same kernel chain this rule
+    # lands in, which stops chain traversal before the DSCP marking is applied.
+    unset_default_control_plane_acls(engines)
+
     with allure.step("Check ACL counters before ping"):
         rule_packets_before = get_rule_packets(mgmt_port, acl_id, rule_id_1, rule_direction=AclConsts.OUTBOUND)
 
@@ -777,10 +783,13 @@ def configure_validate_dscp_acl_value(engines: EnginesT, devices: DevicesT, acl_
                 f"Expected TOS {random_dscp_value_hex} (DSCP {random_dscp_value}) not found. Found: {tos_values}"
 
         with allure.step("Unset dscp option to check CLI command"):
-            acl_obj.acl_id[acl_id].rule.rule_id[rule_id_1].action.dscp.unset(apply=True)
-            output = OutputParsingTool.parse_dscp_value_from_acl(engines, acl_obj, acl_id, rule_id_1)
+            # Unset the whole action (not action set / action set dscp)
+            acl_obj.acl_id[acl_id].rule.rule_id[rule_id_1].action.unset(apply=True)
+            action_show = acl_obj.acl_id[acl_id].rule.rule_id[rule_id_1].action.parse_show()
             with allure.step("Verify DSCP field in ACL is removed after unset"):
-                ValidationTool.verify_field_exist_in_json_output(output, AclConsts.DSCP, should_be_found=False)
+                ValidationTool.verify_field_exist_in_json_output(action_show, AclConsts.SET, should_be_found=False)
+
+        set_default_control_plane_acls(engines)
 
 
 def sleep() -> None:

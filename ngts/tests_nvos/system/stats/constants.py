@@ -221,7 +221,7 @@ class StatsConsts:
     TIMESTAMP_FORMAT = "%b-%d %Y %H:%M:%S"
     SYSTEM_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
     MAX_ROWS_TO_SCAN = 300
-    CONST_HEADER_ROWS = 8
+    CONST_HEADER_ROWS = 9  # Number of header constant rows in the stats file's format: hostname, statistic group, time, columns ...
     BIG_FILE_NUM_OF_LINES = 600026
     # Just past the 600MB mark, where the single-file design used to truncate a
     # file into a <category>.csv.old and start over.

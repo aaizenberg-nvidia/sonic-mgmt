@@ -60,6 +60,24 @@ tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_mgmt_interface_dhcp_opti
     conditions:
     - https://redmine.mellanox.com/issues/5100996
 
+tests_nvos/interfaces/test_ib0_interface_mtu.py::test_interface_ib0_mtu_disabled_sm:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_ib_interface_configuration.py::test_ib_interface_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_interface_eth0_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
 tests_nvos/general/security/tpm_attestation/test_tpm_attestation.py:
   skip:
     reason: Testcase skipped on gorilla systems - feature is pruned on gorilla
@@ -639,12 +657,6 @@ tests_nvos/multi_asic/test_fatal_mode.py:
     conditions:
     - https://redmine.mellanox.com/issues/4780661
 
-tests_nvos/system/issu/test_system_issu.py:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5049077'
-    conditions:
-    - https://redmine.mellanox.com/issues/5049077
-
 tests_nvos/system/gnmi/test_gnmi_server.py::test_simulate_gnmi_server_failure:
   skip:
     reason: '[NVOS - Design] Bug SW #4841879: [nv-gNMI] No system health events when
@@ -699,15 +711,19 @@ tests_nvos/cluster/test_nmx_t_distributed.py:
 tests_nvos/system/test_system_health.py::test_show_system_health:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
+    - '''simx'' in testbed'
 
 tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
   regex: true
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
+
 
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:

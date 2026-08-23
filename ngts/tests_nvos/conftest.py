@@ -41,6 +41,7 @@ from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_tools.cli_coverage.nvue_cli_coverage import NVUECliCoverage
+from ngts.nvos_tools.ib.IbPortsTool import IbPortsTool
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.nvos_tools.infra import ExceptionTool
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner
@@ -804,6 +805,24 @@ def devices(topology_obj):
     devices = DeviceFactory.create_devices_object(topology_obj)
     TestToolkit.update_devices(devices)
     return devices
+
+
+@pytest.fixture(scope='session')
+def ib_ports(engines):
+    """
+    Live IB port topology of the DUT, discovered once per session.
+
+    Prefer this over reading the static connectivity json: that file is a snapshot
+    regenerated only when someone runs test_and_update_connectivity_json.py, so its
+    link-state fields can be months stale, while this reflects the fabric now.
+
+    Not autouse - discovery runs ibdiagnet (about a minute), so only tests that ask
+    for it pay that cost.
+
+        def test_something(ib_ports):
+            port_a, port_b = ib_ports.loop_ports()
+    """
+    return IbPortsTool.discover(engines.dut)
 
 
 @pytest.fixture(scope='session', autouse=True)

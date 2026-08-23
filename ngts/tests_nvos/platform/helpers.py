@@ -5,6 +5,8 @@ from typing import Callable, Iterable
 from retry import retry
 
 from ngts.nvos_constants.constants_nvos import HealthConsts, LogsSources
+from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
+from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.Tools import Tools
@@ -164,3 +166,21 @@ def validate_invalid_voltage_value_logged(system, engine):
             engine=engine,
             only_latest_log=True,
         )
+
+
+def get_available_temperature_sensor_list(device: BaseDevice):
+    with allure.step('Get temperature-sensor list'):
+        try:
+            if device.psu_list:
+                missing_psus = [psu.replace('PSU', 'PSU-') for psu in Platform().environment.get_available_psus(invert=True)]
+            else:
+                missing_psus = []
+            output = [sensor for sensor in device.temperature_sensors if not any(psu in sensor for psu in missing_psus)]
+            logger.info("Available temperature sensors: " + str(output))
+            return output
+        except AssertionError as e:
+            if "'psu' is not one of" in str(e):
+                # then it's a Juliet or similar switch
+                return device.temperature_sensors
+            else:
+                raise
