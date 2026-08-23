@@ -656,6 +656,14 @@ class SPCXRAConsts:
     LEAF_DIP_BASE_IPV6 = "192:168:5:1:1:1:2:0"
     LEAF_DIP_STEP = 1
 
+    # PFC port buffer in bytes, per chip. 363000 is the Spectrum-4 / SN5600 figure from the
+    # Spectrum-X v2.2 deployment guide and is what SPC6 runs with. SPC4 and SPC5 use 20200 because
+    # they reject 363000: their cells are 192 bytes and the buffer caps at 258432 bytes, exactly
+    # 1346 cells, so even SPC6's 1417 cells does not fit. Both are placeholders pending the QoS PFC
+    # values the architecture team is confirming for those generations. A chip left out of this map
+    # renders without "port-buffer" at all and takes whatever NVUE derives instead.
+    PFC_PORT_BUFFER_BY_CHIP = {"SPC6": 363000, "SPC5": 20200, "SPC4": 20200}
+
     # Ceiling on the packets resident in the loop at once, (ports x packets-per-port). Only a
     # backstop: the schedule is sized from chip_dict's calibrated per-port count, which is what
     # tracked the healthy runs - 30 packets at 800G, 12 at 400G, 9 at 200G. 4096 is the level the

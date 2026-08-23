@@ -1225,6 +1225,9 @@ class NvuePerformanceCli(PerformanceCommon):
             "leaf_dip_base_v4": SPCXRAConsts.LEAF_DIP_BASE_IPV4,
             "leaf_dip_base_v6": SPCXRAConsts.LEAF_DIP_BASE_IPV6,
             "leaf_dip_step": SPCXRAConsts.LEAF_DIP_STEP,
+            # None on chips with no published value, which makes dut.yaml.jinja omit
+            # "port-buffer" and leave the sizing to NVUE.
+            "pfc_port_buffer": SPCXRAConsts.PFC_PORT_BUFFER_BY_CHIP.get(chip_type),
         }
         outputText = jinja_template.render(parameter_dict=parameter_dict)
         try:

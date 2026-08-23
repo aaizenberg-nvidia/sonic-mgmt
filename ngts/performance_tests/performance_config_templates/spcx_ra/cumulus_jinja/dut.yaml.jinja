@@ -128,20 +128,54 @@
     qos:
       pfc:
         default-global:
-          port-buffer: 20200
+          {# port-buffer only on chips with a published value, from PFC_PORT_BUFFER_BY_CHIP.
+             Omitted elsewhere so NVUE sizes it: SPC5 rejects the SPC6 figure against a
+             258432-byte limit, and neither Spectrum-X deployment guide gives a Spectrum-5
+             replacement. #}
+          {% if parameter_dict.get('pfc_port_buffer') %}
+          port-buffer: {{ parameter_dict.pfc_port_buffer }}
+          {% endif %}
           switch-priority:
             '3': {}
-          xoff-threshold: 65000
-          xon-threshold: 65000
+          xoff-threshold: 75000
+          xon-threshold: 75000
       roce:
         state: enabled
         mode: lossless
+      {# Lossy traffic in this topology is negligible, so the default 50/50 egress buffer split
+         starves the RoCE class. Both Spectrum-X deployment guides resize the pools to 90/10. #}
+      traffic-pool:
+        default-lossy:
+          memory-percent: 10
+        roce-lossless:
+          memory-percent: 90
     router:
       adaptive-routing:
         state: enabled
+      {# Without BFD a failed link is only detected when the BGP hold timer expires, so a dead
+         nexthop stays in the upstream ECMP group for seconds. 300ms x 3 detects it in ~900ms. #}
+      bfd:
+        state: enabled
+        profile:
+          default:
+            detect-multiplier: 3
+            min-rx-interval: 300
+            min-tx-interval: 300
       bgp:
         state: enabled
         autonomous-system: spine
+        {# Hold best-path selection until the session set has settled. With 512 neighbours coming
+           up at once the default of 0 lets BGP advertise from a partial view and then churn. #}
+        convergence-wait:
+          establish-wait-time: 15
+          time: 30
+        {# The leaf re-apply restarts FRR mid-test; graceful restart keeps forwarding on stale
+           routes across that restart instead of withdrawing the whole ECMP group. #}
+        graceful-restart:
+          mode: full
+          path-selection-deferral-time: 180
+          restart-time: 180
+          stale-routes-time: 180
         router-id: 3.3.3.3
       policy:
         route-map:
@@ -267,11 +301,19 @@
                 type: numbered
                 update-source: {{ right_address_list["v6"][ipidx] }}
               {% endfor %}
+            {# Ignore AS-path differences when selecting multipaths. Every generator link peers
+               from its own AS, so without this the paths are not considered equal-cost and the
+               upstream ECMP group cannot form at full width. #}
+            path-selection:
+              multipath:
+                aspath-ignore: enabled
             peer-group:
               v4_group_left:
                 address-family:
                   ipv4-unicast:
                     state: enabled
+                bfd:
+                  profile: default
                 remote-as: external
               v6_group_left:
                 address-family:
@@ -282,11 +324,15 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
+                bfd:
+                  profile: default
                 remote-as: external
               v4_group_right:
                 address-family:
                   ipv4-unicast:
                     state: enabled
+                bfd:
+                  profile: default
                 remote-as: external
               v6_group_right:
                 address-family:
@@ -297,5 +343,7 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
+                bfd:
+                  profile: default
                 remote-as: external
             state: enabled  
