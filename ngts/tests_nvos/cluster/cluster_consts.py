@@ -126,6 +126,11 @@ class ClusterConsts:
     # maintenance state constants
     MAINTENANCE_STATE = 'maintenance-state'
     MAINTENANCE_STATE_OPTIONS = ['up', 'diag', 'down']
+    # Compute trays are listed in 'nv show sdn trays' with maintenance-state 'N/A'
+    # (6623822 fix, 0.8 >= 25.03.0722): their admin state is not supported — the
+    # update/restore actions are rejected with COMPUTE_TRAY_NOT_SUPPORTED_ERR.
+    COMPUTE_TRAY_MAINTENANCE_STATE = 'N/A'
+    COMPUTE_TRAY_NOT_SUPPORTED_ERR = 'Tray admin state is not supported for tray'
 
     # DSCP Marking constants
     DSCP_MARKING_FIELD = 'dscp-marking'

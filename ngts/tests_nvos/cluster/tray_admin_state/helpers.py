@@ -109,11 +109,11 @@ def eligible_trays_for_maintenance_change(tray_ids, local_switch_slot, tray_topo
     customers — SWITCH trays only (RN note in 0.6, blocked in the NMX-C API in 0.8).
     Compute trays must never be selected for maintenance-state changes.
 
-    Labs with compute trays (compute_nodes > 0): use the local switch tray. (Since 0.8
-    'nv show sdn trays' lists switch trays only, so every listed tray is a switch —
+    Labs with compute trays (compute_nodes > 0): use the local switch tray. (Since the
+    6623822 fix the trays view lists compute trays too, marked maintenance-state 'N/A' —
     we still restrict to the local slot because only its port impact is verifiable
-    on the local switch; relax to all listed trays when a multi-switch-tray setup
-    with remote-impact verification exists.)
+    on the local switch; relax to all non-'N/A' listed trays when a multi-switch-tray
+    setup with remote-impact verification exists.)
 
     Switch-only labs (compute_nodes==0): every tray in the list is a switch tray;
     any of them is fair game. (Note: the only such setup configured today,
@@ -214,28 +214,16 @@ def reset_all_compute_node_gpus(setup_name, cluster=None):
 
 def get_compute_tray_slots(sdn):
     """
-    Slot ids of compute trays, derived from partition GPU locations.
+    Slot ids of compute trays, taken from the trays view.
 
-    Since 0.8 compute trays are filtered out of 'nv show sdn trays', so the trays view
-    cannot name them. Partition locations enumerate GPU locations
-    (<rack>.<slot>.<unit>.<gpu>) and only compute slots host GPUs, so any slot appearing
-    there is a compute tray. Slots also present in the trays view are excluded as a
-    safety net - a maintenance action must never target a listed (switch) tray here.
+    Since the 6623822 fix (0.8 >= 25.03.0722) 'nv show sdn trays' lists compute trays
+    again, with maintenance-state 'N/A' (their admin state is not supported), so the
+    view itself names them — no partition parsing needed (and this keeps working when
+    partitions are deleted).
     """
-    gpu_slots = set()
-    partitions = OutputParsingTool.parse_show_output_to_dict(
-        sdn.partition.show(output_format=OutputFormat.json)).get_returned_value()
-    for partition_id in partitions:
-        partition_output = OutputParsingTool.parse_show_output_to_dict(
-            sdn.partition.partition_id[partition_id].show(output_format=OutputFormat.json)
-        ).get_returned_value()
-        if 'locations' not in partition_output:
-            continue
-        for _uuid, location in ClusterTools.get_partition_uuid_location_map(partition_output):
-            location_parts = str(location).split('.')
-            if len(location_parts) >= 2:
-                gpu_slots.add(location_parts[1])
-    return gpu_slots - set(get_all_trays(sdn).keys())
+    return {
+        tray_id for tray_id, tray_data in get_all_trays(sdn).items()
+        if tray_data.get(ClusterConsts.MAINTENANCE_STATE) == ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE}
 
 
 def get_all_trays(sdn):
