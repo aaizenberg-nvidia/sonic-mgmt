@@ -1303,6 +1303,28 @@ class PlatformConsts:
     }
 
 
+class UsbFrontPanelConsts:
+    """
+    Front-panel USB disable/enable (FR #4294636). Only feature-specific values live here;
+    enable/disable/yes/no/state come from ActionParamConsts / ActionConsts / SystemConsts.
+    """
+    PENDING_STATE = 'pending-state'
+    REBOOT_REQUIRED = 'reboot-required'
+    OPPOSITE_STATE = {ActionParamConsts.ENABLED: ActionParamConsts.DISABLED,
+                      ActionParamConsts.DISABLED: ActionParamConsts.ENABLED}
+    ACTION_PER_STATE = {ActionParamConsts.ENABLED: ActionConsts.ENABLE,
+                        ActionParamConsts.DISABLED: ActionConsts.DISABLE}
+    CONFIRMATION = 'y'
+    ACTION_REBOOT_EXPECTED_OUTPUT = ('Action succeeded',) + SystemConsts.REBOOT_RESPONSE_MESSAGES
+    LSBLK_COLUMNS = 'NAME,TRAN,TYPE'
+    LSBLK_TRAN_USB = 'usb'
+    LSBLK_TYPE_DISK = 'disk'
+    LSBLK_BLOCKDEVICES = 'blockdevices'
+    COMMAND_NOT_FOUND_RC = 127
+    UNSUPPORTED_ERRORS = ['The requested item does not exist.', 'Invalid Command']
+    ACTION_TIMEOUT = 120
+
+
 class ChassisLocationConsts:
     TRAY_ID = 'tray-index'
     SLOT_NUM = 'slot-number'
