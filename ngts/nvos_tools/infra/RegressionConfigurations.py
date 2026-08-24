@@ -39,6 +39,8 @@ class Configurations:
         # Black Mamba
         "10.7.148.248": ['sw61p1', 'sw67p1'],
         "10.7.148.249": ['sw61p1', 'sw67p1'],
+        "10.7.148.150": ['sw17p1', 'sw47p1'],
+        "10.7.148.151": ['sw17p1', 'sw47p1'],
 
         # Black Mamba DGX
         "10.7.145.81": ['sw5p1', 'sw21p1'],
