@@ -307,7 +307,7 @@ class TestLinkLocalIPacket:
          link_local_dst, downlink_uplink_rx_info, rif_support) = common_params
 
         self.remove_ips_form_downlink_ifaces(duthost, mg_facts, rx_iface, tx_iface)
-        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo)
+        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list)
 
         link_local_src, link_local_dst = self.add_link_local_address_to_ptf(ptfhost, ptf_rx_idx,
                                                                             ptf_tx_idx, cleanup_list)
@@ -334,7 +334,7 @@ class TestLinkLocalIPacket:
          link_local_dst, downlink_uplink_rx_info, rif_support) = common_params
 
         self.remove_ips_form_downlink_ifaces(duthost, mg_facts, rx_iface, tx_iface)
-        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo)
+        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list)
 
         logger.info("Sending IPV6 Packet from {} to {}".format(rx_iface, tx_iface))
         pkt = testutils.simple_ipv6ip_packet(eth_dst=ptf_tx_mac,
@@ -352,12 +352,13 @@ class TestLinkLocalIPacket:
                                out_ptf_indices, out_ifaces, out_rif_ifaces, rif_support)
 
     @staticmethod
-    def add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo):
+    def add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list):
         duthost.command("config vlan add {}".format(VLAN_ID))
         config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
 
         vlan_member = config_facts.get('VLAN_MEMBER')
-        if vlan_member and "t1" not in tbinfo["topo"]["name"]:
+        ports_added = False
+        if vlan_member:
             for vlan_interface, vlan_members in vlan_member.items():
                 vlan_id = re.search(r"Vlan(\d+)", vlan_interface).group(1)
                 if vlan_members.get(rx_iface):
@@ -370,7 +371,9 @@ class TestLinkLocalIPacket:
                         cleanup_list.append((duthost.command,
                                              ("config vlan member add {} {} {}".format(vlan_id,
                                                                                        iface, tagging_mode), ), {}))
-        else:
+                    ports_added = True
+                    break
+        if not ports_added:
             for iface in [rx_iface, tx_iface]:
                 duthost.command("config vlan member add {} {} -u".format(VLAN_ID, iface))
                 cleanup_list.append((duthost.command,
