@@ -13,6 +13,7 @@ from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
 from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
                                                      get_cli_port_selection_options)
 from ngts.nvos_tools.infra.FilesTool import FilesTool
+from ngts.performance_tests.log_files.players_logger import get_players_cmd_logger
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 
@@ -348,6 +349,9 @@ class PerformanceCommon:
         :param cmd: Command to be executed on the switch
         :return: None or raise error
         """
+        players_cmd_logger = get_players_cmd_logger()
+        if players_cmd_logger is not None:
+            players_cmd_logger.info(f"[{self.dut_alias}] {cmd}")
         try:
             output = self.engine.run_cmd(cmd, print_output=print_output, validate=True)
             logging.debug(f"command output: {output}")

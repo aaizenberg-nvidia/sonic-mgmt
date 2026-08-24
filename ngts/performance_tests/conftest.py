@@ -6,6 +6,7 @@ import os
 import logging
 import time
 from typing import Optional
+from types import SimpleNamespace
 from datetime import datetime
 from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, deploy_burst_config, stop_traffic,
                                                                 unsplit_all_ports, get_is_simx,
@@ -18,6 +19,8 @@ from ngts.helpers.performance.performance_db_helpers import (create_performance_
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.thread_log_filter import config_root_logger
+from ngts.performance_tests.log_files.players_logger import (init_players_cmd_logger,
+                                                             PLAYERS_CMD_LOGGER_NAME)
 from ngts.helpers.performance.port_selection import (set_cli_port_selection_options,
                                                      get_cli_port_selection_options,
                                                      port_selection_was_activated,
@@ -26,15 +29,24 @@ from devts.infra.tools.exceptions.test_issue import TestIssue
 
 logger = logging.getLogger()
 
+PLAYERS_CMD_LOG_PREFIX = "players_commands"
+_players_cmd_log_run_timestamp = None
+
 
 def pytest_configure(config):
-    """Capture port-selection options at session start (before any fixtures run).
+    """Capture port-selection options and stamp the players-command log run timestamp.
 
-    Stored at module scope in ``port_selection`` so resolution works regardless of fixture
-    ordering — in particular when a class-scoped ``basic_setup_configuration`` applies the
-    config before any function-scoped fixture would run. No-op behavior unless
-    ``--perf-exclude-ports`` / ``--perf-include-ports`` is supplied.
+    Port-selection options are stored at module scope in ``port_selection`` so resolution
+    works regardless of fixture ordering — in particular when a class-scoped
+    ``basic_setup_configuration`` applies the config before any function-scoped fixture would
+    run. No-op behavior unless ``--perf-exclude-ports`` / ``--perf-include-ports`` is supplied.
+
+    One players-command log timestamp is stamped for the whole session so every file the run
+    produces shares it and the run's files can be selected as a group.
     """
+    global _players_cmd_log_run_timestamp
+    _players_cmd_log_run_timestamp = datetime.now().strftime(MongoDbConsts.TIME_REGEX_FORMAT_FOR_MONGO_DB)
+
     set_cli_port_selection_options(
         setup_name=config.getoption("--setup_name", default=None),
         exclude_enabled=config.getoption("--perf-exclude-ports", default=False),
@@ -46,6 +58,22 @@ def pytest_configure(config):
         logger.info("PORT SELECTION ENABLED via CLI: exclude=%s include=%s config=%s (setup=%s)",
                     opts["exclude_enabled"], opts["include_enabled"],
                     opts["config_path"] or DEFAULT_PORT_SELECTION_CONFIG, opts["setup_name"])
+
+
+def pytest_runtest_setup(item):
+    """Redirect the players-command log to a per-test file, before any of the test's fixtures.
+
+    A conftest hookimpl runs ahead of pytest's own ``pytest_runtest_setup``, which is what
+    triggers fixture setup, so this lands before every fixture for the item at every scope.
+    That matters for the class-scoped ``basic_setup_configuration`` most suites use: it runs
+    before any function-scoped fixture, so a fixture-based switch would attribute its
+    configuration commands to the previous test.
+
+    The name matches the test's MongoDB ``test_name`` so a log file and a DB record can be
+    correlated; ``get_perf_test_name`` reads only ``request.node``.
+    """
+    init_players_cmd_logger(_players_cmd_log_run_timestamp,
+                            f"{PLAYERS_CMD_LOG_PREFIX}_{get_perf_test_name(SimpleNamespace(node=item))}")
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -66,6 +94,10 @@ def pytest_sessionfinish(session, exitstatus):
 @pytest.fixture(scope="session", autouse=True)
 def config_root_logger_fixture():
     config_root_logger()
+    # config_root_logger runs dictConfig, which defaults to disable_existing_loggers=True and so
+    # switches off the players-command logger already created for the first test. Later tests
+    # re-enable it on init; this keeps the first test's commands from being dropped.
+    logging.getLogger(PLAYERS_CMD_LOGGER_NAME).disabled = False
 
 
 @pytest.fixture(scope="session")
