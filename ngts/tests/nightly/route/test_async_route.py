@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import statistics
 import time
 
 import allure
@@ -20,6 +21,7 @@ logger = logging.getLogger()
 
 
 NUMBER_OF_MEASUREMENTS = 3
+BASELINE_MEASUREMENTS_COUNT = 5
 ADD = 'Add'
 REMOVE = 'Remove'
 TIMINGS_DB_FILE = 'timings_db.json'
@@ -52,6 +54,20 @@ def get_routes_count(dut_engine, ip_version):
     return routes_count
 
 
+def _get_timing_from_db(timings_db_path, ip_version, platform, action, routes_count, branch):
+    """
+    Read a single expected timing value from a timings DB file.
+
+    :return float|None: expected timing if present, otherwise None
+    """
+    if not os.path.exists(timings_db_path):
+        return None
+    with open(timings_db_path, 'r') as f:
+        timings = json.load(f)
+    return timings.get(branch, {}).get(ip_version, {}).get(platform, {}).get(
+        str(routes_count), {}).get(action)
+
+
 def get_expected_timing(ip_version, platform, action, routes_count, branch):
     """
     Retrieve expected timing value for particular ip_version, platform, action and routes_count
@@ -63,6 +79,13 @@ def get_expected_timing(ip_version, platform, action, routes_count, branch):
     :param str branch: branch of the test
     :return float: expected timing(in sec) to perform an action
     """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    local_timings_db_path = f'{current_dir}/{TIMINGS_DB_FILE}'
+    expected_timing = _get_timing_from_db(
+        local_timings_db_path, ip_version, platform, action, routes_count, branch)
+    if expected_timing is not None:
+        return expected_timing
+
     shared_timings_files = [
         (f, os.path.getctime(os.path.join(SHARED_TIMINGS_DB_LOCATION, f)))
         for f in os.listdir(SHARED_TIMINGS_DB_LOCATION)
@@ -70,22 +93,26 @@ def get_expected_timing(ip_version, platform, action, routes_count, branch):
     ]
     timing_files_sorted = sorted(shared_timings_files, key=lambda x: x[1])
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    local_timings_db_path = f'{current_dir}/{TIMINGS_DB_FILE}'
-    timings_db_paths = [local_timings_db_path]
-    # Adding shared timings DB files to the list
-    timings_db_paths += [f'{SHARED_TIMINGS_DB_LOCATION}{file[0]}' for file in timing_files_sorted]
-    for timings_db_path in timings_db_paths:
-        if os.path.exists(timings_db_path):
-            with open(timings_db_path, 'r') as f:
-                timings = json.loads(f.read())
-                routes_count_key = str(routes_count)
-                expected_timing = timings.get(branch, {}).get(ip_version, {}).get(platform, {}).get(
-                    routes_count_key, {}).get(action)
-                if expected_timing:
-                    if timings_db_path != local_timings_db_path:
-                        logger.warning(f"Using shared timings DB file: {timings_db_path} for expected timing")
-                    return expected_timing
+    shared_timings = []
+    used_files = []
+    for file_name, _ in timing_files_sorted:
+        if len(shared_timings) >= BASELINE_MEASUREMENTS_COUNT:
+            break
+        timings_db_path = os.path.join(SHARED_TIMINGS_DB_LOCATION, file_name)
+        expected_timing = _get_timing_from_db(
+            timings_db_path, ip_version, platform, action, routes_count, branch)
+        if expected_timing is not None:
+            shared_timings.append(expected_timing)
+            used_files.append(timings_db_path)
+
+    if shared_timings:
+        average_timing = round(statistics.mean(shared_timings), 2)
+        logger.info(
+            f"Using average of {len(shared_timings)} oldest shared timings DB file(s) "
+            f"{used_files}: {average_timing}"
+        )
+        return average_timing
+
     logger.warning(f'Expected execution time for {ip_version} {platform} {action} {routes_count} routes not found')
 
 
@@ -104,7 +131,7 @@ def set_expected_execution_time(ip_version, platform, action, routes_count, exec
     shared_timings_file = f'{SHARED_TIMINGS_DB_LOCATION}/{today_date}.json'
     if os.path.exists(shared_timings_file):
         with open(shared_timings_file, 'r') as f:
-            timings = json.loads(f.read())
+            timings = json.load(f)
     else:
         timings = {}
     routes_count_key = str(routes_count)
