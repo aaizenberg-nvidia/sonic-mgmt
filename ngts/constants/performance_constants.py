@@ -1,5 +1,6 @@
 import logging
 import os
+from enum import StrEnum
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional, Tuple
@@ -134,6 +135,7 @@ class PerfConsts:
     DVS_SHAPER_VALUE = 0.975
     OCC_AVG_TH = 400
     TC_NUM = 7
+
     # Thresholds
     OCC_TH_DICT = {ValidationConsts.OCC_AVG: OCC_AVG_TH}
     TEMPERATURE_TH = 105
@@ -212,6 +214,8 @@ class PerfConsts:
 
     # Configuration Parameters
     PORT_GROUPS = "port_groups"
+    AR_ALGORITHM = "ar_algorithm"
+    AR_ALGORITHM_ENV_VAR = "AR_ALGORITHM"
     ECMP_CONFIGURATIONS = "ecmp_configurations"
     TRAFFIC_PATTERN = "traffic_pattern"
     BW_THRESHOLD = "bw_threshold"
@@ -607,6 +611,43 @@ class Cl_Consts:
         "SPC6": 8,
     }
     SDK_DEB_DIR_TEMPLATE = os.path.join(PerfConsts.SDK_VERSION_PATH, "sx_sdk_eth-{SDK_VERSION}/DEBS/6.1.0-29-2-amd64/")
+
+
+class ArAlgorithm(StrEnum):
+    """AR (adaptive-routing) port-selection algorithms for the spcx_ra scenario.
+
+    Members map to the exact strings consumed downstream by perf_sys_sdk
+    (spcx_basic_ra_dut_config / spcx_ra_tg -> ar_profile_create ``port_select_mode``).
+    Round-Robin and Semi-Round-Robin require ASIC generation SPC6+; Random-From-Best
+    runs on SPC2+.
+    """
+    RANDOM_FROM_BEST = "random_from_best"
+    SEMI_ROUND_ROBIN = "semi_round_robin"
+    ROUND_ROBIN = "round_robin"
+
+    @classmethod
+    def from_env(cls) -> Optional["ArAlgorithm"]:
+        """Return the algorithm requested through the ``AR_ALGORITHM`` env variable.
+
+        Lets a run override the algorithm without touching the test code, e.g.
+        ``AR_ALGORITHM=semi_round_robin pytest ... test_spcx_ra.py``.
+
+        Returns:
+            The matching member, or ``None`` when the variable is unset or empty
+            (the caller then falls back to its own default).
+
+        Raises:
+            ValueError: The variable holds a value that is not a supported algorithm.
+        """
+        requested = os.getenv(PerfConsts.AR_ALGORITHM_ENV_VAR, "").strip().lower()
+        if not requested:
+            return None
+        try:
+            return cls(requested)
+        except ValueError:
+            raise ValueError(
+                f"Invalid {PerfConsts.AR_ALGORITHM_ENV_VAR}='{requested}'. "
+                f"Supported values: {', '.join(member.value for member in cls)}") from None
 
 
 class SPCXRAConsts:

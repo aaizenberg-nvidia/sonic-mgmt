@@ -14,6 +14,7 @@ from ngts.helpers.performance.performance_setup_helpers import (save_base_config
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts
+from ngts.performance_tests.spcx_ra.conftest import resolve_ar_algorithm
 from ngts.constants.nv_optimizer_constant import NvOptimizerEnvVariables
 from ngts.helpers.performance.performance_setup_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.constants.performance_constants import MongoDbConsts
@@ -32,6 +33,7 @@ def get_conf_args(is_ipv6, chip_type, performance_parameters):
                                   else PerfConsts.MED_AR_THRESHOLD),
         "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
                                  else PerfConsts.HIGH_AR_THRESHOLD),
+        PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
         "two_sided_ar": True,
         "is_ipv6": is_ipv6,
         "split_right": 2,

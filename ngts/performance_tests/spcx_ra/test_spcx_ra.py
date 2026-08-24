@@ -48,7 +48,8 @@ from ngts.helpers.performance.performance_setup_helpers import (
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
-    TESTS_SCENARIO, compute_flap_validation_overrides, get_leaf_scenario_traffic)
+    TESTS_SCENARIO, compute_flap_validation_overrides, get_leaf_scenario_traffic,
+    resolve_ar_algorithm)
 
 logger = logging.getLogger()
 
@@ -290,6 +291,7 @@ class LanesConfig:
                                            else PerfConsts.LOW_AR_THRESHOLD)),
             "congestion_thresh_med": chip_speed_config.mid_ar_threshold,
             "congestion_thresh_hi": chip_speed_config.high_ar_threshold,
+            PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
             "two_sided_ar": True,
             "is_ipv6": is_ipv6,
             "is_ipv4": is_ipv4,

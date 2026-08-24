@@ -19,7 +19,7 @@ from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, Mongo
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.helpers.performance.traffic_helpers import create_json_traffic_file_with_stream_list, create_json_traffic_stream
-from ngts.performance_tests.spcx_ra.conftest import get_spine_to_leaf_stream_list
+from ngts.performance_tests.spcx_ra.conftest import get_spine_to_leaf_stream_list, resolve_ar_algorithm
 import re
 
 
@@ -74,6 +74,7 @@ def get_conf_args(is_ipv6, chip_type):
                                   else PerfConsts.MED_AR_THRESHOLD),
         "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
                                  else PerfConsts.HIGH_AR_THRESHOLD),
+        PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
         "is_ipv6": is_ipv6,
         "host": PerfConsts.RIGHT_TG_ALIAS,
         "spine": PerfConsts.LEFT_TG_ALIAS,

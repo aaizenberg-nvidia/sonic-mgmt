@@ -11,6 +11,8 @@ Provides:
   - Traffic helpers       spine/leaf JSON builders used by spcx_ra tests
                           and by sibling suites (optimizer, Alibaba,
                           400G->200G).
+  - resolve_ar_algorithm  the AR port-selection algorithm every spcx_ra
+                          conf_args builder configures on the DUT.
 
 The LanesConfig dataclass and the test classes live in test_spcx_ra.py.
 This module uses duck typing (getattr(cls, "CONFIG", None)) so it has no
@@ -29,7 +31,8 @@ import pytest
 from devts.infra.tools.exceptions.test_issue import TestIssue
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.constants.constants import BugHandlerConst, InfraConst
-from ngts.constants.performance_constants import MongoDbConsts, PerfConsts, SPCXRAConsts
+from ngts.constants.performance_constants import (
+    ArAlgorithm, MongoDbConsts, PerfConsts, SPCXRAConsts)
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
@@ -44,6 +47,53 @@ from ngts.helpers.performance.traffic_helpers import (
 logger = logging.getLogger()
 
 TESTS_SCENARIO = "spcx_ra"
+
+# Round-Robin and Semi-Round-Robin need the AR port-selection hardware introduced
+# in SPC6, so they are rejected on SPC4 and SPC5 (see ArAlgorithm's docstring).
+ROUND_ROBIN_ALGORITHMS = (ArAlgorithm.ROUND_ROBIN, ArAlgorithm.SEMI_ROUND_ROBIN)
+ROUND_ROBIN_UNSUPPORTED_CHIPS = ("SPC4", "SPC5")
+
+
+def resolve_ar_algorithm(chip_type) -> ArAlgorithm:
+    """Return the AR algorithm the spcx_ra suites configure on the DUT.
+
+    The choice belongs to the test layer, so every spcx_ra ``conf_args`` builder
+    - this suite, the optimizer, Alibaba AR and 400G->200G - calls this helper
+    instead of each spelling out its own rule.
+
+    The ``AR_ALGORITHM`` env variable wins when set, e.g.
+    ``AR_ALGORITHM=semi_round_robin pytest ...`` - it applies to the whole run,
+    and raises both on an unsupported value and on a round-robin algorithm
+    requested on SPC4 / SPC5. Otherwise the per-chip default applies -
+    Round-Robin on SPC6, Random-From-Best on older silicon. That default is also
+    perf_sys_sdk's own, so a suite that starts passing the resolved value keeps
+    the behavior it had while the key was omitted.
+
+    The value flows: conf_args -> dut.jinja "ar_algorithm" key -> perf_sys_sdk
+    spcx_basic_ra_dut_config.config_ar -> ar_profile_create(port_select_mode=...).
+
+    Args:
+        chip_type: Detected chip-type identifier, e.g. ``"SPC5"`` / ``"SPC6"``.
+
+    Returns:
+        ArAlgorithm: the member to place in ``conf_args[PerfConsts.AR_ALGORITHM]``.
+
+    Raises:
+        ValueError: ``AR_ALGORITHM`` holds a value that is not supported.
+        TestIssue: ``AR_ALGORITHM`` requests a round-robin algorithm on a chip
+            that does not support it (SPC4 / SPC5).
+    """
+    algorithm = ArAlgorithm.from_env()
+    if algorithm is None:
+        return (ArAlgorithm.ROUND_ROBIN if chip_type == "SPC6"
+                else ArAlgorithm.RANDOM_FROM_BEST)
+    if (algorithm in ROUND_ROBIN_ALGORITHMS and
+            chip_type in ROUND_ROBIN_UNSUPPORTED_CHIPS):
+        raise TestIssue(
+            f"{PerfConsts.AR_ALGORITHM_ENV_VAR}='{algorithm.value}' is not supported on "
+            f"{chip_type} | supported on this DUT: {ArAlgorithm.RANDOM_FROM_BEST.value}. "
+            f"Unset {PerfConsts.AR_ALGORITHM_ENV_VAR} to use the per-chip default")
+    return algorithm
 
 
 def _get_test_config(request):
@@ -246,7 +296,33 @@ def _populate_test_state(instance, config, is_ipv6, nodeid, players, engines,
     absolute_breakout = isinstance(players[PerfConsts.DUT_ALIAS]['cli'], NvueCli)
     instance.conf_args = config.to_template_args(
         chip_type, is_ipv6, absolute_breakout=absolute_breakout)
+    instance.ar_algorithm = instance.conf_args[PerfConsts.AR_ALGORITHM]
     instance.traffic_jsons = get_spcx_ra_spine_traffic(players, instance.conf_args)
+
+
+@pytest.fixture(autouse=True)
+def _report_ar_parameters(request, _init_test_instance_state):
+    """Show the AR algorithm and congestion thresholds in the Allure parameters.
+
+    Reads ``instance.ar_algorithm`` and the low/mid/high congestion thresholds
+    off ``instance.conf_args`` rather than resolving them again, so the reported
+    values are the ones that went into ``conf_args`` and on to the DUT.
+
+    Depends on ``_init_test_instance_state`` so the attributes are attached
+    first, and is function-scoped so the parameters land on every test rather
+    than on the first test of the class only.
+
+    Args:
+        request: pytest ``FixtureRequest``.
+        _init_test_instance_state: Dependency-only - forces the instance state
+            this fixture reads to be populated first.
+    """
+    if _get_test_config(request) is None:
+        return
+    allure.dynamic.parameter(PerfConsts.AR_ALGORITHM, request.instance.ar_algorithm)
+    for threshold_key in ("congestion_thresh_lo", "congestion_thresh_med",
+                          "congestion_thresh_hi"):
+        allure.dynamic.parameter(threshold_key, request.instance.conf_args[threshold_key])
 
 
 @pytest.fixture(autouse=True)

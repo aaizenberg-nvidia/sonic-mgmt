@@ -15,6 +15,7 @@ from ngts.helpers.performance.performance_setup_helpers import (
     save_session_base_configuration)
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
+from ngts.performance_tests.spcx_ra.conftest import resolve_ar_algorithm
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.constants.constants import CliType
 from ngts.helpers.performance.performance_setup_helpers import skip_test_on_unsupported_os
@@ -72,6 +73,7 @@ def conf_args(chip_type):
                                            else PerfConsts.MED_AR_THRESHOLD),
                  "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
                                           else PerfConsts.HIGH_AR_THRESHOLD),
+                 PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
                  "is_ipv6": False,
                  "is_ipv4": True,
                  "split_right": 4,
