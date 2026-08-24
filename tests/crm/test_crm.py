@@ -922,7 +922,10 @@ def _get_interface_neighbor_and_port(duthost, tbinfo, dut_interface, nbrhosts):
     if neighbor.get('is_multi_vrf_peer') and neighbor.get('multi_vrf_data'):
         orig_intf_map = neighbor['multi_vrf_data'].get('orig_intf_map', {})
         neighbor_interface = orig_intf_map.get(neighbor_interface, neighbor_interface)
-    neighbor_interface = f'po{lacp_num}' if lacp_num else neighbor_interface.replace('Ethernet', 'eth')
+    if lacp_num:
+        neighbor_interface = f'po{lacp_num}'
+    elif neighbor_interface.startswith('Ethernet'):
+        neighbor_interface = f"eth{neighbor_interface.removeprefix('Ethernet')}"
     return neighbor['host'], neighbor_interface
 
 
