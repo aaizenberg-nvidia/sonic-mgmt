@@ -733,6 +733,61 @@ def _wait_until_ztp_step_status(system, ztp_step='', ztp_status='', tries=30, de
     _retry_decorator(system, ztp_step, ztp_status)
 
 
+def _parse_ztp_status_output(output):
+    """
+    Parse `ztp -s` output into a lowercase-keyed dict.
+
+    The format is Cumulus-version dependent and both variants are handled:
+      - 5.18+:  'state: disabled'         (lowercase 'key: value')
+      - legacy: 'State        disabled'   (column-aligned 'Key<spaces>value')
+    Header lines such as 'ZTP INFO:' / 'Last ZTP INFO:' are ignored.
+    """
+    parsed = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.upper().endswith('ZTP INFO:'):
+            continue
+        # 5.18+ 'key: value'. The key is everything before the first ':' and may be multi-word
+        # (e.g. 'last run'), but it is only single-spaced; the value itself may contain ':'
+        # (URLs/timestamps). A run of 2+ spaces before the ':' means the ':' really belongs to a
+        # legacy column-aligned value, so those lines fall through to the legacy parser below.
+        key, sep, value = line.partition(':')
+        if sep and key.strip() and not re.search(r'\s{2,}', key):
+            parsed[key.strip().lower()] = value.strip()
+            continue
+        # Legacy column-aligned 'Key<2+ spaces>value'; the key may be multi-word (e.g. 'Last run').
+        match = re.match(r'^(.+?)\s{2,}(.*)$', line)
+        if match:
+            parsed[match.group(1).strip().lower()] = match.group(2).strip()
+    return parsed
+
+
+def verify_ztp_output_legacy(engines, expected_result, expected_state):
+    """
+    Verify the legacy Cumulus `ztp -s` status output.
+
+    Runs `sudo ztp -s` on the DUT, parses the state/result/method/url fields and asserts they
+    match the expected values. On mismatch the full `ztp -s` output is included in the error.
+
+    :param engines: test engines; the DUT engine is `engines.dut`
+    :param expected_result: dict with any of the keys 'result', 'method', 'url'
+    :param expected_state: expected value of the ztp 'state' field (e.g. 'disabled')
+    """
+    output = engines.dut.run_cmd('sudo ztp -s')
+    logger.info(f"'ztp -s' output:\n{output}")
+    parsed = _parse_ztp_status_output(output)
+
+    assert parsed.get('state') == expected_state, \
+        f"ZTP state mismatch: expected '{expected_state}', got '{parsed.get('state')}'.\n" \
+        f"Full 'ztp -s' output:\n{output}"
+
+    for field, expected_value in expected_result.items():
+        actual_value = parsed.get(field.lower())
+        assert actual_value == expected_value, \
+            f"ZTP {field} mismatch: expected '{expected_value}', got '{actual_value}'.\n" \
+            f"Full 'ztp -s' output:\n{output}"
+
+
 def reset_ztp(engines, system):
     logger.info('Resetting ZTP')
     engines.dut.run_cmd('sudo ztp -R')

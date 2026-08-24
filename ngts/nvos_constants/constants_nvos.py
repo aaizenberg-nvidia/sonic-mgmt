@@ -91,6 +91,7 @@ class CumulusConsts:
     DNS_PRIORITY = "priority"
     DNS_VRF_LIST = ['default', 'RED']
     INTERFACE_IP_VRF = 'vrf'
+    LINK_MAC = "mac-address"
     FETCH_SUCCESS_MESSAGE = "File has been successfully fetched"
     FETCH_ERROR_MESSAGE = "Failed to fetch file due to the following error"
     PLATFORM_ASIC_TEMPERATURE_FIELDS = ['current', 'min', 'max', 'crit', 'state']
@@ -607,7 +608,10 @@ class SystemConsts:
     LATEST_KEY = 'latest'
 
     MIN_SYSTEM_YEAR = '1970'
-    MAX_SYSTEM_YEAR = '2035'
+    # 2037 is the last full year settable on a 32-bit time_t device (the "Year 2038" limit:
+    # max representable instant is 2038-01-19 03:14:07 UTC). Must match the DUT's accepted
+    # range (it reports "Date year must be in the range of (1970-2037)").
+    MAX_SYSTEM_YEAR = '2037'
     MIN_SYSTEM_DATE = MIN_SYSTEM_YEAR + "-01-01"
     MAX_SYSTEM_DATE = MAX_SYSTEM_YEAR + "-12-31"
     MIN_SYSTEM_DATETIME = MIN_SYSTEM_DATE + " 00:00:00"
@@ -2465,6 +2469,9 @@ class HealthConsts:
     STATUS_LED = "status-led"
     LED_OK_STATUS = "green"
     LED_NOT_OK_STATUS = "amber"
+    # OS-specific health monitoring systemd service names
+    NVOS_HEALTH_SERVICE = "health-statsd"
+    CUMULUS_HEALTH_SERVICE = "cumulus-sdk-health-mon"
     MONITOR_LIST = "monitor-list"
     HEALTH_FIRST_FILE = "health_history"
     HEALTH_SECOND_FILE = "health_history.1"

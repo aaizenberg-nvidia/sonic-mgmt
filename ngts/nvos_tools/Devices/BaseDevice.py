@@ -61,6 +61,10 @@ class BaseDevice(ABC):
         # simx flavors (SimxDevice subclasses) override both
         self.is_simx = False
         self.require_mloop_setup = False
+        # Time reference the platform's syslog daemon stamps in (DateTimeConsts.LOCAL_TIME or
+        # UNIVERSAL_TIME). verify_show_and_log_times() asserts log timestamps against this
+        # reference only. Default to local wall-clock time; platform subclasses may override.
+        self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
 
         self._init_constants()
         self._init_available_databases()

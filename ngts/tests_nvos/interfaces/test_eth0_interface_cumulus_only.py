@@ -62,7 +62,7 @@ def verify_mac_address(expected_mac: str,
                        output_dictionary: dict):
     with allure.step('Verity that MAC address from nv show interface eth0 link matches expected value'):
 
-        mac_address = output_dictionary[IbInterfaceConsts.LINK_MAC]
+        mac_address = output_dictionary[TestToolkit.devices.dut.link_mac]
         assert mac_address == expected_mac, f"MAC address mismatch. Expected: {expected_mac}, Actual: {mac_address}"
 
 
@@ -71,7 +71,7 @@ def validate_link_fields(output_dictionary):
         logging.info('Check that all expected fields under link field exist in the output')
         field_to_check = [IbInterfaceConsts.LINK_MTU,
                           IbInterfaceConsts.LINK_SPEED,
-                          IbInterfaceConsts.LINK_MAC,
+                          TestToolkit.devices.dut.link_mac,
                           IbInterfaceConsts.LINK_DUPLEX,
                           IbInterfaceConsts.LINK_STATE]
         Tools.ValidationTool.verify_field_exist_in_json_output(output_dictionary, field_to_check).verify_result()

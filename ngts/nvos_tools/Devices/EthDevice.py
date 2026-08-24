@@ -12,6 +12,7 @@ from ngts.cli_wrappers.nvue.cumulus.cumulus_general_cli import CumulusGeneralCli
 from ngts.nvos_constants.constants_nvos import (
     ApiType,
     CumulusConsts,
+    DateTimeConsts,
     FansConsts,
     ImageConsts,
     NtpConsts,
@@ -153,6 +154,10 @@ class EthSwitch(BaseSwitch):
 
     def _init_constants(self):
         super()._init_constants()
+        # Cumulus version scheme (build-id e.g. '5.18.0.0045', product-release '5.18.0').
+        # Enables NVOS-style release tracking (operation_time / coverage) for Eth devices.
+        self.full_version_pattern = r'^\d+\.\d+\.\d+(\.\d+)?$'
+        self.version_number_pattern = r'\d+\.\d+\.\d+'
         self.pre_login_message = "Welcome to NVIDIA Cumulus (R) Linux (R)\n"
         self.post_login_message = "Welcome to NVIDIA Cumulus (R) Linux (R)\n" \
                                   "For support and online technical documentation, visit https://www.nvidia.com/en-us/support\n" \
@@ -216,13 +221,21 @@ class EthSwitch(BaseSwitch):
         self.constants.system['system'].append(SystemConsts.GLOBAL)
         self.constants.system['system'].append(SystemConsts.DNS)
         self.constants.system['system'].append(SystemConsts.FQDN)
+        self.constants.system['system'].append(SystemConsts.SECURITY)
         self.system_default_value_dict = {
             SystemConsts.HOSTNAME: NvosConst.DEFAULT_CL_CONFIG['system']['hostname'],
             SystemConsts.CONTACT: "",
             SystemConsts.LOCATION: ""
         }
-        self.system_log_value = "system log"
+        # Cumulus nvued logs the HTTP request path (e.g. GET /nvue_v1/platform/firmware),
+        # not the firmware data fields, so 'part-number' never appears; match the path instead.
+        self.system_log_value = "platform/firmware"
         self.system_log_timestamp_regex = r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?'
+        # Cumulus rsyslog emits RFC3339 timestamps in local wall-clock time (with the local
+        # offset), so log timestamps must reflect the configured local timezone.
+        # verify_show_and_log_times() asserts against this reference only, instead of accepting
+        # either local or UTC.
+        self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
 
     def get_system_log_date_str_for_parsing(self, timestamp_match_str):
         """Convert ISO 8601 syslog timestamp to '%b %d %H:%M:%S.%f' for common strptime parsing."""
@@ -237,6 +250,15 @@ class EthSwitch(BaseSwitch):
         self.fetch_success_message = CumulusConsts.FETCH_SUCCESS_MESSAGE
         self.fetch_error_message = CumulusConsts.FETCH_ERROR_MESSAGE
         self.ask_for_confirmation = True
+        self.expected_selector_dictionary = NvosConst.EXPECTED_SELECTOR_DICTIONARY
+        # WELF (WebTrends Enhanced Log Format) firewall line as emitted by Cumulus syslog.
+        # Cumulus differs from NVOS: it uses a severity="..." field and may append extra
+        # key="value" pairs, e.g. id=firewall time="..." fw="<name>" severity="info" ... msg="...".
+        # {} is filled with the firewall-name in verify_welf_format(). See IbDevice for the NVOS form.
+        self.welf_format_regex = r'id=firewall time="[^"]+" fw="{}" severity="[^"]+"(?: [^=]+="[^"]+")* msg=".*"'
+        self.vrf_mgmt = CumulusConsts.VRF_MGMT
+        self.default_user_name = SystemConsts.DEFAULT_USER_CL
+        self.link_mac = CumulusConsts.LINK_MAC
 
     def get_base_image(self):
         release_name = ImageConsts.CL_RELEASE_5_16_0

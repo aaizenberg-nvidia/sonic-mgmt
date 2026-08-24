@@ -12,6 +12,7 @@ from ngts.nvos_constants.constants_nvos import (
     CableCartridgeConsts,
     ChassisLocationConsts,
     DatabaseConst,
+    DateTimeConsts,
     DocumentsConsts,
     FansConsts,
     HealthConsts,
@@ -717,12 +718,21 @@ class IbSwitch(BaseSwitch):
             SystemConsts.LOCATION: None
         }
         self.expected_selector_dictionary = NvosConst.EXPECTED_SELECTOR_DICTIONARY
+        # WELF (WebTrends Enhanced Log Format) firewall line as emitted by NVOS syslog.
+        # NVOS differs from Cumulus: it uses a numeric pri field, e.g.
+        # id=firewall time="..." fw="<name>" pri=6 msg="...". {} is filled with the
+        # firewall-name in verify_welf_format(). See EthDevice for the Cumulus form.
         self.welf_format_regex = "id=firewall time=\".*\" fw=\"{}\" pri=\\d msg=\".*\""
         self.vrf_mgmt = SyslogConsts.DEFAULT_VRF
+        self.link_mac = IbInterfaceConsts.LINK_MAC
 
         # Initialize link error counters for traffic validation
         self.system_log_value = "part-number"
         self.system_log_timestamp_regex = NvosConst.DATE_TIME_REGEX[0]
+        # NVOS syslog stamps in local wall-clock time (BSD syslog format, no offset), so log
+        # timestamps must reflect the configured local timezone. verify_show_and_log_times()
+        # asserts against this reference only, instead of accepting either local or UTC.
+        self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
 
     def _init_link_error_counters(self):
         """

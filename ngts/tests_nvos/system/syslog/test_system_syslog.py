@@ -2,6 +2,7 @@ import logging
 import pytest
 import random
 from retry import retry
+from retry.api import retry_call
 from ngts.tests_nvos.constants import MINUTE
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
@@ -1672,17 +1673,26 @@ def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=
         return output
 
 
-def verify_msg_in_syslog_file(engine, msg_to_find, syslog_file='/var/log/syslog', should_find=True):
-    cmd = f'cat {syslog_file}|grep {msg_to_find}'
-    output = engine.run_cmd(cmd)
-    msg_in_file = msg_to_find in output
+def verify_msg_in_syslog_file(engine, msg_to_find, syslog_file='/var/log/syslog', should_find=True,
+                              tries=5, delay=2):
+    # 'sudo' so the root-owned log is readable (a non-sudo read fails silently and looks like "not found"),
+    # and 'grep -F -- <msg>' so regex/shell metacharacters in the message (e.g. the "a+"/"b+" filter
+    # prefixes) are matched literally instead of being interpreted as a pattern.
+    cmd = f"sudo grep -F -- '{msg_to_find}' {syslog_file}"
 
-    if msg_in_file and not should_find:
-        raise Exception("Found the message, but expected not to find it")
-    elif not msg_in_file and should_find:
-        raise Exception("Didn't find the message, but expected to find it")
+    def _verify_msg():
+        output = engine.run_cmd(cmd)
+        msg_in_file = msg_to_find in output
+        if msg_in_file and not should_find:
+            raise AssertionError("Found the message, but expected not to find it")
+        if not msg_in_file and should_find:
+            raise AssertionError("Didn't find the message, but expected to find it")
+        return output
 
-    return output
+    # Forwarding to the remote collector can lag behind the send, so retry while we still expect to
+    # find it. For the "should not be received" case a single check is enough (tries=1).
+    return retry_call(_verify_msg, exceptions=AssertionError,
+                      tries=tries if should_find else 1, delay=delay)
 
 
 def create_syslog_output_dictionary(format=SyslogConsts.STANDARD, format_dict={}, trap=SyslogSeverityLevels.NOTICE,

@@ -4,7 +4,6 @@ import pytest
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_constants.constants_nvos import SystemConsts, CumulusConsts, ImageConsts
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
@@ -12,6 +11,7 @@ from devts.infra.tools.validations.traffic_validations.port_check.port_checker i
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.vrf.vrf import Vrf
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.cli_wrappers.openapi.openapi_command_builder import OpenApiRequest
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool, RebootParams
 from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 import re
@@ -93,11 +93,23 @@ def test_set_system_dns_functionality(engines, random_api, target_version, dns_s
     system = System()
     dns_server_id = SystemConsts.DNS_SERVER_IDS[dns_server_type]
 
+    if target_version:
+        # Image path passed on the CLI is fetched from the default SCP server (fit70).
+        fetch_path = target_version
+        fetch_base_url = None
+    else:
+        # No --target_version supplied: fall back to the DUT's base image on its NFS/build
+        # server (mirrors test_fetch_image_via_https). The URL uses a hostname, so once DNS is
+        # pointed at 8.8.8.8 it can no longer be resolved - which is exactly the negative probe below.
+        fetch_path = devices.dut.get_base_image_path(devices.dut.get_base_image())
+        fetch_base_url = devices.dut.nfs_server
+
     try:
         retry_call(verify_dns_in_resolv_file, [engines, [dns_server_id], False], exceptions=AssertionError, tries=2, delay=2)
 
-        with allure.step("Fetch an image {}".format(target_version)):
-            system.image.action_fetch(path=target_version, expected_output=devices.dut.fetch_success_message)
+        with allure.step("Fetch an image {}".format(fetch_path)):
+            system.image.action_fetch(path=fetch_path, base_url=fetch_base_url,
+                                      expected_output=devices.dut.fetch_success_message)
 
         with allure.step('Run set system dns server <server-id>command and apply config'):
             system.dns.set(SystemConsts.DNS_SERVER, dns_server_id,
@@ -106,7 +118,8 @@ def test_set_system_dns_functionality(engines, random_api, target_version, dns_s
         retry_call(verify_dns_in_resolv_file, [engines, [dns_server_id]], exceptions=AssertionError, tries=2, delay=2)
 
         with allure.step("Attempt fetching the image which should fail"):
-            system.image.action_fetch(path=target_version, expected_output=devices.dut.fetch_error_message).verify_result(False)
+            system.image.action_fetch(path=fetch_path, base_url=fetch_base_url,
+                                      expected_output=devices.dut.fetch_error_message).verify_result(False)
 
     finally:
         clear_system_dns(system, engines)
@@ -479,6 +492,9 @@ def test_factory_reset_for_static_system_dns(engines, random_api, devices, nv_co
             system.dns.set(op_param_name=SystemConsts.DNS_SERVER, op_param_value=dns_server_id,
                            apply=True, dut_engine=engines.dut, ask_for_confirmation=devices.dut.ask_for_confirmation).verify_result()
 
+        with allure.step('Save config so the DNS server persists through factory reset keep basic'):
+            TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
+
         with allure.step('Verify DNS server in show system dns server output'):
             dns_output = OutputParsingTool.parse_json_str_to_dictionary(system.dns.show(SystemConsts.DNS_SERVER)). \
                 get_returned_value()
@@ -487,6 +503,14 @@ def test_factory_reset_for_static_system_dns(engines, random_api, devices, nv_co
 
         with allure.step("Run reset factory with keep basic param"):
             res_obj = system.factory_default.action_reset(param="keep basic", operation=devices.dut.reset_factory)
+            # A factory reset wipes the device's NVUE revision database, so any cached OpenAPI
+            # change-set/revision is now stale. Reusing it in the cleanup unset below would fail with
+            # HTTP 404 "Unknown revision: N", so drop it here to force the next OpenAPI request to
+            # create a fresh revision. Scope to Cumulus (this is where the stale-revision failure was
+            # reproduced) AND to the OpenAPI path only
+            # (a Cumulus DUT can still run the NVUE API, which does not cache a change-set to clear).
+            if TestToolkit.devices.dut.is_eth() and TestToolkit.tested_api == ApiType.OPENAPI:
+                OpenApiRequest.clear_changeset_and_payload()
             res_obj.verify_result()
 
         if TestToolkit.devices.dut.is_ib():
