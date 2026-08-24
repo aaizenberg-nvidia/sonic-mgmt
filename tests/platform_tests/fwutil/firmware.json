@@ -590,8 +590,8 @@
 			"component":{
                 "ONIE":[
                     {
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200",
 							"type": "prod"
                     }
 				],
@@ -648,13 +648,13 @@
             "component":{
                 "ONIE":[
                     {
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200",
 							"type": "prod"
                     },
 					{
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010-dev/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/dev/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200-dev",
 							"type": "dev"
                     }
 				],
