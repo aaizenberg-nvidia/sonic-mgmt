@@ -3762,6 +3762,14 @@ class RosalindRTF(RosalindSwitch):
     def __init__(self):
         super().__init__(asic_amount=4)
 
+    def _init_constants(self):
+        super()._init_constants()
+        # 200G is not configurable on RTF, so no core-clock may offer it.
+        self.fae_supported_core_clocks = {
+            core_clock: [speed for speed in speeds if speed != IbInterfaceConsts.XDR_SLOW_SPEED]
+            for core_clock, speeds in self.fae_supported_core_clocks.items()
+        }
+
     def get_configurable_nvl_speeds(self):
         # DUT still advertises 200G in supported_nvl_speeds, but configuring it on RTF
         # needs GPU-side setup — exclude from speed-change tests.
