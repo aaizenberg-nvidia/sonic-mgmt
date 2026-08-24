@@ -3,7 +3,9 @@ import json
 import subprocess
 from json.decoder import JSONDecodeError
 
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+from devts.infra.tools.connection_tools.serial_engine_factory import (
+    PexpectSerialEngine,
+)
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 from devts.infra.tools.validations.traffic_validations.ping.send import ping_till_alive
@@ -26,7 +28,7 @@ from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.cli_wrappers.nvue.nvue_json_utils import parse_nvue_json_cli_output
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class NvueGeneralCli(SonicGeneralCliDefault):

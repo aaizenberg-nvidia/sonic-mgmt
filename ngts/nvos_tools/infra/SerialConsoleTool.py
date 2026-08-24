@@ -4,9 +4,8 @@ from retry import retry
 
 from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
 from devts.infra.tools.connection_tools.serial_engine_factory import SerialEngineFactory
-from devts.infra.tools.connection_tools.utils import generate_strong_password
+from devts.infra.tools.connection_tools.utils import extend_rcon_with_ssh_options, generate_strong_password
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
-from ngts.tests.nightly.secure.conftest import serial_engine
 from ngts.tools.test_utils import allure_utils as allure
 
 
@@ -40,11 +39,7 @@ class SerialConsoleTool:
                 f"Use SerialEngineFactory.create() instead. "
                 f"(player={serial_alias}, url={att['Specific'].get('serial_console_url')})"
             )
-        # add connection options to pass connection problems
-        extended_rcon_command = att['Specific']['serial_conn_cmd'].split(' ')
-        extended_rcon_command.insert(1, DefaultConnectionValues.BASIC_SSH_CONNECTION_OPTIONS)
-        extended_rcon_command = ' '.join(extended_rcon_command)
-        return extended_rcon_command
+        return extend_rcon_with_ssh_options(att['Specific']['serial_conn_cmd'])
 
     @classmethod
     def get_serial_console_session(cls, topology_obj, dut_alias='dut'):

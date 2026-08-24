@@ -7,7 +7,9 @@ import random
 import string
 from contextlib import contextmanager
 
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+from devts.infra.tools.connection_tools.serial_engine_factory import (
+    PexpectSerialEngine,
+)
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from devts.infra.tools.linux_tools.linux_tools import LinuxSshEngine, scp_file
 

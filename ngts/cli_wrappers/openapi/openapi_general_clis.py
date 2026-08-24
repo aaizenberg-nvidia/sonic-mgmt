@@ -1,7 +1,11 @@
 import logging
 import json
 
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+# import via the factory module: in the source layout the direct module path loads a second
+# copy of the class, breaking isinstance() against factory-created engines
+from devts.infra.tools.connection_tools.serial_engine_factory import (  # ty: ignore[unresolved-import]
+    PexpectSerialEngine,
+)
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from .openapi_command_builder import OpenApiCommandHelper, OpenApiRequest, RequestData

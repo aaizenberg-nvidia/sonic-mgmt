@@ -15,7 +15,12 @@ from devts.infra.tools.general_constants.constants import DockerBringupConstants
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from devts.infra.tools.validations.traffic_validations.ping.send import ping_till_alive
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+# import via the factory module: in the source layout the direct module path loads a second
+# copy of the class, breaking isinstance() against factory-created engines
+from devts.infra.tools.connection_tools.serial_engine_factory import (
+    PexpectSerialEngine,
+)
+from devts.infra.tools.connection_tools.utils import extend_rcon_with_ssh_options
 from ngts.cli_wrappers.sonic.sonic_onie_clis import SonicOnieCli
 from ngts.tests.nightly.secure.constants import SecureBootConsts, SonicSecureBootConsts, SecureUpgradeConsts
 
@@ -46,16 +51,14 @@ class SecureBootHelper:
         serial_alias = dut_alias + '_serial'
         logger.info("Serial engine is: {}".format(serial_alias))
         att = topology_obj.players[serial_alias]['attributes'].noga_query_data['attributes']
-        # add connection options to pass connection problems
-        extended_rcon_command = att['Specific']['serial_conn_cmd'].split(' ')
-        extended_rcon_command.insert(1, DefaultConnectionValues.BASIC_SSH_CONNECTION_OPTIONS)
-        extended_rcon_command = ' '.join(extended_rcon_command)
-        serial_engine_instance = PexpectSerialEngine(ip=att['Specific']['ip'],
-                                                     username=att['Topology Conn.']['CONN_USER'],
-                                                     password=att['Topology Conn.']['CONN_PASSWORD'],
-                                                     rcon_command=extended_rcon_command,
-                                                     timeout=30)
-        return serial_engine_instance
+        # built directly (not via SerialEngineFactory.create) because secure-boot
+        # needs a pexpect engine even on non-NVUE (SONiC) setups
+        return PexpectSerialEngine(
+            ip=att['Specific']['ip'],
+            username=att['Topology Conn.']['CONN_USER'],
+            password=att['Topology Conn.']['CONN_PASSWORD'],
+            rcon_command=extend_rcon_with_ssh_options(att['Specific']['serial_conn_cmd']),
+            timeout=30)
 
     @staticmethod
     def get_non_secure_image_path():
