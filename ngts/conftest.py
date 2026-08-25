@@ -877,7 +877,7 @@ def platform_params(show_platform_summary, setup_name, initial_topology_obj):
     platform_data = DottedDict()
     platform_data.platform = show_platform_summary['platform']
     platform_data.filtered_platform = re.search(
-        r"(msn\d{4}a\w?|msn\d{4}c|msn\d{4}|sn\d{4}\_(?!simx)[a-z]+|sn\d{4}[a-z]?|qm\d{4}|q\d{4}|mqm\d{4}|mbf.*c|900.*a|bf.*dpu|N5110_LD|N5100_LD|N5112_LD|N5200_LD|N5600_LD|N5500_LD|N6150_LD|[Nn]6300_LD|[Nn]6100_LD|[Nn]7100_LD|[Nn]7170_LD|[Nn]7200_LD|[Nn]7300_LD|[Nn]7400_LD)",
+        r"(msn\d{4}a\w?|msn\d{4}c|msn\d{4}|sn\d{4}\_(?!simx)[a-z]+|sn\d{4}[a-z]?|n\d{4}_ld(?:_ta)?|qm\d{4}|q\d{4}|mqm\d{4}|mbf.*c|900.*a|bf.*dpu)",
         show_platform_summary['platform'], re.IGNORECASE).group(1)
     if 'air' in setup_name.lower():
         platform_data.hwsku = json.loads(initial_topology_obj.players['dut']['attributes'].noga_query_data['attributes']['Specific']['devdescription'])['hwsku']
