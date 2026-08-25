@@ -213,9 +213,9 @@ tests/nightly/secure:
 
 tests/nightly/secure/test_secure_corrupt_fw/test_secure_corrupt_fw.py:
   xfail:
-    reason: "no err msg output due to RM issue: https://redmine.mellanox.com/issues/5157205"
+    reason: "corrupt MFA need to be regenerated for mtvr-moose-11, tracked by https://redmine.mellanox.com/issues/5222862"
     conditions:
-    - "https://redmine.mellanox.com/issues/5157205"
+    - "https://redmine.mellanox.com/issues/5222862 and and 'mtvr-moose-11' in testbed"
 
 tests/nightly/p4/examples_application/p4_gtp_parser/test_gtp_parser.py:
   skip:
