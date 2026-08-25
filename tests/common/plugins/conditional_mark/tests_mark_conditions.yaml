@@ -1406,9 +1406,9 @@ dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_stress:
       - "asic_type in ['vs']"
       - "'-v6-' in topo_name"
   xfail:
-    reason: "Testcase ignored due to github issue"
+    reason: "DHCP relay stress test is unstable on t0-vpp"
     conditions:
-    - "https://github.com/sonic-net/sonic-mgmt/issues/23601"
+      - "asic_type in ['vpp'] and topo_name in ['t0']"
 
 dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_stress[discover:
   skip:
