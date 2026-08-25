@@ -48,8 +48,9 @@ from ngts.helpers.performance.performance_setup_helpers import (
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
-    TESTS_SCENARIO, compute_flap_validation_overrides, get_leaf_scenario_traffic,
-    resolve_ar_algorithm)
+    TESTS_SCENARIO, TRAFFIC_PROFILE_AI_MIX, compute_flap_validation_overrides,
+    get_ai_mix_mean_packet_size, get_leaf_scenario_traffic,
+    get_spcx_ra_ai_mix_spine_traffic, resolve_ar_algorithm)
 
 logger = logging.getLogger()
 
@@ -368,7 +369,7 @@ class _SpcXRATestBase:
     Subclasses set ``CONFIG = LanesConfig(...)``. The autouse fixtures
     in ``conftest.py`` read ``self.CONFIG`` and attach the per-instance test
     state (``self.players``, ``self.cli_object``, ``self.conf_args``,
-    ``self.traffic_jsons``, ...).
+    ``self.traffic_jsons``, ``self.traffic_profile``, ...).
 
     The leading underscore stops pytest from collecting this base class.
     """
@@ -382,19 +383,32 @@ class _SpcXRATestBase:
     def test_ar_perf_max_bandwidth_rebalancer_enabled(self, request):
         """Verify port utilization with AR + auto buffer mode (rebalancer) on.
 
+        Runs the spine traffic profile selected by ``--spcx-ra-traffic-profile``:
+        ``sanity`` (default) keeps the single RoCE data stream built by the
+        autouse fixture, ``ai_mix`` rebuilds it with the AI control-packet mix
+        alongside the same per-speed data load.
+
         Args:
             request: pytest ``FixtureRequest`` (provides the test name).
         """
         test_name = get_perf_test_name(request)
-        packet_size = PerfConsts.PACKET_SIZE_4K
+        data_packet_size = PerfConsts.PACKET_SIZE_4K
 
         with allure.step("Validate rebalancer (auto buffer mode) is active on the DUT"):
             if isinstance(self.cli_object, NvueCli):
                 validate_perf_dut_rebalancer_buffer_mode(self.players)
 
-        self._run_spine_traffic(packet_size)
+        validation_packet_size = data_packet_size
+        if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+            with allure.step("Switch the spine traffic to the AI packet mix"):
+                self.traffic_jsons = get_spcx_ra_ai_mix_spine_traffic(
+                    self.players, self.conf_args, data_packet_size=data_packet_size)
+                validation_packet_size = self._get_ai_mix_validation_packet_size(
+                    data_packet_size)
+
+        self._run_spine_traffic(data_packet_size)
         self._validate(
-            test_name, packet_size,
+            test_name, validation_packet_size,
             skip_first_counters_iteration=(self.chip_type in ("SPC5", "SPC6") and
                                            isinstance(self.cli_object, NvueCli)))
 
@@ -406,20 +420,34 @@ class _SpcXRATestBase:
 
         Currently skipped unconditionally; also skipped on SPC6 when re-enabled.
 
+        Runs the spine traffic profile selected by ``--spcx-ra-traffic-profile``:
+        ``sanity`` (default) keeps the single RoCE data stream built by the autouse
+        fixture, ``ai_mix`` rebuilds it with the AI control-packet mix alongside the
+        same per-speed data load. This test is the one that carries the mix on SPC4 and
+        SPC5, since the rebalancer test it mirrors is skipped on both.
+
         Args:
             request: pytest ``FixtureRequest``.
         """
         skip_test_on_unsupported_chip_type(self.chip_type, "SPC6")
         test_name = get_perf_test_name(request)
-        packet_size = PerfConsts.PACKET_SIZE_4K
+        data_packet_size = PerfConsts.PACKET_SIZE_4K
 
         with allure.step("Validate ingress buffer mode (IBM) on DUT"):
             if isinstance(self.cli_object, NvueCli):
                 validate_perf_dut_ingress_buffer_mode(self.players)
 
-        self._run_spine_traffic(packet_size)
+        validation_packet_size = data_packet_size
+        if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+            with allure.step("Switch the spine traffic to the AI packet mix"):
+                self.traffic_jsons = get_spcx_ra_ai_mix_spine_traffic(
+                    self.players, self.conf_args, data_packet_size=data_packet_size)
+                validation_packet_size = self._get_ai_mix_validation_packet_size(
+                    data_packet_size)
+
+        self._run_spine_traffic(data_packet_size)
         self._validate(
-            test_name, packet_size,
+            test_name, validation_packet_size,
             bw_threshold=self.CONFIG.ibm_bandwidth_threshold(self.chip_type),
             skip_first_counters_iteration=True)
 
@@ -515,6 +543,47 @@ class _SpcXRATestBase:
         self._validate(test_name, packet_size, skip_first_counters_iteration=True)
 
     # ============================================================== helpers
+
+    def _get_ai_mix_validation_packet_size(self, data_packet_size: int) -> int:
+        """Return the frame size :meth:`_validate` has to be given for the AI mix.
+
+        The byte-weighted mean frame size of one send cycle. Must be called with the same
+        ``data_packet_size`` passed to ``get_spcx_ra_ai_mix_spine_traffic``. The
+        ``sanity`` profile needs none of this - its single stream is already one size.
+
+        Why the size is not simply ``data_packet_size`` on the mix:
+
+        validate_performance_counters never compares bytes to bytes. It takes a port's
+        measured byte rate, divides by ONE frame size to predict the packet count, and fails
+        if the real counter is more than PerfConsts.PERF_COUNTERS_ALLOWED_DEVIATION (2.5%)
+        off that prediction - see get_port_expected_pps() in performance_counter_helpers.py,
+        which is literally bandwidth_Bps / packet_size.
+
+        That division is only sound when every frame is the same size. It is on the sanity
+        profile (one 4096B RoCE stream) and is not on ai_mix, which puts six sizes on the
+        port per cycle: 96/138/118/116B of control traffic plus traffic_packets_per_port
+        data frames. At an unchanged byte rate, smaller frames mean MORE packets, so passing
+        4096 would under-predict the packet count by 12.9% (SPC6 800G x1) to 42.7% (SPC6
+        200G x4) and redden a perfectly healthy run.
+
+        The byte-weighted mean of one cycle is the size that makes the division come out
+        right. Nothing about the generated traffic depends on this value - it only changes
+        what the counter check expects. Note it also feeds the Allure step label, so the
+        ai_mix report reads "packet size 3101" rather than 4096.
+
+        Args:
+            data_packet_size: Frame size of the RoCE data stream, in bytes.
+
+        Returns:
+            The frame size to hand to :meth:`_validate`.
+        """
+        data_packet_count = self.CONFIG.chip_dict[self.chip_type].traffic_packets_per_port
+        mean_packet_size = get_ai_mix_mean_packet_size(
+            data_packet_count, data_packet_size=data_packet_size)
+        logger.info(f"Validating against the {mean_packet_size}B byte-weighted mean frame "
+                    f"size of one send cycle ({data_packet_count} x {data_packet_size}B "
+                    f"data packets + control mix) instead of {data_packet_size}B")
+        return mean_packet_size
 
     def _run_spine_traffic(self, packet_size: int, wait_for_nexthop: bool = True) -> None:
         """Run the spine-side traffic JSON on all configured players.

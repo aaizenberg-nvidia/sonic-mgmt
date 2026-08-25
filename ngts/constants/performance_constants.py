@@ -215,6 +215,13 @@ class PerfConsts:
     DVS_LOSSLESS_TC = 26
     DVS_LOSSY_TC = 34
     DVS_CONTROL_TC = 48
+    # ECN field codepoints (RFC 3168), the low 2 bits of the IPv6 Traffic Class /
+    # IPv4 TOS byte. RoCE traffic is ECN-capable, so dscp_to_tc() callers building
+    # RoCE streams pass ECN_ECT0 rather than a bare 2.
+    ECN_NOT_ECT = 0
+    ECN_ECT1 = 1
+    ECN_ECT0 = 2
+    ECN_CE = 3
 
     # Configuration Parameters
     PORT_GROUPS = "port_groups"

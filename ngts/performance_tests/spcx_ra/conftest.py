@@ -23,6 +23,7 @@ import logging
 import os
 import random
 from collections import Counter
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Tuple
 
 import allure
@@ -42,7 +43,7 @@ from ngts.helpers.performance.performance_setup_helpers import (
     save_session_base_configuration, skip_test_on_unsupported_os)
 from ngts.helpers.performance.traffic_helpers import (
     create_json_traffic_file, create_json_traffic_file_with_stream_list,
-    create_json_traffic_stream)
+    create_json_traffic_stream, dscp_to_tc)
 
 logger = logging.getLogger()
 
@@ -94,6 +95,66 @@ def resolve_ar_algorithm(chip_type) -> ArAlgorithm:
             f"{chip_type} | supported on this DUT: {ArAlgorithm.RANDOM_FROM_BEST.value}. "
             f"Unset {PerfConsts.AR_ALGORITHM_ENV_VAR} to use the per-chip default")
     return algorithm
+
+
+# Spine traffic profiles, selected with --spcx-ra-traffic-profile.
+TRAFFIC_PROFILE_SANITY = "sanity"
+TRAFFIC_PROFILE_AI_MIX = "ai_mix"
+TRAFFIC_PROFILES = [TRAFFIC_PROFILE_SANITY, TRAFFIC_PROFILE_AI_MIX]
+
+# RoCE ACK size for the AI mix. create_json_traffic_stream builds
+# Ether/IP/UDP/BTH, which is 78 bytes over IPv6 and 58 over IPv4, and this suite
+# is parametrized over both address families (see test_spcx_ra.py), so
+# PerfConsts.ROCE_ACK_SIZE (64) cannot carry the IPv6 form. 96 clears both.
+# Kept local so the shared constant, which ar_vs_random needs at 64, stays put.
+AI_MIX_ROCE_ACK_SIZE = 96
+
+AI_MIX_LOSSLESS_TC = dscp_to_tc(PerfConsts.DVS_LOSSLESS_TC, PerfConsts.ECN_ECT0)
+AI_MIX_CONTROL_TC = dscp_to_tc(PerfConsts.DVS_CONTROL_TC, PerfConsts.ECN_ECT0)
+
+
+@dataclass(frozen=True)
+class ControlStreamSpec:
+    """How one AI-mix control stream is put on the wire.
+
+    Attributes:
+        packet_size: Frame size in bytes.
+        traffic_class: Traffic-class byte handed to ``create_json_traffic_stream``.
+    """
+    packet_size: int
+    traffic_class: int
+
+
+# Control packets the ai_mix profile layers on top of the RoCE data stream, one
+# of each per send cycle, keyed by stream name. Shared by the traffic builder
+# and the mean-frame-size calculation so the two cannot drift.
+AI_MIX_CONTROL_STREAM_SPECS = {
+    "RoCE_ack": ControlStreamSpec(AI_MIX_ROCE_ACK_SIZE, AI_MIX_LOSSLESS_TC),
+    "RTT_probe": ControlStreamSpec(PerfConsts.RTT_PROB_SIZE, AI_MIX_LOSSLESS_TC),
+    "RTT_probe_response": ControlStreamSpec(
+        PerfConsts.RTT_PROB_RESPONSE_SIZE, AI_MIX_CONTROL_TC),
+    "CNP": ControlStreamSpec(PerfConsts.CNP_SIZE, AI_MIX_CONTROL_TC),
+}
+
+
+def pytest_addoption(parser):
+    """Register the SPCX-RA-specific CLI options.
+
+    Declared here rather than in the rootdir conftest: pytest loads a conftest
+    as an "initial" plugin (so its pytest_addoption runs) whenever the invoked
+    test path is inside the conftest's directory, which is how MARS runs this
+    suite (``--test_script .../performance_tests/spcx_ra/``). Invoking a parent
+    directory instead leaves the option unregistered.
+
+    Args:
+        parser: pytest ``Parser``.
+    """
+    parser.addoption(
+        "--spcx-ra-traffic-profile", action="store", choices=TRAFFIC_PROFILES,
+        default=TRAFFIC_PROFILE_SANITY,
+        help=(f"Spine traffic profile. '{TRAFFIC_PROFILE_SANITY}' (default) sends the "
+              f"single RoCE data stream; '{TRAFFIC_PROFILE_AI_MIX}' adds the AI "
+              "control-packet mix (RoCE ACK, RTT probe, RTT probe response, CNP)."))
 
 
 def _get_test_config(request):
@@ -259,17 +320,22 @@ def _init_test_instance_state(request, players, engines,
     is_ipv6 = request.getfixturevalue('basic_setup_configuration')
     _populate_test_state(
         request.instance, config, is_ipv6, request.node.nodeid,
-        players, engines, power_thresholds_by_chip_type, chip_type)
+        players, engines, power_thresholds_by_chip_type, chip_type,
+        request.config.getoption("--spcx-ra-traffic-profile"))
     yield
 
 
 def _populate_test_state(instance, config, is_ipv6, nodeid, players, engines,
-                         power_thresholds_by_chip_type, chip_type):
+                         power_thresholds_by_chip_type, chip_type, traffic_profile):
     """Attach the per-test runtime state to a TestSpcXRA_Nx_lanes instance.
 
     The static configuration is already on the class as ``instance.CONFIG``;
     this function only attaches runtime values (players, engines, conf_args,
     pre-built traffic JSONs, ...).
+
+    ``instance.traffic_jsons`` always holds the sanity spine traffic. A test
+    that runs a different profile rebuilds it for itself, so selecting
+    ``ai_mix`` costs nothing on the tests that ignore the profile.
 
     Args:
         instance: The pytest test-class instance to populate.
@@ -281,6 +347,8 @@ def _populate_test_state(instance, config, is_ipv6, nodeid, players, engines,
         power_thresholds_by_chip_type: Power-consumption threshold for the
             DUT's chip type.
         chip_type: Detected chip-type identifier.
+        traffic_profile: Spine traffic profile from
+            ``--spcx-ra-traffic-profile``; one of ``TRAFFIC_PROFILES``.
     """
     instance.players = players
     instance.nodeid = nodeid
@@ -290,6 +358,8 @@ def _populate_test_state(instance, config, is_ipv6, nodeid, players, engines,
     instance.chip_type = chip_type
     instance.power_thresholds_by_chip_type = power_thresholds_by_chip_type
     instance.scenario = TESTS_SCENARIO
+    instance.traffic_profile = traffic_profile
+    logger.info(f"Spine traffic profile: {traffic_profile}")
     instance.is_ipv6 = is_ipv6
     instance.ip = InfraConst.IPV6 if is_ipv6 else InfraConst.IPV4
     instance.topology_obj = get_topology_obj(players)
@@ -398,6 +468,99 @@ def get_spcx_ra_spine_traffic(players, conf_args, template_suite="traffic_packet
             player_alias=player_alias, traffic_parameters=traffic_parameters, json_path=json_path)
         traffic_jsons[player_alias] = json_path
     return traffic_jsons
+
+
+def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
+                                     data_packet_size=PerfConsts.PACKET_SIZE_4K,
+                                     template_suite="traffic_packets_json_files"):
+    """Build bidirectional SPCX-RA spine traffic carrying the AI packet mix.
+
+    Each TG keeps the split-specific RoCE data packet count supplied by its CLI
+    wrapper and adds one RoCE ACK, RTT probe, RTT probe response and CNP packet
+    to the resident stream, so the rebalancer sees the control-packet sizes and
+    traffic classes an AI workload puts on the wire next to the data. The
+    per-speed data load is unchanged.
+
+    The control packets reuse the data stream's addresses and UDP ports, so they
+    share its flow hash: the mix varies packet size and DSCP, not the number of
+    distinct flows. ar_vs_random varies the destination IP per port instead, but
+    that needs the leaf destination list, which the spine scenario has no
+    equivalent of. The control sizes match ar_vs_random except the RoCE ACK,
+    which is AI_MIX_ROCE_ACK_SIZE here (see the note on that constant).
+
+    Args:
+        players: Test players mapping.
+        conf_args: Rendered per-test configuration arguments.
+        data_packet_size: Frame size of the RoCE data stream, in bytes.
+        template_suite: Directory under ``performance_tests`` holding the
+            generated traffic JSONs.
+
+    Returns:
+        A dict mapping each TG alias to its generated traffic JSON path.
+    """
+    traffic_jsons = {}
+
+    logger.info(f"Building the AI control-packet mix on top of the "
+                f"{data_packet_size}B RoCE data stream")
+    for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
+        player_cli_obj = players[player_alias]['cli']
+        json_path = os.path.join(
+            BugHandlerConst.NGTS_PATH, "performance_tests", template_suite,
+            TESTS_SCENARIO,
+            f"{player_alias}_{TESTS_SCENARIO.replace('/', '_')}_ai_mix.json")
+        traffic_parameters = player_cli_obj.performance.get_traffic_parameters(
+            scenario=TESTS_SCENARIO, conf_args=conf_args)
+        data_packet_count = traffic_parameters["num_packets"]
+        stream_list = []
+
+        traffic_parameters["num_packets"] = 1
+        for stream_name, stream_spec in AI_MIX_CONTROL_STREAM_SPECS.items():
+            traffic_parameters["packet_size"] = stream_spec.packet_size
+            stream_list.append(create_json_traffic_stream(
+                player_alias, traffic_parameters,
+                f"{player_alias}_{stream_name}", tc=stream_spec.traffic_class))
+
+        traffic_parameters["packet_size"] = data_packet_size
+        traffic_parameters["num_packets"] = data_packet_count
+        stream_list.append(create_json_traffic_stream(
+            player_alias, traffic_parameters,
+            f"{player_alias}_RoCE_data", tc=AI_MIX_LOSSLESS_TC))
+
+        create_json_traffic_file_with_stream_list(
+            player_alias, traffic_parameters, json_path, stream_list)
+        traffic_jsons[player_alias] = json_path
+    logger.info(f"AI-mix spine traffic JSONs: {traffic_jsons}")
+
+    return traffic_jsons
+
+
+def get_ai_mix_mean_packet_size(data_packet_count,
+                                data_packet_size=PerfConsts.PACKET_SIZE_4K):
+    """Return the byte-weighted mean frame size of one AI-mix send cycle.
+
+    The performance-counter validation derives expected PPS by dividing a port's
+    byte rate by a single frame size, so on the ai_mix profile it has to be given
+    this mean rather than ``data_packet_size``. Handing it the data size instead
+    understates the packet rate by the ratio between the two - 13% to 43% at the
+    SPC6 per-port packet counts, against a 2.5% allowed deviation.
+
+    Every stream is emitted on the same port list, so the per-port count cancels
+    and the mean depends only on the packet counts and sizes of one cycle.
+
+    Args:
+        data_packet_count: RoCE data packets per port per cycle, i.e. the
+            chip's ``traffic_packets_per_port``.
+        data_packet_size: Frame size of the RoCE data stream, in bytes. Must
+            match what was passed to :func:`get_spcx_ra_ai_mix_spine_traffic`.
+
+    Returns:
+        The mean frame size in bytes, rounded down.
+    """
+    control_bytes = sum(stream_spec.packet_size
+                        for stream_spec in AI_MIX_CONTROL_STREAM_SPECS.values())
+    total_bytes = control_bytes + data_packet_size * data_packet_count
+    total_packets = len(AI_MIX_CONTROL_STREAM_SPECS) + data_packet_count
+    return total_bytes // total_packets
 
 
 def get_spcx_ra_leaf_traffic(players, conf_args, template_suite="traffic_packets_json_files",
