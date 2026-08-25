@@ -223,4 +223,26 @@
     </cmd>
   </case>
 
+  <case>
+    <name> test_peer_port_gnmi_counters_heartbeat_under_suppress_redundant </name>
+    <info> Redmine 5230671 item 1: static peer-port identity leaves keep arriving at the heartbeat cadence under suppress-redundant, checked per leaf. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_gnmi_counters_heartbeat_under_suppress_redundant --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_peer_port_heartbeat_survives_peer_port_disable </name>
+    <info> Heartbeat survives disabling and re-enabling peer-port mid-stream: no leaf goes permanently silent afterwards. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/telemetry/ib/test_peerport.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_peer_port_heartbeat_survives_peer_port_disable --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1500   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>

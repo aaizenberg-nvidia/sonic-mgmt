@@ -51,23 +51,25 @@ class GnmiYangPaths:
     PHY_PLR_STATE = INTERFACE_BY_NAME + "/phy/infiniband/plr/state"
     PHY_CHANNELS = INTERFACE_BY_NAME + "/phy/channels"
     PHY_RS_HISTOGRAM = INTERFACE_BY_NAME + "/phy/histograms/state/rs-num-corr-err"
-    _PEER_PREFIX = "peer-port/"
-    PEER_PORT_INTERFACES = _PEER_PREFIX + INTERFACES
-    PEER_PORT_BY_ID = _PEER_PREFIX + INTERFACES + "[name={pid}]"
-    PEER_PORT_STATE = _PEER_PREFIX + STATE
-    PEER_PORT_STATE_COUNTERS = _PEER_PREFIX + STATE_COUNTERS
-    PEER_PORT_INFINIBAND_STATE = _PEER_PREFIX + INFINIBAND_STATE
-    PEER_PORT_INFINIBAND_COUNTERS_PORT = _PEER_PREFIX + INFINIBAND_COUNTERS_PORT
-    PEER_PORT_PHY_STATE = _PEER_PREFIX + PHY_STATE
-    PEER_PORT_PHY_BER_STATE = _PEER_PREFIX + PHY_BER_STATE
-    PEER_PORT_PHY_BER_MONITOR_STATE = _PEER_PREFIX + PHY_BER_MONITOR_STATE
-    PEER_PORT_PHY_LINK_DOWN_INFO = _PEER_PREFIX + PHY_LINK_DOWN_INFO
-    PEER_PORT_PHY_IB_PORT_STATISTICS_STATE = _PEER_PREFIX + PHY_IB_PORT_STATISTICS_STATE
-    PEER_PORT_PHY_IB_PORT_ERRORS_STATE = _PEER_PREFIX + PHY_IB_PORT_ERRORS_STATE
-    PEER_PORT_PHY_PLR_STATE = _PEER_PREFIX + PHY_PLR_STATE
-    PEER_PORT_PHY_CHANNELS = _PEER_PREFIX + PHY_CHANNELS
-    PEER_PORT_PHY_RS_HISTOGRAM = _PEER_PREFIX + PHY_RS_HISTOGRAM
-    PEER_PORT_COMPONENTS = _PEER_PREFIX + "components/component"
+    # Public because tests that mix switch-side and peer-port paths in one subscription need to
+    # tell the two apart in the notifications.
+    PEER_PORT_PREFIX = "peer-port/"
+    PEER_PORT_INTERFACES = PEER_PORT_PREFIX + INTERFACES
+    PEER_PORT_BY_ID = PEER_PORT_PREFIX + INTERFACES + "[name={pid}]"
+    PEER_PORT_STATE = PEER_PORT_PREFIX + STATE
+    PEER_PORT_STATE_COUNTERS = PEER_PORT_PREFIX + STATE_COUNTERS
+    PEER_PORT_INFINIBAND_STATE = PEER_PORT_PREFIX + INFINIBAND_STATE
+    PEER_PORT_INFINIBAND_COUNTERS_PORT = PEER_PORT_PREFIX + INFINIBAND_COUNTERS_PORT
+    PEER_PORT_PHY_STATE = PEER_PORT_PREFIX + PHY_STATE
+    PEER_PORT_PHY_BER_STATE = PEER_PORT_PREFIX + PHY_BER_STATE
+    PEER_PORT_PHY_BER_MONITOR_STATE = PEER_PORT_PREFIX + PHY_BER_MONITOR_STATE
+    PEER_PORT_PHY_LINK_DOWN_INFO = PEER_PORT_PREFIX + PHY_LINK_DOWN_INFO
+    PEER_PORT_PHY_IB_PORT_STATISTICS_STATE = PEER_PORT_PREFIX + PHY_IB_PORT_STATISTICS_STATE
+    PEER_PORT_PHY_IB_PORT_ERRORS_STATE = PEER_PORT_PREFIX + PHY_IB_PORT_ERRORS_STATE
+    PEER_PORT_PHY_PLR_STATE = PEER_PORT_PREFIX + PHY_PLR_STATE
+    PEER_PORT_PHY_CHANNELS = PEER_PORT_PREFIX + PHY_CHANNELS
+    PEER_PORT_PHY_RS_HISTOGRAM = PEER_PORT_PREFIX + PHY_RS_HISTOGRAM
+    PEER_PORT_COMPONENTS = PEER_PORT_PREFIX + "components/component"
     PEER_PORT_COMPONENT_STATE = PEER_PORT_COMPONENTS + "[name={name}]/state"
     PEER_PORT_COMPONENT_ASIC_STATE = PEER_PORT_COMPONENTS + "[name={name}]/asic/state"
     PEER_PORT_COMPONENT_TRANSCEIVER_STATE = PEER_PORT_COMPONENTS + "[name={name}]/transceiver/state"
@@ -399,6 +401,31 @@ PEER_PORT_ADDITIVE_FIELDS = [
     "out-octets",
     "in-bytes",
     "out-bytes",
+]
+
+
+# The subset of PEER_PORT_ADDITIVE_FIELDS that the gNMI YANG model actually exposes, i.e. without
+# the NVUE-only 'bytes' spellings. Use this to build gNMI paths: the union above is safe only for
+# comparisons that tolerate a missing name, whereas a subscription carrying one path outside the
+# model is rejected wholesale with Unimplemented - taking the valid paths down with it.
+PEER_PORT_GNMI_ADDITIVE_FIELDS = [
+    "in-pkts",
+    "out-pkts",
+    "in-octets",
+    "out-octets",
+]
+
+
+# Peer-port identity leaves, which do not change for as long as the peer is present. These are the
+# only peer-port leaves a heartbeat test can use: the additive counters above are refreshed every
+# gpu-telemetry ingest cycle, which is far shorter than any heartbeat, so a change always delivers
+# them before the heartbeat is due and the heartbeat is never exercised.
+PEER_PORT_GNMI_STATIC_LEAVES = [
+    "name",
+    "node-guid",
+    "port-guid",
+    "port-number",
+    "node-description",
 ]
 
 

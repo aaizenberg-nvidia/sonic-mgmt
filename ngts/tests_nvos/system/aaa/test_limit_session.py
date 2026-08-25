@@ -25,7 +25,7 @@ from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode
-from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable
+from ngts.tests_nvos.system.gnmi.helpers import is_gnmi_unavailable
 from ngts.constants.constants import GnmiConsts
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.SerialConsoleTool import SerialConsoleTool
@@ -598,7 +598,7 @@ def open_gnmi_sessions(dut, username, password, num_sessions, verify_tools_first
 
     # Quick pre-check: if gNMI server is down, skip instead of producing false results.
     out, err = gnmi_client.gnmic_capabilities(skip_cert_verify=True)
-    if _is_gnmi_unavailable(err):
+    if is_gnmi_unavailable(err):
         pytest.skip(f"gNMI server is unavailable on {dut.ip}:{GnmiConsts.GNMI_DEFAULT_PORT}: {err.strip()}")
 
     for i in range(num_sessions):
@@ -618,7 +618,7 @@ def open_gnmi_sessions(dut, username, password, num_sessions, verify_tools_first
             else:
                 # Process already exited; capture its output for diagnostics.
                 o, e = gnmi_client.close_session_and_get_out_and_err(proc, delay=0)
-                if _is_gnmi_unavailable(e):
+                if is_gnmi_unavailable(e):
                     pytest.skip(f"gNMI server became unavailable on {dut.ip}:{GnmiConsts.GNMI_DEFAULT_PORT}: {e.strip()}")
                 logger.warning(f"GNMI session {i + 1} for {username} failed: {e or o}")
         except Exception as exc:

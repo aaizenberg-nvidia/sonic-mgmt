@@ -138,4 +138,136 @@
     </cmd>
   </case>
 
+  <case>
+    <name> test_heartbeat_resends_unchanged_leaves_under_suppress_redundant </name>
+    <info> Redmine 5230671 item 1: suppress-redundant plus heartbeat resends unchanged leaves at 10s, 20s and 30s heartbeat intervals, verified per leaf. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_resends_unchanged_leaves_under_suppress_redundant --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_suppress_redundant_without_heartbeat_stays_silent </name>
+    <info> Negative control: suppress-redundant with no heartbeat stays silent after the initial sync. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_suppress_redundant_without_heartbeat_stays_silent --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_sample_without_suppress_redundant_delivers_every_interval </name>
+    <info> SAMPLE without suppress-redundant delivers on every sample interval, independent of the heartbeat. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_sample_without_suppress_redundant_delivers_every_interval --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_on_change_heartbeat_resends_static_leaves </name>
+    <info> ON_CHANGE plus heartbeat resends static leaves at the heartbeat cadence. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_on_change_heartbeat_resends_static_leaves --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_on_change_without_heartbeat_is_silent_until_a_change </name>
+    <info> Negative control: ON_CHANGE with no heartbeat stays silent until a value actually changes. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_on_change_without_heartbeat_is_silent_until_a_change --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_target_defined_stream_mode_honors_heartbeat </name>
+    <info> TARGET_DEFINED stream mode honors the requested heartbeat interval. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_target_defined_stream_mode_honors_heartbeat --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_updates_only_subscription_still_heartbeats </name>
+    <info> An updates-only subscription still heartbeats once the initial sync is suppressed. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_updates_only_subscription_still_heartbeats --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_heartbeat_holds_on_wildcard_across_all_interfaces </name>
+    <info> Heartbeat holds on a wildcard subscription spanning every interface, checked per leaf across the full leaf set. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_holds_on_wildcard_across_all_interfaces --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_heartbeat_holds_on_phy_diag_subtree </name>
+    <info> Heartbeat holds on the phy-diag state subtree; skipped when the platform does not expose it. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_holds_on_phy_diag_subtree --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_heartbeat_holds_on_wildcard_phy_diag_across_all_interfaces </name>
+    <info> Redmine 5230671 item 4: phy-diag state subscribed across every interface at once, the customer's subscription shape; per-leaf continuity with observed-versus-expected leaf counts reported. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_holds_on_wildcard_phy_diag_across_all_interfaces --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1200   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_heartbeat_holds_with_mixed_cost_concurrent_subscriptions </name>
+    <info> Heartbeat holds for every subscriber when cheap and expensive subscriptions run concurrently. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_holds_with_mixed_cost_concurrent_subscriptions --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_heartbeat_survives_link_flap_mid_subscription </name>
+    <info> Heartbeat survives a link flap injected mid-stream: no leaf goes permanently silent afterwards. </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnmi/test_gnmi_subscribe_heartbeat.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_heartbeat_survives_link_flap_mid_subscription --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>

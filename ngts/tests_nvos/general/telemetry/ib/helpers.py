@@ -31,10 +31,10 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import (
-    _is_gnmi_unavailable,
     get_infiniband_name_from_port_name,
     get_port_oid_from_infiniband_port,
     is_gnmi_failure,
+    is_gnmi_unavailable,
     parse_gnmi_output,
     verify_msg_not_in_out_or_err,
 )
@@ -114,6 +114,28 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Lab prerequisites
+# ============================================================================
+
+
+def report_wrong_lab(message: str, skip: bool) -> None:
+    """
+    Fail on an absent lab prerequisite, or skip when the caller is non-gating extra coverage.
+
+    The peer-port and plane-port suites proper fail: a missing HCA, Subnet Manager or plane-port
+    there means the feature under test was never exercised, so a skip would green the run. The
+    gNMI subscribe-heartbeat cases layer extra coverage on top of those suites and skip instead,
+    because they need a fuller lab (external HCA cables, an SM, live planes) than the surface they
+    extend and are not meant to hold back a setup that cannot host them.
+    """
+    if skip:
+        pytest.skip(f"{message} Skipped rather than failed: this case is additional gNMI "
+                    f"subscribe-heartbeat coverage and is not mandatory on a setup that cannot "
+                    f"host it.")
+    pytest.fail(message)
 
 
 # ============================================================================
@@ -481,7 +503,7 @@ def dut_hostname(topology_obj, devices) -> str:
 
 def is_gnmi_server_unavailable(err: Optional[str]) -> bool:
     """True when the DUT gNMI server is down/unreachable (skip, do not false-pass)."""
-    return _is_gnmi_unavailable(err)
+    return is_gnmi_unavailable(err)
 
 
 def wait_for_gnmi_reachable(

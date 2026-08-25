@@ -23,7 +23,7 @@ from ngts.tests_nvos.interfaces.test_ib_interface_configuration import wait_for_
 from ngts.tests_nvos.platform.helpers import _pre_port_config, _post_port_config
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiConstants, GnmicErr
-from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable, is_gnmi_failure, verify_msg_not_in_out_or_err
+from ngts.tests_nvos.system.gnmi.helpers import is_gnmi_failure, is_gnmi_unavailable, verify_msg_not_in_out_or_err
 from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_path
 from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 from ngts.tools.test_utils import allure_utils as allure
@@ -84,7 +84,7 @@ def test_transceiver_status(engines, random_api):
             cmd_time=60, verify_tools_installed=True,
         )
         _, err = gnmi_client.gnmic_capabilities(skip_cert_verify=True)
-        if _is_gnmi_unavailable(err):
+        if is_gnmi_unavailable(err):
             pytest.skip(f"gNMI server is unavailable on {engines.dut.ip}:{GnmiConsts.GNMI_DEFAULT_PORT}: {err.strip()}")
         validate_gnmi_transceiver_physical_channel_fields(gnmi_client, plugged_module, PlatformConsts.INSERTED)
         validate_gnmi_transceiver_physical_channel_fields(gnmi_client, unplugged_module, PlatformConsts.REMOVED)

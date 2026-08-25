@@ -19,7 +19,7 @@ from ngts.tests_nvos.platform.test_platform_transceiver import (
 )
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
-from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable
+from ngts.tests_nvos.system.gnmi.helpers import is_gnmi_unavailable
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -39,7 +39,7 @@ def _build_gnmi_client_or_warn(engines):
             cmd_time=60, verify_tools_installed=True,
         )
         _, err = client.gnmic_capabilities(skip_cert_verify=True)
-        if _is_gnmi_unavailable(err):
+        if is_gnmi_unavailable(err):
             allure.attach('gNMI unavailable WARNING',
                           f"gNMI server unavailable on {engines.dut.ip}: {err.strip()}")
             return None

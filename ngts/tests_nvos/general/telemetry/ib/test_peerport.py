@@ -7,10 +7,28 @@ from typing import Dict, List, Tuple
 import pytest
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
+from ngts.tests_nvos.system.gnmi.constants import (
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_INTERVAL_SHORT,
+    HEARTBEAT_PERTURBATION_AT_SEC,
+    HEARTBEAT_SAMPLE_INTERVAL,
+    HEARTBEAT_STATIC_INTERFACE_LEAVES,
+    GnmiStreamMode,
+)
+from ngts.tests_nvos.system.gnmi.helpers import (
+    StreamSubscription,
+    get_gnmic_engine,
+    heartbeat_window_sec,
+    run_stream_subscribers,
+    verify_heartbeat_drove_delivery,
+    verify_leaf_heartbeat_continuity,
+    verify_subscribers_streamed,
+)
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 
@@ -26,6 +44,8 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     PEER_PORT_ADDITIVE_FIELDS,
     PEER_PORT_API_TO_DB_FIELD,
     PEER_PORT_DB_ADDITIVE_FIELDS,
+    PEER_PORT_GNMI_ADDITIVE_FIELDS,
+    PEER_PORT_GNMI_STATIC_LEAVES,
     PEER_PORT_LIST_SCHEMA_GROUPS,
     PEER_PORT_NVUE_SHOW_NODES,
     PEER_PORT_SCHEMA_GROUPS,
@@ -183,36 +203,58 @@ def _require_hca_topology(setup_topology) -> List:
     return hca
 
 
-def _require_external_hca_topology(setup_topology) -> List:
-    """Return connectivity-derived *external* HCA peers (server cables), or FAIL."""
+def _require_external_hca_topology(setup_topology, skip_on_wrong_lab: bool = False) -> List:
+    """
+    Return connectivity-derived *external* HCA peers (server cables), or report the lab.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     hca = setup_topology.external_hca_peers()
     if not hca:
-        pytest.fail(
+        ibh.report_wrong_lab(
             "WRONG LAB SETUP / TOPOLOGY: the connectivity JSON for "
             f"{setup_topology.setup_name!r} lists no external HCA cables "
             "(connected_to an ib*HCA* port), so the HCA peer-port listing "
             "cannot be exercised here. Run on a setup with at least one "
-            "server HCA cabled to the fabric."
+            "server HCA cabled to the fabric.",
+            skip_on_wrong_lab,
         )
     return hca
 
 
-def _require_active_fabric_and_traffic(engines, request, setup_name):
-    """FAIL (not skip) when HFNM/SM or the traffic harness are missing."""
+def _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab: bool = False):
+    """
+    Bring the fabric Active by starting the Subnet Manager, or report the lab.
+
+    An IB port stays in Initialize until an SM configures it, and NVOS only discovers peer HCAs
+    over an Active fabric - so without this the peer-port surface is simply empty, which reads as
+    a missing feature rather than a missing SM.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     if not hasattr(engines, "hfnm"):
-        pytest.fail(
+        ibh.report_wrong_lab(
             f"WRONG LAB SETUP: setup {setup_name!r} has no Host Fabric Node "
             "Manager (HFNM), so the Subnet Manager cannot be started to bring the "
             "fabric Active - this test cannot be exercised here. Run on an "
-            "HFNM-capable setup with traffic hosts."
+            "HFNM-capable setup with traffic hosts.",
+            skip_on_wrong_lab,
         )
     try:
         request.getfixturevalue("start_sm")
     except Exception as exc:  # noqa: BLE001
-        pytest.fail(
+        ibh.report_wrong_lab(
             "WRONG LAB SETUP: Subnet Manager could not be started on setup "
-            f"{setup_name!r} ({exc}); an active fabric is required here."
+            f"{setup_name!r} ({exc}); an active fabric is required here.",
+            skip_on_wrong_lab,
         )
+
+
+def _require_active_fabric_and_traffic(engines, request, setup_name):
+    """FAIL (not skip) when HFNM/SM or the traffic harness are missing."""
+    _require_active_fabric(engines, request, setup_name)
     try:
         players = request.getfixturevalue("players")
         interfaces = request.getfixturevalue("interfaces")
@@ -327,14 +369,21 @@ def _assert_hca_ingestion_directly_on_dut(engines, setup_topology) -> None:
     )
 
 
-def _select_peer_port_targets(gnmi_client) -> List[Tuple[str, str]]:
-    """Pick up to two live HCA peer-ports to sweep (fallback: first listed); FAILS if none exposed."""
+def _select_peer_port_targets(gnmi_client, skip_on_wrong_lab: bool = False) -> List[Tuple[str, str]]:
+    """
+    Pick up to two live HCA peer-ports to sweep (fallback: first listed), or report the lab.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     entries = ibh.gnmi_get_peer_port_list(gnmi_client)
-    assert entries, (
-        "No peer-ports exposed via gNMI under "
-        f"{GnmiYangPaths.PEER_PORT_INTERFACES}. Enable the peer-port knob and "
-        "confirm gpu-telemetry is running / the feature build is delivered."
-    )
+    if not entries:
+        ibh.report_wrong_lab(
+            "No peer-ports exposed via gNMI under "
+            f"{GnmiYangPaths.PEER_PORT_INTERFACES}. Enable the peer-port knob and "
+            "confirm gpu-telemetry is running / the feature build is delivered.",
+            skip_on_wrong_lab,
+        )
     hca = ibh.filter_peer_entries_by_type(entries, PeerType.HCA)
     targets = [("hca-peer", pid) for pid in sorted(hca)[:2]]
     if not targets:
@@ -1052,6 +1101,227 @@ def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, g
         f"peer-port gNMI list-subtree sweep for {group.group_id!r} found "
         f"{len(problems)} problem(s):\n  " + "\n  ".join(problems)
     )
+
+
+# ---------------------------------------------------------------------------
+# gNMI subscribe heartbeat on the peer-port surface (Redmine 5230671 item 1)
+# ---------------------------------------------------------------------------
+
+
+def _require_link_up_port(purpose: str):
+    """
+    A link-up switch Port, or skip because the lab cannot host this coverage.
+
+    Skips rather than fails for the same reason the fabric and HCA gates above do when called
+    from these cases: a DUT with no live link cannot show a switch-side leaf heartbeating.
+    """
+    port_result = Tools.RandomizationTool.select_random_port(
+        requested_ports_state=NvosConsts.LINK_STATE_UP)
+    if not port_result.result:
+        port_result.ignore_result()
+        ibh.report_wrong_lab(
+            f"WRONG LAB SETUP: no link-up port available to {purpose} on this DUT, so the "
+            f"switch-side leaves this case watches cannot be streamed: {port_result.info}",
+            skip=True,
+        )
+    return port_result.get_returned_value()
+
+
+def _peer_port_counter_paths(targets: List[Tuple[str, str]]) -> List[str]:
+    """Absolute gNMI paths of the additive counters of each selected peer-port."""
+    return [
+        f"{GnmiYangPaths.PEER_PORT_STATE_COUNTERS.format(name=pid)}/{field}"
+        for _, pid in targets
+        for field in PEER_PORT_GNMI_ADDITIVE_FIELDS
+    ]
+
+
+def _peer_port_static_paths(targets: List[Tuple[str, str]]) -> List[str]:
+    """Absolute gNMI paths of the unchanging identity leaves of each selected peer-port."""
+    return [
+        f"{GnmiYangPaths.PEER_PORT_STATE.format(name=pid)}/{leaf}"
+        for _, pid in targets
+        for leaf in PEER_PORT_GNMI_STATIC_LEAVES
+    ]
+
+
+@pytest.mark.skip_clear_config
+@pytest.mark.gnmi
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(10 * MINUTE, func_only=True)
+def test_peer_port_gnmi_counters_heartbeat_under_suppress_redundant(
+    engines, devices, gnmi_client, setup_topology, request, setup_name
+):
+    """
+    Peer-port identity leaves must keep being resent while suppress-redundant is on.
+
+    Redmine 5230671 item 1 on the peer-port subtree. The subscription deliberately targets the
+    identity leaves rather than the additive counters: gpu-telemetry re-ingests the counters every
+    PEER_TELEMETRY_SAMPLING_SEC, which is well under any heartbeat, so a counter is always
+    delivered by a change before its heartbeat comes due and the heartbeat is never exercised. The
+    identity leaves never change while the peer is present, so suppress-redundant drops every
+    sample of them and only the heartbeat can deliver them - which is what makes a dropped
+    heartbeat observable here at all.
+
+    Extra coverage layered on the peer-port suite, so an unmet lab prerequisite skips rather than
+    fails: this case needs an external HCA cable and a running SM on top of what the surface it
+    extends requires.
+    """
+    _require_external_hca_topology(setup_topology, skip_on_wrong_lab=True)
+    _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab=True)
+    _enable_peer_port(engines)
+    targets = _select_peer_port_targets(gnmi_client, skip_on_wrong_lab=True)
+    paths = _peer_port_static_paths(targets)
+    window_sec = heartbeat_window_sec(HEARTBEAT_INTERVAL)
+    subscription = StreamSubscription(
+        paths=paths,
+        stream_mode=GnmiStreamMode.SAMPLE,
+        sample_interval=HEARTBEAT_SAMPLE_INTERVAL,
+        suppress_redundant=True,
+        heartbeat_interval=HEARTBEAT_INTERVAL,
+        label="peer-port identity leaves",
+    )
+    ibh.attach_dict(
+        "peer-port heartbeat subscription",
+        {
+            "peers": [pid for _, pid in targets],
+            "paths": len(paths),
+            "sample_interval": HEARTBEAT_SAMPLE_INTERVAL,
+            "heartbeat_interval": HEARTBEAT_INTERVAL,
+            "peer_sampling_interval_sec": _peer_port_interval_sec(),
+            "window_sec": window_sec,
+        },
+    )
+
+    with allure.step(
+        f"Stream {len(paths)} peer-port identity leaves with suppress-redundant and a "
+        f"{HEARTBEAT_INTERVAL} heartbeat for {window_sec}s"
+    ):
+        results = run_stream_subscribers(
+            target_ip=engines.dut.ip,
+            subscriptions=[subscription],
+            window_sec=window_sec,
+            username=gnmi_client.username,
+            password=gnmi_client.password,
+            engine=get_gnmic_engine(engines),
+        )
+        verify_subscribers_streamed(results)
+
+    # Expected leaves are the subscribed paths themselves, so the check is per peer and per leaf:
+    # a leaf arriving for one peer must not cover for the same leaf going silent on another, and a
+    # peer dropping out of the subscription surfaces as all of its leaves never being delivered.
+    with allure.step(f"Verify every identity leaf of all {len(targets)} subscribed peer(s) kept being resent"):
+        timeline = verify_leaf_heartbeat_continuity(
+            results[0].notifications,
+            HEARTBEAT_INTERVAL,
+            expected_leaf_paths=paths,
+            window_sec=window_sec,
+            context="peer-port identity leaves",
+        )
+
+    with allure.step(f"Verify delivery was driven by the {HEARTBEAT_INTERVAL} heartbeat, not the "
+                     f"{HEARTBEAT_SAMPLE_INTERVAL} sample interval"):
+        verify_heartbeat_drove_delivery(
+            timeline, window_sec, HEARTBEAT_INTERVAL, context="peer-port identity leaves",
+        )
+
+
+@pytest.mark.skip_clear_config
+@pytest.mark.gnmi
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+def test_peer_port_heartbeat_survives_peer_port_disable(
+    engines, devices, gnmi_client, setup_topology, request, setup_name
+):
+    """
+    Disabling peer-port mid-subscription must not silence the rest of the subscription.
+
+    Disabling the knob removes the whole peer-port subtree while a subscription is streaming it -
+    the bluntest available way to kill leaves under a live RPC, which is the failure shape
+    Redmine 5230671 item 1 is about: leaves going silent under a subscription that stays up. The
+    switch-side leaves in the same subscription must keep heartbeating throughout, and the RPC
+    itself must not abort when part of its path set disappears.
+
+    Extra coverage layered on the peer-port suite, so an unmet lab prerequisite skips rather than
+    fails: this case needs an external HCA cable, a running SM and a live switch-side link on top
+    of what the surface it extends requires.
+    """
+    _require_external_hca_topology(setup_topology, skip_on_wrong_lab=True)
+    _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab=True)
+    _enable_peer_port(engines)
+    targets = _select_peer_port_targets(gnmi_client, skip_on_wrong_lab=True)
+    switch_port = _require_link_up_port('watch across the peer-port disable')
+    switch_paths = [
+        f"{GnmiYangPaths.INTERFACE_BY_NAME.format(name=switch_port.name)}/{leaf}"
+        for leaf in HEARTBEAT_STATIC_INTERFACE_LEAVES
+    ]
+    paths = switch_paths + _peer_port_counter_paths(targets)
+    window_sec = heartbeat_window_sec(HEARTBEAT_INTERVAL_SHORT, epochs=5)
+    subscription = StreamSubscription(
+        paths=paths,
+        stream_mode=GnmiStreamMode.SAMPLE,
+        sample_interval=HEARTBEAT_SAMPLE_INTERVAL,
+        suppress_redundant=True,
+        heartbeat_interval=HEARTBEAT_INTERVAL_SHORT,
+        label="switch-side + peer-port leaves across a peer-port disable",
+    )
+    ibh.attach_dict(
+        "peer-port disable perturbation",
+        {
+            "switch_port": switch_port.name,
+            "switch_paths": len(switch_paths),
+            "peer_paths": len(paths) - len(switch_paths),
+            "heartbeat_interval": HEARTBEAT_INTERVAL_SHORT,
+            "window_sec": window_sec,
+            "disable_at_sec": HEARTBEAT_PERTURBATION_AT_SEC,
+        },
+    )
+
+    def _disable_peer_port():
+        System().peer_port.unset(
+            op_param=NvuePaths.KEY_STATE, apply=True, ask_for_confirmation='-y',
+        ).verify_result()
+
+    with allure.step(
+        f"Stream {len(paths)} leaves for {window_sec}s, disabling peer-port after "
+        f"{HEARTBEAT_PERTURBATION_AT_SEC}s"
+    ):
+        try:
+            results = run_stream_subscribers(
+                target_ip=engines.dut.ip,
+                subscriptions=[subscription],
+                window_sec=window_sec,
+                username=gnmi_client.username,
+                password=gnmi_client.password,
+                mid_window_action=_disable_peer_port,
+                action_at_sec=HEARTBEAT_PERTURBATION_AT_SEC,
+                engine=get_gnmic_engine(engines),
+            )
+        finally:
+            with allure.step("Re-enable peer-port"):
+                _enable_peer_port(engines)
+        verify_subscribers_streamed(results)
+
+    # The peer-port leaves are expected to stop: the feature that produced them was turned off.
+    # What must not happen is the switch-side leaves stopping along with them.
+    with allure.step(
+        f"Verify {switch_port.name}'s leaves kept heartbeating across the peer-port disable"
+    ):
+        switch_side = [
+            notification for notification in results[0].notifications
+            if GnmiYangPaths.PEER_PORT_PREFIX not in str(notification.get("prefix", ""))
+        ]
+        verify_leaf_heartbeat_continuity(
+            switch_side,
+            HEARTBEAT_INTERVAL_SHORT,
+            expected_leaf_paths=list(HEARTBEAT_STATIC_INTERFACE_LEAVES),
+            window_sec=window_sec,
+            context=f"{switch_port.name} while the peer-port subtree was removed",
+        )
 
 
 # 9.2 test_hca_ingestion_persists_across_reboot (nice-to-have)

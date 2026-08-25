@@ -46,14 +46,25 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     SystemDbCli,
 )
 from ngts.tests_nvos.system.gnmi.constants import (
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_SAMPLE_INTERVAL,
     MAX_GNMI_SUBSCRIBERS,
+    STREAM_SUBSCRIBE_LOAD_TOLERANCE_FACTOR,
     STREAM_SUBSCRIBE_LOAD_WINDOW_SEC,
     STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
+    GnmiStreamMode,
 )
 from ngts.tests_nvos.system.gnmi.helpers import (
+    StreamSubscription,
     count_result_sets,
+    get_gnmic_engine,
+    heartbeat_window_sec,
     run_concurrent_multi_path_stream_subscribers,
+    run_stream_subscribers,
     validate_notification_has_prefix_and_leaves,
+    verify_heartbeat_drove_delivery,
+    verify_leaf_heartbeat_continuity,
+    verify_subscribers_streamed,
 )
 
 logger = logging.getLogger(__name__)
@@ -689,8 +700,7 @@ def test_gnmi_subscribe_many_planeport_paths(
         f"paths for {STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} "
         f"sample interval"
     ):
-        per_subscriber = run_concurrent_multi_path_stream_subscribers(
-            engines=engines,
+        per_subscriber, _ = run_concurrent_multi_path_stream_subscribers(
             devices=devices,
             target_ip=engines.dut.ip,
             prefix="",
@@ -700,6 +710,7 @@ def test_gnmi_subscribe_many_planeport_paths(
             username=gnmi_client.username,
             password=gnmi_client.password,
             sample_interval=STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
+            engine=get_gnmic_engine(engines),
         )
 
     # Every subscriber session must have returned a result set
@@ -738,19 +749,129 @@ def test_gnmi_subscribe_many_planeport_paths(
                         expected_leaves=leaves,
                     )
 
-    # Assert the subscription kept streaming: each subscriber must observe more than one
-    # result-set over the window (SAMPLE mode at a one-second interval yields ~window_sec)
-    with allure.step("Verify every subscriber received more than one result-set"):
-        for sub_idx, count in enumerate(result_set_counts):
+    # Assert the subscription kept streaming, per leaf rather than in aggregate: a result-set
+    # count only says *something* arrived each interval, so it stays healthy while individual
+    # plane-port leaves go silent. This is the aggregate-over-window gap called out by name in
+    # Redmine 5230671 item 1.
+    with allure.step("Verify every subscribed leaf kept streaming for the whole window"):
+        for sub_idx, notifications in enumerate(per_subscriber):
             with allure.independent_step(
-                f"subscriber {sub_idx}: received {count} result-sets over "
+                f"subscriber {sub_idx}: per-leaf continuity over "
                 f"{STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s"
             ):
-                assert count > 1, (
-                    f"subscriber {sub_idx} expected more than one streamed result-set over "
-                    f"{STREAM_SUBSCRIBE_LOAD_WINDOW_SEC}s at {STREAM_SUBSCRIBE_SAMPLE_INTERVAL} "
-                    f"sample interval, got {count}"
+                verify_leaf_heartbeat_continuity(
+                    notifications,
+                    STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
+                    expected_leaf_paths=paths,
+                    tolerance=STREAM_SUBSCRIBE_LOAD_TOLERANCE_FACTOR,
+                    window_sec=STREAM_SUBSCRIBE_LOAD_WINDOW_SEC,
+                    context=f"subscriber {sub_idx} on {aport.name}'s plane-port counters",
                 )
+
+
+@pytest.mark.gnmi
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(8 * MINUTE, func_only=True)
+def test_gnmi_planeport_counters_heartbeat_under_suppress_redundant(
+    engines, devices, gnmi_client, setup_topology, topology_obj
+):
+    """
+    Plane-port counters must keep heartbeating while suppress-redundant is on.
+
+    Redmine 5230671 item 1 applied to plane-ports: a quiescent plane's error counters sit at zero,
+    so suppress-redundant suppresses them and only the heartbeat can resend them. If the heartbeat
+    is dropped those series go stale while the busy counters keep flowing and the subscription
+    still looks alive - which is exactly what the aggregate result-set check above cannot see.
+
+    Extra coverage layered on the plane-port suite, so an unmet lab prerequisite skips rather than
+    fails: this case needs an Aport whose planes are actually enumerated, which the surface it
+    extends does not.
+    """
+    with allure.step("Verify gNMI server is available"):
+        _, gnmi_cap_err = gnmi_client.gnmic_capabilities(skip_cert_verify=True)
+        if ibh.is_gnmi_server_unavailable(gnmi_cap_err):
+            pytest.skip(
+                f"gNMI server is unavailable on {engines.dut.ip}: {gnmi_cap_err.strip()}"
+            )
+
+    ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
+
+    aport = _select_aport_for_aggregation(devices, setup_topology, topology_obj)
+    planes = setup_topology.planes_for(aport.name)
+    if not planes:
+        ibh.report_wrong_lab(
+            f"WRONG LAB SETUP / TOPOLOGY: no plane-ports are enumerated for Aport {aport.name} on "
+            f"{setup_topology.setup_name!r}, so there are no plane-port counter leaves to watch "
+            "for a heartbeat.",
+            skip=True,
+        )
+
+    leaves = sorted(set(SAI_TO_GNMI_STATE_COUNTER_LEAF.values()))
+    paths = [
+        GnmiYangPaths.STATE_COUNTER_FIELD.format(name=plane.name, field=leaf)
+        for plane in planes
+        for leaf in leaves
+    ]
+    window_sec = heartbeat_window_sec(HEARTBEAT_INTERVAL)
+    subscription = StreamSubscription(
+        paths=paths,
+        stream_mode=GnmiStreamMode.SAMPLE,
+        sample_interval=HEARTBEAT_SAMPLE_INTERVAL,
+        suppress_redundant=True,
+        heartbeat_interval=HEARTBEAT_INTERVAL,
+        label=f"plane-port counters on {aport.name}",
+    )
+    ibh.attach_dict(
+        "plane-port heartbeat subscription",
+        {
+            "aport": aport.name,
+            "planes": [plane.name for plane in planes],
+            "paths": len(paths),
+            "sample_interval": HEARTBEAT_SAMPLE_INTERVAL,
+            "heartbeat_interval": HEARTBEAT_INTERVAL,
+            "window_sec": window_sec,
+        },
+    )
+
+    with allure.step(
+        f"Stream {len(paths)} plane-port counter leaves with suppress-redundant and a "
+        f"{HEARTBEAT_INTERVAL} heartbeat for {window_sec}s"
+    ):
+        results = run_stream_subscribers(
+            target_ip=engines.dut.ip,
+            subscriptions=[subscription],
+            window_sec=window_sec,
+            username=gnmi_client.username,
+            password=gnmi_client.password,
+            engine=get_gnmic_engine(engines),
+        )
+        verify_subscribers_streamed(results)
+
+    # Expected leaves are the subscribed paths themselves, so the check is per plane: a leaf name
+    # arriving on one plane must not cover for the same leaf going silent on another.
+    with allure.step("Verify every plane-port counter leaf kept heartbeating on every plane"):
+        timeline = verify_leaf_heartbeat_continuity(
+            results[0].notifications,
+            HEARTBEAT_INTERVAL,
+            expected_leaf_paths=paths,
+            window_sec=window_sec,
+            context=f"plane-port counters on {aport.name}",
+        )
+
+    # Only the error counters are quiescent; the octet/packet counters move with live traffic and
+    # are legitimately delivered on change, so the cadence check has to exclude them or it would
+    # fail on a healthy fabric.
+    with allure.step(f"Verify the quiescent error counters arrived on the {HEARTBEAT_INTERVAL} "
+                     f"heartbeat rather than every sample"):
+        verify_heartbeat_drove_delivery(
+            timeline,
+            window_sec,
+            HEARTBEAT_INTERVAL,
+            context=f"plane-port error counters on {aport.name}",
+            leaf_filter=lambda leaf: leaf.endswith("-errors"),
+        )
 
 
 # ---------------------------------------------------------------------------
