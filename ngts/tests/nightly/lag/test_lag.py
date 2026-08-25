@@ -415,18 +415,22 @@ def test_lag_members_scale(topology_obj, interfaces, engines, cleanup_list, plat
         ]
 
         with allure.step('Set same speed to all LAG members'):
-            dut_orig_ifaces_speeds = dut_cli.interface.get_interfaces_speed(all_interfaces_with_same_type)
-            # Get minimal supported speed
-            min_speed = min([speed_string_to_int_in_mb(speed) for speed in dut_orig_ifaces_speeds.values()])
-            # If member speeds differ, set the selected members to the minimum speed for their interface type.
-            members_speed = {}
-            [members_speed.update({iface: dut_orig_ifaces_speeds[iface]}) for iface in member_interfaces]
-            if not all(x == list(members_speed.values())[0] for x in list(members_speed.values())):
+            dut_oper_ifaces_speeds = dut_cli.interface.get_interfaces_speed(all_interfaces_with_same_type)
+            dut_original_port_config = json.loads(
+                engines.dut.run_cmd('sonic-cfggen -d --print-data', print_output=False))['PORT']
+
+            # Use operational speeds to decide whether the LAG members need a common speed.
+            min_oper_speed = min(speed_string_to_int_in_mb(speed)
+                                 for speed in dut_oper_ifaces_speeds.values())
+            member_oper_speeds = [dut_oper_ifaces_speeds[interface] for interface in member_interfaces]
+            if any(speed != member_oper_speeds[0] for speed in member_oper_speeds[1:]):
                 interfaces_config_list = []
                 for interface in member_interfaces:
+                    original_configured_speed = dut_original_port_config.get(interface, {}).get('speed')
+                    assert original_configured_speed, f'Missing configured speed for interface {interface}'
                     interfaces_config_list.append({'iface': interface,
-                                                   'speed': min_speed,
-                                                   'original_speed': dut_orig_ifaces_speeds.get(interface, min_speed)})
+                                                   'speed': min_oper_speed,
+                                                   'original_speed': original_configured_speed})
                 interfaces_config_dict = {
                     'dut': interfaces_config_list
                 }
