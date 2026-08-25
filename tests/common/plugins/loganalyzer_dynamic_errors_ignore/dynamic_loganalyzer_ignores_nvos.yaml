@@ -2360,10 +2360,13 @@
         - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
 
 # NMX package good flow: nv-bridge Version mismatch during package swap (error expected)
+# gpu_telemetry: uninstalling nmx-telemetry also removes NMX-T Lite, which is shiped inside that package,
+# so gpu_telemetry cannot reach its sockets until the test restarts the container during cleanup.
 - Errors_list:
     - '.*WARNING nv-bridge#nv-bridge.*Version mismatch: daemon version.*vs server version.*'
     - '.*WARNING nv-bridge#nv-bridge.*Hello gRPC refused.*'
     - '.*ERR nv-bridge#nv-bridge.*[handle_connection_end] -E- Invalid or missing connection-id metadata.*'
+    - '.*ERR gpu_telemetry: Connection error: GET .* on /var/run/nmx-t-lite/.*\.sock.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/cluster/test_nmx_package.py::test_nmx_package_good_flow
