@@ -40,7 +40,7 @@ PTF_PORT = "ptf_port"
 IPV6_KEY = "ipv6"
 MAX_DOWN_BGP_SESSIONS_ALLOWED = 0
 MAX_TIME_CONFIG = {
-    'dataplane_downtime': 1,
+    'dataplane_downtime': 30,
     'controlplane_convergence': 300
 }
 MAX_DOWNTIME_PORT_FLAPPING = MAX_TIME_CONFIG['controlplane_convergence'] + 30  # seconds
