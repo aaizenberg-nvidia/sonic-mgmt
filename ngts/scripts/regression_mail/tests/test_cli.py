@@ -85,6 +85,12 @@ class CliTest(unittest.TestCase):
             " ?: env.REGRESSION_MAIL_RC_STATUS_REPOSITORY",
             groovy,
         )
+        self.assertIn(
+            "regression_mail_github_authors = env.regression_mail_github_authors?.trim() ?:"
+            '\n              env."${name}_regression_mail_github_authors" ?:'
+            "\n              env.REGRESSION_MAIL_GITHUB_AUTHORS",
+            groovy,
+        )
         for setting in (
             "github_api_token: env.GITHUB_API_TOKEN",
             "redmine_api_token: env.REDMINE_API_TOKEN",

@@ -45,6 +45,11 @@ The Groovy step validates that value and passes it to
 `build_config.json`. For `modify`, the triggering Jenkins user remains the
 recipient when a `UserIdCause` is available.
 
+The optional Jenkins string parameter `regression_mail_github_authors` can
+override the comma-separated GitHub login list for a build. When it is absent
+or empty, the job uses `REGRESSION_MAIL_GITHUB_AUTHORS` from
+`build_config.json`, preserving the existing default behavior.
+
 ## Public API
 
 ```python

@@ -107,7 +107,9 @@ def run_step(name) {
           )
           regression_mail_to = env."${name}_regression_mail_to" ?: env.REGRESSION_MAIL_TO
           regression_mail_cc = env."${name}_regression_mail_cc" ?: env.REGRESSION_MAIL_CC
-          regression_mail_github_authors = env."${name}_regression_mail_github_authors" ?: env.REGRESSION_MAIL_GITHUB_AUTHORS
+          regression_mail_github_authors = env.regression_mail_github_authors?.trim() ?:
+              env."${name}_regression_mail_github_authors" ?:
+              env.REGRESSION_MAIL_GITHUB_AUTHORS
           def report_settings = [
             smtp_host: env."${name}_regression_mail_smtp_host" ?: env.REGRESSION_MAIL_SMTP_HOST,
             smtp_port: env."${name}_regression_mail_smtp_port" ?: env.REGRESSION_MAIL_SMTP_PORT,
