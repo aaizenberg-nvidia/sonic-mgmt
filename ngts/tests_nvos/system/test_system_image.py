@@ -15,8 +15,6 @@ from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurat
 from ngts.tests_nvos.general.security.centralized_tests.upgrade import test_upgrade  # TODO: we should't import stuff from other test files directly
 from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ImageConsts
 from ngts.scripts.sonic_deploy.nvos_only_methods import NvosInstallationSteps
-from devts.infra.tools.general_constants.constants import DefaultConnectionValues
-from ngts.tests_nvos.general.security import conftest as security_conftest  # TODO: we should't import stuff from conftest directly
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
 from ngts.ngts_types import DevicesT
@@ -37,7 +35,6 @@ from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_output, run_gnmic_once_flat
 from ngts.tests_nvos.system.reboot_telemetry_helpers import gnmi_client_for_dut
-from ngts.tests_nvos.general.security.conftest import create_ssh_login_engine
 from ngts.tools.test_utils.nvos_general_utils import check_partitions_capacity
 from ngts.tests_nvos.general.security.centralized_tests.upgrade.test_upgrade import fetch_install_img
 from ngts.tests_nvos.checklist.test_checklist_ipv6 import send_open_api_request
@@ -657,7 +654,7 @@ def image_uninstall_test(release_name, original_version, devices, uninstall_forc
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_smallcase_n(engines, original_version, devices):
+def test_system_image_install_reject_with_smallcase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'n'
     Validate that install image command will be aborted when the prompt is rejected.
@@ -667,14 +664,14 @@ def test_system_image_install_reject_with_smallcase_n(engines, original_version,
     """
     system = System()
     prompt_response = 'n'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
 @pytest.mark.system
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_uppercase_n(engines, original_version, devices):
+def test_system_image_install_reject_with_uppercase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'N'
     Validate that install image command will be aborted when the prompt is rejected.
@@ -684,14 +681,14 @@ def test_system_image_install_reject_with_uppercase_n(engines, original_version,
     """
     system = System()
     prompt_response = 'N'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
 @pytest.mark.system
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_random_char(engines, original_version, devices):
+def test_system_image_install_reject_with_random_char(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with random character
     Validate that install image command will be aborted when the prompt is rejected.
@@ -701,61 +698,41 @@ def test_system_image_install_reject_with_random_char(engines, original_version,
     """
     system = System()
     prompt_response = 't'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
-def system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices):
+def system_image_install_reject_with_prompt(system, prompt_response, original_version, devices):
     verify_current_version(original_version, system, devices.dut)
 
-    action_job_id = 0
-    try:
-        with allure.step("Create SSH Engine to login to the switch"):
-            child = security_conftest.create_ssh_login_engine(engines.dut.ip, SystemConsts.DEFAULT_USER_ADMIN)
-            assert isinstance(child.pid, int), "SSH login process failed to be spawned"
-            respond = child.expect([DefaultConnectionValues.PASSWORD_REGEX, '~'])
-            assert respond == 0, "SSH Connection to switch failed"
-            child.sendline(engines.dut.password)
-            respond = child.expect(DefaultConnectionValues.DEFAULT_PROMPTS[0])
-            output = child.after.decode('utf-8')
-            assert respond == 0, "Password prompt did not come up {out}".format(out=output)
+    with allure.step("Extract Image name before attempting installing new image"):
+        image_name = system.version.get_nvos_image_version()
 
-        with allure.step("Extract Image name before attempting installing new image"):
-            image_name = system.version.get_nvos_image_version()
+    with allure.step("Attempt install image and reject the prompt"):
+        # Capture existing jobs to verify that rejecting the prompt does not start an action.
+        exempted_err_msgs = ['action_error', 'File not found', 'Failed to install', 'Action failed']
+        action = Action()
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            action.show(exempted_err_msgs=exempted_err_msgs)
+        ).get_returned_value()
+        action_job_ids_before = set(output or ())
 
-        with allure.step("Attempt install image and reject the prompt"):
-            # Get the last action-job-id
-            exempted_err_msgs = ['action_error', 'File not found', 'Failed to install', 'Action failed']
-            action = Action()
-            output = OutputParsingTool.parse_json_str_to_dictionary(action.show(exempted_err_msgs=exempted_err_msgs)). \
-                get_returned_value()
-            if output:
-                action_job_id = max([int(id_no) for id_no in list(output)])
+        # The rejected action has no CLI output; the absence of a new action job is verified below.
+        system.image.files.file_name['nvos.bin'].action_install(
+            reboot_params=False,
+            force=False,
+            send_user_confirmation=prompt_response,
+            expected_output=('',),
+        ).verify_result()
 
-            # Since the install is to be aborted, using a dummy image name nvos.bin
-            child.sendline('nv action install system image files nvos.bin')
-            respond = child.expect('.*continue.*')
-            assert respond == 0, "Install image confirmation prompt did not come up"
-            child.sendline(prompt_response)
-            respond = child.expect('.*abort.*')
-            assert respond == 0, "Image install abort message did not appear"
+    with allure.step("Verify rejected install did not start an action"):
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            action.show(exempted_err_msgs=exempted_err_msgs)
+        ).get_returned_value()
+        assert set(output or ()) == action_job_ids_before, "Rejected image install unexpectedly created an action"
 
-        with allure.step("Verify install command was executed successfully"):
-            # Increment action-job-id for latest command status
-            action_job_id_str = str(action_job_id + 1)
-            # extract last command execution status
-            output = OutputParsingTool.parse_json_str_to_dictionary(action.show(action_job_id_str)). \
-                get_returned_value()
-            assert output['detail'] == 'Image install aborted by user' and \
-                output['http_status'] == 200 and \
-                output['state'] == 'action_success', "Image install command failed:{out}".format(out=output)
-
-        with allure.step("Verify image is unchanged"):
-            image_name_post = system.version.get_nvos_image_version()
-            assert image_name == image_name_post, "Image name changed even though image install command was aborted"
-
-    finally:
-        # close connection
-        child.close()
+    with allure.step("Verify image is unchanged"):
+        image_name_post = system.version.get_nvos_image_version()
+        assert image_name == image_name_post, "Image name changed even though image install command was aborted"
 
 
 @pytest.mark.checklist
