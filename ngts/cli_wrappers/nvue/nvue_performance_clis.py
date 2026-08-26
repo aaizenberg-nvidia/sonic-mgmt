@@ -1544,8 +1544,9 @@ class NvuePerformanceCli(PerformanceCommon):
         left_ports = copy.deepcopy(ports["left_ports"])
         right_ports = copy.deepcopy(ports["right_ports"])
         egress_ports_num = num_of_ingress_ports // M
-        egress_ports = right_ports[:egress_ports_num]
-        ingress_ports = left_ports[:num_of_ingress_ports]
+        left_ports_start_index = random.randint(0, len(left_ports) - num_of_ingress_ports)
+        egress_ports = random.sample(right_ports, egress_ports_num)
+        ingress_ports = left_ports[left_ports_start_index:left_ports_start_index + num_of_ingress_ports]
         sdk_port_list_egress = self.cli_obj.performance.get_sdk_ports(egress_ports)
         sdk_port_list_ingress = self.cli_obj.performance.get_sdk_ports(ingress_ports)
         for port in sdk_port_list_egress:
