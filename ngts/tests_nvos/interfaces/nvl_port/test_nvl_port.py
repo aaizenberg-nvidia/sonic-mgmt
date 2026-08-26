@@ -123,10 +123,9 @@ def test_show_nvl_interface(devices, random_api):
 @pytest.mark.air_sanity
 def test_nvl_internal_fnm_ports(devices):
     """
-    Validate that all internal FNM ports on NVL systems are UP by default.
+    Validate the expected number of internal FNM ports are UP by default.
 
-    Internal FNM ports connect ASICs together
-    and should be LinkUp by default
+    All internal FNM ports should be UP on NVL5/NVL6; half should be UP on NVL7.
 
     This is the NVL equivalent of test_internal_fnm_ports from multi_planar tests.
     """
@@ -136,14 +135,16 @@ def test_nvl_internal_fnm_ports(devices):
     output_dictionary = OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
         Port.show_interface(fae_param='fae')).get_returned_value()
 
-    down_internal_fnm_ports = {port: output_dictionary[port][IbInterfaceConsts.LINK_STATE]
-                               for port in devices.dut.nvl_internal_fnm_ports
-                               if output_dictionary[port][IbInterfaceConsts.LINK_STATE] != NvosConsts.LINK_STATE_UP}
+    internal_fnm_states = {port: output_dictionary[port][IbInterfaceConsts.LINK_STATE]
+                           for port in devices.dut.nvl_internal_fnm_ports}
+    actual_up_count = sum(state == NvosConsts.LINK_STATE_UP for state in internal_fnm_states.values())
+    expected_up_count = len(internal_fnm_states) // (2 if devices.dut.asic_type == NvosConst.NVL7 else 1)
 
-    assert not down_internal_fnm_ports, (
-        f"Expected all internal FNM ports to be UP, but found DOWN: {down_internal_fnm_ports}"
+    assert actual_up_count == expected_up_count, (
+        f"Expected {expected_up_count}/{len(internal_fnm_states)} internal FNM ports UP, "
+        f"found {actual_up_count}: {internal_fnm_states}"
     )
-    logger.info(f"✓ All {len(devices.dut.nvl_internal_fnm_ports)} internal FNM ports are UP")
+    logger.info("Found expected %d/%d internal FNM ports UP", actual_up_count, len(internal_fnm_states))
 
 
 @pytest.mark.interface

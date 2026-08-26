@@ -127,7 +127,8 @@ class RandomizationTool:
             all_relevant_ports = Port.get_list_of_ports(dut_engine, port_requirements_object)
 
             if len(all_relevant_ports) == 0:
-                result_obj.info = f"Ports with provided parameters were not found: {port_requirements_object}"
+                result_obj.info = (f"Ports with provided parameters were not found: {port_requirements_object}, "
+                                   f"interface_type={port_requirements_object.interface_type!r}")
                 return result_obj
 
             if num_of_ports_to_select == 0:

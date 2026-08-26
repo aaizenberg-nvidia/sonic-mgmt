@@ -11,11 +11,12 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.Devices.IbDevice import RosalindSimx, RosalindStackedSimx, RosalindSwitch  # TODO: Remove RosalindSwitch import when XDR WA is removed
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import MloopConsts
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
+from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
-from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair
+from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair, wait_for_ports_state
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(scope='module')
 def mloop_mode(request) -> MloopConsts.Mode:
     """
-    FAE mloop mode applied by rosalind_simx_setup. Default: LOGICAL (LLU2LLU loopback).
+    FAE mloop mode applied by nvl_simx_setup. Default: LOGICAL (LLU2LLU loopback).
 
     Indirect-parametrizable: tests can pick a mode via::
 
@@ -46,72 +47,67 @@ def mloop_mode(request) -> MloopConsts.Mode:
         )
 
 
-@pytest.fixture(scope='module', autouse=True)
-@pytest.mark.timeout(20 * MINUTE, func_only=True)  # 20 minutes - setup typically takes 7-15 minutes
-def rosalind_simx_setup(engines, devices, mloop_mode, nv_command):
+@pytest.fixture(scope='package', autouse=True)
+def nvl_simx_cleanup(engines, devices):
+    """Disable mloop once after all NVL interface tests finish."""
+    if not devices.dut.require_mloop_setup:
+        yield
+        return
+
+    yield
+
+    logger.info("Cleaning up: disabling per-interface MLOOP")
+    try:
+        access_ports = devices.dut.nvl_access_ports_list
+        if access_ports:
+            port_range = summarize_switch_ports(access_ports)
+            with allure.step(f"Disable mloop on {port_range}"):
+                NvCommand().fae.interfaces[port_range].link.mloop.set(
+                    op_param_name=MloopConsts.Mode.DISABLED,
+                    apply=True,
+                    ask_for_confirmation=True,
+                ).verify_result()
+                logger.info(f"Set mloop=disabled on {port_range} (system auto-toggles ports)")
+
+        engines.dut.run_cmd('nv config save')
+        logger.info("System restored to initial state: MLOOP disabled, config saved")
+    except Exception as e:
+        logger.warning(f"Failed during cleanup: {e}")
+
+
+@pytest.fixture(scope='function', autouse=True)
+def nvl_simx_setup(engines, devices, mloop_mode):
     """
-    RosalindSimx specific setup configuration that runs once per test module (.py file).
+    NVL SIMX-specific setup configuration that runs before each test.
 
     Per nvbug 6072833 the FAE mloop knob is per-interface, and the system toggles
     affected ports automatically. The fixture:
-    1. Sets fae mloop=<mloop_mode> on all access ports (auto-toggles ports up)
-    2. Waits for stabilization
-    3. On teardown, sets fae mloop=disabled on the same ports
+    1. Ensures fae mloop=<mloop_mode> on all access ports
+    2. Waits for every access port to be up
 
     The mode comes from the `mloop_mode` fixture (default: LOGICAL); test modules
     can override that fixture to pick a different mode.
-
-    Note: 20 minute timeout allows for variability in setup time (typically 7-15 minutes).
-    Individual tests still have 900s timeout from MARS configuration.
     """
-    # Skip setup if bug 4681425 is active (SIMX instability with loopback config)
-    if is_bug_active(4681425):
-        logger.warning("Bug 4681425 is active - skipping RosalindSimx loopback setup, tests will run without it")
-        yield
-        return
-
     # Check if this device requires MLOOP setup (simx flavors and future compatible platforms)
     if not devices.dut.require_mloop_setup:
         logger.info("Device does not require MLOOP setup, skipping special configuration")
-        yield
         return
 
-    # Use the reusable utility function for RosalindSimx loopback configuration
-    config_success = IbInterfaceTool.configure_rosalind_simx_loopback(
-        engines, devices, mloop_mode=mloop_mode)
-    if not config_success:
-        pytest.fail("RosalindSimx loopback configuration failed - cannot run tests")
+    # Skip setup if bug 4681425 is active (SIMX instability with loopback config)
+    if is_bug_active(4681425):
+        logger.warning("Bug 4681425 is active - skipping NVL SIMX loopback setup, tests will run without it")
+        return
 
-    logger.info("RosalindSimx loopback configuration completed successfully")
+    # Use the reusable utility function for NVL SIMX loopback configuration
+    if not IbInterfaceTool.configure_nvl_simx_loopback(engines, devices, mloop_mode=mloop_mode):
+        pytest.fail("NVL SIMX loopback configuration failed - cannot run tests")
 
-    # Verify that links are actually up
-    verification_success = IbInterfaceTool.verify_rosalind_simx_links_up(devices, max_retries=2, retry_wait_minutes=3)
-    if not verification_success:
-        pytest.fail("RosalindSimx link verification failed - no ports found UP")
+    logger.info("NVL SIMX loopback configuration completed successfully")
 
-    logger.info("RosalindSimx link verification successful")
-
-    yield  # ALL tests in module execute here
-
-    # Cleanup: disable per-interface MLOOP after all tests complete (system auto-toggles ports)
-    if config_success:
-        logger.info("Cleaning up: disabling per-interface MLOOP")
-        try:
-            access_ports = devices.dut.nvl_access_ports_list
-            if access_ports:
-                port_range = summarize_switch_ports(access_ports)
-                with allure.step(f"Disable mloop on {port_range}"):
-                    nv_command.fae.interfaces[port_range].link.mloop.set(
-                        op_param_name=MloopConsts.Mode.DISABLED,
-                        apply=True,
-                        ask_for_confirmation=True,
-                    ).verify_result()
-                    logger.info(f"Set mloop=disabled on {port_range} (system auto-toggles ports)")
-
-            engines.dut.run_cmd('nv config save')
-            logger.info("System restored to initial state: MLOOP disabled, config saved")
-        except Exception as e:
-            logger.warning(f"Failed during cleanup: {e}")
+    access_ports = devices.dut.nvl_access_ports_list
+    with allure.step(f"Wait for all {len(access_ports)} ACP ports to be up"):
+        wait_for_ports_state(devices, access_ports, 'acp')
+    logger.info("All NVL SIMX ACP links are up")
 
 
 # TODO: XDR Workaround Fixture - Currently DISABLED
