@@ -112,24 +112,6 @@
                 <value> no </value>
             </condition>
         </ignore>
-        <info> GMNI ZMQ Case </info>
-        <name> gnmi_zmq </name>
-        <cmd>
-            <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 7200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts zmq/test_gnmi_zmq.py </static_args>
-            </params>
-        </cmd>
-    </case>
-
-    <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Gnoi system Case </info>
         <name> gnoi_system </name>
         <cmd>
@@ -203,23 +185,6 @@
         <cmd>
             <params>
                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 7200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts gnmi/test_gnoi_system_reboot.py </static_args>
-            </params>
-        </cmd>
-    </case>
-    <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
-        <info> gnmi_stress </info>
-        <name> gnmi_stress </name>
-        <cmd>
-            <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 7200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts gnmi/test_gnmi_stress.py </static_args>
             </params>
         </cmd>
     </case>

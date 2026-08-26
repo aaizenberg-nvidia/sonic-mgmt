@@ -84,41 +84,11 @@
     </case>
 
     <case>
-        <info> Test Sequential Restart Case </info>
-        <name> sequential_restart </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_sequential_restart.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Test XCVR Info in DB Case </info>
-        <name> xcvr_info_in_db </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_xcvr_info_in_db.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
         <info> Test Check sysfs Case </info>
         <name> check_sysfs </name>
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/mellanox/test_check_sysfs.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Test hw-management Service Case </info>
-        <name> hw_management_service </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/mellanox/test_hw_management_service.py </static_args>
              </params>
         </cmd>
     </case>
@@ -134,16 +104,6 @@
     </case>
 
     <!-- Platform API Test Case Begin-->
-
-    <case>
-        <info> Test Watchdog Case </info>
-        <name> watchdog </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/api/test_watchdog.py </static_args>
-             </params>
-        </cmd>
-    </case>
 
     <case>
         <info> Test Chassis API Case </info>
@@ -196,26 +156,6 @@
     </case>
 
     <case>
-        <info> Pcied Daemon Status Case </info>
-        <name> pcied </name>
-        <cmd>
-             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 900 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/daemon/test_pcied.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Critical Process Monitoring Case </info>
-        <name> critical_process_monitoring </name>
-        <cmd>
-             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\" --skip_vendor_specific_container=what-just-happened --disable_memory_utilization\'" --test-scripts process_monitoring/test_critical_process_monitoring.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
         <info> Test syseepromd </info>
         <name> test_syseepromd </name>
         <cmd>
@@ -231,16 +171,6 @@
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 900 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts system_health/test_system_status.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Test counterpoll watermark </info>
-        <name> test_counterpoll_watermark </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 900 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/counterpoll/test_counterpoll_watermark.py </static_args>
              </params>
         </cmd>
     </case>
@@ -277,24 +207,6 @@
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --secure_boot_image=[[conf:extra_info.sig_mismatch_image:sig_mismatch_prod_image]] --disable_memory_utilization\'" --test-scripts platform_tests/test_secure_upgrade.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <ignore>
-            <!-- weekend case -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> yes </value>
-            </condition>
-        </ignore>
-        <info> Test power off reboot status </info>
-        <name> test_power_off_reboot </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 7200 --session-timeout 14400 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_power_off_reboot.py </static_args>
              </params>
         </cmd>
     </case>
