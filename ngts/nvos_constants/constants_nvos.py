@@ -3096,6 +3096,25 @@ class PeerPortConsts:
     ASSOCIATED_SWITCH_PORT = "associated-switch-port"
     HOSTNAME = "hostname"
     EXPECTED_GPU_HOSTNAME = "GR100"
+    COUNTERS = "counters"
+    LINK = "link"
+    NVL = "nvl"
+    PHY = "phy"
+    DETAIL = "detail"
+    HEALTH = "health"
+    HISTOGRAM = "histogram"
+    # Blocks aggregated by 'nv show peer-port --view=detail', one per drill-in show command
+    DETAIL_VIEW_BLOCKS = (
+        (COUNTERS,),
+        (COUNTERS, LINK),
+        (COUNTERS, NVL),
+        (LINK,),
+        (LINK, HEALTH),
+        (LINK, PHY),
+        (LINK, PHY, DETAIL),
+        (LINK, PHY, HEALTH),
+        (LINK, PHY, HEALTH, HISTOGRAM),
+    )
 
 
 class StoDebug:
