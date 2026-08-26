@@ -45,7 +45,6 @@ from ngts.nvos_tools.ib.IbPortsTool import IbPortsTool
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.nvos_tools.infra import ExceptionTool
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner
-from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DiskTool import DiskTool
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
@@ -871,7 +870,10 @@ def serial_engine(topology_obj, devices):
     """
     :return: serial connection
     """
-    return ConnectionTool.create_serial_connection(topology_obj, devices)
+    serial_engine = SerialConsoleTool.get_serial_console_session(topology_obj)
+    SerialConsoleTool.exit_existing_login(serial_engine)
+    SerialConsoleTool.login_nos(serial_engine, devices.dut.default_username, devices.dut.default_password)
+    return serial_engine
 
 
 @pytest.fixture

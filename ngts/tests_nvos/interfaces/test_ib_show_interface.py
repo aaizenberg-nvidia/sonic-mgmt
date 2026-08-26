@@ -545,10 +545,10 @@ def validate_link_fields(output_dictionary, switch_type, port_up=True):
                           # IbInterfaceConsts.LINK_SUPPORTED_SPEEDS,
                           IbInterfaceConsts.LINK_LOGICAL_PORT_STATE,
                           IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE,
-                          IbInterfaceConsts.LINK_VL_ADMIN_CAPABILITIES,
-                          IbInterfaceConsts.LINK_CONNECTION_MODE]
+                          IbInterfaceConsts.LINK_VL_ADMIN_CAPABILITIES]
         if switch_type == "ib":
             field_to_check.insert(1, IbInterfaceConsts.LINK_IB_SUBNET)  # Insert at the desired position
+            field_to_check.append(IbInterfaceConsts.LINK_CONNECTION_MODE)
 
         Tools.ValidationTool.verify_field_exist_in_json_output(output_dictionary, field_to_check).verify_result()
 
@@ -557,7 +557,8 @@ def validate_link_fields(output_dictionary, switch_type, port_up=True):
                           # IbInterfaceConsts.LINK_IB_SPEED,
                           IbInterfaceConsts.LINK_OPERATIONAL_VLS]
 
-        if output_dictionary[IbInterfaceConsts.LINK_CONNECTION_MODE] == IbInterfaceConsts.XDR and \
+        if switch_type == "ib" and \
+           output_dictionary[IbInterfaceConsts.LINK_CONNECTION_MODE] == IbInterfaceConsts.XDR and \
            output_dictionary[IbInterfaceConsts.LINK_LOGICAL_PORT_STATE] == IbInterfaceConsts.LINK_LOGICAL_PORT_STATE_ACTIVE:
             field_to_check.insert(1, IbInterfaceConsts.LINK_SPEED)
 
@@ -693,6 +694,7 @@ def test_ib_interface_counters_cli_structure(engines, devices, random_api):
 def verify_ib_interface_counters_cli_structure_nvl(devices):
     with allure.step('Select a random port'):
         selected_port = Tools.RandomizationTool.select_random_port(
+            requested_ports_state=None,
             requested_ports_type=NvlInterfaceConsts.NVL_PORT_TYPE).get_returned_value()
 
         TestToolkit.update_tested_ports([selected_port])
