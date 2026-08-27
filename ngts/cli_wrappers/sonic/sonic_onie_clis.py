@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import os
@@ -536,8 +537,12 @@ def get_latest_onie_version(fw_pkg_path, platform_params):
     latest_onie_version = ''
     latest_onie_url = ''
     if fw_pkg_path is None:
-        logger.warning("No firmware package file path specified.")
-    else:
+        logger.warning("No firmware package file path specified, falling back to default.")
+        fw_pkg_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)).split('ngts')[0],
+            MarsConstants.UPDATED_FW_TAR_PATH
+        )
+    if fw_pkg_path:
         logger.info(f"Get latest ONIE version from specified file {fw_pkg_path}")
         fw_data = extract_fw_data(fw_pkg_path)
         chassis = normalize_firmware_chassis_name(platform_params.filtered_platform)

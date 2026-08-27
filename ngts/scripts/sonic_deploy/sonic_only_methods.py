@@ -566,7 +566,12 @@ class SonicInstallationSteps:
         :param platform_params: DottedDict with platform info (filtered_platform, host_name, etc.)
         :param cli: DUT cli object (used to wait for dockers before fwutil)
         """
-        assert fw_pkg_path, 'No firmware package path provided, aborting BIOS version check'
+        if not fw_pkg_path:
+            fw_pkg_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)).split("ngts")[0],
+                MarsConstants.UPDATED_FW_TAR_PATH
+            )
+            logger.warning(f"No fw_pkg_path provided, falling back to default: {fw_pkg_path}")
 
         hostname = platform_params.get('host_name', '')
         assert hostname, 'No hostname provided, aborting BIOS version check'
