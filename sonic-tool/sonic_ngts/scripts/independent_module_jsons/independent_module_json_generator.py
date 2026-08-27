@@ -7,6 +7,7 @@ from collections import OrderedDict
 
 SPC3_SI_PARAMS_EXCEL = 'spc3_si_params.xls'
 SPC4_SI_PARAMS_EXCEL = 'spc4_si_params.xls'
+SPC6_SI_PARAMS_EXCEL = 'spc6_si_params.xls'
 
 GLOBAL_MEDIA_SETTINGS = 'GLOBAL_MEDIA_SETTINGS'
 SPC3_PORT_RANGE = '1-32'
@@ -17,6 +18,7 @@ GROUP_ID = 0
 SPC3 = 'spc3'
 SPC4 = 'spc4'
 SPC5 = 'spc5'
+SPC6 = 'spc6'
 
 PORT = 'port'       # media_settings.json
 MODULE = 'module'   # optics_si_settings.json
@@ -46,6 +48,7 @@ SPEED = 'SPEED'
 LANES = 'LANES'
 
 LANE_SPEED_TO_GENERATION = {
+    200: 'XDR',
     100: 'NDR',
     50: 'HDR',
     25: 'EDR',
@@ -64,6 +67,7 @@ SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS = {
 SI_PARAMS_EXCEL = 'si_params_excel'
 SI_PARAMS_SHEET = 'si_params_sheet'
 SERDES_DEVICE = 'serdes_device'
+SPEED_COLUMN = 'speed_column'
 PORT_RANGE = 'port_range'
 SPEED_ALIASES = 'speed_aliases'
 PASSIVE_MIN_LANE_SPEED = 'passive_min_lane_speed'
@@ -80,6 +84,7 @@ SPC_CONFIG = {
         SI_PARAMS_EXCEL: SPC3_SI_PARAMS_EXCEL,
         SI_PARAMS_SHEET: 'TX_DB_HDR',
         SERDES_DEVICE: 'Firebird',
+        SPEED_COLUMN: 'speed / protocol',
         PORT_RANGE: SPC3_PORT_RANGE,
         SPEED_ALIASES: SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS,
         PASSIVE_MIN_LANE_SPEED: PASSIVE_SKIP
@@ -88,6 +93,7 @@ SPC_CONFIG = {
         SI_PARAMS_EXCEL: SPC4_SI_PARAMS_EXCEL,
         SI_PARAMS_SHEET: 'TX_DB',
         SERDES_DEVICE: 'Albatross',
+        SPEED_COLUMN: 'speed / protocol',
         PORT_RANGE: SPC4_PORT_RANGE,
         SPEED_ALIASES: None,
         PASSIVE_MIN_LANE_SPEED: 50
@@ -95,6 +101,15 @@ SPC_CONFIG = {
     SPC5: {
         SI_PARAMS_EXCEL: NO_SI_DATASHEET,
         PORT_RANGE: SPC4_PORT_RANGE,
+        PASSIVE_MIN_LANE_SPEED: 50
+    },
+    SPC6: {
+        SI_PARAMS_EXCEL: SPC6_SI_PARAMS_EXCEL,
+        SI_PARAMS_SHEET: 'in',
+        SERDES_DEVICE: 'Maglan',
+        SPEED_COLUMN: 'Speed',
+        PORT_RANGE: SPC4_PORT_RANGE,
+        SPEED_ALIASES: None,
         PASSIVE_MIN_LANE_SPEED: 50
     }
 }
@@ -174,7 +189,22 @@ PORTS_SI_PARAM_NAMES_EXCEL_TO_JSON = {
         'fir_pre3': 'pre3',
         'fir_main': 'main',
         'fir_post1': 'post1'
+    },
+    SPC6: {
+        'tap0': 'pre3',
+        'tap1': 'pre2',
+        'tap2': 'pre1',
+        'tap3': 'main',
+        'tap4': 'post',
+        'tap5': 'post1'
     }
+}
+
+# SPC3 has its own module SI columns, all the generations from SPC4 on share these
+SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
+    'rx_out_amp': 'OutputAmplitudeTargetRx',
+    'rx_out_emp_pre': 'OutputEqPreCursorTargetRx',
+    'rx_out_emp_post': 'OutputEqPostCursorTargetRx'
 }
 
 MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
@@ -183,11 +213,8 @@ MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
         'cmis_pre': 'OutputEqPreCursorTargetRx',
         'cmis_post': 'OutputEqPostCursorTargetRx'
     },
-    SPC4: {
-        'rx_out_amp': 'OutputAmplitudeTargetRx',
-        'rx_out_emp_pre': 'OutputEqPreCursorTargetRx',
-        'rx_out_emp_post': 'OutputEqPostCursorTargetRx'
-    }
+    SPC4: SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON,
+    SPC6: SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON
 }
 
 # This dictionary maps between EEPROM entries for the identifier field and their corresponding representation in JSON.
@@ -200,7 +227,7 @@ def parse_args():
     @summary: generate the ArgumentParser, parse arguments and return them
     """
     parser = argparse.ArgumentParser(description='Generate Independent Module jsons')
-    parser.add_argument('-s', '--spc', type=str.lower, choices=[SPC3, SPC4, SPC5], help="Spectrum3, Spectrum4 or Spectrum5 indication", required=True)
+    parser.add_argument('-s', '--spc', type=str.lower, choices=[SPC3, SPC4, SPC5, SPC6], help="Spectrum3, Spectrum4, Spectrum5 or Spectrum6 indication", required=True)
     parser.add_argument('-e', '--eeprom_input', type=str, help="Path to a txt file containing module's EEPROM data")
     parser.add_argument('-m', '--mode', type=str, choices=['port', 'module'], help="The required IM json file - 'port' or 'module' SI data", required=True)
     return parser.parse_args()
@@ -208,6 +235,10 @@ def parse_args():
 
 def get_groups():
     return SPC_CONFIG[args.spc][PORT_RANGE]
+
+
+def get_speed_column():
+    return SPC_CONFIG[args.spc][SPEED_COLUMN]
 
 
 def get_excel_row_id(speed):
@@ -421,7 +452,11 @@ def get_port_si_params(df, media_key_to_lane_speed_keys):
                     media_key_si_params[application_json_str] = get_passive_json_data()
                 continue
             row_id = get_excel_row_id(lane_speed)
-            application_si_excel_data = df.loc[(df['speed / protocol'] == row_id) & (df['group'] == GROUP_ID)]
+            application_si_excel_data = df.loc[(df[get_speed_column()] == row_id) & (df['group'] == GROUP_ID)]
+            if application_si_excel_data.empty:
+                print("Skipping '{}' of '{}', the {} SI datasheet has no row for a {}G lane speed"
+                      .format(application, media_key, args.spc, lane_speed))
+                continue
             application_si_excel_data_dict = application_si_excel_data.to_dict(orient='records')[0]
             application_si_json_data = get_port_json_data(application_si_excel_data_dict)
 
@@ -462,7 +497,7 @@ def get_module_si_params(df):
         row_id = get_excel_row_id(supported_speed)
         if not row_id:
             continue
-        generation_si_excel_data = df.loc[(df['speed / protocol'] == row_id) & (df['group'] == GROUP_ID)]
+        generation_si_excel_data = df.loc[(df[get_speed_column()] == row_id) & (df['group'] == GROUP_ID)]
         if generation_si_excel_data.empty:
             continue
         generation_si_excel_data_dict = generation_si_excel_data.to_dict(orient='records')[0]
