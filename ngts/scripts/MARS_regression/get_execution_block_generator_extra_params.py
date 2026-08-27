@@ -15,8 +15,13 @@ Those setups and their arguments are read from the scenario json, see read_scena
 the setups computing their dbs with this script take part, a setup holding its dbs in the execution
 block generator panel of the scenario ui, in its .setup file, or computed by the script of another
 team, runs exactly those dbs and is left out. Any failure of that read falls back to the legacy
-behaviour and is reported on stderr, an unreported fallback is indistinguishable from a scenario
-with nothing to share.
+behaviour.
+
+This script writes the Mars parameter to stdout and NOTHING else, neither on stdout nor on stderr.
+Mars appends everything the command writes to the arguments of setup_cli.py, so a single extra line
+takes the place of the parameter and the setup silently runs the execution blocks of its .setup file
+instead of the dbs computed here. That is why none of the fallbacks above is reported and why no
+logging may be added here. Use show_scenario_setups.py to see what a scenario really runs.
 
 They are called the same topo and hwsku setups, and never a group, because the word group already
 means three different things in this file:
@@ -35,7 +40,6 @@ import argparse
 import os
 import re
 import shlex
-import sys
 import time
 
 COMMUNITY_SET1_NAME = 'community_set1'
@@ -67,15 +71,9 @@ def get_all_tests_per_set(set_tests_group_map):
 
 
 def get_daily_platform_agnostic_tests_group_name(setup_group_name, platform_agnostic_tests_group_name_input=None):
-    if platform_agnostic_tests_group_name_input:
-        if platform_agnostic_tests_group_name_input not in [PLATFORM_AGNOSTIC_GROUP1, PLATFORM_AGNOSTIC_GROUP2]:
-            # Without this check a typo silently drops every platform agnostic db of the setup.
-            sys.stderr.write('WARNING: invalid --platform_agnostic_group {}, expected one of {}. '
-                             'Falling back to the daily rotation\n'
-                             .format(platform_agnostic_tests_group_name_input,
-                                     [PLATFORM_AGNOSTIC_GROUP1, PLATFORM_AGNOSTIC_GROUP2]))
-        else:
-            return platform_agnostic_tests_group_name_input
+    # A value naming neither group, a typo for instance, is ignored and the daily rotation is used.
+    if platform_agnostic_tests_group_name_input in [PLATFORM_AGNOSTIC_GROUP1, PLATFORM_AGNOSTIC_GROUP2]:
+        return platform_agnostic_tests_group_name_input
     day_of_year = datetime.today().timetuple().tm_yday
     is_even_day = day_of_year % 2 == 0
     if setup_group_name == SETUPS_GROUP_1:
@@ -110,16 +108,12 @@ def get_all_available_tests():
 def add_remove_dbs_by_input(tests_list, add_dbs, remove_dbs):
     all_available_tests = get_all_available_tests()
     for db in add_dbs:
-        if db not in all_available_tests:
-            sys.stderr.write('WARNING: --add_dbs {} is not a known db, it is ignored\n'.format(db))
-            continue
-        if db not in tests_list:
+        # A db belonging to no set is ignored, Mars would fail to find its file.
+        if db in all_available_tests and db not in tests_list:
             tests_list.append(db)
     for db in remove_dbs:
-        if db not in tests_list:
-            sys.stderr.write('WARNING: --remove_dbs {} is not in the list of this setup, it is ignored\n'.format(db))
-            continue
-        tests_list.remove(db)
+        if db in tests_list:
+            tests_list.remove(db)
     return tests_list
 
 
@@ -357,20 +351,18 @@ def get_option_value(tokens, option_name):
     return None
 
 
-def read_nfs_file(file_path, file_description):
+def read_nfs_file(file_path):
     """Return the content of a file living on the /auto mounts, or None when it cannot be read.
 
-    Those mounts fail sporadically, so the read is retried. A failure is reported because every
-    caller falls back to the legacy behaviour.
+    Those mounts fail sporadically, so the read is retried. Every caller falls back to the legacy
+    behaviour when it fails.
     """
     for attempt in range(NFS_READ_RETRIES):
         try:
             with open(file_path, errors='ignore') as opened_file:
                 return opened_file.read()
-        except OSError as read_error:
+        except OSError:
             if attempt + 1 == NFS_READ_RETRIES:
-                sys.stderr.write('WARNING: cannot read the {} {} after {} attempts ({})\n'
-                                 .format(file_description, file_path, NFS_READ_RETRIES, read_error))
                 return None
             time.sleep(NFS_RETRY_DELAY_SECONDS)
     return None
@@ -381,7 +373,7 @@ def read_setup_conf(setup_name, conf_file_name):
     if not conf_file_name:
         conf_file_name = setup_name.replace('_setup', '') + '.setup'
     conf_file_path = os.path.join(SETUP_CONF_DIR, setup_name, conf_file_name)
-    return read_nfs_file(conf_file_path, 'setup conf file')
+    return read_nfs_file(conf_file_path)
 
 
 def read_setup_conf_tag(conf_content, tag_name):
@@ -447,8 +439,6 @@ def parse_calculate_params_command(setup_name, calculate_params_command):
             # The --set_name of that setup names no set, a scenario leaving a Mars placeholder
             # unexpanded does that. Sharing with it as if it had no set keeps its neighbours running,
             # the alternative being every setup of the group failing on its argument.
-            sys.stderr.write('WARNING: {} asks for the unknown set {}, the dbs are shared with it as '
-                             'if it had no set\n'.format(setup_name, args.set_name))
             set_name = None
     return {'name': setup_name,
             'set_name': set_name,
@@ -466,17 +456,13 @@ def read_scenario_json():
     """
     scenario_json_path = os.environ.get(SCENARIO_JSON_ENV_VAR)
     if not scenario_json_path:
-        sys.stderr.write('WARNING: {} is not set, the dbs are not shared\n'
-                         .format(SCENARIO_JSON_ENV_VAR))
         return None
-    scenario_json_content = read_nfs_file(scenario_json_path, 'scenario json')
+    scenario_json_content = read_nfs_file(scenario_json_path)
     if scenario_json_content is None:
         return None
     try:
         return json.loads(scenario_json_content)
-    except ValueError as parse_error:
-        sys.stderr.write('WARNING: cannot parse {} ({}), the dbs are not shared\n'
-                         .format(scenario_json_path, parse_error))
+    except ValueError:
         return None
 
 
@@ -538,18 +524,13 @@ def get_setup_list_with_same_topo_and_hwsku(setup_name):
     """
     scenario_setups = read_scenario_setups()
     if not scenario_setups:
-        # The scenario could not be read, read_scenario_json() reported why, or none of its setups
-        # computes its dbs with this script.
+        # The scenario could not be read, or none of its setups computes its dbs with this script.
         return None
     my_setup = scenario_setups.get(setup_name)
     if not my_setup:
-        sys.stderr.write('WARNING: {} is not in the scenario json, or its dbs do not come from this '
-                         'script, the dbs are not shared\n'.format(setup_name))
+        # This setup is not one of them either.
         return None
     if not my_setup['topo'] or not my_setup['hwsku']:
-        sys.stderr.write('WARNING: cannot resolve the topo and the hwsku of {} (topo={} hwsku={}), '
-                         'the dbs are not shared\n'
-                         .format(setup_name, my_setup['topo'], my_setup['hwsku']))
         return None
     return [setup for setup in scenario_setups.values()
             if (setup['topo'], setup['hwsku']) == (my_setup['topo'], my_setup['hwsku'])]
@@ -567,12 +548,6 @@ def get_shared_dbs_list(setup_name):
     if not same_topo_hwsku_setups or not is_db_sharing_needed(same_topo_hwsku_setups):
         return None
     return compute_shared_db_lists(same_topo_hwsku_setups).get(setup_name)
-
-
-def report_selected_dbs(setup_name, dbs_list, is_shared):
-    """Report on stderr what was selected, stdout must hold the Mars parameter only."""
-    sys.stderr.write('[db_selector] setup={} mode={} dbs={}\n'
-                     .format(setup_name, 'shared' if is_shared else 'legacy', len(dbs_list)))
 
 
 if __name__ == "__main__":
@@ -614,6 +589,5 @@ if __name__ == "__main__":
         selected_dbs = filter_control_tests(selected_dbs, setup_name, setup_set_name)
         selected_dbs = add_remove_dbs_by_input(selected_dbs, add_dbs, remove_dbs)
 
-    # Report on stderr and print the Mars parameter on stdout.
-    report_selected_dbs(setup_name, selected_dbs, is_shared)
+    # Print the Mars parameter on stdout, it must be the only thing this script writes.
     print_execution_block_generator_in_mars_format(selected_dbs)
