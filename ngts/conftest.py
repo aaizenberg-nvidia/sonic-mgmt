@@ -100,7 +100,15 @@ def pytest_collection(session: pytest.Session):
     switch_attributes = topology.players['dut']['attributes'].noga_query_data['attributes']
     devinfo = get_devinfo(switch_attributes)
 
-    platform = json.loads(devinfo).get('platform')
+    try:
+        platform = json.loads(devinfo).get('platform')
+    except json.JSONDecodeError:
+        # Run-local compatibility for NOGA resources whose devdescription is
+        # stored with unquoted values instead of JSON (for example SPC6-07).
+        match = re.search(r"""['"]?platform['"]?\s*:\s*['"]?([^,'"}\s]+)""", devinfo)
+        if not match:
+            raise
+        platform = match.group(1)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_PLATFORM_TYPE, platform)
 
     # If pytest is running in collect-only mode, skip the rest of the code

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 import requests
-from netmiko import ConnectHandler, ReadTimeout
+from netmiko import ConnectHandler, NetmikoTimeoutException, ReadTimeout
 from paramiko.ssh_exception import AuthenticationException
 from retry.api import retry_call, retry
 
@@ -284,7 +284,7 @@ class DutUtilsTool:
     def run_cmd_with_disconnect(engine, cmd, timeout=5):
         try:
             return engine.run_cmd(cmd, timeout=timeout, retry_run=False)
-        except (socket.error, ReadTimeout) as e:
+        except (socket.error, ReadTimeout, NetmikoTimeoutException) as e:
             logging.info('Got error: %s. Current engine was also disconnected', e)
             engine.disconnect()
             return "Action succeeded"
@@ -323,7 +323,7 @@ class DutUtilsTool:
         while time.time() < deadline:
             try:
                 last_out = engine.run_cmd(cmd, timeout=90, validate=False, retry_run=False)
-            except (OSError, socket.error, ReadTimeout) as e:
+            except (OSError, socket.error, ReadTimeout, NetmikoTimeoutException) as e:
                 logger.warning(
                     "wait_for_nv_show_system_ready_on_ssh: %s; reconnecting and retrying.", e
                 )
