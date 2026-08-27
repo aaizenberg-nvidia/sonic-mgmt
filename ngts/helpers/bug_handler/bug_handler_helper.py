@@ -21,11 +21,10 @@ from datetime import datetime, timedelta
 from ngts.constants.constants import BugHandlerConst, InfraConst, FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE
 from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_tools.infra import ExceptionTool
-from devts.infra.tools.redmine.redmine_api import get_issue_fixed_in_version_value
+from devts.infra.tools.redmine.redmine_api import get_issue_fixed_in_version_value, get_issues_status
 from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from ngts.scripts.collect_simx_logs_on_not_success import collect_hypervisor_logs, dump_simx_data
 from devts.infra.tools.topology_tools.topology_setup_utils import get_topology_by_setup_name
-from ngts.helpers.redmine_cache_helper import access_redmine_cache
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +481,7 @@ def get_action_based_on_no_action_results(bug_handler_file_result, branch, bug_h
     if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
         cur_version = bug_handler_params["duthost"].os_version
         ticket_id = get_ticket_id(bug_handler_file_result)
-        ticket_status = access_redmine_cache([ticket_id], use_active_status=False).get(str(ticket_id), '')
+        ticket_status = get_issues_status([ticket_id]).get(str(ticket_id), '')
 
         if ticket_status == "Closed":
             # When the script for getting fixed image is ready for RC image,
