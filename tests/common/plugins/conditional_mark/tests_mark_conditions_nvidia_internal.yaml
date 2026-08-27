@@ -1126,6 +1126,12 @@ platform_tests/cli/test_show_platform.py::test_show_platform_syseeprom:
     conditions:
     - "'simx' in platform"
 
+platform_tests/counterpoll/test_counterpoll_watermark.py::test_counterpoll_queue_watermark_pg_drop:
+  skip:
+    reason: "Performance-related validation is not tested on ASAN images"
+    conditions:
+    - "'ASAN' in build_version"
+
 platform_tests/test_memory_exhaustion.py::TestMemoryExhaustion::test_memory_exhaustion:
   skip:
     reason: "Simx doesn't support PDU"
