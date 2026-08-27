@@ -44,7 +44,11 @@ UPSTREAM_NEIGHBOR_MAP = {
     "t2-isolated-d128s2": "t1",
     "c0": "m1",
     "lrh": "urh",
-    "urh": "rwa"
+    "urh": "rwa",
+    # Neighbor names are matched by suffix, so use the full "uma"/"lma"/"rwa"
+    # strings here. A bare "ma" would also match the LMA neighbors on a UMA DUT.
+    "uma": "rwa",
+    "lma": "uma"
 }
 
 # Describe ALL upstream neighbor of dut in different topos
@@ -61,7 +65,9 @@ UPSTREAM_ALL_NEIGHBOR_MAP = {
     "c0": ["m1"],
     'ft2': ['lt2'],
     'lrh': ["urh", "frh"],
-    'urh': ["rwa"]
+    'urh': ["rwa"],
+    "uma": ["rwa"],
+    "lma": ["uma"]
 }
 
 # Describe downstream neighbor of dut in different topos
@@ -77,7 +83,11 @@ DOWNSTREAM_NEIGHBOR_MAP = {
     "ft2": "lt2",
     "lt2": "t1",
     "lrh": "t2",
-    "urh": "lrh"
+    "urh": "lrh",
+    "uma": "lma",
+    # LMA has both M2 and M3 downstream; this map holds a single value, so it
+    # names the first tier. See DOWNSTREAM_ALL_NEIGHBOR_MAP for the full set.
+    "lma": "m2"
 }
 
 # Describe downstream neighbor of dut in different topos
@@ -93,5 +103,7 @@ DOWNSTREAM_ALL_NEIGHBOR_MAP = {
     "ft2": ["lt2"],
     "lt2": ["t1"],
     "lrh": ["t2", "ut2"],
-    "urh": ["lrh"]
+    "urh": ["lrh"],
+    "uma": ["lma", "m1"],
+    "lma": ["m2", "m3"]
 }
