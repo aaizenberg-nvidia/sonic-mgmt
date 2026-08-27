@@ -1,4 +1,3 @@
-import os
 import re
 import pytest
 import logging
@@ -8,6 +7,7 @@ from tests.common import config_reload
 current_path = sys.path.copy()
 sys.path.insert(0, "dash")
 from tests.common.helpers.smartswitch_util import correlate_dpu_info_with_dpuhost
+from tests.common.helpers.sonic_image_readme import resolve_sonic_image_readme_path
 sys.path = current_path
 
 pytestmark = [
@@ -64,9 +64,12 @@ def parse_readme_versions(sonic_image):
     :param sonic_image: The current sonic image deployed on the DPU
     :return: Dictionary with component names as keys and version strings as values
     """
-    readme_path = os.path.realpath(f"/auto/sw_system_release/sonic/{sonic_image}/dev/README")
-    if not os.path.exists(readme_path):
-        raise Exception(f"Sonic image path: {readme_path} doesn't include a README file")
+    readme_path = resolve_sonic_image_readme_path(sonic_image)
+    if not readme_path:
+        raise Exception(
+            f"Sonic image path: /auto/sw_system_release/sonic/{sonic_image}/dev/README "
+            f"doesn't include a README file"
+        )
 
     logger.info(f"Parsing versions according to readme file: {readme_path}")
     with open(readme_path) as f:

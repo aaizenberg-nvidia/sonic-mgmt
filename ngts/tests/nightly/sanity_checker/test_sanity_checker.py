@@ -19,6 +19,7 @@ from tests.common.helpers.firmware_helper import (
     parse_firmware_status, get_bmc_version_from_firmware_data,
     get_bmc_info_from_firmware_data, resolve_bmc_flavor, load_bmc_creds
 )
+from tests.common.helpers.sonic_image_readme import resolve_sonic_image_readme_path
 
 pytestmark = [
     pytest.mark.disable_loganalyzer,
@@ -598,9 +599,12 @@ def parse_readme_versions(sonic_image):
     :param sonic_image: the current sonic image deployed on the dut
     :return: A dictionary, stating for each component what is the readme version of it, example - {"SDK", "4.6.2202"}
     """
-    readme_path = os.path.realpath(f"/auto/sw_system_release/sonic/{sonic_image}/dev/README")
-    if not os.path.exists(readme_path):
-        raise Exception(f"Sonic image path: {readme_path} doesn't include a README file")
+    readme_path = resolve_sonic_image_readme_path(sonic_image)
+    if not readme_path:
+        raise Exception(
+            f"Sonic image path: /auto/sw_system_release/sonic/{sonic_image}/dev/README "
+            f"doesn't include a README file"
+        )
     logger.info(f"Parsing versions according to readme file: {readme_path}")
     with open(readme_path) as f:
         image_readme_content = f.read()
