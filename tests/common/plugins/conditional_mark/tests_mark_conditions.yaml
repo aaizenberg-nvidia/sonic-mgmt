@@ -4922,17 +4922,12 @@ qos/test_qos_sai.py::TestQosSai::testQosSaiPgSharedWatermark:
     conditions:
       - "asic_type in ['marvell-teralynx'] and platform in ['x86_64-wistron_6512_32r-r0', 'x86_64-wistron_sw_to3200k-r0']"
 
-qos/test_qos_sai.py::TestQosSai::testQosSaiPgSharedWatermark[single_asic-wm_pg_shared_lossy]:
-  xfail:
-    reason: "testQosSaiPgSharedWatermark[single_asic-wm_pg_shared_lossy] might fail on Mellanox platform due to https://github.com/sonic-net/sonic-mgmt/issues/24595"
+qos/test_qos_sai.py::TestQosSai::testQosSaiQSharedWatermark(\[|$):
+  regex: true
+  skip:
+    reason: "Test case replaced by testQosSaiQSharedWatermarkQuantized for Cisco-8223."
     conditions:
-      - "asic_type in ['mellanox'] and https://github.com/sonic-net/sonic-mgmt/issues/24595"
-
-qos/test_qos_sai.py::TestQosSai::testQosSaiQSharedWatermark[single_asic-wm_q_shared_lossy]:
-  xfail:
-    reason: "testQosSaiQSharedWatermark[single_asic-wm_q_shared_lossy] might fail on Mellanox platform due to https://github.com/sonic-net/sonic-mgmt/issues/24595"
-    conditions:
-      - "asic_type in ['mellanox'] and https://github.com/sonic-net/sonic-mgmt/issues/24595"
+      - "asic_type in ['cisco-8000'] and platform.startswith('x86_64-8223')"
 
 qos/test_qos_sai.py::TestQosSai::testQosSaiQWatermarkAllPorts:
   skip:
