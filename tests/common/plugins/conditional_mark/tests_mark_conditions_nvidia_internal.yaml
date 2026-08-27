@@ -1544,6 +1544,12 @@ high_frequency_telemetry/test_high_frequency_telemetry.py:
     - "https://redmine.mellanox.com/issues/4924461"
     - "'sn6600_ld_simx' in platform"
 
+high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_port_counters:
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
+
 high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_full_ingress_priority_group_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538"
