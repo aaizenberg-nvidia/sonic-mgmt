@@ -266,14 +266,23 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # See Redmine #5134692. Detach reboot from the SSH session and give
         # `reload()` extra headroom to detect shutdown.
         if sanitizer:
+            reboot_bin = None
+            for candidate in (f"/usr/local/bin/{reboot_type}", f"/sbin/{reboot_type}"):
+                exists = self.engine.run_cmd(
+                    f"test -x {candidate} && echo yes || echo no", validate=False)
+                if exists and "yes" in exists:
+                    reboot_bin = candidate
+                    break
+            if not reboot_bin:
+                raise Exception(f"Reboot command '{reboot_type}' not found in /usr/local/bin or /sbin")
             reboot_cmd = (
-                "nohup sudo /sbin/{rt} "
+                "nohup sudo {} "
                 "</dev/null >/dev/null 2>&1 & disown"
-            ).format(rt=reboot_type)
+            ).format(reboot_bin)
             effective_wait_after_ping = wait_after_ping + SANITIZER_REBOOT_EXTRA_WAIT_SEC
             logger.info("ASAN/sanitizer image detected: using detached reboot "
-                        "and extending wait_after_ping %ss -> %ss",
-                        wait_after_ping, effective_wait_after_ping)
+                        "(%s) and extending wait_after_ping %ss -> %ss",
+                        reboot_bin, wait_after_ping, effective_wait_after_ping)
         else:
             reboot_cmd = f'sudo {reboot_type}'
             effective_wait_after_ping = wait_after_ping
