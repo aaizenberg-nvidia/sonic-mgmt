@@ -41,8 +41,8 @@ from ngts.helpers.performance.performance_counter_helpers import (
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.performance.performance_setup_helpers import (
-    ValidationConfig, apply_test_configuration, configure_incremental_dips_on_tg,
-    get_obj_method, restore_basic_configuration, run_traffic,
+    ValidationConfig, apply_test_configuration_guarded, configure_incremental_dips_on_tg,
+    get_obj_method, restore_session_basic_configuration, run_traffic,
     run_validation, set_ports_admin_state, skip_test_on_unsupported_chip_type,
     skip_test_on_unsupported_os, validate_perf_dut_ingress_buffer_mode,
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
@@ -575,11 +575,12 @@ class _SpcXRATestBase:
         """
         self.conf_args["two_sided_ar"] = two_sided
         if not isinstance(self.cli_object, NvueCli):
-            restore_basic_configuration(
-                players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES)
-        apply_test_configuration(
+            restore_session_basic_configuration(
+                players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES,
+                nodeid=self.nodeid)
+        apply_test_configuration_guarded(
             players=self.players, players_aliases=PerfConsts.PERF_SETUP_DUT_ALIASES,
-            scenario=self.scenario, conf_args=self.conf_args)
+            scenario=self.scenario, conf_args=self.conf_args, nodeid=self.nodeid)
         if not two_sided:
             self._wait_for_leaf_ports_ready()
         self._reapply_ar_profile()

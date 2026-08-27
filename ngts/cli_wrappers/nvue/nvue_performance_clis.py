@@ -884,12 +884,21 @@ class NvuePerformanceCli(PerformanceCommon):
             return self.mloops
 
     def get_dut_ports(self, sdk_ports=False):
-        mgmt_port = "eth0"
-        bonus_ports = self.cli_obj.interface.get_bonus_ports(self.engine)
+        """Return DUT ports in SDK or NVUE interface format.
+
+        Args:
+            sdk_ports: Return connected SDK port identifiers when True. Otherwise,
+                return front-panel NVUE interface names.
+
+        Returns:
+            Connected SDK ports or ordered front-panel NVUE interface names,
+            excluding platform bonus ports.
+        """
         if sdk_ports:
             player_ports = self.get_player_ports()
             return player_ports["connected_ports"]
         else:
+            bonus_ports = self.cli_obj.interface.get_bonus_ports(self.engine)
             output = self.execute_cmd("nv sh interface physical -o json")
             try:
                 output = json.loads(output)
@@ -897,11 +906,20 @@ class NvuePerformanceCli(PerformanceCommon):
                 logging.error("Interface output is not a valid JSON object")
                 logging.error(f"Output is : {output}")
                 raise j
-            list_of_ports = list(output.keys())
-            list_of_ports.pop(list_of_ports.index(mgmt_port))
-            for ports in bonus_ports:
-                list_of_ports.pop(list_of_ports.index(ports))
-            return list_of_ports
+            # The regex r"swp\d+" matches a string starting with 'swp' followed by one or more digits, e.g., "swp1", "swp32".
+            bonus_port_parents = {
+                re.match(r"swp\d+", port_name).group()
+                for port_name in bonus_ports if re.match(r"swp\d+", port_name)
+            }
+            # The regex r"swp\d+(?:s\d+)?" matches:
+            # - 'swp' followed by one or more digits (e.g. "swp3") - optionally, 's' followed by one or more digits (e.g. "swp23s1")
+            # So it matches port names like 'swp1', 'swp12s2', but not any with unexpected suffixes.
+            # The re.match(r"swp\d+", port_name) is used again to get the parent part for comparison.
+            return [
+                port_name for port_name in output
+                if re.fullmatch(r"swp\d+(?:s\d+)?", port_name) and
+                re.match(r"swp\d+", port_name).group() not in bonus_port_parents
+            ]
 
     def get_os_ports_name_mapping(self):
         """

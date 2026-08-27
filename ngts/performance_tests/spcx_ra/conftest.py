@@ -32,10 +32,11 @@ from ngts.constants.constants import BugHandlerConst, InfraConst
 from ngts.constants.performance_constants import MongoDbConsts, PerfConsts, SPCXRAConsts
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
+from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.helpers.performance.performance_setup_helpers import (
-    allure_attach_performance_conf_context, apply_test_configuration,
-    get_topology_obj, restore_basic_configuration, save_base_configuration,
-    skip_test_on_unsupported_os)
+    allure_attach_performance_conf_context, apply_test_configuration_guarded,
+    get_topology_obj, restore_session_basic_configuration,
+    save_session_base_configuration, skip_test_on_unsupported_os)
 from ngts.helpers.performance.traffic_helpers import (
     create_json_traffic_file, create_json_traffic_file_with_stream_list,
     create_json_traffic_stream)
@@ -151,18 +152,33 @@ def basic_setup_configuration(request, players, chip_type,
     absolute_breakout = isinstance(players[PerfConsts.DUT_ALIAS]['cli'], NvueCli)
     conf_args = config.to_template_args(
         chip_type, is_ipv6, absolute_breakout=absolute_breakout)
+    baseline_available = False
+    primary_error = None
     try:
         with allure.step('Save Players initial Configuration'):
-            save_base_configuration(players)
+            save_session_base_configuration(players)
+            baseline_available = True
         with allure.step("Apply Test configuration on all Players"):
-            apply_test_configuration(
-                players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+            apply_test_configuration_guarded(
+                players, scenario=TESTS_SCENARIO, conf_args=conf_args,
+                nodeid=request.node.nodeid)
         with allure.step("Allure: attach conf_args and DUT applied NVUE YAML"):
             allure_attach_performance_conf_context(players, conf_args)
         yield is_ipv6
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        with allure.step('Restore Base Configuration on all Players'):
-            restore_basic_configuration(players)
+        if baseline_available:
+            try:
+                with allure.step('Restore Base Configuration on all Players'):
+                    restore_session_basic_configuration(
+                        players, nodeid=request.node.nodeid)
+            except Exception:
+                if not has_primary_test_failure(primary_error, request.node):
+                    raise
+                logger.exception(
+                    "Baseline restore failed while preserving the primary setup/test failure")
 
 
 @pytest.fixture(autouse=True)
@@ -192,12 +208,12 @@ def _init_test_instance_state(request, players, engines,
         return
     is_ipv6 = request.getfixturevalue('basic_setup_configuration')
     _populate_test_state(
-        request.instance, config, is_ipv6,
+        request.instance, config, is_ipv6, request.node.nodeid,
         players, engines, power_thresholds_by_chip_type, chip_type)
     yield
 
 
-def _populate_test_state(instance, config, is_ipv6, players, engines,
+def _populate_test_state(instance, config, is_ipv6, nodeid, players, engines,
                          power_thresholds_by_chip_type, chip_type):
     """Attach the per-test runtime state to a TestSpcXRA_Nx_lanes instance.
 
@@ -209,6 +225,7 @@ def _populate_test_state(instance, config, is_ipv6, players, engines,
         instance: The pytest test-class instance to populate.
         config: The ``LanesConfig`` pinned to the class.
         is_ipv6: Whether the test runs under IPv6.
+        nodeid: Pytest node identifier for fatal-state attribution.
         players: Test players mapping.
         engines: Engines mapping (DUT, traffic generators).
         power_thresholds_by_chip_type: Power-consumption threshold for the
@@ -216,6 +233,7 @@ def _populate_test_state(instance, config, is_ipv6, players, engines,
         chip_type: Detected chip-type identifier.
     """
     instance.players = players
+    instance.nodeid = nodeid
     instance.engines = engines
     instance.dut_engine = engines['dut']
     instance.cli_object = players['dut']['cli']

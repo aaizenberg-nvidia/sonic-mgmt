@@ -12,11 +12,12 @@ import allure
 import copy
 import os
 from ngts.constants.constants import BugHandlerConst, CliType, InfraConst
-from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
-                                                                restore_basic_configuration,
-                                                                apply_test_configuration, skip_test_on_unsupported_os)
+from ngts.helpers.performance.performance_setup_helpers import (
+    apply_test_configuration_guarded, restore_session_basic_configuration,
+    save_session_base_configuration, skip_test_on_unsupported_os)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
+from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.helpers.performance.traffic_helpers import create_json_traffic_file_with_stream_list, create_json_traffic_stream
 from ngts.performance_tests.spcx_ra.conftest import get_spine_to_leaf_stream_list
 import re
@@ -95,29 +96,44 @@ def get_conf_args(is_ipv6, chip_type):
     return conf_args
 
 
-def apply_basic_setup_configuration(is_ipv6, players, chip_type):
+def apply_basic_setup_configuration(is_ipv6, players, chip_type, nodeid=None):
     conf_args = get_conf_args(is_ipv6, chip_type)
-    with allure.step('Save Players initial Configuration'):
-        save_base_configuration(players)
     with allure.step("Apply Test configuration on all Players"):
-        apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+        apply_test_configuration_guarded(
+            players, scenario=TESTS_SCENARIO, conf_args=conf_args, nodeid=nodeid)
 
 
 @pytest.fixture(scope='class')
 def basic_setup_configuration(request, players, chip_type):
     is_ipv6 = request.param == InfraConst.IPV6
+    baseline_available = False
+    primary_error = None
     try:
-        apply_basic_setup_configuration(is_ipv6, players, chip_type)
+        with allure.step('Save Players initial Configuration'):
+            save_session_base_configuration(players)
+            baseline_available = True
+        apply_basic_setup_configuration(
+            is_ipv6, players, chip_type, nodeid=request.node.nodeid)
         yield is_ipv6
-    except Exception as e:
-        raise e
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        with allure.step('Restore Base Configuration on all Players'):
-            restore_basic_configuration(players)
+        if baseline_available:
+            try:
+                with allure.step('Restore Base Configuration on all Players'):
+                    restore_session_basic_configuration(
+                        players, nodeid=request.node.nodeid)
+            except Exception:
+                if not has_primary_test_failure(primary_error, request.node):
+                    raise
+                logger.exception(
+                    "Baseline restore failed while preserving the primary setup/test failure")
 
 
 @pytest.fixture(scope='function', autouse=False)
-def alibaba_scenarios_fixture(players, chip_type, scenario_configuration, hash_type, basic_setup_configuration):
+def alibaba_scenarios_fixture(request, players, chip_type, scenario_configuration, hash_type,
+                              basic_setup_configuration):
     """
     Fixture to apply scenario-specific configuration for each test case.
     Updates conf_args with scenario configuration and applies it to players.
@@ -128,7 +144,8 @@ def alibaba_scenarios_fixture(players, chip_type, scenario_configuration, hash_t
     conf_args = get_conf_args(is_ipv6, chip_type)
     try:
         with allure.step("Restore Base Configuration on all Players"):
-            restore_basic_configuration(players)
+            restore_session_basic_configuration(
+                players, nodeid=request.node.nodeid)
 
         conf_args.update({
             "packet_size": scenario_configuration.packet_size,
@@ -143,7 +160,9 @@ def alibaba_scenarios_fixture(players, chip_type, scenario_configuration, hash_t
         })
 
         with allure.step("Apply the updated test configuration"):
-            apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+            apply_test_configuration_guarded(
+                players, scenario=TESTS_SCENARIO, conf_args=conf_args,
+                nodeid=request.node.nodeid)
         return conf_args
     except Exception as e:
         logger.error(f"Error in alibaba_scenarios_fixture: {str(e)}")

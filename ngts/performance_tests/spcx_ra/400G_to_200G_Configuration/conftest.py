@@ -10,9 +10,10 @@ import logging
 import allure
 import copy
 import os
-from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
-                                                                restore_basic_configuration,
-                                                                apply_test_configuration)
+from ngts.helpers.performance.performance_setup_helpers import (
+    apply_test_configuration_guarded, restore_session_basic_configuration,
+    save_session_base_configuration)
+from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.constants.constants import CliType
@@ -29,21 +30,35 @@ def skip_test_conditionally(players):
 
 
 @pytest.fixture(scope='class', autouse=True)
-def basic_setup_configuration(players, conf_args):
+def basic_setup_configuration(request, players, conf_args):
+    baseline_available = False
+    primary_error = None
     try:
         with allure.step('Save Players initial Configuration'):
             # Relevant mostly for CL/Sonic- Save config for later cleanup
-            save_base_configuration(players)
+            save_session_base_configuration(players)
+            baseline_available = True
         with allure.step("Apply Test configuration on all Players"):
             # Apply the configuration from all of the jinja files and run the test.
-            apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+            apply_test_configuration_guarded(
+                players, scenario=TESTS_SCENARIO, conf_args=conf_args,
+                nodeid=request.node.nodeid)
         yield
-    except Exception as e:
-        raise e
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        with allure.step('Restore Base Configuration on all Players'):
-            # In DVS- dvs_stop & start. CL/Sonic- Reload base config file
-            restore_basic_configuration(players)
+        if baseline_available:
+            try:
+                with allure.step('Restore Base Configuration on all Players'):
+                    # In DVS- dvs_stop & start. CL/Sonic- Reload base config file
+                    restore_session_basic_configuration(
+                        players, nodeid=request.node.nodeid)
+            except Exception:
+                if not has_primary_test_failure(primary_error, request.node):
+                    raise
+                logger.exception(
+                    "Baseline restore failed while preserving the primary setup/test failure")
 
 
 @pytest.fixture(scope='class', autouse=True)

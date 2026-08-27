@@ -22,6 +22,9 @@ from ngts.helpers.performance.performance_counter_helpers import validate_perfor
 from ngts.helpers.performance.topology_helpers import get_dvs_topology_obj, get_nvue_sonic_topology_obj
 from ngts.helpers.performance.power_temp_helpers import validate_temperature, validate_power
 from ngts.helpers.performance.port_selection import clear_resolved_excluded_ports
+from ngts.helpers.performance.performance_recovery import (
+    get_performance_session_state, restore_session_baseline,
+    run_guarded_operation, save_session_baseline)
 from ngts.cli_wrappers.dvs.dvs_cli import DvsCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
@@ -406,11 +409,27 @@ def configure_mloops(players, validate_mloops=True, is_simx=False, burst_config=
             players[player_alias]['cli'].performance.configure_mloops(validate_mloops, is_simx, burst_config)
 
 
-def save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+def _save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
     call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
                                            action="save base configuration",
                                            performance_clis_function_name="save_basic_configuration",
                                            performance_clis_function_args=(players,), step=step)
+
+
+def save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+    """Save configuration without overwriting an active session baseline.
+
+    Args:
+        players: Performance players mapping.
+        step: Allure step text forwarded to the save operation.
+
+    Returns:
+        The underlying save result, or False when a session baseline already exists.
+    """
+    if get_performance_session_state().recovery_enabled:
+        return save_session_baseline(
+            players, lambda: _save_base_configuration(players, step=step))
+    return _save_base_configuration(players, step=step)
 
 
 def restore_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
@@ -419,6 +438,57 @@ def restore_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_P
                                            action="restore base configuration",
                                            performance_clis_function_name="restore_basic_configuration",
                                            performance_clis_function_args=(), step=step)
+
+
+def save_session_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+    """Save the shared performance baseline once for the pytest session.
+
+    Args:
+        players: Performance players mapping.
+        step: Allure step text forwarded to the existing save helper.
+
+    Returns:
+        bool: True when saved, False when the session baseline already exists.
+    """
+    return save_session_baseline(
+        players, lambda: _save_base_configuration(players, step=step))
+
+
+def restore_session_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
+                                        step="Tear down - restore_base_configuration", nodeid=None,
+                                        health_checker=None, diagnostics_collector=None):
+    """Restore and health-gate the shared session baseline.
+
+    Args:
+        players: Performance players mapping.
+        players_aliases: Player aliases restored by the existing helper.
+        step: Allure step text forwarded to the existing restore helper.
+        nodeid: Pytest node identifier associated with the restore.
+        health_checker: Optional injectable health gate.
+        diagnostics_collector: Optional injectable diagnostic collector.
+
+    Returns:
+        The existing restore helper result.
+    """
+    return restore_session_baseline(
+        players,
+        lambda: restore_basic_configuration(
+            players, players_aliases=players_aliases, step=step),
+        nodeid=nodeid, health_checker=health_checker,
+        diagnostics_collector=diagnostics_collector)
+
+
+def apply_test_configuration_guarded(players, scenario, conf_args,
+                                     players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
+                                     step="basic_test_configuration - apply_test_configuration",
+                                     parallel_run=True, nodeid=None):
+    """Apply report-path configuration while detecting exact SDK fatal signatures."""
+    return run_guarded_operation(
+        players,
+        lambda: apply_test_configuration(
+            players, scenario, conf_args, players_aliases=players_aliases,
+            step=step, parallel_run=parallel_run),
+        nodeid=nodeid)
 
 
 def dynamic_configuration_helper(players, scenario, performance_parameters, step="basic_test_configuration - dynamic_configuration_helper"):
@@ -474,11 +544,15 @@ def validate_traffic_results(players, test_name, scenario, samples_params_dict,
                                  "traffic_validation_json_files",
                                  scenario, f"{hour_str}_{player_alias}_{hostname}_{test_name}_TrafficValidator.json")
         os.environ[PerfConsts.TRAFFIC_VALIDATION_JSON_PATH] = full_path
-        call_performance_function_with_threads(players, players_aliases=[player_alias],
-                                               action="run traffic validator",
-                                               performance_clis_function_name="validate_traffic",
-                                               performance_clis_function_args=(full_path, samples_params_dict),
-                                               step="Traffic Validation - Test Body")
+        run_guarded_operation(
+            players,
+            lambda: call_performance_function_with_threads(
+                players, players_aliases=[player_alias],
+                action="run traffic validator",
+                performance_clis_function_name="validate_traffic",
+                performance_clis_function_args=(full_path, samples_params_dict),
+                step="Traffic Validation - Test Body"),
+            nodeid=test_name)
         traffic_json = attach_json_to_allure(full_path,
                                              f'Traffic Validation JSON results on {player_alias} - {hostname}',
                                              attach_to_allure)

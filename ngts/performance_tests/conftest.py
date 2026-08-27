@@ -11,8 +11,12 @@ from datetime import datetime
 from ngts.helpers.performance.performance_setup_helpers import (configure_mloops, deploy_burst_config, stop_traffic,
                                                                 unsplit_all_ports, get_is_simx,
                                                                 _build_default_port_group_df)
+from ngts.helpers.performance.performance_recovery import (
+    enforce_fatal_session_exit_status, exit_if_performance_environment_fatal,
+    record_performance_test_failure, reset_performance_session_state,
+    run_guarded_operation)
 from ngts.helpers.performance.Performance_log_print import print_players_logs, remove_players_logs
-from ngts.constants.constants import PytestConst
+from ngts.constants.constants import FatalStateConsts, PytestConst
 from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
 from ngts.helpers.performance.burst_config import BurstConfig
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
@@ -31,6 +35,26 @@ logger = logging.getLogger()
 
 PLAYERS_CMD_LOG_PREFIX = "players_commands"
 _players_cmd_log_run_timestamp = None
+
+
+def pytest_sessionstart(session):
+    """Reset process-local performance recovery state for this pytest session."""
+    reset_performance_session_state()
+
+
+def pytest_runtest_setup(item):
+    """Abort before the next performance test after a fatal environment failure."""
+    exit_if_performance_environment_fatal(
+        pytest.exit, FatalStateConsts.FATAL_STATE_RETURN_CODE)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Track failed setup/call items for class-scoped restore exception handling."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when in ("setup", "call") and report.failed:
+        record_performance_test_failure(item.nodeid)
 
 
 def pytest_configure(config):
@@ -89,6 +113,8 @@ def pytest_sessionfinish(session, exitstatus):
                        "deployed, (2) the test applies performance configuration, and (3) the "
                        "config file has an entry for setup '%s' and the test's scenario.",
                        opts["setup_name"])
+    enforce_fatal_session_exit_status(
+        session, FatalStateConsts.FATAL_STATE_RETURN_CODE)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -177,13 +203,20 @@ def basic_test_configuration(request, players, basic_setup_configuration, burst_
             with allure.step('Copy the burst configuration to the Traffic Generators'):
                 deploy_burst_config(players, burst_config, parallel_run=False)
         with allure.step('Configure Mloops on Traffic Generators'):
-            configure_mloops(players, is_simx=get_is_simx(players), burst_config=burst_config)
+            run_guarded_operation(
+                players,
+                lambda: configure_mloops(players, is_simx=get_is_simx(players), burst_config=burst_config),
+                nodeid=request.node.nodeid)
             mloops_configured = True
         yield
-    finally:
         if mloops_configured:
             with allure.step('Stop Traffic on Traffic Generators'):
-                stop_traffic(players, burst_config=burst_config)
+                run_guarded_operation(
+                    players, lambda: stop_traffic(players, burst_config=burst_config),
+                    nodeid=request.node.nodeid)
+    except Exception as e:
+        raise e
+    finally:
         test_was_skipped = request.node.rep_call.skipped if hasattr(request.node, 'rep_call') else False
         if not test_was_skipped:
             with allure.step(f"Attaching Players Logs to Allure"):
