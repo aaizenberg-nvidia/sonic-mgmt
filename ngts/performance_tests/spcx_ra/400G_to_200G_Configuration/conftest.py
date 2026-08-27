@@ -53,6 +53,10 @@ def conf_args(chip_type):
     """
     conf_args = {"auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
                  "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+                 "congestion_thresh_med": (PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
+                                           else PerfConsts.MED_AR_THRESHOLD),
+                 "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
+                                          else PerfConsts.HIGH_AR_THRESHOLD),
                  "is_ipv6": False,
                  "is_ipv4": True,
                  "split_right": 4,
