@@ -3814,6 +3814,7 @@ class PortiaSwitch(RosalindSwitch):
         self.constants.erots.clear()
         self.components_list = [component for component in self.components_list if component != FW_COMPONENT_EROT]
         self.asic_type = NvosConst.NVL7
+        self.mst_dev_name = tuple(f'/dev/mst/mt54010_pciconf{i}' for i in range(self.asic_amount))
         self.core_count = 4
         self.supported_nvl_speeds = ['200G']
         self.fae_supported_core_clocks = {
