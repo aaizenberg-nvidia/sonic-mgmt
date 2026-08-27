@@ -1832,6 +1832,12 @@ system_health/test_system_status.py::test_system_is_running:
     conditions:
     - "https://github.com/sonic-net/sonic-buildimage/issues/19879 and 'simx' in platform"
 
+vxlan/test_vxlan_multi_tunnel.py::test_vxlan_error_null_tunnel_id:
+  xfail:
+    reason: "Xfail due to RM issue: https://redmine.mellanox.com/issues/5239813"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5239813 and ('sn5640' in platform or 'msn4700' in platform or 'msn4600c' in platform or 'sn4280' in platform)"
+
 ########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) START ##########################
 arp/test_wr_arp.py:
   skip:
