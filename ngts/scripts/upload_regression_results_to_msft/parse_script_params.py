@@ -79,10 +79,16 @@ def parse_params(params, command):
     replace_dict = {"true,": "true ", "false,": "false "}
     params_idx_dict = {}
     if command == "collect":
-        collect_replace_dict = {"last_days,": "--last_days ", ",user_sessions,": "--user_sessions "}
+        collect_replace_dict = {
+            "last_days,": "--last_days ",
+            ",user_sessions,": "--user_sessions ",
+            "user_sessions,": "--user_sessions ",
+        }
         replace_dict.update(collect_replace_dict)
         params_idx_dict = {1: "--filter_sessions_started_by", 2: "--filter_platforms"}
-        params = get_platform_filter_param(params)
+        # Active Choices for user_sessions omits platform/started_by filter fields
+        if not params.lstrip(",").startswith("user_sessions"):
+            params = get_platform_filter_param(params)
     elif command == "modify":
         print(" ".join(parse_modify_params(params)))
         return

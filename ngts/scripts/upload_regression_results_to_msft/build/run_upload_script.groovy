@@ -88,7 +88,8 @@ def echo_params(sonic_version, command, git_repository, branch, params, containe
 def run_step(name) {
     try {
           echo "Run upload_regression_results_to_msft.py script on ngts sonic-mgmt docker"
-          sonic_version = env."${name}_sonic_version"
+          // Active Choices Formatted HTML often appends a trailing comma
+          sonic_version = (env."${name}_sonic_version" ?: "").replaceAll(/,+$/, "").trim()
           command = env."${name}_command"
           git_repository = env."${name}_git_repository"
           branch = env."${name}_branch"
