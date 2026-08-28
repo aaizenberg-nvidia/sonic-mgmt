@@ -8022,9 +8022,9 @@ sensors_checks:
       - mp29816-i2c-15-62/PMIC-3 Temp 2/temp2_max_alarm
       - mp29816-i2c-15-62/PMIC-3 Temp 2/temp2_crit_alarm
 
-      - jc42-i2c-10-52/SODIMM1 Temp/temp1_max_alarm
-      - jc42-i2c-10-52/SODIMM1 Temp/temp1_min_alarm
-      - jc42-i2c-10-52/SODIMM1 Temp/temp1_crit_alarm
+      - spd5118-i2c-10-52/SODIMM1 Temp/temp1_max_alarm
+      - spd5118-i2c-10-52/SODIMM1 Temp/temp1_min_alarm
+      - spd5118-i2c-10-52/SODIMM1 Temp/temp1_crit_alarm
 
       - mp29816-i2c-15-6b/PMIC-12 Temp 1/temp1_max_alarm
       - mp29816-i2c-15-6b/PMIC-12 Temp 1/temp1_crit_alarm
@@ -8068,9 +8068,9 @@ sensors_checks:
       - mp29816-i2c-15-63/PMIC-4 Temp 2/temp2_max_alarm
       - mp29816-i2c-15-63/PMIC-4 Temp 2/temp2_crit_alarm
 
-      - jc42-i2c-10-53/SODIMM2 Temp/temp1_max_alarm
-      - jc42-i2c-10-53/SODIMM2 Temp/temp1_min_alarm
-      - jc42-i2c-10-53/SODIMM2 Temp/temp1_crit_alarm
+      - spd5118-i2c-10-53/SODIMM2 Temp/temp1_max_alarm
+      - spd5118-i2c-10-53/SODIMM2 Temp/temp1_min_alarm
+      - spd5118-i2c-10-53/SODIMM2 Temp/temp1_crit_alarm
 
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Phase Temp/temp1_max_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Phase Temp/temp1_crit_alarm
@@ -8134,8 +8134,8 @@ sensors_checks:
       - - mp29816-i2c-15-62/PMIC-3 Temp 2/temp2_input
         - mp29816-i2c-15-62/PMIC-3 Temp 2/temp2_crit
 
-      - - jc42-i2c-10-52/SODIMM1 Temp/temp1_input
-        - jc42-i2c-10-52/SODIMM1 Temp/temp1_crit
+      - - spd5118-i2c-10-52/SODIMM1 Temp/temp1_input
+        - spd5118-i2c-10-52/SODIMM1 Temp/temp1_crit
 
       - - mp29816-i2c-15-6b/PMIC-12 Temp 1/temp1_input
         - mp29816-i2c-15-6b/PMIC-12 Temp 1/temp1_crit
@@ -8188,8 +8188,8 @@ sensors_checks:
       - - mp29816-i2c-15-63/PMIC-4 Temp 2/temp2_input
         - mp29816-i2c-15-63/PMIC-4 Temp 2/temp2_crit
 
-      - - jc42-i2c-10-53/SODIMM2 Temp/temp1_input
-        - jc42-i2c-10-53/SODIMM2 Temp/temp1_crit
+      - - spd5118-i2c-10-53/SODIMM2 Temp/temp1_input
+        - spd5118-i2c-10-53/SODIMM2 Temp/temp1_crit
 
       - - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Phase Temp/temp1_input
         - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Phase Temp/temp1_crit
