@@ -60,6 +60,7 @@ class WorkbookLoader:
                 record_excel_rows,
                 setup_platforms,
                 setup_testbeds,
+                versions,
             ) = self._read_selected_rows(
                 workbook[sheet_name],
                 header_row,
@@ -83,6 +84,7 @@ class WorkbookLoader:
             selected_rows=selected_rows,
             result_counts={name: counts.get(name, 0) for name in sorted(SUPPORTED_RESULTS)},
             hardware_pairs=[tuple(pair) for pair in hardware_pairs],
+            versions=versions,
             setup_platforms=setup_platforms,
             setup_testbeds=setup_testbeds,
             record_excel_rows=record_excel_rows,
@@ -134,12 +136,14 @@ class WorkbookLoader:
         Dict[str, List[int]],
         Dict[str, str],
         Dict[str, str],
+        List[str],
     ]:
         header_index = {header: index for index, header in enumerate(headers) if header}
         deduplicated: Dict[str, ResultRow] = {}
         record_excel_rows: Dict[str, List[int]] = {}
         setup_variants: DefaultDict[str, List[str]] = defaultdict(list)
         platforms_by_setup: DefaultDict[str, List[str]] = defaultdict(list)
+        versions = set()
         for excel_row, cells in enumerate(
             worksheet.iter_rows(min_row=header_row + 1, values_only=True),
             start=header_row + 1,
@@ -165,9 +169,8 @@ class WorkbookLoader:
                 }:
                     platforms_by_setup[setup_key].append(platform)
             row_version = normalize_version(values.get("os_version"))
-            if row_version != wanted_version:
-                continue
-
+            if row_version:
+                versions.add(row_version)
             result = normalize_text(values.get("result")).lower()
             if result not in SUPPORTED_RESULTS:
                 raise ValueError(
@@ -212,6 +215,8 @@ class WorkbookLoader:
             deduplicated.values(),
             key=lambda row: row.excel_row,
         )
+        if wanted_version not in versions:
+            raise ValueError("no Excel rows match version {!r}".format(wanted_version))
         setup_testbeds: Dict[str, str] = {}
         displays_by_setup: DefaultDict[str, List[str]] = defaultdict(list)
         for row in selected_rows:
@@ -234,6 +239,7 @@ class WorkbookLoader:
             record_excel_rows,
             setup_platforms,
             setup_testbeds,
+            sorted(versions),
         )
 
 

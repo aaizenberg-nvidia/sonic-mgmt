@@ -1,10 +1,12 @@
 #!/auto/app/Python-3.6.2/bin/python
 import sys
 import argparse
+import datetime
 import logging
 import os
 import re
 import json
+import subprocess
 import time
 import pdb
 path = os.path.abspath(__file__)
@@ -14,6 +16,11 @@ sys.path.append(sonic_mgmt_path)
 logger = logging.getLogger()
 
 DOCKER_REGISTRY = "nbu-harbor.gtm.nvidia.com"
+JENKINS_MANAGED_LABEL = "nvidia.jenkins.managed"
+JENKINS_JOB_LABEL = "nvidia.jenkins.job"
+JENKINS_JOB = "TEST_sonic_upload_regression_results_to_msft"
+JENKINS_CONTAINER_PREFIX = "sonic-mgmt-sw-r2d2-bot-jenkins-{}-".format(JENKINS_JOB)
+STALE_CONTAINER_TIMEOUT = 24 * 60 * 60
 SONIC_MGMT_MOUNTPOINTS = {
     '/.autodirect/mswg/projects': '/.autodirect/mswg/projects',
     '/auto/sw_system_project': '/auto/sw_system_project',
@@ -105,6 +112,40 @@ def get_container_mountpoints():
     return container_mountpoints
 
 
+def remove_container(container_name):
+    subprocess.call(
+        ["sudo", "docker", "rm", "-f", container_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def cleanup_stale_containers():
+    managed = subprocess.check_output([
+        "sudo", "docker", "ps", "-aq",
+        "--filter", "label={}={}".format(JENKINS_MANAGED_LABEL, "true"),
+        "--filter", "label={}={}".format(JENKINS_JOB_LABEL, JENKINS_JOB),
+    ]).decode().split()
+    legacy = subprocess.check_output([
+        "sudo", "docker", "ps", "-aq",
+        "--filter", "name={}".format(JENKINS_CONTAINER_PREFIX),
+    ]).decode().split()
+    now = int(time.time())
+    for container_id in set(managed + legacy):
+        try:
+            created_at = subprocess.check_output([
+                "sudo", "docker", "inspect", "--format", "{{.Created}}",
+                container_id,
+            ]).decode().strip()
+            created_at = int((datetime.datetime.strptime(created_at[:19], "%Y-%m-%dT%H:%M:%S") -
+                              datetime.datetime(1970, 1, 1)).total_seconds())
+        except (subprocess.CalledProcessError, ValueError):
+            continue
+        if now - created_at > STALE_CONTAINER_TIMEOUT:
+            logger.info("Removing stale Jenkins container %s", container_id)
+            remove_container(container_id)
+
+
 def check_container_started(container_name, max_retries=3):
     for i in range(max_retries):
         attempt = i + 1
@@ -170,21 +211,31 @@ def copy_sonic_mgmt_to_container(container_name):
 
 
 def create_sonic_mgmt_ngts_docker(ngts_version, container_name):
+    cleanup_stale_containers()
     image_name = pull_image(ngts_version)
     container_mountpoints = get_container_mountpoints()
     create_secrets_vars_script(container_name)
     logger.info("Try to remove existing docker container anyway")
-    os.popen("sudo docker rm -f {CONTAINER_NAME}".format(CONTAINER_NAME=container_name))
-    cmd = "sudo docker run -d --security-opt seccomp=unconfined {CONTAINER_MOUNTPOINTS} " \
+    remove_container(container_name)
+    cmd = "sudo docker run -d --security-opt seccomp=unconfined " \
+          "--label {MANAGED_LABEL}=true --label {JOB_LABEL}={JOB} " \
+          "{CONTAINER_MOUNTPOINTS} " \
           "--name {CONTAINER_NAME} {IMAGE_NAME}:{IMAGE_TAG}".format(CONTAINER_MOUNTPOINTS=container_mountpoints,
+                                                                    MANAGED_LABEL=JENKINS_MANAGED_LABEL,
+                                                                    JOB_LABEL=JENKINS_JOB_LABEL,
+                                                                    JOB=JENKINS_JOB,
                                                                     CONTAINER_NAME=container_name,
                                                                     IMAGE_NAME=image_name,
                                                                     IMAGE_TAG=ngts_version)
-    os.popen(cmd)
-    logger.info("Created container, wait a few seconds for it to start")
-    time.sleep(5)
-    check_container_started(container_name)
-    copy_sonic_mgmt_to_container(container_name)
+    try:
+        subprocess.check_call(cmd, shell=True)
+        logger.info("Created container, wait a few seconds for it to start")
+        time.sleep(5)
+        check_container_started(container_name)
+        copy_sonic_mgmt_to_container(container_name)
+    except Exception:
+        remove_container(container_name)
+        raise
 
 
 if __name__ == '__main__':

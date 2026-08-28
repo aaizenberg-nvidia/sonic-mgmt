@@ -574,9 +574,9 @@ def _plain_prs(
     if not rows:
         lines.append("(none)")
         return lines
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
         url, pr_title = row[0], row[1]
-        lines.append("{} - {}".format(url, pr_title))
+        lines.append("{}. {} - {}".format(index, url, pr_title))
     return lines
 
 
@@ -692,11 +692,12 @@ def _pr_list(rows: Sequence[Sequence[object]]) -> str:
         return "<p>No data available</p>"
     return "<p>{}</p>".format(
         "<br>".join(
-            '<a href="{url}">{url}</a> - {title}'.format(
+            '{index}. <a href="{url}">{url}</a> - {title}'.format(
+                index=index,
                 url=html.escape(str(row[0] or ""), quote=True),
                 title=_e(row[1]),
             )
-            for row in rows
+            for index, row in enumerate(rows, start=1)
         )
     )
 

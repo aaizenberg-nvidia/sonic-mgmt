@@ -131,9 +131,10 @@ def run_step(name) {
             inference_timeout: env."${name}_regression_mail_inference_timeout" ?: env.REGRESSION_MAIL_INFERENCE_TIMEOUT
           ]
           modify_params = command == "modify" ? params.split(",", -1) : [] as String[]
-          report_requested = command == "modify" && modify_params.size() > 2 &&
-              modify_params[2].trim().equalsIgnoreCase("true")
-          if (report_requested && command == "modify") {
+          report_requested = command == "collect" ||
+              (command == "modify" && modify_params.size() > 2 &&
+               modify_params[2].trim().equalsIgnoreCase("true"))
+          if (report_requested) {
             def causes = currentBuild.getBuildCauses(
                 "hudson.model.Cause\$UserIdCause"
             )
@@ -141,7 +142,7 @@ def run_step(name) {
               def trigger_user = causes[0].userId.toString().trim()
               regression_mail_to = trigger_user.contains("@") ?
                   trigger_user : "${trigger_user}@nvidia.com"
-              echo "modify generate_upload_mail: recipients=${regression_mail_to}"
+              echo "${command} regression mail: recipients=${regression_mail_to}"
             }
           }
           if (report_requested) {
@@ -240,6 +241,9 @@ def cleanup(name) {
     )
     NGCITools().ciTools.run_sh(
         "rm -f '/tmp/${container_name}_env_file.sh'"
+    )
+    NGCITools().ciTools.run_sh(
+        "sudo docker rm -f '${container_name}' >/dev/null 2>&1 || true"
     )
     return true
 }

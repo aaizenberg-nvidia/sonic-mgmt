@@ -1273,11 +1273,7 @@ class ExternalAdapterTest(unittest.TestCase):
 
         def opener(request, timeout):
             calls.append(request.full_url)
-            if request.full_url.endswith("/api/collections"):
-                payload = ["202605_RC.70"]
-            elif "/api/collections/202605_RC.70?rows=1" in request.full_url:
-                payload = {"records": []}
-            elif request.full_url.endswith("/api/failure-analysis"):
+            if "/api/failure-analysis?" in request.full_url:
                 payload = {"rows": []}
             elif "/api/snapshot-summary?" in request.full_url:
                 payload = {"groups": [{"passed": 9, "failed": 1}]}
@@ -1304,6 +1300,35 @@ class ExternalAdapterTest(unittest.TestCase):
                 "version=SONiC.202605_RC.70-deadbeef_Internal" in call
                 for call in metric_calls
             )
+        )
+
+    def test_dashboard_filters_overlay_by_exact_version(self) -> None:
+        analyses = RegressionReportClient._analyses_from_records(
+            [
+                {
+                    "switchVersion": "SONiC.202605_RC.83-deadbeef_Internal",
+                    "marsSessionId": "123",
+                    "testName": "tests/a.py::test_a[param]",
+                    "analysis": "analysis",
+                    "verdict": "verdict",
+                    "rmUrl": "https://redmine.mellanox.com/issues/1",
+                    "updatedAt": "2026-08-28 10:00:00",
+                },
+                {
+                    "switchVersion": "SONiC.202605_RC.84-cafebabe_Internal",
+                    "marsSessionId": "456",
+                    "testName": "tests/b.py::test_b[param]",
+                },
+            ],
+        )
+
+        self.assertEqual(2, len(analyses))
+        self.assertEqual("123", analyses[0].session_id)
+        self.assertEqual("verdict", analyses[0].verdict)
+        self.assertEqual("2026-08-28 10:00:00", analyses[0].updated_at)
+        self.assertEqual(
+            "202605_RC.83-deadbeef_Internal",
+            analyses[0].switch_version,
         )
 
     def test_dashboard_rejects_invalid_count_values(self) -> None:

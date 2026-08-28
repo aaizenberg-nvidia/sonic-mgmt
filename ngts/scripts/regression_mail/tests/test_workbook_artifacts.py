@@ -99,9 +99,16 @@ class WorkbookArtifactTest(unittest.TestCase):
 
         self.assertEqual(before, after)
         self.assertEqual("community_tests", snapshot.sheet_name)
-        self.assertEqual(2, len(snapshot.selected_rows))
-        self.assertEqual({"fail": 1, "pass": 0, "skipped": 1}, snapshot.result_counts)
-        self.assertEqual([("sku", "t0"), ("sku2", "t1")], snapshot.hardware_pairs)
+        self.assertEqual(3, len(snapshot.selected_rows))
+        self.assertEqual({"fail": 1, "pass": 1, "skipped": 1}, snapshot.result_counts)
+        self.assertEqual(
+            [("sku", "t0"), ("sku2", "t1"), ("sku3", "t2")],
+            snapshot.hardware_pairs,
+        )
+        self.assertEqual(
+            ["202605_RC.1-other_Internal", VERSION],
+            snapshot.versions,
+        )
 
     def test_atomic_skip_mapping(self) -> None:
         snapshot = WorkbookLoader().load(self.path, VERSION)
@@ -199,7 +206,7 @@ class WorkbookArtifactTest(unittest.TestCase):
         snapshot = WorkbookLoader().load(self.path, VERSION)
         redactor = SetupRedactor(snapshot.setup_platforms)
         self.assertEqual(["tb1"], redactor.platforms(["tb1"]))
-        self.assertEqual("SN5600-t0", snapshot.setup_testbeds["tb1"])
+        self.assertEqual("", snapshot.setup_testbeds["tb1"])
 
     def test_missing_skip_reason_uses_contract_fallback(self) -> None:
         workbook = openpyxl.load_workbook(self.path)

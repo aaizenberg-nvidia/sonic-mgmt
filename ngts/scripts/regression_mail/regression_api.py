@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import gzip
 import json
-import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
-from urllib.parse import quote, urlencode
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ngts.scripts.regression_mail.models import DashboardAnalysis, DashboardSnapshot
 from ngts.scripts.regression_mail.normalization import normalize_text, normalize_version
-
-
-_COLLECTION_FROM_VERSION = re.compile(r"^(\d{6}_RC\.\d+)")
 
 
 class RegressionReportClient:
@@ -29,14 +25,30 @@ class RegressionReportClient:
         self.timeout = timeout
         self.opener = opener
 
-    def fetch(self, version: str) -> DashboardSnapshot:
-        normalized_version = normalize_version(version)
-        collection_name = self._resolve_collection(normalized_version)
-        metric_version = "SONiC." + normalized_version
-        collection = self._get_json(
-            "/api/collections/{}?rows=1".format(quote(collection_name, safe=""))
-        )
-        overlay = self._get_json("/api/failure-analysis")
+    def fetch(self, versions: Union[str, Sequence[str]]) -> DashboardSnapshot:
+        normalized_versions = _normalized_versions(versions)
+        metric_version = "SONiC." + normalized_versions[0]
+        records: List[Mapping[str, Any]] = []
+        seen = set()
+        for version in normalized_versions:
+            overlay = self._get_json(
+                "/api/failure-analysis",
+                {"version": "SONiC." + version},
+            )
+            for record in _require_record_list(overlay, "failure-analysis"):
+                if normalize_version(record.get("switchVersion")) != version:
+                    continue
+                identity = (
+                    normalize_text(record.get("marsSessionId")),
+                    normalize_text(record.get("testName")),
+                    normalize_text(record.get("analysis")),
+                    normalize_text(record.get("verdict")),
+                    normalize_text(record.get("rmUrl")),
+                    normalize_text(record.get("updatedAt")),
+                )
+                if identity not in seen:
+                    seen.add(identity)
+                    records.append(record)
         summary = self._get_json(
             "/api/snapshot-summary",
             {"version": metric_version},
@@ -45,35 +57,12 @@ class RegressionReportClient:
             "/api/coverage",
             {"version": metric_version},
         )
-        analyses = self._join_analyses(collection, overlay)
-        setup_platforms, setup_testbeds = _setup_maps(
-            _require_record_list(collection, "collection")
-        )
+        analyses = self._analyses_from_records(records)
         return DashboardSnapshot(
             coverage=_extract_coverage(coverage),
             pass_rate=_extract_pass_rate(summary),
             analyses=analyses,
-            setup_platforms=setup_platforms,
-            setup_testbeds=setup_testbeds,
         )
-
-    def _resolve_collection(self, version: str) -> str:
-        match = _COLLECTION_FROM_VERSION.match(normalize_version(version))
-        if not match:
-            raise ValueError("cannot derive an exact collection name from version {!r}".format(version))
-        expected = match.group(1)
-        payload = self._get_json("/api/collections")
-        names = sorted(_collection_names(payload))
-        exact = [name for name in names if name == expected]
-        if len(exact) != 1:
-            raise ValueError(
-                "version {!r} must resolve to exactly one current collection {!r}; found {}".format(
-                    version,
-                    expected,
-                    len(exact),
-                )
-            )
-        return exact[0]
 
     def _get_json(
         self,
@@ -96,6 +85,24 @@ class RegressionReportClient:
             if response.headers.get("Content-Encoding", "").lower() == "gzip":
                 body = gzip.decompress(body)
         return json.loads(body.decode("utf-8"))
+
+    @staticmethod
+    def _analyses_from_records(records: Sequence[Mapping[str, Any]]) -> List[DashboardAnalysis]:
+        analyses: List[DashboardAnalysis] = []
+        for record in records:
+            analyses.append(
+                DashboardAnalysis(
+                    session_id=normalize_text(record.get("marsSessionId")),
+                    key_id="",
+                    test_name=normalize_text(record.get("testName")),
+                    analysis=normalize_text(record.get("analysis")),
+                    redmine_url=normalize_text(record.get("rmUrl")),
+                    verdict=normalize_text(record.get("verdict")),
+                    updated_at=normalize_text(record.get("updatedAt")),
+                    switch_version=normalize_version(record.get("switchVersion")),
+                )
+            )
+        return analyses
 
     @staticmethod
     def _join_analyses(collection: Any, overlay: Any) -> List[DashboardAnalysis]:
@@ -139,23 +146,16 @@ class RegressionReportClient:
         return analyses
 
 
-def _collection_names(payload: Any) -> Iterable[str]:
-    if isinstance(payload, list):
-        for item in payload:
-            if isinstance(item, str):
-                yield item
-            elif isinstance(item, Mapping):
-                name = item.get("name") or item.get("collection")
-                if name:
-                    yield normalize_text(name)
-    elif isinstance(payload, Mapping):
-        for key in ("collections", "items", "data", "versions"):
-            if key in payload:
-                yield from _collection_names(payload[key])
-                return
-        for key in payload:
-            if _COLLECTION_FROM_VERSION.match(str(key)):
-                yield normalize_text(key)
+def _normalized_versions(versions: Union[str, Sequence[str]]) -> List[str]:
+    values = [versions] if isinstance(versions, str) else list(versions)
+    result = []
+    for value in values:
+        normalized = normalize_version(value)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    if not result:
+        raise ValueError("at least one SONiC version is required")
+    return result
 
 
 def _require_record_list(payload: Any, source: str) -> List[Mapping[str, Any]]:

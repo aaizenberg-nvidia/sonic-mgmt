@@ -1678,6 +1678,23 @@ class PipelineTest(unittest.TestCase):
         html = message.get_body(preferencelist=("html",)).get_content()
         self.assertIn("Fix image build", html)
         self.assertIn("Fix mgmt test", html)
+        self.assertIn(
+            '1. <a href="https://github.com/sonic-net/sonic-buildimage/pull/9">',
+            html,
+        )
+        self.assertIn(
+            '1. <a href="https://github.com/sonic-net/sonic-mgmt/pull/7">',
+            html,
+        )
+        plain = message.get_body(preferencelist=("plain",)).get_content()
+        self.assertIn(
+            "1. https://github.com/sonic-net/sonic-buildimage/pull/9 - Fix image build",
+            plain,
+        )
+        self.assertIn(
+            "1. https://github.com/sonic-net/sonic-mgmt/pull/7 - Fix mgmt test",
+            plain,
+        )
         self.assertIn("SN5600-t0", html)
         self.assertIn("sonic-buildimage branch:", html)
         self.assertIn(
@@ -3713,7 +3730,7 @@ class PipelineTest(unittest.TestCase):
             workbook.dashboard_statuses["failure-1"],
         )
 
-    def test_dashboard_rejects_conflicting_exact_analyses(self) -> None:
+    def test_dashboard_merges_conflicting_exact_analyses_by_time(self) -> None:
         workbook = _snapshot(self.request.excel_path)
         workbook.row_comments = {}
         dashboard = DashboardSnapshot(
@@ -3724,6 +3741,8 @@ class PipelineTest(unittest.TestCase):
                     test_name="tests/a.py::test_a",
                     analysis="Analysis A",
                     redmine_url="https://redmine.mellanox.com/issues/111",
+                    updated_at="2026-08-28 09:00:00",
+                    switch_version="202605_RC.82-old_Internal",
                 ),
                 DashboardAnalysis(
                     session_id="s",
@@ -3731,15 +3750,50 @@ class PipelineTest(unittest.TestCase):
                     test_name="tests/a.py::test_a",
                     analysis="Analysis B",
                     redmine_url="https://redmine.mellanox.com/issues/222",
+                    updated_at="2026-08-28 10:00:00",
+                    switch_version="202605_RC.83-new_Internal",
                 ),
             ]
         )
 
         apply_dashboard_analysis(workbook, dashboard)
 
-        self.assertEqual("", workbook.row_comments["failure-1"])
+        comment = workbook.row_comments["failure-1"]
+        self.assertLess(comment.index("2026-08-28 10:00:00"), comment.index("2026-08-28 09:00:00"))
+        self.assertIn("Analysis A", comment)
+        self.assertIn("Analysis B", comment)
+        self.assertIn("[202605_RC.82-old_Internal]", comment)
+        self.assertIn("[202605_RC.83-new_Internal]", comment)
+        self.assertEqual("analyzed", workbook.dashboard_statuses["failure-1"])
+
+    def test_dashboard_uses_latest_session_and_case_analysis(self) -> None:
+        workbook = _snapshot(self.request.excel_path)
+        workbook.row_comments = {}
+        dashboard = DashboardSnapshot(
+            analyses=[
+                DashboardAnalysis(
+                    session_id="s",
+                    key_id="",
+                    test_name="tests/a.py::test_a",
+                    analysis="Old analysis",
+                    updated_at="2026-08-27 10:00:00",
+                ),
+                DashboardAnalysis(
+                    session_id="s",
+                    key_id="",
+                    test_name="tests/a.py::test_a",
+                    analysis="Latest analysis",
+                    updated_at="2026-08-28 10:00:00",
+                ),
+            ]
+        )
+
+        apply_dashboard_analysis(workbook, dashboard)
+
+        comment = workbook.row_comments["failure-1"]
+        self.assertLess(comment.index("Latest analysis"), comment.index("Old analysis"))
         self.assertEqual(
-            "ambiguous",
+            "analyzed",
             workbook.dashboard_statuses["failure-1"],
         )
 

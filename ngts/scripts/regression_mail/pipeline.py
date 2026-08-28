@@ -186,7 +186,9 @@ def run(
                 "Regression Report API",
                 ExitCode.EXTERNAL_SOURCE,
                 "Coverage, pass rate, and engineer analysis are unavailable.",
-                lambda: deps.dashboard.fetch(request.version),
+                lambda: deps.dashboard.fetch(
+                    [request.version] + report.workbook.versions
+                ),
                 settings,
             )
             if report.dashboard:
@@ -483,7 +485,9 @@ def _refresh_dashboard_analysis_if_needed(
     if not unresolved_ids:
         return
     try:
-        refreshed = deps.dashboard.fetch(report.request.version)
+        refreshed = deps.dashboard.fetch(
+            [report.request.version] + report.workbook.versions
+        )
     except Exception as error:
         _write_diagnostic(settings, "Regression Report API refresh", error)
         return
@@ -1903,6 +1907,8 @@ def apply_dashboard_analysis(
         List[DashboardAnalysis],
     ] = defaultdict(list)
     for analysis in dashboard.analyses:
+        if not normalize_text(analysis.key_id):
+            continue
         identity_key = (
             normalize_text(analysis.session_id),
             normalize_text(analysis.key_id),
@@ -1921,6 +1927,8 @@ def apply_dashboard_analysis(
     ] = defaultdict(list)
     if setup_aliases:
         for analysis in dashboard.analyses:
+            if not normalize_text(analysis.key_id):
+                continue
             aliased_name = _normalize_dashboard_join_name(
                 analysis.test_name,
                 setup_aliases,
@@ -1931,6 +1939,17 @@ def apply_dashboard_analysis(
                 aliased_name,
             )
             aliased_index[aliased_key].append(analysis)
+    session_test_index: Dict[
+        Tuple[str, str],
+        List[DashboardAnalysis],
+    ] = defaultdict(list)
+    for analysis in dashboard.analyses:
+        session_test_index[
+            (
+                normalize_text(analysis.session_id),
+                normalize_text(analysis.test_name),
+            )
+        ].append(analysis)
 
     selected_ids = set(record_ids) if record_ids is not None else None
     comments: Dict[str, str] = {}
@@ -1942,15 +1961,36 @@ def apply_dashboard_analysis(
             normalize_text(row.mars_key_id),
         )
         candidates: List[DashboardAnalysis] = []
+        direct_candidates: List[DashboardAnalysis] = []
         for test_name in row.join_names:
-            exact_key = (
-                identity_key[0],
-                identity_key[1],
-                normalize_text(test_name),
-            )
-            for analysis in exact_index.get(exact_key, []):
-                if analysis not in candidates:
-                    candidates.append(analysis)
+            direct_candidates.extend(session_test_index.get(
+                (identity_key[0], normalize_text(test_name)),
+                (),
+            ))
+        if direct_candidates:
+            by_content: Dict[Tuple[str, str, str], DashboardAnalysis] = {}
+            for analysis in sorted(
+                direct_candidates,
+                key=lambda item: normalize_text(item.updated_at),
+                reverse=True,
+            ):
+                content = (
+                    normalize_text(analysis.analysis),
+                    normalize_text(analysis.redmine_url),
+                    normalize_text(analysis.verdict),
+                )
+                by_content.setdefault(content, analysis)
+            candidates = list(by_content.values())
+        if not candidates:
+            for test_name in row.join_names:
+                exact_key = (
+                    identity_key[0],
+                    identity_key[1],
+                    normalize_text(test_name),
+                )
+                for analysis in exact_index.get(exact_key, []):
+                    if analysis not in candidates:
+                        candidates.append(analysis)
         if not candidates and setup_aliases:
             for test_name in row.join_names:
                 aliased_key = (
@@ -1973,35 +2013,37 @@ def apply_dashboard_analysis(
                     analysis.test_name,
                 )
             ]
-        signatures = {
-            (
-                normalize_text(analysis.analysis),
-                normalize_text(analysis.redmine_url),
-            )
-            for analysis in candidates
-        }
-        ambiguous = len(signatures) > 1
-        matched = [] if ambiguous else candidates
+        matched = candidates
+        multiple = len(matched) > 1
         values: List[str] = []
         has_analysis = False
         has_ticket = False
         placeholder_statuses = set()
         for analysis in matched:
+            entry: List[str] = []
             value = normalize_text(analysis.analysis)
             placeholder_status = _dashboard_placeholder_status(value)
             if placeholder_status:
                 placeholder_statuses.add(placeholder_status)
-            elif value and value not in values:
-                values.append(value)
+            elif value:
+                entry.append(value)
                 has_analysis = True
             redmine_url = normalize_text(analysis.redmine_url)
-            if redmine_url and redmine_url not in values:
-                values.append(redmine_url)
+            if redmine_url:
+                entry.append(redmine_url)
                 has_ticket = True
+            if entry:
+                if multiple:
+                    entry.insert(
+                        0,
+                        "[{}] [{}]".format(
+                            normalize_text(analysis.updated_at) or "unknown time",
+                            normalize_text(analysis.switch_version) or "unknown version",
+                        ),
+                    )
+                values.append("\n".join(entry))
         comments[row.record_id] = "\n".join(values)
-        if ambiguous:
-            workbook.dashboard_statuses[row.record_id] = "ambiguous"
-        elif has_analysis and placeholder_statuses:
+        if has_analysis and placeholder_statuses:
             workbook.dashboard_statuses[row.record_id] = "partial"
         elif has_analysis or has_ticket:
             workbook.dashboard_statuses[row.record_id] = "analyzed"

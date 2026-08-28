@@ -73,6 +73,7 @@ class WorkbookSnapshot:
     selected_rows: List[ResultRow]
     result_counts: Dict[str, int]
     hardware_pairs: List[Sequence[str]]
+    versions: List[str] = field(default_factory=list)
     setup_platforms: Dict[str, str] = field(default_factory=dict)
     setup_testbeds: Dict[str, str] = field(default_factory=dict)
     row_comments: Dict[str, str] = field(default_factory=dict)
@@ -100,6 +101,9 @@ class DashboardAnalysis:
     test_name: str
     analysis: str
     redmine_url: str = ""
+    verdict: str = ""
+    updated_at: str = ""
+    switch_version: str = ""
 
 
 @dataclass

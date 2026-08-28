@@ -25,6 +25,14 @@ class CliTest(unittest.TestCase):
         groovy = (build_root / "run_upload_script.groovy").read_text(
             encoding="utf-8"
         )
+        self.assertIn('report_requested = command == "collect" ||', groovy)
+        self.assertIn(
+            'echo "${command} regression mail: recipients=${regression_mail_to}"',
+            groovy,
+        )
+        self.assertNotIn(
+            'if (report_requested && command == "modify") {', groovy
+        )
         assigned_env = set(
             re.findall(r"report_values\.([A-Z][A-Z0-9_]*)\s*=", groovy)
         )
