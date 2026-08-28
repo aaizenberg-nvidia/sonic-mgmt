@@ -264,9 +264,16 @@ class ReleaseResultsUploader:
         sessions = self.user_sessions if self.user_sessions else self.query_sessions_for_image()
         logger.info(f'Session are: {sessions}')
         self.update_sessions_testbed_properties(sessions)
-        platform_filtered_sessions = self.filter_sessions(sessions)
-        logger.info(f'Platform filtered Sessions are: {platform_filtered_sessions}')
-        self.create_excel_table(platform_filtered_sessions)
+        # user_sessions: keep all provided sessions (no MSFT_PLATFORMS filter)
+        if self.user_sessions:
+            sessions_for_excel = sessions
+            for session in sessions_for_excel:
+                self.hosts.add(self.sessions_testbed_properties[session]['host'])
+            logger.info(f'user_sessions: skipping platform filter, keeping {len(sessions_for_excel)} sessions')
+        else:
+            sessions_for_excel = self.filter_sessions(sessions)
+            logger.info(f'Platform filtered Sessions are: {sessions_for_excel}')
+        self.create_excel_table(sessions_for_excel)
         logger.info(f'Collected excel results table is at : {self.excel_table_path}')
         setups_in_results = self.get_setups_from_results(self.all_setups)
         setups_not_in_results = set(self.all_setups).difference(setups_in_results)
