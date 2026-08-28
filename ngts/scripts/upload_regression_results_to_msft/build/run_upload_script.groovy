@@ -128,9 +128,8 @@ def run_step(name) {
             inference_timeout: env."${name}_regression_mail_inference_timeout" ?: env.REGRESSION_MAIL_INFERENCE_TIMEOUT
           ]
           modify_params = command == "modify" ? params.split(",", -1) : [] as String[]
-          report_requested = command == "collect" ||
-              (command == "modify" && modify_params.size() > 2 &&
-               modify_params[2].trim().equalsIgnoreCase("true"))
+          report_requested = command == "modify" && modify_params.size() > 2 &&
+              modify_params[2].trim().equalsIgnoreCase("true")
           if (report_requested && command == "modify") {
             def causes = currentBuild.getBuildCauses(
                 "hudson.model.Cause\$UserIdCause"
