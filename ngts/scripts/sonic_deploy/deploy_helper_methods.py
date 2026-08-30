@@ -196,7 +196,7 @@ class DeploymentContext:
 
     def _validate_and_adjust_parameters(self):
         """Validate parameters and make necessary adjustments."""
-        if not self.deploy_switch and not self.deploy_bmc:
+        if not self.deploy_switch and not self.deploy_bmc and not self.request.config.getoption('--post_install_only'):
             logger.warning(
                 'No image provided via "--base-version", "--target-version" or '
                 '"--base-version-bmc"; deployment flow will be skipped.'
@@ -802,7 +802,7 @@ class DeployOrchestrator:
             dut_ip=dut_ip,
             fanout_target_version=fanout_target_version
         )
-        time.sleep(30)
+        time.sleep(PerfConsts.IMAGE_SETTLING_TIME)
 
     def execute_post_installation_steps(self):
         cli_obj = self.context.primary_cli_obj
@@ -819,6 +819,23 @@ class DeployOrchestrator:
                 deploy_sequential=self.context.deploy_sequential,
                 sdk_source=self.context.sdk_source
             )
+
+    def execute_post_install_only(self):
+        """Complete first boot and execute NOS-specific post-installation steps."""
+        for dut in self.context.all_duts:
+            with allure.step(f"Complete first boot on {dut['dut_name']}"):
+                serial_log_analyzer = self.context.serial_log_analyzers[dut['dut_ip']]
+                with serial_log_analyzer.stage(SerialLoggerConst.MANUFACTURE_STAGE):
+                    cli_obj = self.context.get_cli_obj(dut)
+                    cli_obj.complete_first_boot_after_onie(self.context.topology_obj, dut['dut_alias'])
+
+        # Match the settling period used after each image installation in the full deploy flow.
+        time.sleep(PerfConsts.IMAGE_SETTLING_TIME)
+
+        with allure.step('post installation steps'):
+            self.execute_post_installation_steps()
+            cache_full_path = os.path.join(os.path.dirname(__file__), '../../.pytest_cache')
+            shutil.rmtree(cache_full_path, ignore_errors=True)
 
     def execute_dpu_post_installation_steps(self):
         cli_obj = self.context.primary_cli_obj

@@ -285,6 +285,7 @@ class NvueGeneralCli(SonicGeneralCliDefault):
             self._wait_nos_to_become_functional(engine, topology_obj, dut_alias, serial_engine)
 
     def _wait_nos_to_become_functional(self, engine, topology_obj="", dut_alias='dut', serial_engine: PexpectSerialEngine = None):
+        serial_engine = serial_engine or self.enter_serial_connection_context(topology_obj, dut_alias)
         with allure.step('Ping switch until shutting down'):
             ping_till_alive(should_be_alive=False, destination_host=engine.ip)
         with allure.step('Ping switch until back alive'):
@@ -295,6 +296,21 @@ class NvueGeneralCli(SonicGeneralCliDefault):
 
         # Validate system health after ONIE install
         DutUtilsTool.wait_for_nvos_to_become_functional(engine).verify_result()
+
+    def complete_first_boot_after_onie(self, topology_obj, dut_alias='dut'):
+        """Complete first boot after a manual ONIE installation.
+
+        Args:
+            topology_obj: Test topology containing the DUT.
+            dut_alias: DUT alias in the topology.
+        """
+        self.engine.password = self.device.default_password
+        if self._ssh_is_ready(self.engine):
+            logger.info("%s is already reachable over SSH; first boot is complete", self.engine.ip)
+            self.device.wait_for_os_to_become_functional(self.engine).verify_result()
+            return
+
+        self._wait_nos_to_become_functional(self.engine, topology_obj, dut_alias)
 
     @staticmethod
     def diff_config(engine, revision_1='', revision_2='', output_type='json'):

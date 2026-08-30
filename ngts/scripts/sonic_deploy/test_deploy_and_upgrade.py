@@ -25,7 +25,7 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
                             wjh_deb_url, verify_secure_boot, chip_type, destination_hwsku, show_setup_versions,
                             serial_log_analyzers, fanout_target_version, request, is_air,
                             deploy_testbed_in_parallel, deploy_image_only, deploy_chipless,
-                            deploy_sequential, base_version_bmc, neighbor_mode,
+                            post_install_only, deploy_sequential, base_version_bmc, neighbor_mode,
                             sdk_source):
     """
         Deploy SONiC/NVOS testing topology and upgrade switch
@@ -74,6 +74,7 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
         :param chip_type: chip_type fixture
         :param deploy_testbed_in_parallel: deploy_testbed_in_parallel fixture
         :param deploy_image_only: deploy_image_only fixture
+        :param post_install_only: post_install_only fixture
         :param deploy_sequential: deploy_sequential fixture
         :param neighbor_mode: neighbor_mode fixture
         :param sdk_source: where to take the traffic generator SDK from
@@ -105,13 +106,17 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
 
         # Execute deployment using orchestrator
         orchestrator = DeployOrchestrator(context)
-        orchestrator.execute_full_deployment()
+        if post_install_only:
+            allure.dynamic.title('Post image installation steps only')
+            orchestrator.execute_post_install_only()
+        else:
+            orchestrator.execute_full_deployment()
 
     except Exception as err:
-        raise AssertionError(err)
+        raise AssertionError(err) from err
 
     finally:
-        DeployConnectionHelper.handle_serial_log_analyzers(context.serial_log_analyzers)
+        DeployConnectionHelper.handle_serial_log_analyzers(serial_log_analyzers)
 
 
 if 'base-version=/auto/sw_system_release/sonic' in ' '.join(sys.argv) and 'target_cli_type' not in ' '.join(sys.argv):

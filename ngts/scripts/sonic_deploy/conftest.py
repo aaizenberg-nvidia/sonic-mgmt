@@ -139,6 +139,9 @@ def pytest_addoption(parser):
     logger.info('Parsing deploy_image_only')
     parser.addoption("--deploy_image_only", action="store", default='no', choices=["yes", "no"], required=False,
                      help="Deploy the image only, skip add-topo and remove-topo")
+    logger.info('Parsing post_install_only')
+    parser.addoption("--post_install_only", action="store_true", default=False,
+                     help="Skip image deployment and run first-boot and post-installation steps only")
     logger.info('Parsing deploy_chipless')
     parser.addoption("--deploy_chipless", help="Specify whether to do chipless deployment. Default is 'no'",
                      choices=["no", "yes"], action="store", default="no")
@@ -443,6 +446,19 @@ def deploy_image_only(request):
     """
     deploy_image_only_arg = request.config.getoption('--deploy_image_only')
     return deploy_image_only_arg == "yes"
+
+
+@pytest.fixture(scope="module")
+def post_install_only(request):
+    """Return whether only first-boot and post-installation steps should run.
+
+    Args:
+        request: The pytest builtin request fixture.
+
+    Returns:
+        bool: True when ``--post_install_only`` is specified.
+    """
+    return request.config.getoption('--post_install_only')
 
 
 @pytest.fixture(scope="module")

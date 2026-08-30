@@ -115,6 +115,26 @@ orchestrator.execute_post_installation_steps()
 - Handles CLI-specific post-installation tasks
 - Manages upgrades, reboots, and validation
 
+### Post-Installation-Only Mode
+Use `--post_install_only` after an image is installed manually through ONIE. The same
+`test_deploy_and_upgrade.py` test then:
+
+1. Completes first boot for every DUT through its NOS-specific CLI implementation.
+2. Waits for services to settle.
+3. Runs the standard polymorphic post-installation flow.
+
+This mode skips pre-installation and image deployment. It supports SONiC, NVOS, Cumulus,
+and DVS through the existing CLI abstractions. Keep the normal NOS-specific arguments:
+NVOS and DVS post-installation flows require `--target-version`, while Cumulus and SONiC
+can run this mode without an image argument.
+
+```bash
+pytest ngts/scripts/sonic_deploy/test_deploy_and_upgrade.py \
+  --setup_name=<setup> \
+  --sonic-topo=ptf-any \
+  --post_install_only
+```
+
 ### 6. Cleanup
 ```python
 DeployConnectionHelper.handle_serial_log_analyzers(context.serial_log_analyzers)

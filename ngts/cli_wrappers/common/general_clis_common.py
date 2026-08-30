@@ -23,6 +23,8 @@ from ngts.cli_wrappers.common.sdk_clis_common import SdkCliCommon
 logger = logging.getLogger()
 
 DUMMY_COMMAND = 'echo dummy_command'
+FIRST_BOOT_SSH_TIMEOUT = 600
+FIRST_BOOT_SSH_INTERVAL = 10
 
 
 class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
@@ -32,6 +34,44 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
 
     def __init__(self, engine, cli_obj=None, dut_alias=None):
         SdkCliCommon.__init__(self, engine, cli_obj, dut_alias)
+
+    @staticmethod
+    def _ssh_is_ready(engine, timeout=20):
+        """Return whether the installed NOS accepts an SSH command."""
+        try:
+            engine.disconnect()
+            engine.run_cmd("true", timeout=timeout, retry_run=False, validate=False)
+            return True
+        except Exception as err:
+            logger.info("SSH is not ready yet on %s: %s", engine.ip, err)
+            return False
+
+    def complete_first_boot_after_onie(self, topology_obj, dut_alias='dut'):
+        """Wait for a manually installed NOS to finish its first boot.
+
+        Args:
+            topology_obj: Test topology containing the DUT.
+            dut_alias: DUT alias in the topology.
+
+        Raises:
+            TimeoutError: If the NOS does not accept SSH before the timeout.
+        """
+        del topology_obj, dut_alias
+        deadline = time.monotonic() + FIRST_BOOT_SSH_TIMEOUT
+        with allure.step('Waiting for SSH after ONIE installation'):
+            while True:
+                remaining_time = deadline - time.monotonic()
+                if remaining_time <= 0:
+                    break
+                if self._ssh_is_ready(self.engine, timeout=min(20, remaining_time)):
+                    logger.info("%s is reachable over SSH; first boot is complete", self.engine.ip)
+                    return
+                remaining_time = deadline - time.monotonic()
+                if remaining_time > 0:
+                    time.sleep(min(FIRST_BOOT_SSH_INTERVAL, remaining_time))
+
+        raise TimeoutError(
+            f"NOS on {self.engine.ip} did not accept SSH within {FIRST_BOOT_SSH_TIMEOUT} seconds")
 
     def start_service(self, service):
         # lldpad is managed by supervisorctl
