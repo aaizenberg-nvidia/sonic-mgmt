@@ -109,6 +109,16 @@ class NoPeerPortCapability(BaseCapability):
         )
 
 
+class NoAsicPowerCapability(BaseCapability):
+    """Capability for switches without asic-power stats (asic-power category pruned)."""
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="NoAsicPower",
+            excluded_categories={"asic-power"},
+        )
+
+
 class CpoCapability(BaseCapability):
     """Capability for CPO-capable switches.
 

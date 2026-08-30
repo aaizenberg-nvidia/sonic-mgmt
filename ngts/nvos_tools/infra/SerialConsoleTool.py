@@ -75,8 +75,13 @@ class SerialConsoleTool:
 
         with allure.step(f'enter password: {password}'):
             out, idx = serial_engine.run_cmd(password, cls.SHELL_PROMPT_PATTERNS + [cls.NEW_PASSWORD_PATTERN], 10)
-        if idx == 1 and handle_change_password_prompt:
+        # any shell-prompt match means login completed (PAM prints 'New password:'
+        # before the MOTD, whose '#' in the kernel line matches SHELL_PROMPT_PATTERNS[1])
+        if idx == len(cls.SHELL_PROMPT_PATTERNS) and handle_change_password_prompt:
             cls.handle_change_password_prompt(serial_engine)
+        # we're logged in now; make auto_reconnect_on_eof re-login instead of
+        # landing on a bare login prompt (engine was created with login_to_switch=False)
+        serial_engine._create_engine_kwargs['login_to_switch'] = True
 
     @classmethod
     def handle_change_password_prompt(cls, serial_engine: PexpectSerialEngine, new_password='', restore_password=True):

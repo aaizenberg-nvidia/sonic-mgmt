@@ -87,15 +87,17 @@ def test_simx_classes_are_thin_overlays_of_real_models():
         PortiaNpoSwitch,
         PortiaNpoTASimx,
         PortiaSimx,
+        PortiaSimxDevice,
         PortiaSwitch,
         SimxDevice,
     )
 
-    assert PortiaSimx.__bases__ == (SimxDevice, PortiaSwitch)
-    assert PortiaCpoSimx.__bases__ == (SimxDevice, PortiaCpoSwitch)
-    assert PortiaCpoTASimx.__bases__ == (SimxDevice, PortiaCpoSwitch)
-    assert PortiaNpoSimx.__bases__ == (SimxDevice, PortiaNpoSwitch)
-    assert PortiaNpoTASimx.__bases__ == (SimxDevice, PortiaNpoSwitch)
+    assert PortiaSimxDevice.__bases__ == (SimxDevice,)
+    assert PortiaSimx.__bases__ == (PortiaSimxDevice, PortiaSwitch)
+    assert PortiaCpoSimx.__bases__ == (PortiaSimxDevice, PortiaCpoSwitch)
+    assert PortiaCpoTASimx.__bases__ == (PortiaSimxDevice, PortiaCpoSwitch)
+    assert PortiaNpoSimx.__bases__ == (PortiaSimxDevice, PortiaNpoSwitch)
+    assert PortiaNpoTASimx.__bases__ == (PortiaSimxDevice, PortiaNpoSwitch)
 
 
 @pytest.mark.parametrize("model", ["N7300_LD_TA", "N7400_LD_TA"])

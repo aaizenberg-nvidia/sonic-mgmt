@@ -31,6 +31,7 @@ from ngts.nvos_constants.constants_nvos import (
 from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
 from ngts.nvos_tools.Devices.SwitchCapabilities import (
     CpoCapability,
+    NoAsicPowerCapability,
     NoPSUCapability,
     PortiaCpoCapability,
     SwitchCapabilityHandler,
@@ -3921,7 +3922,15 @@ class PortiaSwitch(RosalindSwitch):
 # -------------------------- PortiaSimx Switch ----------------------------
 
 
-class PortiaSimx(SimxDevice, PortiaSwitch):
+class PortiaSimxDevice(SimxDevice):
+    """Emulation gaps shared by all Portia simx flavors: asic-power stats are not emulated."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        SwitchCapabilityHandler.apply_capability(self, NoAsicPowerCapability())
+
+
+class PortiaSimx(PortiaSimxDevice, PortiaSwitch):
     """Four-ASIC non-expandable NVL72 SIMX tray (N7200_LD)."""
 
 
@@ -3985,11 +3994,11 @@ class PortiaCpoSwitch(PortiaSwitch):
         self.all_fae_nvl_ports_list = self.all_nvl_ports_list + self.nvl_fnm_ports + self.nvl_internal_fnm_ports
 
 
-class PortiaCpoSimx(SimxDevice, PortiaCpoSwitch):
+class PortiaCpoSimx(PortiaSimxDevice, PortiaCpoSwitch):
     """Full 8-ASIC N7300_LD SIMX profile."""
 
 
-class PortiaCpoTASimx(SimxDevice, PortiaCpoSwitch):
+class PortiaCpoTASimx(PortiaSimxDevice, PortiaCpoSwitch):
     """Reduced 2-ASIC N7300_LD_TA profile, available only in SIMX."""
 
     def __init__(self):
@@ -4042,11 +4051,11 @@ class PortiaNpoSwitch(PortiaSwitch):
         self.all_fae_nvl_ports_list = self.all_nvl_ports_list + self.nvl_fnm_ports + self.nvl_internal_fnm_ports
 
 
-class PortiaNpoSimx(SimxDevice, PortiaNpoSwitch):
+class PortiaNpoSimx(PortiaSimxDevice, PortiaNpoSwitch):
     """Full 8-ASIC N7400_LD SIMX profile."""
 
 
-class PortiaNpoTASimx(SimxDevice, PortiaNpoSwitch):
+class PortiaNpoTASimx(PortiaSimxDevice, PortiaNpoSwitch):
     """Reduced 2-ASIC N7400_LD_TA profile, available only in SIMX."""
 
     def __init__(self):
