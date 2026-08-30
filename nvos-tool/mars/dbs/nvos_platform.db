@@ -84,4 +84,7 @@
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/platform/nvos_platform_ssd_firmware.cases </cases>
 	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/platform/nvos_platform_uphy.cases </cases>
+	</test>
 </DBDEF>

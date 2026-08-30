@@ -16,6 +16,7 @@ from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
+from ngts.tests_nvos.helpers.platform import platform_uphy_helpers as uphy_helpers
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.ib_router.constants import IbRouterConsts
 import logging
@@ -257,7 +258,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
 
             # sx_core module validation only applies to switches that have the sx_core kernel module.
             # IB (XDR) switches (Crocodile, Mamba, Taipan) have sx_core; NVLink switches (Juliet, Rosalind) do not.
-            if devices.dut.has_sx_core:
+            if devices.dut.has_sx_core_modules:
                 with allure.independent_step('validate sx_core modules in dump'):
                     validate_sx_core_modules_in_dump_nvos(engines.dut, tech_support_dir)
 
@@ -277,6 +278,11 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
             if getattr(devices.dut, 'requires_nv_bridge_config', False):
                 with allure.independent_step('validate nv-bridge logs and status are bundled in tech-support'):
                     validate_nv_bridge_logs_in_dump(engines.dut, tech_support_dir)
+
+            with allure.independent_step('validate uphy version in tech-support matches the DUT sysfs'):
+                uphy_helpers.verify_uphy_cmds(
+                    (uphy_helpers.sysfs_uphy_cmd, devices.dut.asic_numbers, engines.dut),
+                    (uphy_helpers.techsupport_uphy_cmd, devices.dut.asic_numbers, engines.dut, tech_support_dir))
     finally:
         if devices.dut.has_nmx and not skynet:
             Cluster().unset(apply=True)
