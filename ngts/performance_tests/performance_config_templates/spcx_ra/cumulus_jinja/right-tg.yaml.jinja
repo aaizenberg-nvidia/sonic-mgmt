@@ -75,6 +75,41 @@
             action:
               permit: {}
         type: mac
+      {# Drops the RoCE data arriving from the DUT at ingress, regardless of destination MAC or
+         DUT route state. Otherwise the discard depends on the frame carrying this TG's SVI MAC so
+         it is L3-terminated and dies on no-route; when the DUT floods instead, the frame re-enters
+         the bridge and the mac loopback and amplifies. Matched on the RoCE port rather than on UDP
+         as a whole so no other UDP protocol on these links is caught by it. #}
+      acl-drop-roce-data-v4:
+        rule:
+          '10':
+            action:
+              deny: {}
+            match:
+              ip:
+                protocol: udp
+                udp:
+                  dest-port:
+                    '4791': {}
+          '20':
+            action:
+              permit: {}
+        type: ipv4
+      acl-drop-roce-data-v6:
+        rule:
+          '10':
+            action:
+              deny: {}
+            match:
+              ip:
+                protocol: udp
+                udp:
+                  dest-port:
+                    '4791': {}
+          '20':
+            action:
+              permit: {}
+        type: ipv6
     bridge:
       domain:
         br_default:
@@ -123,6 +158,11 @@
       {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
+        acl:
+          acl-drop-roce-data-v4:
+            inbound: {}
+          acl-drop-roce-data-v6:
+            inbound: {}
         bridge:
           domain:
             br_default:
@@ -167,6 +207,19 @@
       egress-shaper:
         default-global:
           port-max-rate: {{ (speed * 0.98) | int }}
+      {# Honour the DUT's PFC so this generator stops transmitting on the paused priority instead
+         of letting the DUT's ingress buffer overflow and discard. Note this does not throttle
+         generation itself: the mac loopback circulates inside the ASIC and PFC cannot reach it, so
+         a sustained pause backs up the DUT-facing egress queue and eventually tail-drops here
+         instead of on the DUT.
+         tx stays disabled. The inbound ACL drops the RoCE data before buffer admission, so no
+         ingress buffer builds on this side and there is nothing for it to raise Xoff about. #}
+      pfc:
+        default-global:
+          switch-priority:
+            '3': {}
+          rx: enable
+          tx: disable
     system:
       aaa:
         user:

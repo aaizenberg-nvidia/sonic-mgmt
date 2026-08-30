@@ -152,15 +152,6 @@
     router:
       adaptive-routing:
         state: enabled
-      {# Without BFD a failed link is only detected when the BGP hold timer expires, so a dead
-         nexthop stays in the upstream ECMP group for seconds. 300ms x 3 detects it in ~900ms. #}
-      bfd:
-        state: enabled
-        profile:
-          default:
-            detect-multiplier: 3
-            min-rx-interval: 300
-            min-tx-interval: 300
       bgp:
         state: enabled
         autonomous-system: spine
@@ -312,8 +303,6 @@
                 address-family:
                   ipv4-unicast:
                     state: enabled
-                bfd:
-                  profile: default
                 remote-as: external
               v6_group_left:
                 address-family:
@@ -324,15 +313,11 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
-                bfd:
-                  profile: default
                 remote-as: external
               v4_group_right:
                 address-family:
                   ipv4-unicast:
                     state: enabled
-                bfd:
-                  profile: default
                 remote-as: external
               v6_group_right:
                 address-family:
@@ -343,7 +328,5 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
-                bfd:
-                  profile: default
                 remote-as: external
             state: enabled  
