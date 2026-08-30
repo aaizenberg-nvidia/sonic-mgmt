@@ -16,6 +16,8 @@ from tests.common.platform.transceiver_utils import parse_transceiver_info
 from tests.common.plugins.loganalyzer.loganalyzer import LogAnalyzer
 from tests.common.broadcom_data import is_broadcom_device
 from tests.common.mellanox_data import is_mellanox_device
+from tests.platform_tests.sfp.test_sfputil import cmd_sfp_presence
+from tests.platform_tests.sfp.util import parse_output
 from tests.common.platform.reboot_timing_constants import SERVICE_PATTERNS, OTHER_PATTERNS, SAIREDIS_PATTERNS, \
     OFFSET_ITEMS, TIME_SPAN_ITEMS, REQUIRED_PATTERNS
 from tests.common.devices.duthosts import DutHosts
@@ -73,7 +75,7 @@ def fanout_switch_port_lookup(fanout_switches, dut_name, dut_port):
 
         Returns:
             None, None if fanout switch instance and port is not found
-            FanoutHost, port name (str) if found
+            FanoutHost, Portname(str) if found
     """
     dut_host_port = encode_dut_port_name(dut_name, dut_port)
     for _, fanout in list(fanout_switches.items()):
@@ -81,45 +83,6 @@ def fanout_switch_port_lookup(fanout_switches, dut_name, dut_port):
             return fanout, fanout.host_to_fanout_port_map[dut_host_port]
 
     return None, None
-
-
-def get_primary_fanout(dut, fanouthosts):
-    """
-    The ports of a DUT may be spread over several fanouts.
-
-    Return the fanout holding most of the links of the DUT, None when the DUT has no fanout.
-    """
-    dut_port_prefix = encode_dut_port_name(dut.hostname, '')
-    link_counts = {}
-    for fanout_name, fanout in fanouthosts.items():
-        # Map may list each DUT port twice (name + alias); count unique peers.
-        peer_ports = {peer_port for dut_port, peer_port in fanout.host_to_fanout_port_map.items()
-                      if dut_port.startswith(dut_port_prefix)}
-        if peer_ports:
-            link_counts[fanout_name] = len(peer_ports)
-
-    logging.info("Number of links per fanout of {}: {}".format(dut.hostname, link_counts))
-    if not link_counts:
-        return None
-
-    return fanouthosts[max(link_counts, key=link_counts.get)]
-
-
-def get_primary_fanout_peer(dut, interface, fanouthosts):
-    """
-    Return the (fanout, fanout_port) peer of an interface on the primary fanout.
-
-    Returns (None, None) when the interface is wired to any other fanout.
-    """
-    primary_fanout = get_primary_fanout(dut, fanouthosts)
-    primary_fanouthosts = {primary_fanout.hostname: primary_fanout} if primary_fanout else {}
-
-    fanout, fanout_port = fanout_switch_port_lookup(primary_fanouthosts, dut.hostname, interface)
-    # The connection graph may hold the port alias, sfputil needs the SONiC name
-    if fanout:
-        fanout_port = fanout.fanout_port_alias_to_name.get(fanout_port, fanout_port)
-
-    return fanout, fanout_port
 
 
 def get_dut_psu_line_pattern(dut):
@@ -138,8 +101,8 @@ def get_dut_psu_line_pattern(dut):
         # Supports various PSU naming conventions:
         #
         # example 1:
-        #     psu1   PWR-500AC-R  serial-number-1  N/A          N/A            N/A          OK        green
-        #     psu2   PWR-500AC-R  serial-number-2  N/A          N/A            N/A          OK        green
+        #     psu1   PWR-500AC-R  L8180S01HTAVP  N/A            N/A            N/A          OK        green
+        #     psu2   PWR-500AC-R  L8180S01HFAVP  N/A            N/A            N/A          OK        green
         # example 2:
         #     psutray0.psu0  N/A      N/A               12.05           3.38        40.62  OK        green
         #     psutray0.psu1  N/A      N/A               12.01           4.12        49.50  OK        green
@@ -196,8 +159,8 @@ def eos_to_linux_intf(eos_intf_name, hwsku=None):
 
 def nxos_to_linux_intf(nxos_intf_name):
     """
-        @Summary: Map NX-OS's interface name to Linux's interface name
-        @param nxos_intf_name: Interface name in NX-OS
+        @Summary: Map NxOS's interface name to Linux's interface name
+        @param nxos_intf_name: Interface name in NXOS
         @return: Return the interface name in Linux
     """
     return nxos_intf_name.replace('Ethernet', 'Eth').replace('/', '-')
@@ -336,7 +299,7 @@ def handle_test_error(health_check):
             traceback.print_exc()
             logging.error("Health check {} failed with unknown error: {}".format(
                 health_check.__name__, str(err)))
-            test_report[health_check.__name__] = "Unknown error"
+            test_report[health_check.__name__] = "Unkown error"
             return
         # set result to pass
         test_report[health_check.__name__] = True
@@ -381,7 +344,7 @@ def check_interfaces_and_transceivers(duthost, request):
         raise RebootHealthError(
             "Interface check failed, not all interfaces are up. Failed: {}".format(failed))
 
-    # Skip this step for virtual testbed - KVM testbed has transceivers marked as "Not present"
+    # Skip this step for virtual testbed - KVM testbed has transeivers marked as "Not present"
     # and the DB returns an "empty array" for "keys TRANSCEIVER_INFO*"
     if duthost.facts['platform'] == 'x86_64-kvm_x86_64-r0':
         return
@@ -407,7 +370,7 @@ def check_interfaces_and_transceivers(duthost, request):
 @handle_test_error
 def check_neighbors(duthost, tbinfo):
     """
-    Check BGP neighbor sessions.
+    Perform a BGP neighborship check.
     """
     logging.info("Check BGP neighbors status. Expected state - established")
 
@@ -439,7 +402,7 @@ def check_neighbors(duthost, tbinfo):
             raise RebootHealthError("Local ASNs not found in BGP session.\
                 Minigraph: {}. Found {}".format(value['local AS'], mg_facts['minigraph_bgp_asn']))
     for v in mg_facts['minigraph_bgp']:
-        # Compare the BGP neighbor name with the minigraph BGP neighbor name
+        # Compare the bgp neighbors name with minigraph bgp neigbhors name
         if (v['name'] != bgp_facts['bgp_neighbors'][v['addr'].lower()]['description']):
             raise RebootHealthError("BGP neighbor's name does not match minigraph.\
                 Minigraph: {}. Found {}".format(v['name'],
@@ -631,19 +594,19 @@ def get_state_times(timestamp, state, state_times, first_after_offset=None):
     timestamps = state_dict.get("timestamp")
     if state_status in timestamps:
         state_dict[state_status +
-                   " count"] = state_dict.get(state_status + " count") + 1
-        # Capture the last occurrence, which is useful for calculating the event end time.
-        state_dict["last_occurrence"] = time
+                   " count"] = state_dict.get(state_status+" count") + 1
+        # capture last occcurence - useful in calculating events end time
+        state_dict["last_occurence"] = time
     elif first_after_offset:
-        state_dict[state_status + " count"] = 1
-        # Capture the first occurrence after the offset timestamp and ignore earlier ones.
+        state_dict[state_status+" count"] = 1
+        # capture the first occurence as the one after offset timestamp and ignore the ones before
         # this is useful to find time after a specific instance, for eg. - kexec time or FDB disable time.
         if _parse_timestamp(first_after_offset) < _parse_timestamp(time):
             timestamps[state_status] = time
     else:
-        # Only capture the timestamp of the entity's first occurrence. Otherwise, increment the count above.
+        # only capture timestamp of first occurence of the entity. Otherwise, just increment the count above.
         # this is useful in capturing start point. Eg., first neighbor entry, LAG ready, etc.
-        state_dict[state_status + " count"] = 1
+        state_dict[state_status+" count"] = 1
         timestamps[state_status] = time
     return {state_name: state_dict}
 
@@ -682,9 +645,9 @@ def analyze_log_file(duthost, messages, result, offset_from_kexec):
         timestamps = service_dict.get("timestamp")
         if status in timestamps:
             service_dict[status +
-                         " count"] = service_dict.get(status + " count") + 1
+                         " count"] = service_dict.get(status+" count") + 1
         else:
-            service_dict[status + " count"] = 1
+            service_dict[status+" count"] = 1
         timestamps[status] = time
         service_restart_times.update({service_name: service_dict})
 
@@ -737,8 +700,8 @@ def analyze_log_file(duthost, messages, result, offset_from_kexec):
             timings["time_span"] = (_parse_timestamp(timestamps["Started"]) -
                                     _parse_timestamp(timestamps["Stopped"])).total_seconds()
         elif "Start" in timestamps and "End" in timestamps:
-            if "last_occurrence" in timings:
-                timings["time_span"] = (_parse_timestamp(timings["last_occurrence"]) -
+            if "last_occurence" in timings:
+                timings["time_span"] = (_parse_timestamp(timings["last_occurence"]) -
                                         _parse_timestamp(timestamps["Start"])).total_seconds()
             else:
                 timings["time_span"] = (_parse_timestamp(timestamps["End"]) -
@@ -818,7 +781,7 @@ def get_report_summary(duthost, analyze_result, reboot_type, reboot_oper, base_o
         elif entity in kexec_offsets:
             marker_first_time = kexec_offsets.get(
                 entity).get("timestamp", {}).get("Start")
-            marker_last_time = kexec_offsets.get(entity).get("last_occurrence")
+            marker_last_time = kexec_offsets.get(entity).get("last_occurence")
             if marker_first_time and marker_last_time:
                 time_taken = (_parse_timestamp(marker_last_time) -
                               _parse_timestamp(marker_first_time)).total_seconds()
@@ -899,7 +862,7 @@ def verify_mac_jumping(test_name, timing_data, verification_errors):
         if _parse_timestamp(mac_expiry_start) > _parse_timestamp(fdb_aging_disable_start) and\
            _parse_timestamp(mac_expiry_start) < _parse_timestamp(fdb_aging_disable_end):
             verification_errors.append(
-                "Mac expiry detected during the window when FDB aging was disabled")
+                "Mac expiry detected during the window when FDB ageing was disabled")
 
 
 def verify_required_events(duthost, event_counters, timing_data, verification_errors):
@@ -1012,8 +975,8 @@ def advanceboot_loganalyzer_factory(duthost, request, marker_postfix=None):
             # restore original script. If the ".orig" file does not exist (upgrade path case), ignore the error.
             duthost.shell("mv {} {}".format(reboot_script_path + ".orig", reboot_script_path),
                           module_ignore_errors=True)
-        # For mac jump test, the log message we care about is usually combined with other messages in one line,
-        # which makes the line longer than 1000 characters, so LogAnalyzer drops it. We need to increase
+        # For mac jump test, the log message we care about is uaually combined with other messages in one line,
+        # which makes the length of the line longer than 1000 and get dropped by Logananlyzer. So we need to increase
         # the max allowed length.
         # The regex library in Python 2 takes very long time (over 10 minutes) to process long lines. In our test,
         # most of the combined log message for mac jump test is around 5000 characters. So we set the max allowed
@@ -1023,7 +986,7 @@ def advanceboot_loganalyzer_factory(duthost, request, marker_postfix=None):
         offset_from_kexec = dict()
 
         # Parsing sairedis shall happen after parsing syslog because FDB_AGING_DISABLE is required
-        # when analyzing the sairedis.rec log, so we need to sort the keys
+        # when analysing sairedis.rec log, so we need to sort the keys
         key_list = ["syslog", "bgpd.log", "sairedis.rec"]
         for i in range(0, len(key_list)):
             for message_key in list(result["expect_messages"].keys()):

@@ -1,14 +1,15 @@
+import ast
 import logging
 import pytest
 import random
 import time
 
 from tests.common.helpers.assertions import pytest_assert
-from tests.common.platform.device_utils import get_primary_fanout_peer
 from tests.common.utilities import skip_release
 from tests.common.mellanox_data import is_mellanox_device
+from tests.common.platform.interface_utils import get_physical_port_indices
 from tests.common.utilities import wait_until
-from tests.layer1.conftest import TestMACFaultMellanox, get_sfp_presence
+from tests.layer1.conftest import TestMACFaultMellanox
 
 pytestmark = [
     pytest.mark.disable_loganalyzer,  # disable automatic loganalyzer
@@ -18,13 +19,7 @@ pytestmark = [
 SUPPORTED_PLATFORMS = ["arista_7060x6", "nvidia_sn6600_ld", "nvidia_sn5640", "nvidia_sn5600"]
 WAIT_FOR_PORT_SHUTDOWN = 5
 WAIT_FOR_PORT_STARTUP = 20
-WAIT_FOR_PEER_RESET_PORT_SHUTDOWN = 10
-WAIT_FOR_PEER_RESET_PORT_STARTUP = 120
-PEER_RESET_PORT_SHUTDOWN_POLL_INTERVAL = 1
-PEER_RESET_PORT_STARTUP_POLL_INTERVAL = 5
-PEER_RESET_PORT_POLL_DELAY = 0
-cmd_sfp_reset = "sudo sfputil reset"
-
+cmd_sfp_presence = "sudo sfpshow presence"
 
 @pytest.fixture(scope="session")
 def vendor_specific_obj(duthost):
@@ -32,7 +27,6 @@ def vendor_specific_obj(duthost):
         return TestMACFaultMellanox()
     else:
         pytest.skip("Test is not implemented for this specific vendor")
-
 
 class TestMACFault(object):
     @pytest.fixture(scope="class", autouse=True)
@@ -66,6 +60,34 @@ class TestMACFault(object):
     def get_interface_status(dut, interface):
         return dut.show_and_parse("show interfaces status {}".format(interface))[0].get("oper", "unknown")
 
+    @staticmethod
+    def filter_rx_disable_supported_interfaces(dut, interfaces):
+        """Exclude interfaces whose module does not support RX disable"""
+        port_index_map = get_physical_port_indices(dut, interfaces)
+        indexes = sorted({idx for idx in port_index_map.values() if idx is not None})
+        cmd = """
+cat << EOF > get_rx_disable_supported_indexes.py
+from sonic_platform.chassis import Chassis
+c = Chassis()
+supported = []
+for i in {indexes}:
+    try:
+        api = c.get_sfp(i).get_xcvr_api()
+        if api and api.get_rx_disable_support() is True:
+            supported.append(i)
+    except Exception:
+        pass
+print(supported)
+EOF
+""".format(indexes=indexes)
+        dut.shell(cmd)
+        out = dut.shell("python3 get_rx_disable_supported_indexes.py")["stdout"].strip()
+        supported_indexes = set(ast.literal_eval(out))
+        supported = [intf for intf in interfaces if port_index_map.get(intf) in supported_indexes]
+        logging.info("Excluded interfaces without RX disable support: {}".format(
+            [intf for intf in interfaces if intf not in supported]))
+        return supported
+
     @pytest.fixture(scope="class", autouse=True)
     def reboot_dut(self, rand_selected_dut, localhost):
         from tests.common.reboot import reboot
@@ -73,41 +95,19 @@ class TestMACFault(object):
                localhost, safe_reboot=True, check_intf_up_ports=True)
 
     @pytest.fixture(scope="class")
-    def available_interfaces(self, rand_selected_dut, vendor_specific_obj):
+    def select_random_interfaces(self, rand_selected_dut, vendor_specific_obj, collected_ports_num):
         dut = rand_selected_dut
-        parsed_presence = get_sfp_presence(dut)
+
+        sfp_presence = dut.command(cmd_sfp_presence)
+        parsed_presence = {line.split()[0]: line.split()[1] for line in sfp_presence["stdout_lines"][2:]}
+
         test_available_ifaces, failed_api_ports = (
             vendor_specific_obj.return_available_interfaces(dut, parsed_presence)
         )
-
-        return test_available_ifaces, failed_api_ports
-
-    @pytest.fixture(scope="class")
-    def select_random_interfaces(self, available_interfaces, collected_ports_num):
-        test_available_ifaces, failed_api_ports = available_interfaces
+        # Local fault uses sfputil rx-output; skip modules that cannot disable RX.
+        test_available_ifaces = self.filter_rx_disable_supported_interfaces(dut, test_available_ifaces)
         if not test_available_ifaces:
             pytest.skip("No interfaces available for this test were found.")
-
-        test_ifaces = random.sample(test_available_ifaces,
-                                    min(collected_ports_num, len(test_available_ifaces)))
-
-        return test_ifaces, failed_api_ports
-
-    @pytest.fixture(scope="class")
-    def select_random_local_fault_interfaces(self, rand_selected_dut, available_interfaces,
-                                             collected_ports_num, fanouthosts, vendor_specific_obj):
-        dut = rand_selected_dut
-        test_available_ifaces, failed_api_ports = available_interfaces
-        rx_disable_supported = set(vendor_specific_obj.filter_rx_disable_supported_interfaces(
-            dut, test_available_ifaces))
-        peer_reset_supported = set(vendor_specific_obj.filter_fanout_resettable_interfaces(
-            dut, test_available_ifaces, fanouthosts))
-        test_available_ifaces = [
-            intf for intf in test_available_ifaces
-            if intf in rx_disable_supported or intf in peer_reset_supported
-        ]
-        if not test_available_ifaces:
-            pytest.skip("No interfaces support RX disable or have a resettable fanout peer.")
 
         test_ifaces = random.sample(test_available_ifaces,
                                     min(collected_ports_num, len(test_available_ifaces)))
@@ -123,80 +123,38 @@ class TestMACFault(object):
         pytest_assert(wait_until(30, 1, 0, lambda: self.get_interface_status(dut, interface) == "up"),
                       "Interface {} did not come up after startup".format(interface))
 
-    def reset_peer_module(self, dut, interface, fanout, fanout_port):
-        """
-        Reset the peer module instead of shutting the peer port: an admin down peer may keep its laser on
-        and transmit local fault ordered sets, which the DUT counts as a remote fault.
-        """
-        cmd_sfp_reset_intf = "{} {}".format(cmd_sfp_reset, fanout_port)
-        reset_result = fanout.host.command(cmd_sfp_reset_intf)
-        pytest_assert(reset_result["rc"] == 0 and
-                      "OK" in reset_result["stdout"] and
-                      "Failed" not in reset_result["stdout"],
-                      "'{}' failed on fanout {}: rc={}, stdout={}".format(
-                          cmd_sfp_reset_intf, fanout.hostname,
-                          reset_result["rc"], reset_result["stdout"]))
-
-        pytest_assert(
-            wait_until(WAIT_FOR_PEER_RESET_PORT_SHUTDOWN,
-                       PEER_RESET_PORT_SHUTDOWN_POLL_INTERVAL,
-                       PEER_RESET_PORT_POLL_DELAY,
-                       lambda: self.get_interface_status(dut, interface) == "down"),
-            "Interface {} did not go down after resetting peer port {} on fanout {}".format(
-                interface, fanout_port, fanout.hostname))
-
-        pytest_assert(
-            wait_until(WAIT_FOR_PEER_RESET_PORT_STARTUP,
-                       PEER_RESET_PORT_STARTUP_POLL_INTERVAL,
-                       PEER_RESET_PORT_POLL_DELAY,
-                       lambda: self.get_interface_status(dut, interface) == "up"),
-            "Interface {} did not come up after peer port {} on fanout {} recovered from the reset".format(
-                interface, fanout_port, fanout.hostname))
-
-    def toggle_rx_output_on_iface(self, dut, interface):
-        dut.shell("sudo sfputil debug rx-output {} disable".format(interface))
-        time.sleep(WAIT_FOR_PORT_SHUTDOWN)
-        pytest_assert(self.get_interface_status(dut, interface) == "down",
-                      "Interface {iface} did not go down after 'sudo sfputil debug rx-output {iface} disable'"
-                      .format(iface=interface))
-
-        dut.shell("sudo sfputil debug rx-output {} enable".format(interface))
-        time.sleep(WAIT_FOR_PORT_STARTUP)
-        pytest_assert(self.get_interface_status(dut, interface) == "up",
-                      "Interface {iface} did not come up after 'sudo sfputil debug rx-output {iface} enable'"
-                      .format(iface=interface))
-
-    def test_mac_local_fault_increment(self, select_random_local_fault_interfaces, rand_selected_dut,
-                                       fanouthosts, vendor_specific_obj):
+    def test_mac_local_fault_increment(self, select_random_interfaces, rand_selected_dut):
         dut = rand_selected_dut
-        selected_ifaces, failed_api_ports = select_random_local_fault_interfaces
-        rx_disable_supported = set(vendor_specific_obj.filter_rx_disable_supported_interfaces(
-            dut, selected_ifaces))
+        selected_ifaces, failed_api_ports = select_random_interfaces
         logging.info("Selected interfaces for tests: {}".format(selected_ifaces))
 
         for interface in selected_ifaces:
             self.toggle_iface(dut, interface)
 
             pytest_assert(self.get_interface_status(dut, interface) == "up",
-                          "Interface {} was not up before triggering a local fault".format(interface))
+                          "Interface {} was not up before disabling/enabling rx-output using sfputil".format(interface))
 
             local_fault_before = self.get_mac_fault_count(dut, interface, "mac local fault")
             logging.info("Initial MAC local fault count on {}: {}".format(interface, local_fault_before))
 
-            if interface in rx_disable_supported:
-                self.toggle_rx_output_on_iface(dut, interface)
-                fault_trigger = "disabling/enabling rx-output using sfputil"
-            else:
-                fanout, fanout_port = get_primary_fanout_peer(dut, interface, fanouthosts)
-                self.reset_peer_module(dut, interface, fanout, fanout_port)
-                fault_trigger = "resetting the peer module"
+            dut.shell("sudo sfputil debug rx-output {} disable".format(interface))
+            time.sleep(WAIT_FOR_PORT_SHUTDOWN)
+            pytest_assert(self.get_interface_status(dut, interface) == "down",
+                          "Interface {iface} did not go down after 'sudo sfputil debug rx-output {iface} disable'"
+                          .format(iface=interface))
+
+            dut.shell("sudo sfputil debug rx-output {} enable".format(interface))
+            time.sleep(WAIT_FOR_PORT_STARTUP)
+            pytest_assert(self.get_interface_status(dut, interface) == "up",
+                          "Interface {iface} did not come up after 'sudo sfputil debug rx-output {iface} enable'"
+                          .format(iface=interface))
 
             local_fault_after = self.get_mac_fault_count(dut, interface, "mac local fault")
-            logging.info("MAC local fault count after {} on {}: {}".format(
-                fault_trigger, interface, local_fault_after))
+            logging.info("MAC local fault count after disabling/enabling rx-output using sfputil {}: {}".format(
+                interface, local_fault_after))
 
             pytest_assert(local_fault_after > local_fault_before,
-                          "MAC local fault count did not increment after {}".format(fault_trigger))
+                          "MAC local fault count did not increment after disabling/enabling rx-output on the device")
 
         pytest_assert(len(failed_api_ports) == 0, "Interfaces with failed API ports: {}".format(failed_api_ports))
 
