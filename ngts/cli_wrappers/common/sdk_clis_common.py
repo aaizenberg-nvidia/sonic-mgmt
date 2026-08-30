@@ -23,15 +23,44 @@ class SdkCliCommon():
         self.dut_alias = dut_alias
 
     def get_sdk_version(self):
+        """Return the SDK version the DUT is running.
+
+        The version is not always a released ``X.Y.Z`` triplet: builds off a private SDK
+        branch report a build name instead (e.g. ``arv2_grading-004``), which still
+        resolves to a real folder under ``/auto/sw_system_release/sx_sdk_eth``.
+
+        Raises:
+            TestIssue: If the version cannot be parsed out of the command output.
+        """
         sdk_version_output = self.engine.run_cmd(InfraConst.CMD_GET_SDK_VERSION, validate=True)
-        sdk_version = re.search(r"SX-SDK ETH (\d+\.\d+\.\d+)", sdk_version_output).group(1)
+        version_match = re.search(r"SX-SDK ETH ([^,\s]+)", sdk_version_output)
+        if not version_match:
+            raise TestIssue(f"Could not parse the SDK version out of "
+                            f"'{InfraConst.CMD_GET_SDK_VERSION}' output: {sdk_version_output}")
+        sdk_version = version_match.group(1)
+        logger.info(f"DUT is running SDK version '{sdk_version}' (reported: {sdk_version_output.strip()})")
         return sdk_version
 
     def get_sdk_branch(self, sdk_version):
+        """Return the SDK branch that ``sdk_version`` was built from.
+
+        Release branch names carry a version suffix (``sx_sdk_4_7_4500``) and are trimmed
+        to it. Private branches have no such suffix (``sx_sdk_arv2_grading``), so they are
+        returned as read.
+        """
         command = f"cat /auto/sw_system_release/sx_sdk_eth/sx_sdk_eth-{sdk_version}/SDK_BRANCH.txt"
         sdk_branch = os.popen(command).read().strip()
+        if not sdk_branch:
+            logger.warning(f"Could not read the SDK branch of version '{sdk_version}' with: {command} - "
+                           f"callers that clone per branch will fall back to their default")
+            return sdk_branch
         if sdk_branch.startswith("sx_sdk_"):
-            sdk_branch = re.search(r"(sx_sdk_\d+_\d+_\d{4})", sdk_branch).group(1)
+            numbered_branch = re.search(r"(sx_sdk_\d+_\d+_\d{4})", sdk_branch)
+            if numbered_branch and numbered_branch.group(1) != sdk_branch:
+                logger.info(f"Trimmed release SDK branch '{sdk_branch}' to '{numbered_branch.group(1)}'")
+            if numbered_branch:
+                sdk_branch = numbered_branch.group(1)
+        logger.info(f"SDK version '{sdk_version}' was built from branch '{sdk_branch}'")
         return sdk_branch
 
     def get_kernel_version(self):

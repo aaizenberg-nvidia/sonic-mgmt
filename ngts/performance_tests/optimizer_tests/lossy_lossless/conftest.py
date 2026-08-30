@@ -49,13 +49,15 @@ def basic_setup_configuration(players, conf_args, init, performance_parameters, 
 
 
 @pytest.fixture(scope='session', autouse=True)
-def conf_args(players):
+def conf_args(players, chip_type):
     """
     This function alters all of the jinja template files.
     """
 
     conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "auto_buffer_mode": "False",
+                 # Pass thresholds 4-7 here to run SPC6 extended grading.
+                 **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "is_ipv6": False,
                  "split_right": 2,

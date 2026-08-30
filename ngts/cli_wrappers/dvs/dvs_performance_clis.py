@@ -332,7 +332,9 @@ class DvsPerformance(PerformanceCommon):
 
         restart_cmd = "dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL"
         if chip_type == "SPC6":
-            restart_cmd += f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
+            custom_config_file_arg = f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
+            logging.info(f"chip_type is SPC6, adding '{custom_config_file_arg}' to the restart command")
+            restart_cmd += custom_config_file_arg
         self.execute_cmd(restart_cmd)
 
         # TODO: Remove this once we have a better way to undo SDK tests

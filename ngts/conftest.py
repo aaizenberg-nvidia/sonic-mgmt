@@ -223,6 +223,9 @@ def pytest_addoption(parser):
                      help='Which environment variable to use for default dut password')
     parser.addoption("--skip_bug_handler_action", action="store_true", default=False, required=False,
                      help="Whether to skip (True) log analyzer bug handler actions when loganalyzer is enabled, or not (False)")
+    parser.addoption("--ar_extended_thresholds", action="store_true", default=False, required=False,
+                     help="Whether to use the SPC6 extended AR grading (7 congestion grades) instead of "
+                          "the legacy 3-grade lo/med/hi thresholds. Defaults to the legacy 3-grade thresholds.")
     parser.addoption('--fail_install_if_secure_boot_off', action='store', default='yes',
                      help='Whether to fail NVOS installation due to disabled Secure-Boot')
     parser.addoption('--skip_weekend_cases', required=False, action='store', default="",

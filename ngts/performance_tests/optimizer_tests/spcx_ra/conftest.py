@@ -31,6 +31,8 @@ def get_conf_args(is_ipv6, chip_type, performance_parameters):
         "auto_buffer_mode": "False",
         **get_ar_congestion_thresholds(chip_type),
         PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+        # Pass thresholds 4-7 here to run SPC6 extended grading.
+        **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
         "two_sided_ar": True,
         "is_ipv6": is_ipv6,
         "split_right": 2,

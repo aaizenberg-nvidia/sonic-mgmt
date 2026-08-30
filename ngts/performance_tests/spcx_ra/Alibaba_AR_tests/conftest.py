@@ -72,6 +72,8 @@ def get_conf_args(is_ipv6, chip_type):
         "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
         **get_ar_congestion_thresholds(chip_type),
         PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+        # Pass thresholds 4-7 here to run SPC6 extended grading.
+        **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
         "is_ipv6": is_ipv6,
         "host": PerfConsts.RIGHT_TG_ALIAS,
         "spine": PerfConsts.LEFT_TG_ALIAS,

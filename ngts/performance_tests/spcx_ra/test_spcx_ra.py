@@ -24,7 +24,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 from time import sleep
-from typing import ClassVar, Dict, Optional
+from typing import ClassVar, Dict, Optional, Tuple
 
 import allure
 import pytest
@@ -40,6 +40,7 @@ from ngts.helpers.performance.performance_counter_helpers import (
     should_validate_performance_counters)
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
+from ngts.helpers.performance.performance_recovery import get_performance_session_state
 from ngts.helpers.performance.performance_setup_helpers import (
     ValidationConfig, apply_test_configuration_guarded, configure_incremental_dips_on_tg,
     get_obj_method, restore_session_basic_configuration, run_traffic,
@@ -113,6 +114,14 @@ class ChipBandwidth:
         high_ar_threshold: Per-config AR high-congestion threshold
             (``congestion_thresh_hi``), defaulting to
             ``PerfConsts.HIGH_AR_THRESHOLD``. Overridden on SPC6 entries.
+        ar_extended_thresholds: Ordered AR congestion thresholds 4-7 in cells,
+            enabling SPC6 extended grading (port grades up to 7) on top of
+            lo/med/hi. Left None to keep the legacy three-threshold grading,
+            which is what every non-SPC6 generation uses regardless. Even when
+            set, this (and the accompanying low/mid/high overrides above) is
+            only honored while the ``--ar_extended_thresholds`` pytest flag is
+            passed - see :meth:`LanesConfig.to_template_args`. The legacy
+            3-grade thresholds are the default.
     """
 
     port_split: int
@@ -125,6 +134,7 @@ class ChipBandwidth:
     low_ar_threshold: Optional[int] = None
     mid_ar_threshold: int = PerfConsts.MED_AR_THRESHOLD
     high_ar_threshold: int = PerfConsts.HIGH_AR_THRESHOLD
+    ar_extended_thresholds: Optional[Tuple[int, int, int, int]] = None
 
 
 @dataclass(frozen=True)
@@ -284,15 +294,28 @@ class LanesConfig:
         is_ipv4 = not is_ipv6
         split = (self.effective_split(chip_type) if absolute_breakout
                  else chip_speed_config.port_split)
+        # The 7-grade extended thresholds baked into chip_dict entries are opt-in via
+        # --ar_extended_thresholds; default to the legacy 3-grade lo/med/hi otherwise.
+        if get_performance_session_state().ar_extended_thresholds:
+            low_ar_threshold = (chip_speed_config.low_ar_threshold
+                                if chip_speed_config.low_ar_threshold is not None
+                                else (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
+                                      else PerfConsts.LOW_AR_THRESHOLD))
+            mid_ar_threshold = chip_speed_config.mid_ar_threshold
+            high_ar_threshold = chip_speed_config.high_ar_threshold
+            ar_extended_thresholds = chip_speed_config.ar_extended_thresholds
+        else:
+            low_ar_threshold = PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD
+            mid_ar_threshold = PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.MED_AR_THRESHOLD
+            high_ar_threshold = PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.HIGH_AR_THRESHOLD
+            ar_extended_thresholds = None
         conf_args = {
-            "auto_buffer_mode": "True",
-            "congestion_thresh_lo": (chip_speed_config.low_ar_threshold
-                                     if chip_speed_config.low_ar_threshold is not None
-                                     else (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                           else PerfConsts.LOW_AR_THRESHOLD)),
-            "congestion_thresh_med": chip_speed_config.mid_ar_threshold,
-            "congestion_thresh_hi": chip_speed_config.high_ar_threshold,
+            "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+            "congestion_thresh_lo": low_ar_threshold,
+            "congestion_thresh_med": mid_ar_threshold,
+            "congestion_thresh_hi": high_ar_threshold,
             PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+            **PerfConsts.get_ar_extended_grading_conf_args(chip_type, ar_extended_thresholds),
             "two_sided_ar": True,
             "is_ipv6": is_ipv6,
             "is_ipv4": is_ipv4,
@@ -393,6 +416,10 @@ class _SpcXRATestBase:
         """
         test_name = get_perf_test_name(request)
         data_packet_size = PerfConsts.PACKET_SIZE_4K
+        # Ad-hoc packet-mix experiment: fewer RoCE data (4K) packets per cycle, more of
+        # each control packet (RoCE ACK / RTT probe / RTT probe response / CNP) per cycle.
+        data_packet_count = 19
+        control_packet_count = 11
 
         with allure.step("Validate rebalancer (auto buffer mode) is active on the DUT"):
             if isinstance(self.cli_object, NvueCli):
@@ -402,9 +429,12 @@ class _SpcXRATestBase:
         if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
             with allure.step("Switch the spine traffic to the AI packet mix"):
                 self.traffic_jsons = get_spcx_ra_ai_mix_spine_traffic(
-                    self.players, self.conf_args, data_packet_size=data_packet_size)
+                    self.players, self.conf_args, data_packet_size=data_packet_size,
+                    data_packet_count=data_packet_count,
+                    control_packet_count=control_packet_count)
                 validation_packet_size = self._get_ai_mix_validation_packet_size(
-                    data_packet_size)
+                    data_packet_size, data_packet_count=data_packet_count,
+                    control_packet_count=control_packet_count)
 
         self._run_spine_traffic(data_packet_size)
         self._validate(
@@ -544,12 +574,15 @@ class _SpcXRATestBase:
 
     # ============================================================== helpers
 
-    def _get_ai_mix_validation_packet_size(self, data_packet_size: int) -> int:
+    def _get_ai_mix_validation_packet_size(self, data_packet_size: int,
+                                           data_packet_count: Optional[int] = None,
+                                           control_packet_count: int = 1) -> int:
         """Return the frame size :meth:`_validate` has to be given for the AI mix.
 
         The byte-weighted mean frame size of one send cycle. Must be called with the same
-        ``data_packet_size`` passed to ``get_spcx_ra_ai_mix_spine_traffic``. The
-        ``sanity`` profile needs none of this - its single stream is already one size.
+        ``data_packet_size``, ``data_packet_count`` and ``control_packet_count`` passed to
+        ``get_spcx_ra_ai_mix_spine_traffic``. The ``sanity`` profile needs none of this -
+        its single stream is already one size.
 
         Why the size is not simply ``data_packet_size`` on the mix:
 
@@ -573,16 +606,27 @@ class _SpcXRATestBase:
 
         Args:
             data_packet_size: Frame size of the RoCE data stream, in bytes.
+            data_packet_count: RoCE data packets per port per cycle. Defaults to
+                ``None``, which uses the chip's ``traffic_packets_per_port`` (the
+                default ``get_spcx_ra_ai_mix_spine_traffic`` also falls back to).
+                Pass the same override given to that function if one was used.
+            control_packet_count: Packets sent per control stream per cycle.
+                Must match ``control_packet_count`` passed to
+                ``get_spcx_ra_ai_mix_spine_traffic``.
 
         Returns:
             The frame size to hand to :meth:`_validate`.
         """
-        data_packet_count = self.CONFIG.chip_dict[self.chip_type].traffic_packets_per_port
+        resolved_data_packet_count = (
+            data_packet_count if data_packet_count is not None
+            else self.CONFIG.chip_dict[self.chip_type].traffic_packets_per_port)
         mean_packet_size = get_ai_mix_mean_packet_size(
-            data_packet_count, data_packet_size=data_packet_size)
+            resolved_data_packet_count, data_packet_size=data_packet_size,
+            control_packet_count=control_packet_count)
         logger.info(f"Validating against the {mean_packet_size}B byte-weighted mean frame "
-                    f"size of one send cycle ({data_packet_count} x {data_packet_size}B "
-                    f"data packets + control mix) instead of {data_packet_size}B")
+                    f"size of one send cycle ({resolved_data_packet_count} x "
+                    f"{data_packet_size}B data packets + {control_packet_count}x control "
+                    f"mix) instead of {data_packet_size}B")
         return mean_packet_size
 
     def _run_spine_traffic(self, packet_size: int, wait_for_nexthop: bool = True) -> None:
@@ -1001,9 +1045,10 @@ class TestSpcXRA_4x_lanes(_SpcXRATestBase):
                 port_split=1,
                 port_speed_bps="800000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_800G_x1["SPC6"],
-                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
-                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
-                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_EXTENDED_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_EXTENDED_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_EXTENDED_SPC6,
+                ar_extended_thresholds=PerfConsts.AR_EXTENDED_THRESHOLDS_SPC6,
             ),
         },
     )
@@ -1029,9 +1074,10 @@ class TestSpcXRA_2x_lanes(_SpcXRATestBase):
                 port_split=2,
                 port_speed_bps="400000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_400G_x2["SPC6"],
-                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
-                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
-                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_EXTENDED_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_EXTENDED_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_EXTENDED_SPC6,
+                ar_extended_thresholds=PerfConsts.AR_EXTENDED_THRESHOLDS_SPC6,
             ),
         },
     )
@@ -1057,9 +1103,10 @@ class TestSpcXRA_1x_lanes(_SpcXRATestBase):
                 # Cumulus max-breakout mloop ports need an explicit phy speed
                 # (same pattern as Yehuda's SPC6 x8 NVUE bring-up).
                 link_phy_speed="200G",
-                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_SPC6,
-                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_SPC6,
-                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_SPC6,
+                low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_EXTENDED_SPC6,
+                mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_EXTENDED_SPC6,
+                high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_EXTENDED_SPC6,
+                ar_extended_thresholds=PerfConsts.AR_EXTENDED_THRESHOLDS_SPC6,
             ),
         },
     )
