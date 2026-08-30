@@ -52,7 +52,7 @@ master:
     lldpmgrd: 25
     dialout: 75
     telemetry: 70
-    dhcprelayd: 10
+    dhcprelayd: 11
     rsyslogd: &rsyslogd_defaults
       expected_value: 30
       containers_list: ['gnmi','dhcp_relay','what-just-happened','snmp','mgmt-framework','lldp','pmon','radv','syncd',
