@@ -40,6 +40,7 @@ from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
     find_active_peer_switch_pair_for_attention,
     is_link_health_feature_available,
     is_link_health_supported,
+    skip_if_peer_port_link_health_unavailable,
     trigger_link_health_attention_first,
     verify_healthy_link_health_block,
     verify_link_health_after_link_down,
@@ -105,6 +106,9 @@ def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_con
     else:
         with allure.step(f"Get list of peer ports"):
             peer_ports = peer_port.get_list_of_ports()
+
+    if verify_link_health:
+        skip_if_peer_port_link_health_unavailable(engines.dut)
 
     with allure.step(f"Validate show commands for all Peer Ports"):
         logger.info(f"List of Peer Ports: {[port.peer_port_name for port in peer_ports]}")

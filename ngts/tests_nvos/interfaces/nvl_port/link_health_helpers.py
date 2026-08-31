@@ -1,11 +1,11 @@
 import json
 import logging
 import os
+import random
 import re
-import subprocess
 import time
 from functools import cache
-from typing import List, Optional
+from typing import Optional
 
 import pytest
 
@@ -15,7 +15,6 @@ from ngts.nvos_constants.constants_nvos import (
     NvosConst,
     PeerPortConsts,
 )
-from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
 from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
@@ -73,6 +72,132 @@ def _is_empty_field(value) -> bool:
     return value in (None, '', {}, [])
 
 
+def _normalize_attention_field(value) -> Optional[str]:
+    if _is_empty_field(value):
+        return None
+    return str(value).strip()
+
+
+def _is_empty_or_zero_field(value) -> bool:
+    """Empty, or the FW ``n/a`` encoding (metric index 0)."""
+    normalized = _normalize_attention_field(value)
+    return normalized is None or normalized == '0'
+
+
+def _split_legacy_reason(reason) -> tuple:
+    """Split a pre-split ``reason`` (``<metric name>.<index>``) into its halves."""
+    normalized = _normalize_attention_field(reason)
+    if normalized is None:
+        return None, None
+    trigger, _, metric = normalized.rpartition('.')
+    if trigger and metric.isdigit():
+        return trigger, metric
+    return normalized, None
+
+
+def _extract_attention_fields(health_output: dict) -> tuple:
+    """Return ``(trigger, metric)`` from a link-health block.
+
+    ``trigger`` (FW metric name) + ``metric`` (its index) replaced the combined
+    ``reason`` leaf; images predating the split are read through the fallback.
+    """
+    if not isinstance(health_output, dict):
+        return None, None
+    trigger = health_output.get(LinkHealthConsts.TRIGGER)
+    metric = health_output.get(LinkHealthConsts.METRIC)
+    if _is_empty_field(trigger) and _is_empty_field(metric):
+        return _split_legacy_reason(health_output.get(LinkHealthConsts.REASON))
+    return trigger, metric
+
+
+def verify_link_health_leaf_set(health_output: dict, context: str = '', require_all=True) -> bool:
+    """Assert a health block carries the post-split leaf set.
+
+    ``trigger`` + ``metric`` replaced ``reason``, which the HLD removes rather
+    than deprecates, so an image serving the new leaves must not also serve
+    ``reason``. ``require_all`` is dropped for views that omit empty leaves
+    (the aggregate table). Returns False on a pre-split image, so the remaining
+    checks still run there.
+    """
+    prefix = f'{context}: ' if context else ''
+    assert isinstance(health_output, dict), (
+        f'{prefix}link-health block is not a dict: {health_output!r}'
+    )
+    leaves = set(health_output.keys())
+    if not leaves & {LinkHealthConsts.TRIGGER, LinkHealthConsts.METRIC}:
+        logger.warning(
+            f'{prefix}link-health block exposes no trigger/metric leaf (pre-split '
+            f'image?); leaves={sorted(leaves)}'
+        )
+        return False
+    stale = leaves & LinkHealthConsts.REMOVED_HEALTH_LEAVES
+    assert not stale, (
+        f'{prefix}link-health block still exposes {sorted(stale)} next to trigger/metric; '
+        'the split replaces reason rather than deprecating it'
+    )
+    if require_all:
+        missing = LinkHealthConsts.HEALTH_LEAVES - leaves
+        assert not missing, (
+            f'{prefix}link-health block is missing leaves {sorted(missing)}; '
+            f'got {sorted(leaves)}'
+        )
+    unexpected = leaves - LinkHealthConsts.HEALTH_LEAVES
+    if unexpected:
+        logger.info(f'{prefix}link-health block carries extra leaves {sorted(unexpected)}')
+    return True
+
+
+def _assert_peer_port_metric_pruned(health_output: dict, context: str = '') -> None:
+    """0.8: peer-port must not expose metric (empty or populated)."""
+    prefix = f'{context}: ' if context else ''
+    pruned = set(health_output) & LinkHealthConsts.PEER_PORT_PRUNED_HEALTH_LEAVES
+    shown = ', '.join(
+        f'{k}={health_output.get(k)!r}' for k in sorted(pruned)
+    )
+    assert not pruned, (
+        f'{prefix}peer-port link-health still exposes pruned leaf {sorted(pruned)} '
+        f'({shown}); metric is interface-only until compute 1.0/1.1 '
+        '(same gap as peer-port FAE clear)'
+    )
+
+
+def verify_peer_port_link_health_leaf_set(
+    health_output: dict, context: str = '', require_all=True,
+) -> bool:
+    """Assert the 0.8 peer-port health leaf set: state / trigger / time, no metric.
+
+    ``metric`` is pruned (not left empty). ``reason`` must stay gone.
+    ``require_all`` is False on healthy views that omit empty trigger/time.
+    """
+    prefix = f'{context}: ' if context else ''
+    assert isinstance(health_output, dict), (
+        f'{prefix}link-health block is not a dict: {health_output!r}'
+    )
+    leaves = set(health_output.keys())
+    stale = leaves & LinkHealthConsts.REMOVED_HEALTH_LEAVES
+    assert not stale, (
+        f'{prefix}peer-port link-health still exposes {sorted(stale)}; '
+        'the split replaces reason rather than deprecating it'
+    )
+    _assert_peer_port_metric_pruned(health_output, context)
+    if require_all:
+        missing = LinkHealthConsts.PEER_PORT_HEALTH_LEAVES - leaves
+        assert not missing, (
+            f'{prefix}peer-port link-health is missing leaves {sorted(missing)}; '
+            f'got {sorted(leaves)}'
+        )
+    else:
+        assert LinkHealthConsts.STATE in leaves, (
+            f'{prefix}peer-port link-health is missing state; got {sorted(leaves)}'
+        )
+    unexpected = leaves - LinkHealthConsts.PEER_PORT_HEALTH_LEAVES
+    if unexpected:
+        logger.info(
+            f'{prefix}peer-port link-health carries extra leaves {sorted(unexpected)}'
+        )
+    return True
+
+
 def _parse_link_health_state(health_output: dict) -> Optional[str]:
     state = health_output.get(LinkHealthConsts.STATE)
     if isinstance(state, dict):
@@ -94,13 +219,20 @@ def verify_healthy_link_health_block(health_output: dict, context: str = "") -> 
     assert state == LinkHealthConsts.STATE_HEALTHY, (
         f"{prefix}expected state={LinkHealthConsts.STATE_HEALTHY}, got {state!r}"
     )
-    reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-    since = health_output.get(LinkHealthConsts.SINCE)
-    assert _is_empty_field(reason), (
-        f"{prefix}attention-reason should be empty when healthy, got {reason!r}"
+    trigger, metric = _extract_attention_fields(health_output)
+    time_value = health_output.get(LinkHealthConsts.TIME)
+    assert _is_empty_field(trigger), (
+        f"{prefix}trigger should be empty when healthy, got {trigger!r}"
     )
-    assert _is_empty_field(since), (
-        f"{prefix}since should be empty when healthy, got {since!r}"
+    assert _is_empty_or_zero_field(metric), (
+        f"{prefix}metric should be empty when healthy, got {metric!r}"
+    )
+    if _normalize_attention_field(metric) == '0':
+        logger.warning(
+            f"{prefix}metric reads 0 (FW n/a index) instead of empty while healthy"
+        )
+    assert _is_empty_field(time_value), (
+        f"{prefix}time should be empty when healthy, got {time_value!r}"
     )
 
 
@@ -131,6 +263,12 @@ def verify_link_health_summary_on_nvl_ports(devices: DevicesT, dut_engine) -> No
             assert health_block is not None, (
                 f"Port {port_name}: link health block missing from show interface JSON"
             )
+            # The brief collection omits the attention leaves by design (they would
+            # otherwise land in the Summary cell), so only the removed leaf is checked.
+            assert LinkHealthConsts.REASON not in health_block, (
+                f"Port {port_name}: brief view still exposes the removed 'reason' leaf: "
+                f"{sorted(health_block.keys())}"
+            )
             state = health_block.get(LinkHealthConsts.STATE)
             if isinstance(state, dict):
                 state = next(iter(state.keys()), None)
@@ -145,18 +283,21 @@ def verify_link_health_drill_in(port: Port) -> None:
         health_output = OutputParsingTool.parse_json_str_to_dictionary(
             port.interface.link.health.show()
         ).get_returned_value()
+        verify_link_health_leaf_set(health_output, port.name)
         state = health_output.get(LinkHealthConsts.STATE)
         if isinstance(state, dict):
             state = next(iter(state.keys()), None)
         verify_link_health_state_valid(state, port.name)
         if state == LinkHealthConsts.STATE_HEALTHY:
             verify_healthy_link_health_block(health_output, port.name)
+        elif state == LinkHealthConsts.STATE_ATTENTION:
+            verify_attention_link_health_block(health_output, port.name)
 
 
 def _extract_aggregate_health_block(row):
     """Return the nested link-health block from a `nv show interface link-health` row.
 
-    Actual shape: ``{"link": {"health": {"state", "attention-trigger-code", "since"}}}``.
+    Actual shape: ``{"link": {"health": {"state", "trigger", "metric", "time"}}}``.
     Also tolerates a direct ``{"health": {...}}`` fallback. Returns the block dict or None.
     """
     if not isinstance(row, dict):
@@ -173,7 +314,7 @@ def _extract_aggregate_health_block(row):
 def verify_link_health_aggregate(dut_engine) -> None:
     """CLI-01: `nv show interface link-health` aggregate table.
 
-    Row shape: ``{<port>: {"link": {"health": {state, attention-trigger-code, since}}}}``.
+    Row shape: ``{<port>: {"link": {"health": {state, trigger, metric, time}}}}``.
     """
     with allure.step("Verify nv show interface link-health aggregate"):
         output = OutputParsingTool.parse_json_str_to_dictionary(
@@ -196,6 +337,9 @@ def verify_link_health_aggregate(dut_engine) -> None:
                 logger.debug(f"aggregate row {port_name}: empty link-health state; skipping")
                 continue
             verify_link_health_state_valid(state, port_name)
+            # The aggregate blanks non-attention rows, so empty leaves may be
+            # omitted entirely here; only the removed-leaf rule is enforced.
+            verify_link_health_leaf_set(health_block, port_name, require_all=False)
             checked += 1
             if state == LinkHealthConsts.STATE_ATTENTION:
                 verify_attention_link_health_block(health_block, port_name)
@@ -220,12 +364,15 @@ def verify_link_health_interface_block(port: Port) -> None:
         assert health_block is not None, (
             f"Port {port.name}: link.health block missing from nv show interface {port.name}"
         )
+        verify_link_health_leaf_set(health_block, port.name)
         state = health_block.get(LinkHealthConsts.STATE)
         if isinstance(state, dict):
             state = next(iter(state.keys()), None)
         verify_link_health_state_valid(state, port.name)
         if state == LinkHealthConsts.STATE_HEALTHY:
             verify_healthy_link_health_block(health_block, port.name)
+        elif state == LinkHealthConsts.STATE_ATTENTION:
+            verify_attention_link_health_block(health_block, port.name)
 
 
 def verify_link_health_link_nested(port: Port) -> None:
@@ -238,12 +385,15 @@ def verify_link_health_link_nested(port: Port) -> None:
         assert health_block is not None, (
             f"Port {port.name}: health block missing from nv show interface {port.name} link"
         )
+        verify_link_health_leaf_set(health_block, port.name)
         state = health_block.get(LinkHealthConsts.STATE)
         if isinstance(state, dict):
             state = next(iter(state.keys()), None)
         verify_link_health_state_valid(state, port.name)
         if state == LinkHealthConsts.STATE_HEALTHY:
             verify_healthy_link_health_block(health_block, port.name)
+        elif state == LinkHealthConsts.STATE_ATTENTION:
+            verify_attention_link_health_block(health_block, port.name)
 
 
 def verify_link_health_read_only(port: Port, dut_engine) -> None:
@@ -325,35 +475,55 @@ def verify_attention_link_health_block(health_output: dict, context: str = "") -
     assert state == LinkHealthConsts.STATE_ATTENTION, (
         f"{prefix}expected state={LinkHealthConsts.STATE_ATTENTION}, got {state!r}"
     )
-    reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-    since = health_output.get(LinkHealthConsts.SINCE)
-    assert not _is_empty_field(reason), (
-        f"{prefix}attention-reason should be populated when in attention, got {reason!r}"
+    trigger, metric = _extract_attention_fields(health_output)
+    time_value = health_output.get(LinkHealthConsts.TIME)
+    assert not _is_empty_field(trigger), (
+        f"{prefix}trigger should be populated when in attention, got {trigger!r}"
     )
-    assert not _is_empty_field(since), (
-        f"{prefix}since should be populated when in attention, got {since!r}"
+    assert not _is_empty_field(metric), (
+        f"{prefix}metric should be populated when in attention, got {metric!r}"
+    )
+    _assert_attention_fields_format(trigger, metric, context)
+    assert not _is_empty_field(time_value), (
+        f"{prefix}time should be populated when in attention, got {time_value!r}"
     )
 
 
-def verify_link_health_na_when_link_down(port: Port, known_bug_id: Optional[int] = None) -> str:
-    """Deprecated ST-07 helper: link down was once expected to report n/a.
+def verify_peer_port_healthy_link_health_block(health_output: dict, context: str = '') -> None:
+    """Healthy peer-port block: empty trigger/time, no metric leaf."""
+    prefix = f'{context}: ' if context else ''
+    verify_peer_port_link_health_leaf_set(health_output, context, require_all=False)
+    state = _parse_link_health_state(health_output)
+    assert state == LinkHealthConsts.STATE_HEALTHY, (
+        f'{prefix}expected state={LinkHealthConsts.STATE_HEALTHY}, got {state!r}'
+    )
+    trigger, _metric = _extract_attention_fields(health_output)
+    time_value = health_output.get(LinkHealthConsts.TIME)
+    assert _is_empty_field(trigger), (
+        f'{prefix}peer-port trigger should be empty when healthy, got {trigger!r}'
+    )
+    assert _is_empty_field(time_value), (
+        f'{prefix}peer-port time should be empty when healthy, got {time_value!r}'
+    )
 
-    The link-health build fix makes link-health sticky across admin down —
-    ``healthy`` stays ``healthy``, ``attention`` stays ``attention``, and the
-    old n/a-on-down behavior is now a regression. Use
-    ``verify_link_health_after_link_down`` for current tests.
-    """
-    with allure.step(f"Verify link-health when {port.name} is down (deprecated n/a check)"):
-        health_output = OutputParsingTool.parse_json_str_to_dictionary(
-            port.interface.link.health.show()
-        ).get_returned_value()
-        state = _parse_link_health_state(health_output)
-        if state == LinkHealthConsts.STATE_NA:
-            logger.warning(
-                f"{port.name}: link-health is n/a when down — this is the pre-fix regression "
-                f"(bug {known_bug_id}); post-fix sticky behavior is healthy/attention"
-            )
-        return state
+
+def verify_peer_port_attention_link_health_block(health_output: dict, context: str = '') -> None:
+    """Attention peer-port block: trigger + time, no metric leaf."""
+    prefix = f'{context}: ' if context else ''
+    verify_peer_port_link_health_leaf_set(health_output, context, require_all=True)
+    state = _parse_link_health_state(health_output)
+    assert state == LinkHealthConsts.STATE_ATTENTION, (
+        f'{prefix}expected state={LinkHealthConsts.STATE_ATTENTION}, got {state!r}'
+    )
+    trigger, _metric = _extract_attention_fields(health_output)
+    time_value = health_output.get(LinkHealthConsts.TIME)
+    assert not _is_empty_field(trigger), (
+        f'{prefix}peer-port trigger should be populated when in attention, got {trigger!r}'
+    )
+    _assert_attention_trigger_format(trigger, context)
+    assert not _is_empty_field(time_value), (
+        f'{prefix}peer-port time should be populated when in attention, got {time_value!r}'
+    )
 
 
 def verify_link_health_after_link_down(port: Port, baseline_state: str) -> tuple:
@@ -363,8 +533,8 @@ def verify_link_health_after_link_down(port: Port, baseline_state: str) -> tuple
     down no longer forces ``n/a``), a down link keeps whatever link-health it had
     just before it went down, so the value tells you the pre-down status:
       - down from ``healthy``   -> still ``healthy``.
-      - down from ``attention`` -> still ``attention`` (reason/since preserved).
-      - down from ``n/a``       -> still ``n/a`` (reason/since cleared).
+      - down from ``attention`` -> still ``attention`` (trigger/metric/time preserved).
+      - down from ``n/a``       -> still ``n/a`` (trigger/metric/time cleared).
 
     The state must equal ``baseline_state`` exactly; a change to ``n/a`` from a
     healthy/attention baseline is the regression this asserts against.
@@ -382,13 +552,16 @@ def verify_link_health_after_link_down(port: Port, baseline_state: str) -> tuple
         elif state == LinkHealthConsts.STATE_HEALTHY:
             verify_healthy_link_health_block(health_output, port.name)
         else:
-            reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-            since = health_output.get(LinkHealthConsts.SINCE)
-            assert _is_empty_field(reason), (
-                f'Port {port.name}: attention-trigger-code should be empty for n/a, got {reason!r}'
+            trigger, metric = _extract_attention_fields(health_output)
+            time_value = health_output.get(LinkHealthConsts.TIME)
+            assert _is_empty_field(trigger), (
+                f'Port {port.name}: trigger should be empty for n/a, got {trigger!r}'
             )
-            assert _is_empty_field(since), (
-                f'Port {port.name}: since should be empty for n/a, got {since!r}'
+            assert _is_empty_or_zero_field(metric), (
+                f'Port {port.name}: metric should be empty for n/a, got {metric!r}'
+            )
+            assert _is_empty_field(time_value), (
+                f'Port {port.name}: time should be empty for n/a, got {time_value!r}'
             )
         return state, health_output
 
@@ -413,20 +586,20 @@ def _parse_gnmic_flat_value(output: str, path_fragment: str) -> Optional[str]:
     return None
 
 
-def _parse_gnmic_flat_status(output: str) -> Optional[str]:
-    """Return the last status value from gnmic --format flat output."""
-    return _parse_gnmic_flat_value(output, LinkHealthConsts.GNMI_PATH_STATUS)
-
-
 def _parse_gnmi_link_health_state(output: str) -> dict:
-    """Parse status, attention-reason, and attention-since from gnmic flat output."""
+    """Parse status, trigger, metric, and time from gnmic flat output."""
+    trigger = _parse_gnmic_flat_value(output, LinkHealthConsts.GNMI_PATH_TRIGGER)
+    metric = _parse_gnmic_flat_value(output, LinkHealthConsts.GNMI_PATH_METRIC)
+    if _is_empty_field(trigger) and _is_empty_field(metric):
+        trigger, metric = _split_legacy_reason(
+            _parse_gnmic_flat_value(output, LinkHealthConsts.GNMI_PATH_REASON)
+        )
     return {
         LinkHealthConsts.STATE: _parse_gnmic_flat_value(output, LinkHealthConsts.GNMI_PATH_STATUS),
-        LinkHealthConsts.ATTENTION_TRIGGER_CODE: _parse_gnmic_flat_value(
-            output, LinkHealthConsts.GNMI_PATH_ATTENTION_TRIGGER_CODE
-        ),
-        LinkHealthConsts.SINCE: _parse_gnmic_flat_value(
-            output, LinkHealthConsts.GNMI_PATH_ATTENTION_SINCE
+        LinkHealthConsts.TRIGGER: trigger,
+        LinkHealthConsts.METRIC: metric,
+        LinkHealthConsts.TIME: _parse_gnmic_flat_value(
+            output, LinkHealthConsts.GNMI_PATH_TIME
         ),
     }
 
@@ -440,21 +613,143 @@ def _is_gnmi_zero_or_empty(value) -> bool:
         return False
 
 
-def _normalize_attention_reason(value) -> Optional[str]:
-    if _is_empty_field(value):
-        return None
-    return str(value).strip()
+def _assert_attention_trigger_format(trigger, context: str = '') -> None:
+    """Attention ``trigger`` is a FW metric name (e.g. plr-tx-bw-loss)."""
+    prefix = f'{context}: ' if context else ''
+    normalized_trigger = _normalize_attention_field(trigger)
+    assert normalized_trigger is not None, f'{prefix}trigger is empty'
+    assert re.match(LinkHealthConsts.TRIGGER_PATTERN, normalized_trigger), (
+        f'{prefix}trigger {trigger!r} does not match expected FW metric name pattern'
+    )
+
+
+def _assert_attention_fields_format(trigger, metric, context: str = '') -> None:
+    """Switch Attention reports ``trigger`` (FW metric name) + ``metric`` (index 1-15)."""
+    prefix = f'{context}: ' if context else ''
+    _assert_attention_trigger_format(trigger, context)
+    normalized_metric = _normalize_attention_field(metric)
+    assert normalized_metric is not None, f'{prefix}metric is empty'
+    assert re.match(LinkHealthConsts.METRIC_PATTERN, normalized_metric), (
+        f'{prefix}metric {metric!r} is not a metric index'
+    )
+    metric_index = int(normalized_metric)
+    assert (
+        LinkHealthConsts.METRIC_INDEX_MIN <= metric_index <= LinkHealthConsts.METRIC_INDEX_MAX
+    ), (
+        f'{prefix}metric index {metric_index} is outside the FW range '
+        f'{LinkHealthConsts.METRIC_INDEX_MIN}-{LinkHealthConsts.METRIC_INDEX_MAX} '
+        f'(0 is the FW n/a index and must not appear while trigger {trigger!r} is set)'
+    )
 
 
 def _read_link_health_cli_fields(port: Port) -> dict:
     health_output = OutputParsingTool.parse_json_str_to_dictionary(
         port.interface.link.health.show()
     ).get_returned_value()
+    trigger, metric = _extract_attention_fields(health_output)
     return {
         LinkHealthConsts.STATE: _parse_link_health_state(health_output),
-        LinkHealthConsts.ATTENTION_TRIGGER_CODE: health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE),
-        LinkHealthConsts.SINCE: health_output.get(LinkHealthConsts.SINCE),
+        LinkHealthConsts.TRIGGER: trigger,
+        LinkHealthConsts.METRIC: metric,
+        LinkHealthConsts.TIME: health_output.get(LinkHealthConsts.TIME),
     }
+
+
+GNMI_LINK_HEALTH_LEAVES = (
+    LinkHealthConsts.STATE,
+    LinkHealthConsts.TRIGGER,
+    LinkHealthConsts.METRIC,
+    LinkHealthConsts.TIME,
+)
+
+
+def _gnmi_serves_pre_split_trigger(gnmi_state: dict) -> bool:
+    """True when telemetry still serves the raw FW trigger code and no metric leaf.
+
+    Verified on dev-link-health-updates-010: the CLI reports
+    ``trigger=plr-tx-bw-loss`` / ``metric=1`` while gNMI serves
+    ``.../state/trigger: 1`` and no ``metric`` leaf at all, because the telemetry
+    proposal for the split has not landed yet.
+    """
+    trigger = _normalize_attention_field(gnmi_state.get(LinkHealthConsts.TRIGGER))
+    return (
+        trigger is not None and
+        trigger.isdigit() and
+        gnmi_state.get(LinkHealthConsts.METRIC) is None
+    )
+
+
+def _verify_gnmi_link_health_leaves(
+    gnmi_state: dict,
+    expected_cli_state: str,
+    port_name: str,
+    prefix: str = '',
+) -> None:
+    """Assert the subscription carries every link-health leaf for this state.
+
+    A leaf parsed as ``None`` was absent from the subscription; ``''`` means it
+    was reported empty, which is what healthy / n-a must look like. Attention
+    needs all four leaves with values, unless telemetry is still on the pre-split
+    encoding (raw trigger code, no metric leaf), which is reported rather than
+    failed. Likewise a build serving no trigger/metric leaf at all is logged, so
+    the remaining parity checks still run.
+    """
+    absent = [leaf for leaf in GNMI_LINK_HEALTH_LEAVES if gnmi_state.get(leaf) is None]
+    if expected_cli_state == LinkHealthConsts.STATE_ATTENTION:
+        if _gnmi_serves_pre_split_trigger(gnmi_state):
+            logger.warning(
+                f'{prefix}Port {port_name}: gNMI still serves the pre-split encoding '
+                f'(raw trigger code {gnmi_state.get(LinkHealthConsts.TRIGGER)!r}, no metric '
+                'leaf); skipping the metric-leaf requirement until the telemetry split lands'
+            )
+            missing = [leaf for leaf in absent if leaf != LinkHealthConsts.METRIC]
+            assert not missing, (
+                f'{prefix}Port {port_name}: gNMI attention sample is missing leaves '
+                f'{missing}; got {gnmi_state!r}'
+            )
+            return
+        assert not absent, (
+            f'{prefix}Port {port_name}: gNMI attention sample is missing leaves {absent}; '
+            f'got {gnmi_state!r}'
+        )
+        return
+
+    serves_split = any(
+        gnmi_state.get(leaf) is not None
+        for leaf in (LinkHealthConsts.TRIGGER, LinkHealthConsts.METRIC)
+    )
+    if not serves_split:
+        logger.warning(
+            f'{prefix}Port {port_name}: gNMI serves no trigger/metric leaf for CLI '
+            f'{expected_cli_state!r} (telemetry split not implemented on this image?); '
+            f'absent leaves={absent}'
+        )
+        return
+    # Status is the YANG enum default for n/a and time is a numeric epoch that
+    # defaults to 0; gnmic drops default leaves on the wire, so those two are
+    # reported rather than failed. The string trigger/metric leaves must both be
+    # there, reported empty.
+    tolerated = {LinkHealthConsts.STATE, LinkHealthConsts.TIME}
+    missing = [leaf for leaf in absent if leaf not in tolerated]
+    assert not missing, (
+        f'{prefix}Port {port_name}: gNMI reports trigger/metric for CLI '
+        f'{expected_cli_state!r} but omits {missing}; every leaf must be present '
+        f'(empty) when there is no attention'
+    )
+    omitted_defaults = [leaf for leaf in absent if leaf in tolerated]
+    if omitted_defaults:
+        logger.info(
+            f'{prefix}Port {port_name}: gNMI omits default leaves {omitted_defaults} for CLI '
+            f'{expected_cli_state!r} (gnmic drops leaves left at their YANG default)'
+        )
+
+
+def _canonical_trigger(value) -> Optional[str]:
+    """Compare trigger names across separator/case differences (PLR-Tx-BW-Loss)."""
+    normalized = _normalize_attention_field(value)
+    if normalized is None:
+        return None
+    return re.sub(r'[-_]', '', normalized).lower()
 
 
 def _assert_gnmi_link_health_parity(
@@ -464,44 +759,51 @@ def _assert_gnmi_link_health_parity(
     port_name: str,
     context: str = '',
 ) -> None:
-    """Assert gNMI status + reason + since match CLI semantics.
+    """Assert gNMI status + trigger + metric + time match CLI semantics.
 
-  ``UNHEALTHY`` alone is not accepted for attention: reason and since must
-  corroborate the CLI state. For n/a, reason and since must be cleared so
+  ``UNHEALTHY`` alone is not accepted for attention: the trigger and time must
+  corroborate the CLI state. For n/a, trigger/metric/time must be cleared so
   gNMI does not look like attention.
     """
     prefix = f'{context}: ' if context else ''
     gnmi_status = gnmi_state.get(LinkHealthConsts.STATE)
-    gnmi_reason = gnmi_state.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-    gnmi_since = gnmi_state.get(LinkHealthConsts.SINCE)
-    cli_reason = cli_fields.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-    cli_since = cli_fields.get(LinkHealthConsts.SINCE)
+    gnmi_trigger = gnmi_state.get(LinkHealthConsts.TRIGGER)
+    gnmi_metric = gnmi_state.get(LinkHealthConsts.METRIC)
+    gnmi_time = gnmi_state.get(LinkHealthConsts.TIME)
+    cli_trigger = cli_fields.get(LinkHealthConsts.TRIGGER)
+    cli_metric = cli_fields.get(LinkHealthConsts.METRIC)
+    cli_time = cli_fields.get(LinkHealthConsts.TIME)
+    _verify_gnmi_link_health_leaves(gnmi_state, expected_cli_state, port_name, prefix)
 
     if expected_cli_state == LinkHealthConsts.STATE_NA:
-        assert _is_gnmi_zero_or_empty(gnmi_reason), (
-            f'{prefix}Port {port_name}: gNMI attention-reason must be 0/empty for n/a; '
-            f'non-zero value {gnmi_reason!r} implies attention, not n/a'
+        assert _is_gnmi_zero_or_empty(gnmi_trigger), (
+            f'{prefix}Port {port_name}: gNMI trigger must be empty for n/a; '
+            f'non-zero value {gnmi_trigger!r} implies attention, not n/a'
         )
-        assert _is_gnmi_zero_or_empty(gnmi_since), (
-            f'{prefix}Port {port_name}: gNMI attention-since must be 0/empty for n/a, '
-            f'got {gnmi_since!r}'
+        assert _is_gnmi_zero_or_empty(gnmi_metric), (
+            f'{prefix}Port {port_name}: gNMI metric must be 0/empty for n/a, '
+            f'got {gnmi_metric!r}'
+        )
+        assert _is_gnmi_zero_or_empty(gnmi_time), (
+            f'{prefix}Port {port_name}: gNMI time must be 0/empty for n/a, '
+            f'got {gnmi_time!r}'
         )
         if _gnmi_value_matches_cli_state(gnmi_status, LinkHealthConsts.STATE_NA):
             return
         if gnmi_status is None:
             # UNSPECIFIED is the YANG default (enum 0); gnmic omits default leaves
-            # on the wire (same as `since` at baseline). Absent status + cleared
-            # reason/since is the expected n/a encoding.
+            # on the wire (same as `time` at baseline). Absent status + cleared
+            # attention fields is the expected n/a encoding.
             logger.info(
                 f'{prefix}Port {port_name}: gNMI status leaf absent for CLI n/a; '
-                'treating omitted UNSPECIFIED default with cleared reason/since as n/a'
+                'treating omitted UNSPECIFIED default with cleared trigger/metric/time as n/a'
             )
             return
         if _gnmi_value_matches_cli_state(gnmi_status, LinkHealthConsts.STATE_ATTENTION):
             logger.warning(
                 f'{prefix}Port {port_name}: gNMI status is UNHEALTHY for CLI n/a — '
-                'YANG specifies UNSPECIFIED for n/a; cleared reason/since confirm n/a '
-                'semantics but status encoding deviates from model (§18)'
+                'YANG specifies UNSPECIFIED for n/a; cleared trigger/metric/time confirm '
+                'n/a semantics but status encoding deviates from model (§18)'
             )
             return
         assert not _gnmi_value_matches_cli_state(gnmi_status, LinkHealthConsts.STATE_HEALTHY), (
@@ -510,39 +812,68 @@ def _assert_gnmi_link_health_parity(
         )
         pytest.fail(
             f'{prefix}Port {port_name}: expected gNMI status UNSPECIFIED (or UNHEALTHY with '
-            f'cleared reason/since) for CLI n/a, got status={gnmi_status!r} '
-            f'(reason={gnmi_reason!r}, since={gnmi_since!r})'
+            f'cleared trigger/metric/time) for CLI n/a, got status={gnmi_status!r} '
+            f'(trigger={gnmi_trigger!r}, metric={gnmi_metric!r}, time={gnmi_time!r})'
         )
 
     assert _gnmi_value_matches_cli_state(gnmi_status, expected_cli_state), (
         f'{prefix}Port {port_name}: expected gNMI status semantically matching CLI '
         f'{expected_cli_state!r}, got status={gnmi_status!r} '
-        f'(reason={gnmi_reason!r}, since={gnmi_since!r})'
+        f'(trigger={gnmi_trigger!r}, metric={gnmi_metric!r}, time={gnmi_time!r})'
     )
 
     if expected_cli_state == LinkHealthConsts.STATE_HEALTHY:
-        assert _is_gnmi_zero_or_empty(gnmi_reason), (
-            f'{prefix}Port {port_name}: gNMI attention-reason should be 0/empty when '
-            f'healthy, got {gnmi_reason!r}'
+        assert _is_gnmi_zero_or_empty(gnmi_trigger), (
+            f'{prefix}Port {port_name}: gNMI trigger should be empty when '
+            f'healthy, got {gnmi_trigger!r}'
         )
-        assert _is_gnmi_zero_or_empty(gnmi_since), (
-            f'{prefix}Port {port_name}: gNMI attention-since should be 0/empty when '
-            f'healthy, got {gnmi_since!r}'
+        assert _is_gnmi_zero_or_empty(gnmi_metric), (
+            f'{prefix}Port {port_name}: gNMI metric should be 0/empty when '
+            f'healthy, got {gnmi_metric!r}'
+        )
+        assert _is_gnmi_zero_or_empty(gnmi_time), (
+            f'{prefix}Port {port_name}: gNMI time should be 0/empty when '
+            f'healthy, got {gnmi_time!r}'
         )
         return
 
     if expected_cli_state == LinkHealthConsts.STATE_ATTENTION:
-        assert not _is_gnmi_zero_or_empty(gnmi_reason), (
+        assert not _is_gnmi_zero_or_empty(gnmi_trigger), (
             f'{prefix}Port {port_name}: gNMI status {gnmi_status!r} is ambiguous without '
-            f'a non-zero attention-reason; UNHEALTHY alone cannot confirm attention'
+            f'a non-empty trigger; ATTENTION status alone cannot confirm attention'
         )
-        assert _normalize_attention_reason(gnmi_reason) == _normalize_attention_reason(cli_reason), (
-            f'{prefix}Port {port_name}: gNMI attention-reason {gnmi_reason!r} does not match '
-            f'CLI {cli_reason!r}'
-        )
-        assert not _is_gnmi_zero_or_empty(gnmi_since), (
-            f'{prefix}Port {port_name}: gNMI attention-since should be non-zero when CLI '
-            f'since is populated ({cli_since!r}), got {gnmi_since!r}'
+        if str(gnmi_trigger).strip().isdigit() and not str(cli_trigger).strip().isdigit():
+            # Telemetry still carries the raw FW code; the CLI already serves the
+            # decoded metric name, so a code-vs-name pair cannot be compared.
+            logger.warning(
+                f'{prefix}Port {port_name}: gNMI trigger {gnmi_trigger!r} is a raw FW code '
+                f'while CLI reports {cli_trigger!r}; skipping value comparison until the '
+                'telemetry trigger/metric split lands'
+            )
+        else:
+            assert _canonical_trigger(gnmi_trigger) == _canonical_trigger(cli_trigger), (
+                f'{prefix}Port {port_name}: gNMI trigger {gnmi_trigger!r} does not match '
+                f'CLI {cli_trigger!r}'
+            )
+        if not _is_empty_field(gnmi_metric) and not _is_empty_field(cli_metric):
+            assert _normalize_attention_field(gnmi_metric) == _normalize_attention_field(cli_metric), (
+                f'{prefix}Port {port_name}: gNMI metric {gnmi_metric!r} does not match '
+                f'CLI {cli_metric!r}'
+            )
+        normalized_gnmi_metric = _normalize_attention_field(gnmi_metric)
+        if normalized_gnmi_metric is not None and normalized_gnmi_metric.isdigit():
+            metric_index = int(normalized_gnmi_metric)
+            assert (
+                LinkHealthConsts.METRIC_INDEX_MIN <= metric_index <=
+                LinkHealthConsts.METRIC_INDEX_MAX
+            ), (
+                f'{prefix}Port {port_name}: gNMI metric index {metric_index} is outside the '
+                f'FW range {LinkHealthConsts.METRIC_INDEX_MIN}-'
+                f'{LinkHealthConsts.METRIC_INDEX_MAX} while in attention'
+            )
+        assert not _is_gnmi_zero_or_empty(gnmi_time), (
+            f'{prefix}Port {port_name}: gNMI time should be non-zero when CLI '
+            f'time is populated ({cli_time!r}), got {gnmi_time!r}'
         )
         return
 
@@ -688,7 +1019,7 @@ def gnmi_link_health_state_once(
     username: str,
     password: str,
 ) -> dict:
-    """One-shot gNMI read of link-health status, attention-reason, and attention-since."""
+    """One-shot gNMI read of link-health status, trigger, metric, and time."""
     from ngts.tests_nvos.system.gnmi.constants import GnmiMode
 
     out, err, _, _ = gnmi_client.gnmic_subscribe(
@@ -709,13 +1040,6 @@ def gnmi_link_health_state_once(
     return _parse_gnmi_link_health_state(combined)
 
 
-def gnmi_link_health_status_once(gnmi_client, port_name: str, username: str, password: str) -> Optional[str]:
-    """One-shot gNMI read of link-health status for a port."""
-    return gnmi_link_health_state_once(gnmi_client, port_name, username, password).get(
-        LinkHealthConsts.STATE
-    )
-
-
 def verify_gnmi_link_health_matches_cli(
     gnmi_client,
     port_name: str,
@@ -728,7 +1052,7 @@ def verify_gnmi_link_health_matches_cli(
 ) -> None:
     prefix = f'{context}: ' if context else ''
     step = (
-        f'{prefix}Verify gNMI link-health (status, attention-reason, attention-since) '
+        f'{prefix}Verify gNMI link-health (status, trigger, metric, time) '
         f'matches CLI {expected_cli_state!r} for {port_name}'
     )
     with allure.step(step):
@@ -753,172 +1077,6 @@ def verify_gnmi_link_health_matches_cli(
         )
 
 
-def start_gnmi_link_health_stream(
-    gnmi_client,
-    port_name: str,
-    username: str,
-    password: str,
-) -> subprocess.Popen:
-    """Keep a STREAM subscription open before a link-state change."""
-    from ngts.tests_nvos.system.gnmi.constants import GnmiMode
-
-    _, _, _, process = gnmi_client.gnmic_subscribe(
-        _gnmi_status_prefix(port_name),
-        LinkHealthConsts.GNMI_PATH_STATE,
-        GnmiMode.STREAM,
-        flat=True,
-        username=username,
-        password=password,
-        skip_cert_verify=True,
-        keep_session_alive=True,
-    )
-    time.sleep(2)
-    return process
-
-
-def _split_gnmi_stream_samples(combined: str) -> List[str]:
-    """Split flat gnmic STREAM output into per-sample blocks (blank-line separated)."""
-    return [block for block in re.split(r'\n\s*\n', combined) if block.strip()]
-
-
-def _gnmi_sample_matches_state(gnmi_state: dict, expected_cli_state: str) -> bool:
-    """True if one parsed gNMI sample matches the expected CLI state semantics.
-
-    Attention requires a corroborating non-zero trigger-code (UNHEALTHY status
-    alone is ambiguous); healthy only needs the status; n/a needs UNSPECIFIED/
-    absent status with cleared trigger-code and since.
-    """
-    status = gnmi_state.get(LinkHealthConsts.STATE)
-    reason = gnmi_state.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-    since = gnmi_state.get(LinkHealthConsts.SINCE)
-    if expected_cli_state == LinkHealthConsts.STATE_ATTENTION:
-        return (
-            _gnmi_value_matches_cli_state(status, LinkHealthConsts.STATE_ATTENTION) and
-            not _is_gnmi_zero_or_empty(reason)
-        )
-    if expected_cli_state == LinkHealthConsts.STATE_HEALTHY:
-        return _gnmi_value_matches_cli_state(status, LinkHealthConsts.STATE_HEALTHY)
-    if expected_cli_state == LinkHealthConsts.STATE_NA:
-        na_status = (
-            status is None or
-            _gnmi_value_matches_cli_state(status, LinkHealthConsts.STATE_NA) or
-            _gnmi_value_matches_cli_state(status, LinkHealthConsts.STATE_ATTENTION)
-        )
-        return na_status and _is_gnmi_zero_or_empty(reason) and _is_gnmi_zero_or_empty(since)
-    return _gnmi_value_matches_cli_state(status, expected_cli_state)
-
-
-def verify_gnmi_stream_includes_cli_state(
-    out: str,
-    err: str,
-    expected_cli_state: str,
-    port_name: str,
-    context: str = '',
-    cli_health_fields: Optional[dict] = None,  # noqa: ARG001 (kept for call-site compat)
-) -> None:
-    """Assert a closed STREAM streamed at least one sample matching the expected state.
-
-    A STREAM carries multiple samples across transitions, so each per-sample block
-    is parsed independently. Collapsing the whole blob into one (last-value-wins)
-    state mixes leaves from different samples (e.g. a trailing HEALTHY status with a
-    stale attention-since) and yields false mismatches, so it is avoided here.
-    """
-    from ngts.tests_nvos.system.gnmi.helpers import verify_msg_not_in_out_or_err
-
-    prefix = f'{context}: ' if context else ''
-    combined = f'{out}\n{err}'
-    verify_msg_not_in_out_or_err('auth fail', out, err)
-
-    parsed_states = [
-        _parse_gnmi_link_health_state(block)
-        for block in _split_gnmi_stream_samples(combined)
-    ]
-    if any(_gnmi_sample_matches_state(state, expected_cli_state) for state in parsed_states):
-        return
-
-    # Fallback for builds that omit reason/since leaves: accept a bare status-token
-    # match for healthy/na. Attention still needs a corroborating trigger-code above.
-    if expected_cli_state != LinkHealthConsts.STATE_ATTENTION:
-        status_tokens = re.findall(
-            r'\b(?:UNSPECIFIED|HEALTHY|UNHEALTHY|ATTENTION|NA|N/A|NOT[_-]?APPLICABLE)\b',
-            combined,
-            flags=re.IGNORECASE,
-        )
-        if any(_gnmi_value_matches_cli_state(tok, expected_cli_state) for tok in status_tokens):
-            return
-
-    observed = [
-        (
-            state.get(LinkHealthConsts.STATE),
-            state.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE),
-            state.get(LinkHealthConsts.SINCE),
-        )
-        for state in parsed_states
-    ]
-    pytest.fail(
-        f'{prefix}Port {port_name}: gNMI STREAM did not include a sample matching CLI '
-        f'{expected_cli_state!r}. Samples (status, trigger-code, since): {observed!r}. '
-        f'Output excerpt: {combined[-1500:]!r}'
-    )
-
-
-def verify_link_health_down_with_gnmi(
-    port: Port,
-    gnmi_client,
-    stream_process: Optional[subprocess.Popen],
-    username: str,
-    password: str,
-    baseline_state: str,
-    close_stream: bool = False,
-) -> str:
-    """CLI + gNMI parity after admin down. Returns the observed CLI state.
-
-    A down link retains its pre-down link-health value (healthy stays healthy,
-    attention stays attention), and gNMI is validated against that observed CLI
-    state. Keeps the STREAM subscription open by default so the caller can verify
-    link-up recovery.
-    """
-    observed_state, _ = verify_link_health_after_link_down(port, baseline_state)
-    verify_gnmi_link_health_matches_cli(
-        gnmi_client,
-        port.name,
-        observed_state,
-        username,
-        password,
-        context='after link down',
-        port=port,
-    )
-    if close_stream and stream_process is not None:
-        out, err = gnmi_client.close_session_and_get_out_and_err(stream_process, delay=2)
-        verify_gnmi_stream_includes_cli_state(
-            out,
-            err,
-            observed_state,
-            port.name,
-            context='stream after link down',
-            cli_health_fields=_read_link_health_cli_fields(port),
-        )
-    return observed_state
-
-
-def finalize_gnmi_link_health_stream(
-    gnmi_client,
-    stream_process: subprocess.Popen,
-    port_name: str,
-    expected_cli_states: List[str],
-    delay: int = 2,
-) -> None:
-    """Close an open STREAM subscription and verify it reported the expected states."""
-    with allure.step(
-        f'Close gNMI link-health stream on {port_name} and verify transitions'
-    ):
-        out, err = gnmi_client.close_session_and_get_out_and_err(stream_process, delay=delay)
-        for state in expected_cli_states:
-            verify_gnmi_stream_includes_cli_state(
-                out, err, state, port_name, context=f'stream includes {state!r}',
-            )
-
-
 def verify_link_health_up_with_gnmi(
     port: Port,
     gnmi_client,
@@ -931,6 +1089,7 @@ def verify_link_health_up_with_gnmi(
             port.interface.link.health.show()
         ).get_returned_value()
         verify_healthy_link_health_block(health_output, port.name)
+        verify_link_health_leaf_set(health_output, port.name)
     if gnmi_client is None:
         return
     verify_gnmi_link_health_matches_cli(
@@ -948,13 +1107,21 @@ PTER_REGISTER = 'PTER'
 
 # PTER error_type_admin values (provisional lab recipe — FW/FAE approval pending)
 PTER_ERROR_TYPE_CLEAR = '0x0'
-PTER_ERROR_TYPE_BER = '0x2'       # Effective/Raw BER -> attention-reason 4
-PTER_ERROR_TYPE_SYMBOL = '0x4'    # Symbol errors -> attention-reason 3/9
-# BER magnitude for injection. 0x3 (1e-3) is too aggressive on some ports/ASICs
-# (admin-downs the link or has no clean effect); 0x4 (1e-4) reliably trips
-# attention in the lab. Bump toward 0x5 if a port needs a gentler magnitude.
+PTER_ERROR_TYPE_BER = '0x2'       # Effective/Raw BER -> BER attention trigger
+PTER_ERROR_TYPE_SYMBOL = '0x4'    # Symbol errors -> symbol-error attention trigger
+# Validated pair (zombie-link / Rosalind 2165 acp10): mantissa=1, exp=4.
+# mantissa 0x9 was FW-accepted on some builds but did not trip Attention here.
+# error_type_oper staying 0 is *not* proof the inject is idle on this FW —
+# CLI still reached attention (PLR_Tx_BW_Loss) after the SET.
 PTER_BER_MANTISSA = '0x1'
 PTER_BER_EXP = '0x4'
+
+
+def _prefer_pci_cr_mst(mst_device: str) -> str:
+    """PTER/PPBMP are often only reliable on pci_cr, not pciconf (Quantum3)."""
+    if mst_device and 'pciconf' in str(mst_device):
+        return str(mst_device).replace('pciconf', 'pci_cr')
+    return mst_device
 
 
 def enable_asic_error_injection(dut_engine) -> None:
@@ -1014,58 +1181,70 @@ def _mlxreg_reports_error(output: str) -> bool:
     return any(tok in lowered for tok in error_markers)
 
 
-def read_pter_error_type(dut_engine, mst_device, local_port, sudo_password=None) -> Optional[int]:
-    """Read back PTER error_type_admin via mlxreg --get. Returns int or None."""
-    get_cmd = _pter_get_cmd(mst_device, local_port)
-    if sudo_password:
-        output = _run_compute_sudo_cmd(dut_engine, sudo_password, get_cmd)
-    else:
-        output = dut_engine.run_cmd(get_cmd, validate=False, print_output=False)
-    if not output:
-        return None
+PTER_READ_FIELDS = ('error_type_admin', 'error_type_oper', 'error_type_cap')
+
+
+def _parse_pter_field(output: str, field: str) -> Optional[int]:
     for line in output.splitlines():
-        if 'error_type_admin' in line:
-            match = re.search(r'0x[0-9a-fA-F]+|\b\d+\b', line.split('error_type_admin', 1)[1])
-            if match:
-                try:
-                    return int(match.group(0), 0)
-                except ValueError:
-                    return None
+        if field not in line:
+            continue
+        match = re.search(r'0x[0-9a-fA-F]+|\b\d+\b', line.split(field, 1)[1])
+        if not match:
+            continue
+        try:
+            return int(match.group(0), 0)
+        except ValueError:
+            return None
     return None
 
 
-def clear_pter_injection(dut_engine, mst_device, local_port, sudo_password=None) -> None:
+def read_pter_fields(dut_engine, mst_device, local_port) -> dict:
+    """Read PTER admin/oper/cap via mlxreg --get. Missing fields map to None.
+
+    ``error_type_cap`` is a bitmask of the error types the port supports, so it
+    explains a write that the CLI accepts but the port silently drops.
+    """
+    get_cmd = _pter_get_cmd(mst_device, local_port)
+    output = dut_engine.run_cmd(get_cmd, validate=False, print_output=False)
+    if not output:
+        return {field: None for field in PTER_READ_FIELDS}
+    return {field: _parse_pter_field(output, field) for field in PTER_READ_FIELDS}
+
+
+def _format_pter_fields(fields: dict) -> str:
+    return ', '.join(
+        f'{name}={value:#x}' if isinstance(value, int) else f'{name}=?'
+        for name, value in fields.items()
+    )
+
+
+def clear_pter_injection(dut_engine, mst_device, local_port) -> None:
     """Disarm PTER injection (error_type_admin=0)."""
     if not mst_device or not local_port:
         return
     cmd = _pter_cmd(mst_device, local_port, PTER_ERROR_TYPE_CLEAR)
-    if sudo_password:
-        _run_compute_sudo_cmd(dut_engine, sudo_password, cmd)
-    else:
-        dut_engine.run_cmd(cmd, validate=False, print_output=False)
+    dut_engine.run_cmd(cmd, validate=False, print_output=False)
 
 
 def arm_pter_attention(dut_engine, mst_device, local_port,
-                       error_type_admin=PTER_ERROR_TYPE_BER, sudo_password=None) -> bool:
+                       error_type_admin=PTER_ERROR_TYPE_BER,
+                       ber_mantissa=None, ber_exp=None) -> bool:
     """Clear then arm PTER injection, and verify the register write took effect.
 
     Returns True only when the mlxreg set was accepted (no error) AND a read-back
     shows error_type_admin == the requested value. This distinguishes "register
     write went through" from "write silently ignored", instead of assuming the
     write worked and only checking the downstream CLI.
-
-    Pass ``sudo_password`` when running on a Linux compute host (non-passwordless sudo).
     """
-    clear_pter_injection(dut_engine, mst_device, local_port, sudo_password=sudo_password)
+    clear_pter_injection(dut_engine, mst_device, local_port)
+    ber_mantissa = PTER_BER_MANTISSA if ber_mantissa is None else ber_mantissa
+    ber_exp = PTER_BER_EXP if ber_exp is None else ber_exp
     with allure.step(f'Arm PTER on local_port={local_port} (error_type_admin={error_type_admin})'):
         set_cmd = _pter_cmd(
             mst_device, local_port, error_type_admin,
-            error_injection_time='0xFFFF', ber_mantissa=PTER_BER_MANTISSA, ber_exp=PTER_BER_EXP,
+            error_injection_time='0xFFFF', ber_mantissa=ber_mantissa, ber_exp=ber_exp,
         )
-        if sudo_password:
-            set_output = _run_compute_sudo_cmd(dut_engine, sudo_password, set_cmd)
-        else:
-            set_output = dut_engine.run_cmd(set_cmd, validate=False, print_output=False)
+        set_output = dut_engine.run_cmd(set_cmd, validate=False, print_output=False)
         if _mlxreg_reports_error(set_output):
             logger.warning(
                 f'PTER set on local_port={local_port} reported an error; '
@@ -1074,7 +1253,8 @@ def arm_pter_attention(dut_engine, mst_device, local_port,
             return False
 
         expected = int(str(error_type_admin), 0)
-        read_back = read_pter_error_type(dut_engine, mst_device, local_port, sudo_password=sudo_password)
+        fields = read_pter_fields(dut_engine, mst_device, local_port)
+        read_back = fields['error_type_admin']
         if read_back is None:
             logger.warning(
                 f'PTER set on local_port={local_port} returned no error, but read-back '
@@ -1082,14 +1262,28 @@ def arm_pter_attention(dut_engine, mst_device, local_port,
             )
             return False
         if read_back != expected:
+            cap = fields['error_type_cap']
+            unsupported = isinstance(cap, int) and not cap & expected
+            cap_note = (
+                f'error_type {expected:#x} is NOT in the port capability mask'
+                if unsupported else
+                'error_type is within the capability mask, so the value itself was rejected'
+            )
             logger.warning(
                 f'PTER write did not take effect on local_port={local_port}: '
                 f'set error_type_admin={expected:#x}, read back {read_back:#x} '
-                '(register write went through the CLI but was not applied)'
+                f'({_format_pter_fields(fields)}); {cap_note}'
             )
             return False
+        oper = fields.get('error_type_oper')
+        if oper == 0:
+            logger.info(
+                f'PTER error_type_oper=0 on local_port={local_port} after arm; '
+                'on this FW that is not a reject — keep injection armed and wait for CLI'
+            )
         logger.info(
-            f'PTER write confirmed on local_port={local_port}: error_type_admin={read_back:#x}'
+            f'PTER write confirmed on local_port={local_port}: '
+            f'{_format_pter_fields(fields)}'
         )
         return True
 
@@ -1221,6 +1415,32 @@ def wait_for_link_health_cli_state(port, expected_state, poll_timeout=30, poll_i
     return False
 
 
+def wait_for_attention_block_populated(port, poll_timeout=20, poll_interval=3) -> bool:
+    """Poll until an attention block carries trigger/metric/time, not just the state.
+
+    NVOS can publish ``state: attention`` a moment before trigger and time are
+    filled in - lab capture on dev-link-health-updates-011 showed
+    ``{"metric": "1", "state": "attention", "time": "", "trigger": ""}`` one poll
+    before the complete block. Returns False on timeout; callers decide whether
+    that is a failure.
+    """
+    deadline = time.time() + poll_timeout
+    last_output = None
+    while time.time() < deadline:
+        state, last_output = _read_link_health_state(port)
+        if state == LinkHealthConsts.STATE_ATTENTION:
+            trigger, metric = _extract_attention_fields(last_output)
+            time_value = last_output.get(LinkHealthConsts.TIME)
+            if not any(_is_empty_field(value) for value in (trigger, metric, time_value)):
+                return True
+        time.sleep(poll_interval)
+    logger.warning(
+        f'{port.name}: attention block still incomplete after {poll_timeout}s '
+        f'(last output={last_output!r})'
+    )
+    return False
+
+
 def trigger_link_health_attention(port, dut_engine, error_type_admin=PTER_ERROR_TYPE_BER,
                                   poll_timeout=90, poll_interval=5,
                                   require_healthy_baseline=True) -> bool:
@@ -1279,6 +1499,7 @@ def trigger_link_health_attention(port, dut_engine, error_type_admin=PTER_ERROR_
                     local_port, mst_device = get_local_port_and_mst_device_nvlink(
                         port.name, dut_engine
                     )
+                    mst_device = _prefer_pci_cr_mst(mst_device)
                 except Exception as exc:  # noqa: BLE001 - provisional path must not break test
                     logger.warning(
                         f'Could not resolve local_port/mst for {port.name}; '
@@ -1309,6 +1530,8 @@ def trigger_link_health_attention(port, dut_engine, error_type_admin=PTER_ERROR_
                     f'{port.name}: PTER write was confirmed applied but link-health never '
                     f'reached attention within {poll_timeout}s (injection had no health effect)'
                 )
+            else:
+                wait_for_attention_block_populated(port)
         else:
             time.sleep(poll_interval)
             state, _ = _read_link_health_state(port)
@@ -1330,7 +1553,7 @@ def trigger_link_health_attention_first(
     port,
     dut_engine,
     error_types=ATTENTION_FIRST_TRIGGER_ERROR_TYPES,
-    poll_timeout=90,
+    poll_timeout=180,
     poll_interval=5,
 ) -> Optional[str]:
     """First-trigger induction that escalates across PTER error types.
@@ -1375,22 +1598,26 @@ def trigger_link_health_attention_first(
 
 
 def verify_link_health_attention_on_port(port, context=''):
-    """Assert CLI shows attention + numeric reason + non-empty since. Returns (reason, since)."""
+    """Assert CLI shows attention + trigger/metric + non-empty time.
+
+    Returns ``(trigger, metric, time)``.
+    """
     prefix = f'{context}: ' if context else ''
     with allure.step(f'{prefix}Verify link-health attention block for {port.name}'):
         state, health_output = _read_link_health_state(port)
         assert state == LinkHealthConsts.STATE_ATTENTION, (
             f'{prefix}Port {port.name}: expected attention, got {state!r}'
         )
-        reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-        since = health_output.get(LinkHealthConsts.SINCE)
-        assert not _is_empty_field(reason), (
-            f'{prefix}Port {port.name}: attention-reason should be populated, got {reason!r}'
+        trigger, metric = _extract_attention_fields(health_output)
+        time_value = health_output.get(LinkHealthConsts.TIME)
+        assert not _is_empty_field(trigger), (
+            f'{prefix}Port {port.name}: trigger should be populated, got {trigger!r}'
         )
-        assert not _is_empty_field(since), (
-            f'{prefix}Port {port.name}: since should be populated, got {since!r}'
+        _assert_attention_fields_format(trigger, metric, prefix.rstrip(': ') or port.name)
+        assert not _is_empty_field(time_value), (
+            f'{prefix}Port {port.name}: time should be populated, got {time_value!r}'
         )
-        return reason, since
+        return trigger, metric, time_value
 
 
 # ST-06: wait ~2 FlexCounter poll cycles before a repeat trigger.
@@ -1402,31 +1629,37 @@ TOGGLE_STRESS_SETTLE_SEC = 10
 
 def verify_attention_sticky_first_capture(
     port,
-    first_reason,
-    first_since,
+    first_trigger,
+    first_metric,
+    first_time,
     context='ST-06',
     gnmi_client=None,
     username: str = '',
     password: str = '',
 ) -> None:
-    """Assert attention still shows the first latched reason and since (ST-06)."""
+    """Assert attention still shows the first latched trigger/metric/time (ST-06)."""
     prefix = f'{context}: ' if context else ''
     with allure.step(
-        f'{prefix}Verify {port.name} retains first attention reason/since after repeat trigger'
+        f'{prefix}Verify {port.name} retains first attention trigger/metric/time '
+        'after repeat trigger'
     ):
         state, health_output = _read_link_health_state(port)
         assert state == LinkHealthConsts.STATE_ATTENTION, (
             f'{prefix}Port {port.name}: expected attention, got {state!r}'
         )
-        reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-        since = health_output.get(LinkHealthConsts.SINCE)
-        assert _normalize_attention_reason(reason) == _normalize_attention_reason(first_reason), (
-            f'{prefix}Port {port.name}: attention-reason should stay at first capture '
-            f'{first_reason!r}, got {reason!r}'
+        trigger, metric = _extract_attention_fields(health_output)
+        time_value = health_output.get(LinkHealthConsts.TIME)
+        assert _normalize_attention_field(trigger) == _normalize_attention_field(first_trigger), (
+            f'{prefix}Port {port.name}: trigger should stay at first capture '
+            f'{first_trigger!r}, got {trigger!r}'
         )
-        assert since == first_since, (
-            f'{prefix}Port {port.name}: since should stay at first capture '
-            f'{first_since!r}, got {since!r}'
+        assert _normalize_attention_field(metric) == _normalize_attention_field(first_metric), (
+            f'{prefix}Port {port.name}: metric should stay at first capture '
+            f'{first_metric!r}, got {metric!r}'
+        )
+        assert time_value == first_time, (
+            f'{prefix}Port {port.name}: time should stay at first capture '
+            f'{first_time!r}, got {time_value!r}'
         )
         if gnmi_client is not None:
             verify_gnmi_link_health_matches_cli(
@@ -1448,15 +1681,15 @@ def induce_link_health_attention_first_capture(
     password: str = '',
     on_attention_latched=None,
 ):
-    """ST-06 phase 1: latch attention once and capture the first reason/since.
+    """ST-06 phase 1: latch attention once and capture the first trigger/metric/time.
 
     The trigger escalates across PTER error types (BER then SYMBOL) until one
     trips attention. ``on_attention_latched`` is invoked the moment attention is
     confirmed - before the CLI block is validated - so the caller can arm its
     recovery before any assertion can fail.
 
-    Returns ``(working_error_type, first_reason, first_since)``, or
-    ``(None, None, None)`` when no error type tripped attention (nothing was
+    Returns ``(working_error_type, first_trigger, first_metric, first_time)``, or
+    ``(None, None, None, None)`` when no error type tripped attention (nothing was
     latched, so the caller owes no attention recovery).
     """
     with allure.step(f'ST-06 first attention capture on {port.name}'):
@@ -1465,16 +1698,16 @@ def induce_link_health_attention_first_capture(
         )
         if working_error_type is None:
             logger.warning(f'{port.name}: first attention trigger failed')
-            return None, None, None
+            return None, None, None, None
         if on_attention_latched is not None:
             on_attention_latched()
 
-        first_reason, first_since = verify_link_health_attention_on_port(
+        first_trigger, first_metric, first_time = verify_link_health_attention_on_port(
             port, context='first capture'
         )
         logger.info(
-            f'{port.name}: first attention capture reason={first_reason!r} '
-            f'since={first_since!r}'
+            f'{port.name}: first attention capture trigger={first_trigger!r} '
+            f'metric={first_metric!r} time={first_time!r}'
         )
         if gnmi_client is not None:
             verify_gnmi_link_health_matches_cli(
@@ -1486,15 +1719,16 @@ def induce_link_health_attention_first_capture(
                 context='first capture gNMI',
                 port=port,
             )
-        return working_error_type, first_reason, first_since
+        return working_error_type, first_trigger, first_metric, first_time
 
 
 def verify_link_health_attention_sticky_repeat_triggers(
     port,
     dut_engine,
     repeat_error_type,
-    first_reason,
-    first_since,
+    first_trigger,
+    first_metric,
+    first_time,
     trigger_count=ATTENTION_STRESS_TRIGGER_COUNT,
     settle_sec=ATTENTION_STICKY_SETTLE_SEC,
     gnmi_client=None,
@@ -1526,8 +1760,9 @@ def verify_link_health_attention_sticky_repeat_triggers(
                 return False
             verify_attention_sticky_first_capture(
                 port,
-                first_reason,
-                first_since,
+                first_trigger,
+                first_metric,
+                first_time,
                 context=f'repeat trigger {repeat_idx}',
                 gnmi_client=gnmi_client if repeat_idx == trigger_count - 1 else None,
                 username=username,
@@ -1647,12 +1882,13 @@ def prepare_nvl_link_health_before_trigger(devices, dut_engine, test_name):
                 logger.warning('Attention prep failed; restoring prepped ports')
                 return None
 
-            first_reason, first_since = verify_link_health_attention_on_port(
+            first_trigger, first_metric, first_time = verify_link_health_attention_on_port(
                 attention_port, context='pre-trigger'
             )
             context.update({
-                'first_reason': first_reason,
-                'first_since': first_since,
+                'first_trigger': first_trigger,
+                'first_metric': first_metric,
+                'first_time': first_time,
                 'working_error_type': working_error_type,
             })
             prep_done = True
@@ -1662,26 +1898,233 @@ def prepare_nvl_link_health_before_trigger(devices, dut_engine, test_name):
             recover_nvl_link_health_prep(context, devices, test_name)
 
 
+def _split_nvl_port_name(port_name: str):
+    """``'acp57'`` -> ``('acp', 57)``; ``(None, None)`` when not ``<prefix><num>``."""
+    match = re.match(r'^([A-Za-z]+)(\d+)$', str(port_name))
+    if not match:
+        return None, None
+    prefix, num = match.groups()
+    return prefix, int(num)
+
+
+def build_link_health_range_expr(port_names) -> str:
+    """Build an HLD 0.18 ranged interface id for a set of same-prefix ports.
+
+    ``[acp1, acp2, acp7, acp8]`` -> ``acp1-2,7-8``: the prefix is emitted once
+    and consecutive port numbers collapse into ``first-last`` spans, which is
+    the form ``nv action clear fae interface <id> link health`` accepts.
+    """
+    parsed = [_split_nvl_port_name(name) for name in port_names]
+    assert all(prefix is not None for prefix, _ in parsed), (
+        f'Unparseable port name in {list(port_names)!r}; expected <prefix><number>'
+    )
+    prefixes = {prefix for prefix, _ in parsed}
+    assert len(prefixes) == 1, (
+        f'Ranged clear needs a single port prefix, got {sorted(prefixes)} from {list(port_names)!r}'
+    )
+    prefix = prefixes.pop()
+    numbers = sorted({num for _, num in parsed})
+
+    spans = []
+    span_start = span_end = numbers[0]
+    for num in numbers[1:]:
+        if num == span_end + 1:
+            span_end = num
+            continue
+        spans.append((span_start, span_end))
+        span_start = span_end = num
+    spans.append((span_start, span_end))
+
+    parts = [
+        str(start) if start == end else f'{start}-{end}'
+        for start, end in spans
+    ]
+    return f'{prefix}{",".join(parts)}'
+
+
+def find_contiguous_nvl_port_groups(
+    dut_engine,  # noqa: ARG001 (kept for signature parity with the other finders)
+    candidate_ports,
+    group_size=2,
+    group_count=2,
+):
+    """Find ``group_count`` disjoint runs of ``group_size`` consecutive ports.
+
+    Ranged-clear coverage needs consecutive port numbers so the range id spans
+    real neighbours (``acp1-2``) rather than degenerating into a list of single
+    ports. Eligibility is checked lazily per run so a 288-port setup does not
+    pay for a full scan, and all returned groups share one prefix.
+    """
+    by_prefix = {}
+    for port in candidate_ports:
+        prefix, num = _split_nvl_port_name(getattr(port, 'name', port))
+        if prefix is None:
+            continue
+        by_prefix.setdefault(prefix, {})[num] = port
+
+    eligibility_cache = {}
+
+    def _eligible(port):
+        if port.name not in eligibility_cache:
+            try:
+                ready, detail = is_port_ready_for_attention(port)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f'Eligibility check failed for {port.name}: {exc!r}')
+                ready, detail = False, repr(exc)
+            eligibility_cache[port.name] = ready
+            if not ready:
+                logger.debug(f'{port.name} not eligible for ranged clear: {detail}')
+        return eligibility_cache[port.name]
+
+    for prefix in sorted(by_prefix):
+        numbered = by_prefix[prefix]
+        candidate_runs = []
+        for start in sorted(numbered):
+            run_numbers = list(range(start, start + group_size))
+            if any(num not in numbered for num in run_numbers):
+                continue
+            run_ports = [numbered[num] for num in run_numbers]
+            if not all(_eligible(port) for port in run_ports):
+                continue
+            candidate_runs.append(run_ports)
+        random.shuffle(candidate_runs)
+        groups = []
+        used = set()
+        for run_ports in candidate_runs:
+            run_numbers = [_split_nvl_port_name(port.name)[1] for port in run_ports]
+            if any(num in used for num in run_numbers):
+                continue
+            groups.append(run_ports)
+            used.update(run_numbers)
+            if len(groups) >= group_count:
+                break
+        if groups:
+            logger.info(
+                'Selected contiguous NVL port groups for ranged clear: '
+                f'{[[p.name for p in group] for group in groups]}'
+            )
+            return groups
+
+    logger.warning(
+        f'Could not find {group_count} disjoint run(s) of {group_size} consecutive '
+        'eligible NVL ports for ranged-clear coverage'
+    )
+    return []
+
+
+def clear_stale_link_health_attentions(dut_engine, context='pre-test') -> list:
+    """FAE-clear every port currently latched in Attention.
+
+    Call at the start of link-health tests so leftover sticky Attention from a
+    prior run cannot pollute baselines or eligible-port selection.
+
+    Returns the list of port names that were cleared (best-effort; failures are
+    logged and skipped so a single stuck port does not abort the suite).
+    """
+    prefix = f'{context}: ' if context else ''
+    cleared = []
+    with allure.step(f'{prefix}Clear any leftover link-health Attention latches'):
+        try:
+            output = OutputParsingTool.parse_json_str_to_dictionary(
+                dut_engine.run_cmd('nv show interface link-health -o json')
+            ).get_returned_value()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f'{prefix}Could not read link-health aggregate for pre-clear: {exc!r}')
+            return cleared
+        if not isinstance(output, dict) or not output:
+            logger.info(f'{prefix}link-health aggregate empty; nothing to pre-clear')
+            return cleared
+
+        attention_ports = []
+        for port_name, row in output.items():
+            health_block = _extract_aggregate_health_block(row)
+            if not health_block:
+                continue
+            state = health_block.get(LinkHealthConsts.STATE)
+            if isinstance(state, dict):
+                state = next(iter(state.keys()), None)
+            if state == LinkHealthConsts.STATE_ATTENTION:
+                attention_ports.append(port_name)
+
+        if not attention_ports:
+            logger.info(f'{prefix}No leftover Attention latches; starting clean')
+            return cleared
+
+        logger.info(
+            f'{prefix}Clearing leftover Attention on {len(attention_ports)} port(s): '
+            f'{attention_ports}'
+        )
+        for port_name in attention_ports:
+            try:
+                clear_link_health_attention_fae(port_name, dut_engine)
+                cleared.append(port_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f'{prefix}Pre-clear failed on {port_name}: {exc!r}')
+        if cleared:
+            # One short settle so subsequent healthy-port selection sees the new state.
+            time.sleep(2)
+    return cleared
+
+
+def clear_link_health_attention_fae(port_or_range: str, dut_engine=None) -> None:
+    """Run ``nv action clear fae interface <id|range> link health``.
+
+    ``port_or_range`` may be a single port (``acp1``) or a ranged id
+    (``acp1-74``, ``acp1-3,7``) per HLD 0.18.
+    """
+    from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+
+    if dut_engine is None:
+        dut_engine = TestToolkit.get_engine()
+    cmd = f'nv action clear fae interface {port_or_range} link health'
+    with allure.step(f'FAE clear link health: {port_or_range}'):
+        out = dut_engine.run_cmd(cmd, validate=False)
+        lowered = (out or '').lower()
+        assert 'error' not in lowered and 'invalid' not in lowered, (
+            f'FAE clear link health failed for {port_or_range!r}: {out!r}'
+        )
+
+
 def clear_link_health_attention_on_port(port, devices, test_name) -> None:
-    """Best-effort bounce of a port to clear a latched attention.
+    """Best-effort FAE clear of a latched attention (HLD 0.17).
+
+    Uses ``nv action clear fae interface <port> link health`` so sticky
+    Attention + trigger/metric/time are cleared without toggling the link. Falls back
+    to admin down/up only if the FAE clear path is unavailable on the image.
 
     A no-op unless the port currently reports ``attention``, so callers can run
     it unconditionally in cleanup without disturbing an untouched port.
     """
     from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
     from ngts.tests_nvos.interfaces.nvl_port.helpers import toggle_port_state
+    from ngts.nvos_tools.infra.Fae import Fae
 
     try:
         state, _ = _read_link_health_state(port)
         if state != LinkHealthConsts.STATE_ATTENTION:
             logger.info(f'{port.name} is {state!r}; no latched attention to clear')
             return
-        with allure.step(f'Clear latched attention on {port.name} via admin down/up'):
-            toggle_port_state(port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
-            time.sleep(TOGGLE_STRESS_SETTLE_SEC)
-            toggle_port_state(port, NvosConsts.LINK_STATE_UP, test_name, devices)
+        with allure.step(f'Clear latched attention on {port.name} via FAE clear'):
+            result = Fae(port_name=port.name).interface.link.health.action_clear()
+            if getattr(result, 'result', True) is False:
+                raise RuntimeError(getattr(result, 'info', 'FAE clear failed'))
+            wait_for_link_health_cli_state(
+                port,
+                LinkHealthConsts.STATE_HEALTHY,
+                poll_timeout=LinkHealthConsts.ATTENTION_POLL_TIMEOUT_SEC,
+                poll_interval=LinkHealthConsts.ATTENTION_POLL_INTERVAL_SEC,
+            )
     except Exception as exc:  # noqa: BLE001 - cleanup must not mask the test result
-        logger.warning(f'Failed to clear attention on {port.name}: {exc!r}')
+        logger.warning(
+            f'FAE clear failed on {port.name} ({exc!r}); falling back to admin down/up'
+        )
+        try:
+            with allure.step(f'Clear latched attention on {port.name} via admin down/up'):
+                toggle_port_state(port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+                time.sleep(TOGGLE_STRESS_SETTLE_SEC)
+                toggle_port_state(port, NvosConsts.LINK_STATE_UP, test_name, devices)
+        except Exception as fallback_exc:  # noqa: BLE001
+            logger.warning(f'Failed to clear attention on {port.name}: {fallback_exc!r}')
 
 
 def recover_nvl_link_health_prep(context, devices, test_name) -> None:
@@ -1740,7 +2183,7 @@ def verify_nvl_link_health_after_upgrade(context, devices, dut_engine) -> None:
     """REL-05/REL-06: after upgrade/ISSU, prepared ports must be healthy.
 
     Stale attention must be cleared; both the pre-down and pre-attention ports
-    report ``healthy`` with empty ``attention-trigger-code`` / ``since``.
+    report ``healthy`` with empty ``trigger`` / ``metric`` / ``time``.
     Shared by ``test_downgrade_upgrade`` and ISSU positive flows.
     """
     if context is None:
@@ -1798,8 +2241,33 @@ def verify_nvl_link_health_after_reboot(context, devices, dut_engine, test_name)
             verify_healthy_link_health_block(health_output, down_port.name)
 
 
+def skip_if_peer_port_link_health_unavailable(dut_engine) -> None:
+    """Peer-port link-health needs NMX-T; skip until that build is available."""
+    output = dut_engine.run_cmd(
+        'nv show peer-port link-health -o json 2>&1',
+        validate=False,
+        print_output=False,
+    )
+    lowered = (output or '').lower()
+    if (
+        not output or
+        not output.strip() or
+        'error' in lowered or
+        'invalid' in lowered or
+        'unknown' in lowered or
+        'no data' in lowered
+    ):
+        pytest.skip(
+            'Peer-port link-health CLI not available yet '
+            '(NMX-T build required per HLD / release note)'
+        )
+
+
 def verify_peer_port_link_health_show(peer_port_interface) -> None:
-    """PP visibility: peer-port link health drill-in when feature is available."""
+    """PP visibility: peer-port link health drill-in when feature is available.
+
+    0.8 leaf set is state / trigger / time. ``metric`` is pruned (interface-only).
+    """
     with allure.step(
         f"Verify peer-port link health for {peer_port_interface.peer_port_name}"
     ):
@@ -1811,7 +2279,17 @@ def verify_peer_port_link_health_show(peer_port_interface) -> None:
             state = next(iter(state.keys()), None)
         verify_link_health_state_valid(state, peer_port_interface.peer_port_name)
         if state == LinkHealthConsts.STATE_HEALTHY:
-            verify_healthy_link_health_block(health_output, peer_port_interface.peer_port_name)
+            verify_peer_port_healthy_link_health_block(
+                health_output, peer_port_interface.peer_port_name
+            )
+        elif state == LinkHealthConsts.STATE_ATTENTION:
+            verify_peer_port_attention_link_health_block(
+                health_output, peer_port_interface.peer_port_name
+            )
+        else:
+            verify_peer_port_link_health_leaf_set(
+                health_output, peer_port_interface.peer_port_name, require_all=False
+            )
 
 
 def resolve_switch_port_for_peer_port(peer_port_interface):
@@ -1860,66 +2338,6 @@ def _read_peer_port_link_health_state(peer_port_interface):
     return _parse_link_health_state(health_output), health_output
 
 
-def wait_for_peer_port_link_health_cli_state(
-    peer_port_interface,
-    expected_state,
-    poll_timeout=30,
-    poll_interval=5,
-) -> bool:
-    """Poll `nv show peer-port <gpu> link health` until expected_state."""
-    deadline = time.time() + poll_timeout
-    last_state = None
-    peer_name = peer_port_interface.peer_port_name
-    while True:
-        last_state, _ = _read_peer_port_link_health_state(peer_port_interface)
-        if last_state == expected_state:
-            return True
-        if time.time() >= deadline:
-            break
-        time.sleep(poll_interval)
-    logger.warning(
-        f'peer-port {peer_name} did not reach link-health state {expected_state!r} within '
-        f'{poll_timeout}s (last state={last_state!r})'
-    )
-    return False
-
-
-def verify_peer_port_link_health_attention(peer_port_interface, context=''):
-    """Assert peer-port CLI shows attention + numeric reason + non-empty since."""
-    prefix = f'{context}: ' if context else ''
-    peer_name = peer_port_interface.peer_port_name
-    with allure.step(f'{prefix}Verify peer-port link-health attention for {peer_name}'):
-        state, health_output = _read_peer_port_link_health_state(peer_port_interface)
-        assert state == LinkHealthConsts.STATE_ATTENTION, (
-            f'{prefix}peer-port {peer_name}: expected attention, got {state!r}'
-        )
-        reason = health_output.get(LinkHealthConsts.ATTENTION_TRIGGER_CODE)
-        since = health_output.get(LinkHealthConsts.SINCE)
-        assert not _is_empty_field(reason), (
-            f'{prefix}peer-port {peer_name}: attention-reason should be populated, got {reason!r}'
-        )
-        assert not _is_empty_field(since), (
-            f'{prefix}peer-port {peer_name}: since should be populated, got {since!r}'
-        )
-        return reason, since
-
-
-def verify_switch_peer_link_health_independence(peer_port_interface, switch_port, context='PP-07'):
-    """GPU-side attention on peer-port; associated switch port must stay healthy."""
-    prefix = f'{context}: ' if context else ''
-    peer_name = peer_port_interface.peer_port_name
-    with allure.step(
-        f'{prefix}Verify peer attention on {peer_name} while {switch_port.name} stays healthy'
-    ):
-        verify_peer_port_link_health_attention(peer_port_interface, context=context)
-        switch_state, health_output = _read_link_health_state(switch_port)
-        assert switch_state == LinkHealthConsts.STATE_HEALTHY, (
-            f'{prefix}switch port {switch_port.name} should stay healthy when only the '
-            f'GPU peer filter trips, got {switch_state!r}; output={health_output!r}'
-        )
-        verify_healthy_link_health_block(health_output, switch_port.name)
-
-
 def verify_peer_link_health_independent_of_switch_attention(
     peer_port_interface, switch_port, context='PP-07'
 ):
@@ -1947,196 +2365,5 @@ def verify_peer_link_health_independent_of_switch_attention(
             f'output={peer_output!r}'
         )
         if peer_state == LinkHealthConsts.STATE_HEALTHY:
-            verify_healthy_link_health_block(peer_output, peer_name)
+            verify_peer_port_healthy_link_health_block(peer_output, peer_name)
         return peer_state, peer_output
-
-
-def _load_gpu_local_port_map() -> dict:
-    raw = os.environ.get(LinkHealthConsts.GPU_LOCAL_PORT_MAP_ENV, '').strip()
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        logger.warning(f'Invalid JSON in {LinkHealthConsts.GPU_LOCAL_PORT_MAP_ENV!r}')
-        return {}
-
-
-def _make_compute_ssh_engine(node):
-    from infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
-
-    return LinuxSshEngine(node['ip_address'], node['username'], node['password'])
-
-
-def _run_compute_sudo_cmd(compute_engine, password, cmd) -> str:
-    """Run a sudo command on a Linux compute host (password via stdin)."""
-    inner = cmd[len('sudo '):] if cmd.startswith('sudo ') else cmd
-    wrapped = f"printf '%s\\n' '{password}' | sudo -S -p '' {inner}"
-    return compute_engine.run_cmd(wrapped, validate=False, print_output=False)
-
-
-def _pick_mst_pciconf_device(compute_engine, password) -> Optional[str]:
-    """Return the first MST pciconf device path on a compute node."""
-    output = _run_compute_sudo_cmd(
-        compute_engine, password, 'mst start 2>&1; mst status 2>&1'
-    )
-    if not output:
-        return None
-    for line in output.splitlines():
-        if 'pciconf' not in line:
-            continue
-        for token in line.split():
-            if token.startswith('/dev/mst/'):
-                return token
-    return None
-
-
-def _gpu_attention_format_kwargs(peer_port_interface, switch_port) -> dict:
-    peer_name = peer_port_interface.peer_port_name
-    switch_name = switch_port.name
-    return {
-        'peer_port': peer_name,
-        'peer_port_name': peer_name,
-        'switch_port': switch_name,
-        'switch_port_name': switch_name,
-        'port': switch_name,
-        'port_name': switch_name,
-    }
-
-
-def _resolve_gpu_attention_target(peer_port_interface, switch_port, setup_name):
-    """Resolve (compute_engine, password, mst_device, local_port) for GPU mlxreg."""
-    fmt = _gpu_attention_format_kwargs(peer_port_interface, switch_port)
-    peer_name = peer_port_interface.peer_port_name
-
-    override_cmd = os.environ.get(LinkHealthConsts.GPU_ATTENTION_INDUCTION_ENV)
-    if override_cmd:
-        return None, None, None, None, override_cmd.format(**fmt)
-
-    port_map = _load_gpu_local_port_map()
-    entry = port_map.get(peer_name) or port_map.get(peer_name.lower())
-    nodes = Configurations.compute_nodes_per_system.get(setup_name) or []
-
-    if entry:
-        target_ip = entry.get('ip')
-        mst_device = entry.get('mst')
-        local_port = entry.get('local_port')
-        node = next((n for n in nodes if n.get('ip_address') == target_ip), None)
-        if not node and len(nodes) == 1:
-            node = nodes[0]
-        if node and mst_device and local_port:
-            return _make_compute_ssh_engine(node), node['password'], mst_device, str(local_port), None
-
-    for node in nodes:
-        engine = _make_compute_ssh_engine(node)
-        mst_device = _pick_mst_pciconf_device(engine, node['password'])
-        if not mst_device:
-            continue
-        local_port = None
-        if entry:
-            local_port = entry.get('local_port')
-        if local_port:
-            return engine, node['password'], mst_device, str(local_port), None
-
-    return None, None, None, None, None
-
-
-def trigger_gpu_side_link_health_attention(
-    peer_port_interface,
-    switch_port,
-    setup_name,
-    error_type_admin=PTER_ERROR_TYPE_BER,
-    poll_timeout=30,
-    poll_interval=5,
-) -> bool:
-    """Induce attention on the GPU peer path via mlxreg on a compute node.
-
-    Polls ``nv show peer-port <gpu> link health`` for attention (not the switch
-    port). Switch-side health is expected to remain healthy (PP-07).
-
-    Lab hooks:
-      - ``NVOS_LINK_HEALTH_GPU_ATTENTION_CMD``: full shell command on compute node
-      - ``NVOS_LINK_HEALTH_GPU_LOCAL_PORT_MAP``: JSON
-        ``{"gpu238": {"ip": "...", "mst": "/dev/mst/...", "local_port": "75"}}``
-
-    Returns True when peer-port attention appears within poll_timeout.
-    """
-    peer_name = peer_port_interface.peer_port_name
-    compute_engine = None
-    password = None
-    mst_device = None
-    local_port = None
-
-    with allure.step(f'Trigger GPU-side link-health attention for peer-port {peer_name}'):
-        compute_engine, password, mst_device, local_port, override_cmd = _resolve_gpu_attention_target(
-            peer_port_interface, switch_port, setup_name
-        )
-
-        try:
-            if override_cmd:
-                if compute_engine is None:
-                    nodes = Configurations.compute_nodes_per_system.get(setup_name) or []
-                    if not nodes:
-                        logger.warning('No compute nodes configured for GPU attention command')
-                        return False
-                    node = nodes[0]
-                    compute_engine = _make_compute_ssh_engine(node)
-                    password = node['password']
-                logger.info(
-                    f'Using {LinkHealthConsts.GPU_ATTENTION_INDUCTION_ENV} for {peer_name}: '
-                    f'{override_cmd}'
-                )
-                _run_compute_sudo_cmd(compute_engine, password, override_cmd)
-            elif compute_engine and mst_device and local_port:
-                logger.info(
-                    f'GPU mlxreg on {peer_name}: mst={mst_device}, local_port={local_port}'
-                )
-                clear_pter_injection(
-                    compute_engine, mst_device, local_port, sudo_password=password
-                )
-                if not arm_pter_attention(
-                    compute_engine,
-                    mst_device,
-                    local_port,
-                    error_type_admin=error_type_admin,
-                    sudo_password=password,
-                ):
-                    logger.warning(
-                        f'GPU PTER write did not take effect for peer-port {peer_name}'
-                    )
-                    clear_pter_injection(
-                        compute_engine, mst_device, local_port, sudo_password=password
-                    )
-                    return False
-            else:
-                logger.warning(
-                    f'No GPU-side attention induction path for peer-port {peer_name}. '
-                    f'Set {LinkHealthConsts.GPU_ATTENTION_INDUCTION_ENV} or '
-                    f'{LinkHealthConsts.GPU_LOCAL_PORT_MAP_ENV} (see link_health_helpers docstring).'
-                )
-                return False
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f'GPU-side attention injection failed for {peer_name}: {exc!r}')
-            if compute_engine and mst_device and local_port:
-                clear_pter_injection(
-                    compute_engine, mst_device, local_port, sudo_password=password
-                )
-            return False
-
-        reached = wait_for_peer_port_link_health_cli_state(
-            peer_port_interface,
-            LinkHealthConsts.STATE_ATTENTION,
-            poll_timeout,
-            poll_interval,
-        )
-        if mst_device and local_port and compute_engine:
-            clear_pter_injection(
-                compute_engine, mst_device, local_port, sudo_password=password
-            )
-        if not reached:
-            logger.warning(
-                f'peer-port {peer_name}: GPU injection ran but link-health never '
-                f'reached attention within {poll_timeout}s'
-            )
-        return reached

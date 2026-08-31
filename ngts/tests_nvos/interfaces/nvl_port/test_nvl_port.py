@@ -18,8 +18,13 @@ from ngts.nvos_constants.constants_nvos import (
     OutputFormat,
 )
 from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    _read_link_health_state,
+    build_link_health_range_expr,
+    clear_link_health_attention_fae,
     clear_link_health_attention_on_port,
+    clear_stale_link_health_attentions,
     find_active_healthy_nvl_port,
+    find_contiguous_nvl_port_groups,
     find_n_eligible_nvl_ports,
     induce_link_health_attention_first_capture,
     is_gnmi_server_enabled,
@@ -31,12 +36,15 @@ from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
     skip_if_link_health_feature_unavailable,
     skip_if_link_health_not_supported,
     trigger_link_health_attention,
+    trigger_link_health_attention_first,
     try_build_gnmi_client,
+    verify_healthy_link_health_block,
     verify_link_health_after_link_down,
     verify_link_health_all_switch_endpoints,
     verify_link_health_attention_on_port,
     verify_link_health_attention_sticky_repeat_triggers,
     verify_link_health_hidden_on_platform,
+    verify_link_health_leaf_set,
     verify_link_health_summary_on_nvl_ports,
     verify_link_health_up_with_gnmi,
     wait_for_link_health_cli_state,
@@ -105,6 +113,7 @@ def test_show_nvl_interface(devices, random_api):
     with allure.step("Verify link-health visibility matches platform (VR Rosalind / NVL-6 only)"):
         dut_engine = TestToolkit.get_engine()
         if is_link_health_supported(devices) and is_link_health_feature_available(dut_engine):
+            clear_stale_link_health_attentions(dut_engine, context='test_show_nvl_interface')
             verify_link_health_summary_on_nvl_ports(devices, dut_engine)
         elif devices.dut.is_nvl() or devices.dut.is_ib():
             verify_link_health_hidden_on_platform(dut_engine)
@@ -287,6 +296,7 @@ def test_show_nvl_interface_commands(engines, devices, random_api, has_loopbox, 
 
     with allure_step("Verify all switch link-health CLI endpoints on supported VR platform"):
         if is_link_health_supported(devices) and is_link_health_feature_available(engines.dut):
+            clear_stale_link_health_attentions(engines.dut, context='test_show_nvl_interface_commands')
             verify_link_health_all_switch_endpoints(selected_port, engines.dut)
         elif devices.dut.is_nvl() and not is_link_health_supported(devices):
             verify_link_health_hidden_on_platform(engines.dut)
@@ -338,6 +348,9 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
     if not toggleable_interface:
         pytest.skip("No toggleable interfaces available (no fnm/sw/acp ports found on device)")
 
+    lifecycle_port = None
+    link_health_checks = False
+    pre_cleared = False
     try:
         for interface_type in toggleable_interface:
             if devices.dut.nvl_trunk_ports_list == [] and interface_type == 'sw':
@@ -351,6 +364,9 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
                 is_link_health_supported(devices) and
                 is_link_health_feature_available(dut_engine)
             )
+            if link_health_checks and not pre_cleared:
+                clear_stale_link_health_attentions(dut_engine, context='test_toggle_interface_state')
+                pre_cleared = True
             attention_triggered = False
             if link_health_checks:
                 attention_ready, attention_detail = is_port_ready_for_attention(lifecycle_port)
@@ -419,6 +435,10 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
                                                               field_name=IbInterfaceConsts.LINK_STATE,
                                                               expected_value=NvosConsts.LINK_STATE_UP).verify_result()
             if link_health_checks:
+                # HLD sticky Attention survives admin up; FAE-clear it before the
+                # healthy-on-up check so leftover latches from this (or a prior)
+                # run do not fail the baseline healthy assertion.
+                clear_link_health_attention_on_port(lifecycle_port, devices, test_name)
                 verify_link_health_up_with_gnmi(
                     lifecycle_port,
                     None,
@@ -426,8 +446,10 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
                     devices.dut.default_password,
                 )
     finally:
-        if not port_init_state_restored:
+        if lifecycle_port is not None and not port_init_state_restored:
             toggle_port_state(lifecycle_port, NvosConsts.LINK_STATE_UP, test_name, devices)
+        if lifecycle_port is not None and link_health_checks:
+            clear_link_health_attention_on_port(lifecycle_port, devices, test_name)
 
 
 @pytest.mark.interface
@@ -437,6 +459,7 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
     skip_if_link_health_not_supported(devices)
     dut_engine = TestToolkit.get_engine()
     skip_if_link_health_feature_unavailable(devices, dut_engine)
+    clear_stale_link_health_attentions(dut_engine, context='test_link_health_attention_and_toggle_stress')
 
     candidates = RandomizationTool.select_random_ports(
         requested_ports_state=NvosConsts.LINK_STATE_UP,
@@ -466,7 +489,12 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
         attention_needs_recovery = True
 
     try:
-        working_error_type, first_reason, first_since = induce_link_health_attention_first_capture(
+        (
+            working_error_type,
+            first_trigger,
+            first_metric,
+            first_time,
+        ) = induce_link_health_attention_first_capture(
             attention_port,
             dut_engine,
             gnmi_client=gnmi_client,
@@ -486,8 +514,9 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
             attention_port,
             dut_engine,
             working_error_type,
-            first_reason,
-            first_since,
+            first_trigger,
+            first_metric,
+            first_time,
             gnmi_client=gnmi_client,
             username=devices.dut.default_username,
             password=devices.dut.default_password,
@@ -515,6 +544,126 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
             )
         if attention_needs_recovery:
             clear_link_health_attention_on_port(attention_port, devices, test_name)
+
+
+@pytest.mark.interface
+@pytest.mark.nvl_ci
+def test_link_health_fae_clear_range(test_name, devices, random_api):
+    """HLD 0.17/0.18: FAE clear restores healthy, including ranged ids.
+
+    ``nv action clear fae interface <id|range> link health`` clears sticky
+    Attention and empties trigger/metric/time. Four ports are latched into Attention and
+    two of them are then taken admin down, so the range covers both admin-up and
+    admin-down members (link-health is sticky across admin down, so the downed
+    ports keep their Attention and are genuinely still dirty). A single ranged
+    clear such as ``acp1-2,7-8`` must then leave all four healthy with empty
+    trigger/metric/time, and the two downed ports must come back up healthy.
+    """
+    skip_if_link_health_not_supported(devices)
+    dut_engine = TestToolkit.get_engine()
+    skip_if_link_health_feature_unavailable(devices, dut_engine)
+    clear_stale_link_health_attentions(dut_engine, context='test_link_health_fae_clear_range')
+
+    candidates = RandomizationTool.select_random_ports(
+        requested_ports_state=NvosConsts.LINK_STATE_UP,
+        num_of_ports_to_select=0,
+    ).returned_value or []
+    groups = find_contiguous_nvl_port_groups(
+        dut_engine, candidates, group_size=2, group_count=12
+    )
+    if len(groups) < 2:
+        pytest.skip(
+            'Need at least 2 disjoint runs of 2 consecutive admin-up healthy NVL ports '
+            'for ranged FAE clear coverage'
+        )
+
+    stay_up_ports = go_down_ports = None
+    ranged_ports = []
+    cleanup_ports = []
+    downed_ports = []
+    try:
+        with allure_step('Latch attention on two contiguous pairs (skip pairs that will not trip)'):
+            latched_groups = []
+            for pair in groups:
+                if len(latched_groups) >= 2:
+                    break
+                pair_ok = True
+                for port in pair:
+                    working_error_type = trigger_link_health_attention_first(port, dut_engine)
+                    if port not in cleanup_ports:
+                        cleanup_ports.append(port)
+                    if working_error_type is None:
+                        logger.warning(
+                            f'CLEAR-RANGE: {port.name} did not latch; skipping pair '
+                            f'{[p.name for p in pair]}'
+                        )
+                        pair_ok = False
+                        break
+                    verify_link_health_attention_on_port(port, context='CLEAR-RANGE pre-clear')
+                if pair_ok:
+                    latched_groups.append(pair)
+                    continue
+                for port in pair:
+                    clear_link_health_attention_on_port(port, devices, test_name)
+            if len(latched_groups) < 2:
+                pytest.skip(
+                    'Could not induce attention on 2 disjoint consecutive pairs; '
+                    'ranged FAE clear not exercised'
+                )
+            stay_up_ports, go_down_ports = latched_groups[0], latched_groups[1]
+            ranged_ports = stay_up_ports + go_down_ports
+            TestToolkit.update_tested_ports(ranged_ports)
+
+        range_expr = build_link_health_range_expr([port.name for port in ranged_ports])
+
+        with allure_step(f'Admin down {[p.name for p in go_down_ports]} while in attention'):
+            for port in go_down_ports:
+                toggle_port_state(port, NvosConsts.LINK_STATE_DOWN, test_name, devices)
+                downed_ports.append(port)
+                verify_link_health_after_link_down(port, LinkHealthConsts.STATE_ATTENTION)
+
+        with allure_step(f'Single ranged FAE clear over {range_expr}'):
+            clear_link_health_attention_fae(range_expr, dut_engine)
+
+        with allure_step(f'Verify all {len(ranged_ports)} ranged ports report healthy'):
+            for port in ranged_ports:
+                reached = wait_for_link_health_cli_state(
+                    port, LinkHealthConsts.STATE_HEALTHY, poll_timeout=60, poll_interval=5
+                )
+                state, health_output = _read_link_health_state(port)
+                assert reached, (
+                    f'CLEAR-RANGE: {port.name} not healthy after ranged clear of '
+                    f'{range_expr}, got {state!r}; output={health_output}'
+                )
+                verify_healthy_link_health_block(
+                    health_output, context=f'CLEAR-RANGE {port.name} after ranged clear'
+                )
+                # The clear empties the attention fields but must not drop the leaves.
+                verify_link_health_leaf_set(
+                    health_output, context=f'CLEAR-RANGE {port.name} after ranged clear'
+                )
+
+        with allure_step(f'Restore {[p.name for p in go_down_ports]} and verify healthy when up'):
+            for port in list(downed_ports):
+                toggle_port_state(port, NvosConsts.LINK_STATE_UP, test_name, devices)
+                downed_ports.remove(port)
+            for port in ranged_ports:
+                state, health_output = _read_link_health_state(port)
+                assert state == LinkHealthConsts.STATE_HEALTHY, (
+                    f'CLEAR-RANGE: {port.name} left {state!r} once every ranged port is '
+                    f'admin up; output={health_output}'
+                )
+                verify_healthy_link_health_block(
+                    health_output, context=f'CLEAR-RANGE {port.name} after admin up'
+                )
+    finally:
+        for port in downed_ports:
+            try:
+                toggle_port_state(port, NvosConsts.LINK_STATE_UP, test_name, devices)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the test result
+                logger.warning(f'Failed to restore admin-up on {port.name}: {exc!r}')
+        for port in cleanup_ports or ranged_ports:
+            clear_link_health_attention_on_port(port, devices, test_name)
 
 
 def _extract_link_up_ms(raw_value):
