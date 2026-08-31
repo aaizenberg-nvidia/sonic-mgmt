@@ -414,10 +414,8 @@ tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::tes
     reason: "Testcase ignored due to RM issues"
     conditions_logical_operator: or
     conditions:
-    - "https://redmine.mellanox.com/issues/4977733 and 'sn4280' in platform"
-    - "https://redmine.mellanox.com/issues/4970711"
     - "https://redmine.mellanox.com/issues/4975253 and 'sn6600_ld' not in platform"
-    - "https://redmine.mellanox.com/issues/4970326"
+    - "https://redmine.mellanox.com/issues/5226570"
 
 tests/push_build_tests/L3/evpn_vxlan/test_evpn_vxlan.py:
   skip:

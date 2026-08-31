@@ -1,0 +1,172 @@
+signatures:
+  - name: signature_1
+    exception_type: |-
+      AssertionError
+    message: |-
+      AssertionError: RAM usage in these processes is more than expected : [{'lldp_syncd': 21.5068}]
+    stack_trace: |-
+      results_file_name = 'test_ram_usage'
+      dut_engine = <devts.infra.tools.connection_tools.linux_ssh_engine.LinuxSshEngine object at 0x7f417501a0c0>
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+
+          def do_ram_usage_test(results_file_name, dut_engine, expected_ram_usage_dict):
+              """
+              Contains all logic for ram usage check
+              :param results_file_name: name of file for results
+              :param dut_engine: engine of dut
+              :param expected_ram_usage_dict: expected ram usage
+              """
+              total_ram_size_mb = 0
+              used_ram_size_mb = 0
+              ram_usage_per_process = {}
+              overall_assertions_list = []
+              (total_ram_expected, no_simx_proc_list, ram_expected_usage_dict_filtered,
+               proc_to_container_mapping_dict, container_to_proc_dict) = read_expected_usage(dut_engine, expected_ram_usage_dict)
+
+              try:
+                  proc_to_pids_mapping_dict = {}
+                  for container in container_to_proc_dict:
+                      cur_proc_to_pids_mapping_dict = get_processes_pids(dut_engine, container_to_proc_dict, container)
+                      proc_to_pids_mapping_dict = merge_by_nested_keys(proc_to_pids_mapping_dict, cur_proc_to_pids_mapping_dict)
+
+                  find_missing_processes(ram_expected_usage_dict_filtered, proc_to_pids_mapping_dict, no_simx_proc_list)
+
+                  for attempt in range(3):
+                      logger.info('Checking RAM utilization, attempt number: %s', attempt)
+                      assertions_list_total_usage, total_ram_size_mb, used_ram_size_mb = (
+                          validate_total_ram_usage(dut_engine, total_ram_expected))
+                      assertions_list_processes_usage, ram_usage_per_process = validate_processes_ram_usage(dut_engine,
+                                                                                                            ram_expected_usage_dict_filtered, proc_to_container_mapping_dict, proc_to_pids_mapping_dict)
+                      overall_assertions_list = assertions_list_total_usage + assertions_list_processes_usage
+                      if not overall_assertions_list:
+                          break
+
+      >           assert not overall_assertions_list, \
+                      f'RAM usage: {overall_assertions_list} \n is more than expected: \n {ram_expected_usage_dict_filtered}'
+      E               AssertionError: RAM usage: [{'lldp_syncd': 21.5068}]
+      E                  is more than expected:
+      E                  {'sx_sdk': 1600, 'syncd': 380, 'snmpd': 20, 'zebra': 85, 'bgpd': 75, 'bgpcfgd': 70, 'bgpmon': 20, 'fpmsyncd': 7, 'orchagent': 118, 'neighsyncd': 7, 'vlanmgrd': 7, 'intfmgrd': 7, 'portmgrd': 7, 'buffermgrd': 7, 'vrfmgrd': 7, 'nbrmgrd': 7, 'vxlanmgrd': 7, 'sensord': 10, 'sonic_ax_impl': 70, 'rest_server': 60, 'lldp_syncd': 20, 'lldpd': 10, 'lldpmgrd': 25, 'dialout': 90, 'telemetry': 110, 'dhcprelayd': 10, 'rsyslogd': 30, 'pcied': 25, 'psud': 25, 'syseepromd': 30, 'thermalctld': 107, 'xcvrd': 100, 'teammgrd': 10, 'teamsyncd': 10, 'tlm_teamd': 10, 'staticd': 10, 'arp_update': 10, 'coppmgrd': 10, 'fdbsyncd': 10, 'portsyncd': 10, 'tunnelmgrd': 10, 'eventd': 90, 'redis': 80, 'wjhd': 150, 'hostcfgd': 50, 'featured': 25, 'caclmgrd': 20, 'containerd': 310, 'healthd': 140, 'chronyd': 7}
+      E               assert not [{'lldp_syncd': 21.5068}]
+
+      assertions_list_processes_usage = [{'lldp_syncd': 21.5068}]
+      assertions_list_total_usage = []
+      attempt    = 2
+      container  = 'database'
+      container_to_proc_dict = {'bgp': ['rsyslogd'], 'database': ['rsyslogd'], 'dhcp_relay': ['rsyslogd'], 'eventd': ['rsyslogd'], ...}
+      cur_proc_to_pids_mapping_dict = {'rsyslogd': {'database': ['100']}}
+      dut_engine = <devts.infra.tools.connection_tools.linux_ssh_engine.LinuxSshEngine object at 0x7f417501a0c0>
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      no_simx_proc_list = []
+      overall_assertions_list = [{'lldp_syncd': 21.5068}]
+      proc_to_container_mapping_dict = {'arp_update': ['host'], 'bgpcfgd': ['host'], 'bgpd': ['host'], 'bgpmon': ['host'], ...}
+      proc_to_pids_mapping_dict = {'arp_update': {'host': ['67905']}, 'bgpcfgd': {'host': ['67706']}, 'bgpd': {'host': ['67705', '67833']}, 'bgpmon': {'host': ['67707']}, ...}
+      ram_expected_usage_dict_filtered = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      ram_usage_per_process = {'arp_update': 1.40039, 'bgpcfgd': 19.5898, 'bgpd': 29.181659999999997, 'bgpmon': 8.49707, ...}
+      results_file_name = 'test_ram_usage'
+      total_ram_expected = 7000
+      total_ram_size_mb = 31986.49609375
+      used_ram_size_mb = 5483.5546875
+
+      devts/tests/skynet/system/test_cpu_ram_hdd_usage.py:150: AssertionError
+
+      The above exception was the direct cause of the following exception:
+
+      self = <ngts.tests.push_build_tests.system.test_cpu_ram_hdd_usage.TestCpuRamHddUsage object at 0x7f4174e02b10>
+      request = <FixtureRequest for <Function test_ram_usage>>
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      skip_test_ram_usage_on_asan = None
+
+          @pytest.mark.build
+          @pytest.mark.push_gate
+          @pytest.mark.physical_coverage
+          def test_ram_usage(self, request, expected_ram_usage_dict, skip_test_ram_usage_on_asan):
+              """
+              This tests checks RAM usage - total and per process
+              Test doing command "top" - then parse output and check from it PIDs for running processes
+              Then test doing command "free" and parse total RAM usage
+              After it test check RAM usage by process using command:
+              sudo cat /proc/{PID}/smaps | grep Pss | awk '{Total+=$2} END {print Total/1024}
+              If total RAM usage or by process RAM usage is bigger than expected - raise exception
+              :param request: pytest build-in
+              :param expected_ram_usage_dict: expected_ram_usage_dict fixture
+              """
+              if is_redmine_issue_active([5152247])[0]:
+                  expected_ram_usage_dict['telemetry'] += 10
+      >       do_ram_usage_test(request.node.originalname, self.dut_engine, expected_ram_usage_dict)
+
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      request    = <FixtureRequest for <Function test_ram_usage>>
+      self       = <ngts.tests.push_build_tests.system.test_cpu_ram_hdd_usage.TestCpuRamHddUsage object at 0x7f4174e02b10>
+      skip_test_ram_usage_on_asan = None
+
+      root/mars/workspace/sonic-mgmt/ngts/tests/push_build_tests/system/test_cpu_ram_hdd_usage.py:139:
+      _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+      results_file_name = 'test_ram_usage'
+      dut_engine = <devts.infra.tools.connection_tools.linux_ssh_engine.LinuxSshEngine object at 0x7f417501a0c0>
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+
+          def do_ram_usage_test(results_file_name, dut_engine, expected_ram_usage_dict):
+              """
+              Contains all logic for ram usage check
+              :param results_file_name: name of file for results
+              :param dut_engine: engine of dut
+              :param expected_ram_usage_dict: expected ram usage
+              """
+              total_ram_size_mb = 0
+              used_ram_size_mb = 0
+              ram_usage_per_process = {}
+              overall_assertions_list = []
+              (total_ram_expected, no_simx_proc_list, ram_expected_usage_dict_filtered,
+               proc_to_container_mapping_dict, container_to_proc_dict) = read_expected_usage(dut_engine, expected_ram_usage_dict)
+
+              try:
+                  proc_to_pids_mapping_dict = {}
+                  for container in container_to_proc_dict:
+                      cur_proc_to_pids_mapping_dict = get_processes_pids(dut_engine, container_to_proc_dict, container)
+                      proc_to_pids_mapping_dict = merge_by_nested_keys(proc_to_pids_mapping_dict, cur_proc_to_pids_mapping_dict)
+
+                  find_missing_processes(ram_expected_usage_dict_filtered, proc_to_pids_mapping_dict, no_simx_proc_list)
+
+                  for attempt in range(3):
+                      logger.info('Checking RAM utilization, attempt number: %s', attempt)
+                      assertions_list_total_usage, total_ram_size_mb, used_ram_size_mb = (
+                          validate_total_ram_usage(dut_engine, total_ram_expected))
+                      assertions_list_processes_usage, ram_usage_per_process = validate_processes_ram_usage(dut_engine,
+                                                                                                            ram_expected_usage_dict_filtered, proc_to_container_mapping_dict, proc_to_pids_mapping_dict)
+                      overall_assertions_list = assertions_list_total_usage + assertions_list_processes_usage
+                      if not overall_assertions_list:
+                          break
+
+                  assert not overall_assertions_list, \
+                      f'RAM usage: {overall_assertions_list} \n is more than expected: \n {ram_expected_usage_dict_filtered}'
+
+              except Exception as err:
+      >           raise AssertionError(f"RAM usage in these processes is more than expected : {overall_assertions_list}") from err
+      E           AssertionError: RAM usage in these processes is more than expected : [{'lldp_syncd': 21.5068}]
+
+      assertions_list_processes_usage = [{'lldp_syncd': 21.5068}]
+      assertions_list_total_usage = []
+      attempt    = 2
+      container  = 'database'
+      container_to_proc_dict = {'bgp': ['rsyslogd'], 'database': ['rsyslogd'], 'dhcp_relay': ['rsyslogd'], 'eventd': ['rsyslogd'], ...}
+      cur_proc_to_pids_mapping_dict = {'rsyslogd': {'database': ['100']}}
+      dut_engine = <devts.infra.tools.connection_tools.linux_ssh_engine.LinuxSshEngine object at 0x7f417501a0c0>
+      expected_ram_usage_dict = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      no_simx_proc_list = []
+      overall_assertions_list = [{'lldp_syncd': 21.5068}]
+      proc_to_container_mapping_dict = {'arp_update': ['host'], 'bgpcfgd': ['host'], 'bgpd': ['host'], 'bgpmon': ['host'], ...}
+      proc_to_pids_mapping_dict = {'arp_update': {'host': ['67905']}, 'bgpcfgd': {'host': ['67706']}, 'bgpd': {'host': ['67705', '67833']}, 'bgpmon': {'host': ['67707']}, ...}
+      ram_expected_usage_dict_filtered = {'arp_update': 10, 'bgpcfgd': 70, 'bgpd': 75, 'bgpmon': 20, ...}
+      ram_usage_per_process = {'arp_update': 1.40039, 'bgpcfgd': 19.5898, 'bgpd': 29.181659999999997, 'bgpmon': 8.49707, ...}
+      results_file_name = 'test_ram_usage'
+      total_ram_expected = 7000
+      total_ram_size_mb = 31986.49609375
+      used_ram_size_mb = 5483.5546875
+
+      devts/tests/skynet/system/test_cpu_ram_hdd_usage.py:154: AssertionError
+    failure_matching_rule: |-
+      If catch AssertionError: RAM usage in these processes is more than expected : [{'lldp_syncd': and no other process besides'lldp_syncd' is found, then it is the same issue.
+    xfail_similarity_low_th: 0.4
+    xfail_similarity_high_th: 0.9
+    xfail_ai_agent_timeout: 30
