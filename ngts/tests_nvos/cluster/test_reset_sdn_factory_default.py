@@ -99,12 +99,12 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
             ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
 
         verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                                  skip_chassis_mapping)
+                                                  skip_chassis_mapping, GFM_WAIT_EXPECTED_AFTER_SDN_RESET)
 
         with allure.step("Reboot and verify configuration not changed"):
             result_obj, duration = OperationTime.save_duration('reboot', '', test_name, system.reboot.action_reboot)
             verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                                      skip_chassis_mapping)
+                                                      skip_chassis_mapping, GFM_WAIT_EXPECTED_AFTER_REBOOT)
 
     finally:
         current_time = get_current_time(engines)
@@ -114,8 +114,18 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
             OperationTime.verify_operation_time(duration, devices.dut.reset_factory, devices).verify_result()
 
 
+# GFM_WAIT_TIMEOUT_SEC is GFM-owned (NVBug 6348727 - Not-a-bug): 'nv action reset sdn
+# factory-default' regenerates it from the GFM package template, where the default is
+# empty, while a running GFM writes 360. The expected rendering therefore depends on the
+# verification point, so each verify call states the exact value it expects instead of
+# byte-comparing this key against the snapshot.
+GFM_WAIT_KEY = 'GFM_WAIT_TIMEOUT_SEC='
+GFM_WAIT_EXPECTED_AFTER_SDN_RESET = ''    # GFM package template default
+GFM_WAIT_EXPECTED_AFTER_REBOOT = '360'    # value written by running GFM
+
+
 def verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                              skip_chassis_mapping):
+                                              skip_chassis_mapping, expected_gfm_wait_value):
     """
     Verify current config equals given config for all apps on this device.
     Uses device-specific app configuration to handle different device types.
@@ -138,6 +148,17 @@ def verify_current_config_equals_given_config(sdn, engines, devices, initial_con
                     continue
                 initial_config_set = set(line.strip() for line in initial_config_contents[file_type].strip().split('\n') if line.strip())
                 current_config_set = set(line.strip() for line in current_config_content.strip().split('\n') if line.strip())
+                if file_type == ClusterConsts.NMX_CONTROLLER_CONFIG_FM:
+                    observed_values = sorted(line[len(GFM_WAIT_KEY):] for line in current_config_set
+                                             if line.startswith(GFM_WAIT_KEY))
+                    logger.info(f"GFM_WAIT_TIMEOUT_SEC rendered as {observed_values}, expected "
+                                f"['{expected_gfm_wait_value}'] at this verification point (NVBug 6348727)")
+                    if observed_values != [expected_gfm_wait_value]:
+                        errors_list.append(f"GFM_WAIT_TIMEOUT_SEC expected to render exactly as "
+                                           f"'{expected_gfm_wait_value}' at this verification point (GFM-owned "
+                                           f"key, NVBug 6348727), got: {observed_values}")
+                    initial_config_set = {line for line in initial_config_set if not line.startswith(GFM_WAIT_KEY)}
+                    current_config_set = {line for line in current_config_set if not line.startswith(GFM_WAIT_KEY)}
                 if initial_config_set != current_config_set:
                     errors_list.append(f"Configuration mismatch in file {file_type}:\nInitial: {initial_config_set}\nCurrent: {current_config_set}")
         assert not errors_list, "\n\n".join(errors_list)

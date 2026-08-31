@@ -107,6 +107,7 @@ class ClusterConsts:
         'telemetry': lambda content: content
     }
     NMX_CONTROLLER_CONFIG_CHASSIS_MAPPING = 'chassis_mapping'
+    NMX_CONTROLLER_CONFIG_FM = 'fm_config'
     PARTITION_TYPES = ['location_based', 'gpuuid_based']
     DEFAULT_PARTITION_ID = '32766'
     EMPTY_PARTITION_ID = '10'
