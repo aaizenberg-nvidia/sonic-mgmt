@@ -135,6 +135,7 @@ def test_plr_counters_cli_and_json(engines: EnginesT) -> None:
                         allure.attach(_attachment_name(context, "txt"), cli_output, attachment_type=AttachmentType.TEXT)
                         _validate_cli_output(cli_output, context)
 
+                    plr_values = None
                     with allure.independent_step(f"Validate {context} PLR fields in JSON output"):
                         json_output = phy_detail.parse_show()
                         attachment_name = _attachment_name(context, "json")
