@@ -65,4 +65,8 @@
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/thermalctld_bmc.cases </cases>
     </test>
 
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/redfish_bmc.cases </cases>
+    </test>
+
 </DBDEF>
