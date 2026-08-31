@@ -335,7 +335,6 @@ def test_system_location_set(test_api, engines, nv_command):
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.cumulus
 def test_factory_reset_for_system_contact_location(engines, nv_command, devices):
     """

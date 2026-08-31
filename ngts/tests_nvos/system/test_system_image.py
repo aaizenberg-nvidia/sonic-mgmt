@@ -651,7 +651,6 @@ def image_uninstall_test(release_name, original_version, devices, uninstall_forc
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
 def test_system_image_install_reject_with_smallcase_n(original_version, devices):
@@ -668,7 +667,6 @@ def test_system_image_install_reject_with_smallcase_n(original_version, devices)
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
 def test_system_image_install_reject_with_uppercase_n(original_version, devices):
@@ -685,7 +683,6 @@ def test_system_image_install_reject_with_uppercase_n(original_version, devices)
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
 def test_system_image_install_reject_with_random_char(original_version, devices):

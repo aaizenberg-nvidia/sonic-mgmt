@@ -727,7 +727,6 @@ def _delete_log_files(engines, system_log_obj, file_name):
 @pytest.mark.check_log_size(expect=10000)
 @pytest.mark.system
 @pytest.mark.log
-@pytest.mark.simx
 def test_log_idle(engines):
     """
     Verify system generates minimal logs during idle state.
