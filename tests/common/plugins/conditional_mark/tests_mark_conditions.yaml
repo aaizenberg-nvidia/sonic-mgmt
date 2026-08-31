@@ -593,6 +593,10 @@ bgp/test_bgp_sentinel.py::test_bgp_sentinel[IPv4:
     reason: "Skip for IPv6-only topologies"
     conditions:
       - "'-v6-' in topo_name"
+  xfail:
+    reason: "Test fails due to backend neighbor group port classification issues"
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/26841 and 't1-d96u4' in topo_name"
 
 bgp/test_bgp_sentinel.py::test_bgp_sentinel[IPv6:
   xfail:
@@ -761,9 +765,11 @@ bgp/test_bgp_suppress_fib.py::test_suppress_fib_stress:
 
 bgp/test_bgp_update_replication.py:
   xfail:
-    reason: "Testcase is not stable on dualtor-aa setup due to GH issue: https://github.com/sonic-net/sonic-mgmt/issues/21110"
+    reason: "Testcase is not stable due to GH issues"
+    conditions_logical_operator: or
     conditions:
       - "https://github.com/sonic-net/sonic-mgmt/issues/21110 and 'dualtor-aa' in topo_name"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/26841 and 't1-d96u4' in topo_name"
 
 bgp/test_bgp_update_timer.py::test_bgp_update_timer_session_down:
   xfail:
