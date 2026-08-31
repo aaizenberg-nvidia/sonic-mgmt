@@ -20,6 +20,10 @@ class ValidationConsts:
     DUMP_GENERATION_TIME = "dumpGenerationTime"
     VALIDATION_KEY = "validation_key"
     PORT_GROUPS = "port_groups"
+    # Metadata block of TrafficValidator.json. TrafficValidator fills the DUT-side
+    # fields (speed, chip_type, sdk_version, collectors_list); the run identity is
+    # merged in on ingest from ValidatorRunIdentity.
+    METADATA = "metadata"
     TX_RX_PER_PORT_GROUP = "tx_rx_per_port_group"
     SHARED_BUFFER_SIZE = "shared_buffer_size"
     COLLECTORS_LIST = "collectors_list"
@@ -760,6 +764,9 @@ class MongoDbConsts:
     TC_LATENCY_DATA = "tcLatencyData"
     TEMP_DATA = "temperatureData"
     TEST_NAME = "testName"
+    DUT_SYSTEM_INFORMATION = "dutSystemInformation"
+    MARS_SESSION_ID = "marsSessionId"
+    SETUP_NAME = "setupName"
     TEST_WORKLOAD = "testWorkload"
     TEST_TRAFFIC_TYPE = "testTrafficType"
     INGRESS_PORT_SEQUENCE = "ingressPortSequence"

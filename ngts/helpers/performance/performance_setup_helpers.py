@@ -30,7 +30,7 @@ from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
 from ngts.tools.infra import get_chip_type
 
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional, List, Dict, Any, Callable
 
 logger = logging.getLogger()
@@ -553,6 +553,7 @@ def validate_traffic_results(players, test_name, scenario, samples_params_dict,
                 performance_clis_function_args=(full_path, samples_params_dict),
                 step="Traffic Validation - Test Body"),
             nodeid=test_name)
+        add_run_identity_to_validator_json(full_path, test_name, scenario, player_alias, hostname)
         traffic_json = attach_json_to_allure(full_path,
                                              f'Traffic Validation JSON results on {player_alias} - {hostname}',
                                              attach_to_allure)
@@ -564,6 +565,82 @@ def validate_traffic_results(players, test_name, scenario, samples_params_dict,
         if add_validator_results_to_mongo_db:
             add_test_mongo_metadata(test_name, {MongoDbConsts.VALIDATOR_RESULTS: traffic_json})
     return traffic_validation_results
+
+
+@dataclass
+class ValidatorRunIdentity:
+    """
+    The run identity sonic-mgmt owns, merged into the validator JSON's metadata block.
+
+    TrafficValidator fills that block with what the DUT can see - speed, chip type, SDK
+    version and the collectors list. The fields below are known only to the orchestration.
+    The attribute names are the JSON keys, so adding a field here adds it to the block.
+
+    Attributes:
+        test_name (str): Scenario-qualified test name, i.e, TestSrv6_test_srv6_leaf
+        scenario (str): The performance scenario, i.e, "srv6"
+        player_alias (str): The player the validator ran on, i.e, "dut"
+        hostname (str): The player's hostname, i.e, "mtvr-moose-02"
+        setup_name (str, optional): The Noga setup name, from the mongo db template file
+        mars_session_id (str, optional): MARS session id, from the mongo db template file
+    """
+    test_name: str
+    scenario: str
+    player_alias: str
+    hostname: str
+    setup_name: str = None
+    mars_session_id: str = None
+
+    def to_json(self):
+        """
+        Returns:
+            dict: the identity keyed by attribute name, ready to merge into the
+            validator JSON's metadata block
+        """
+        return asdict(self)
+
+
+def add_run_identity_to_validator_json(json_path, test_name, scenario, player_alias, hostname):
+    """Merge the run identity sonic-mgmt owns into the validator JSON's metadata block.
+
+    TrafficValidator fills the block with what the DUT can see - speed, chip type, SDK
+    version and the collectors list. The test, scenario, player, setup and MARS session
+    are known only to the orchestration, so they are merged into the same block here,
+    before the JSON is attached to Allure and stored in mongo. Both halves then travel
+    together and each saved TrafficValidator.json describes the run that produced it.
+
+    The setup name and MARS session id are read from the mongo db template file, written
+    once per session by create_performance_db_template, so they do not have to be
+    threaded through every caller.
+
+    Args:
+        json_path (str): path to the validator JSON pulled from the DUT
+        test_name (str): scenario-qualified test name, i.e, TestSrv6_test_srv6_leaf
+        scenario (str): the performance scenario, i.e, "srv6"
+        player_alias (str): the player the validator ran on, i.e, "dut"
+        hostname (str): the player's hostname
+
+    Returns:
+        None
+    """
+    with open(json_path) as f:
+        validator_json = json.load(f)
+    dut_system_information = {}
+    if os.path.exists(MongoDbConsts.PERF_MONGO_DB_RESULTS_PATH):
+        with open(MongoDbConsts.PERF_MONGO_DB_RESULTS_PATH) as f:
+            dut_system_information = json.load(f).get(MongoDbConsts.DUT_SYSTEM_INFORMATION, {})
+    run_identity = ValidatorRunIdentity(
+        test_name=test_name,
+        scenario=scenario,
+        player_alias=player_alias,
+        hostname=hostname,
+        setup_name=dut_system_information.get(MongoDbConsts.SETUP_NAME),
+        mars_session_id=dut_system_information.get(MongoDbConsts.MARS_SESSION_ID),
+    )
+    run_identity_json = run_identity.to_json()
+    validator_json.setdefault(ValidationConsts.METADATA, {}).update(run_identity_json)
+    with open(json_path, "w") as f:
+        json.dump(validator_json, f, indent=4)
 
 
 def attach_json_to_allure(json_path, attachment_name, attach_to_allure=True):
