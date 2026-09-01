@@ -325,4 +325,7 @@
     <test>
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/bgp_link_local.cases </cases>
     </test>
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bgp_prefix_list_suppress.cases </cases>
+    </test>
 </DBDEF>
