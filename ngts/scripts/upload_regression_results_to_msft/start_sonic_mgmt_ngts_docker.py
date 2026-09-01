@@ -113,11 +113,12 @@ def get_container_mountpoints():
 
 
 def remove_container(container_name):
-    subprocess.call(
-        ["sudo", "docker", "rm", "-f", container_name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with open(os.devnull, "w") as devnull:
+        subprocess.call(
+            ["sudo", "docker", "rm", "-f", container_name],
+            stdout=devnull,
+            stderr=devnull,
+        )
 
 
 def cleanup_stale_containers():
