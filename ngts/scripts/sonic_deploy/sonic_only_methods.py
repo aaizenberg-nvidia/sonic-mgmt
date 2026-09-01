@@ -6,9 +6,11 @@ import json
 import allure
 import pytest
 import sys
+import time
 import yaml
 from pathlib import Path
 
+from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers import json_file_helper
 from ngts.helpers.system_helpers import set_timezone as system_set_timezone
 from ngts.scripts.sonic_deploy.image_preparetion_methods import is_url, get_sonic_branch
@@ -28,7 +30,10 @@ logger = logging.getLogger()
 # Hosts that should skip BIOS version check / restore during deploy.
 BIOS_RESTORE_SKIP_HOSTS = {
     'r-bobcat-01',  # r-bobcat-01 BIOS fail to restore, remove when the setup is fixed.
+    'slm-174',  # slm-174 BIOS fail to update, redmine#5255760
 }
+
+BIOS_INSTALL_REBOOT_TIMEOUT = 900
 
 
 class SonicInstallationSteps:
@@ -629,10 +634,33 @@ class SonicInstallationSteps:
                 if os.path.exists(local_fw_path):
                     os.remove(local_fw_path)
 
-            # fwutil force-reboots; engine.reload sends via send_config_set (no prompt wait).
+            # fwutil install triggers automatic cold reboot after BIOS update.
             install_cmd = f'sudo fwutil install chassis component BIOS fw {dut_fw_path} -y'
             logger.info(f'Running: {install_cmd}')
-            engine.reload([install_cmd], wait_after_ping=InfraConst.SLEEP_AFTER_RRBOOT)
+
+            port_check_delay = 10
+            port_check_tries = BIOS_INSTALL_REBOOT_TIMEOUT // port_check_delay
+
+            # Step 1: Send fwutil install command (will trigger automatic reboot)
+            engine.engine.send_config_set([install_cmd], exit_config_mode=False, cmd_verify=False)
+
+            # Step 2: Wait for SSH port to close (device starting reboot)
+            logger.info(f'Waiting for switch shutdown after BIOS install (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)')
+            check_port_status_till_alive(False, engine.ip, engine.ssh_port)
+
+            # Step 3: Disconnect current session
+            engine.disconnect()
+
+            # Step 4: Wait for SSH port to open (device boot complete)
+            logger.info(f'Waiting for switch bring-up after BIOS install (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)')
+            check_port_status_till_alive(True, engine.ip, engine.ssh_port,
+                                         tries=port_check_tries, delay=port_check_delay)
+
+            # Step 5: Wait for CLI to be ready
+            retry_call(
+                engine.run_cmd, fargs=[""],
+                tries=80, delay=2, logger=logger,
+            )
 
             cli.cli_obj.general.verify_dockers_are_up(platform_params=platform_params)
 
