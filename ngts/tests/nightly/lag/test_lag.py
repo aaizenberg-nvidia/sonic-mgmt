@@ -438,10 +438,10 @@ def test_lag_members_scale(topology_obj, interfaces, engines, cleanup_list, plat
                 configured_speeds = dut_cli.interface.get_interfaces_speed(member_interfaces)
                 unexpected_speeds = {
                     interface: speed for interface, speed in configured_speeds.items()
-                    if speed_string_to_int_in_mb(speed) != min_speed
+                    if speed_string_to_int_in_mb(speed) != min_oper_speed
                 }
                 assert not unexpected_speeds, \
-                    'Failed to set all LAG members to speed {}: {}'.format(min_speed, unexpected_speeds)
+                    'Failed to set all LAG members to speed {}: {}'.format(min_oper_speed, unexpected_speeds)
 
         with allure.step('Disable all member loopback interfaces'):
             dut_cli.interface.disable_interfaces(admin_up_lb_member_interfaces)
