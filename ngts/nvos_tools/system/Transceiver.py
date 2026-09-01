@@ -57,6 +57,26 @@ class Transceiver(BaseComponent):
         op_param = '--view=detail'
         return self.show(op_param=op_param)
 
+    def show_detailed_dict(self) -> Dict:
+        """Parsed output of `nv show platform transceiver --view=detail`.
+
+        Callers needing more than one view of the inventory should fetch this
+        once and pass it into the getters below, instead of re-running the
+        command per query.
+        """
+        return OutputParsingTool.parse_json_str_to_dictionary(self.show_detailed()).verify_result()
+
+    def get_fw_versions(self, transceivers_detail: Dict = None) -> Dict[str, str]:
+        """{transceiver name: fw-version} for every transceiver reporting a 'fw-version' field.
+
+        :param transceivers_detail: parsed show_detailed output as dict. If not provided, will be fetched from the device.
+        """
+        if transceivers_detail is None:
+            transceivers_detail = self.show_detailed_dict()
+        return {k: v[PlatformConsts.FW_VERSION]
+                for k, v in transceivers_detail.items()
+                if isinstance(v, dict) and PlatformConsts.FW_VERSION in v}
+
     def action_reset(self, transceiver_name, expected_str="", dut_engine=None):
         """nv action reset platform transceiver <transceiver-name> """
         return self.action_deprecated(ActionConsts.RESET, transceiver_name, expected_output=expected_str, dut_engine=dut_engine)

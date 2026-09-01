@@ -72,7 +72,8 @@ def test_reset_transceiver_firmware_positive(engines, test_api):
     :param test_api:
     :return:
     """
-    platform, random_transceiver, random_port = _get_random_optical_module_transceiver()
+    platform = Platform()
+    random_transceiver, random_port = _get_random_optical_module_transceiver(platform)
 
     with allure.step("Create interface object"):
         interface = Interface(parent_obj=None, port_name=random_port)
@@ -100,36 +101,51 @@ def test_reset_transceiver_firmware_positive(engines, test_api):
 @pytest.mark.transceiver
 def test_install_transceiver_firmware_positive(engines, devices, random_api, test_name):
     """
-    Test Flow:
-        1. Fetch 2 module FW images. Save as <FW1>و <FW2>
-        2. Pick random connected module  	Save as <random_sw>
-        3. Run nv action install platform transceiver <random_sw> firmware files <FW1>  	Action executing ... Action succeeded
-        4. Verify Total installing Time	Between 1-2 min[using logs]
-        5. Run nv show platform transceiver <random_sw> firmware	actual-firmware   <fw1>  fw-upgrade-status OK  fw-upgrade-error  N/A
-        6. Run nv action install platform transceiver <random_sw> firmware files <FW2>  	Action executing ...  Action succeeded
-        7. Run nv show platform transceiver <random_sw> firmware	actual-firmware   <fw2>  fw-upgrade-status OK  fw-upgrade-error  N/A
-        8. Run nv show platform transceiver firmware files	fw1.bin    /host/fw-images/modules/fw1.bin  fw2.bin    /host/fw-images/modules/fw2.bin
-        9. Run nv show platform transceiver <random_sw>  firmware files	fw1.bin    /host/fw-images/modules/fw1.bin  fw2.bin    /host/fw-images/modules/fw2.bin
-        10. Pick randomly on of 1 or 2	<random_fw>
-        11. Run nv show platform transceiver <random_sw> firmware <random_fw>	<random_fw>.bin    /host/fw-images/modules/<random_fw>.bin
-        12. Run nv action reset platform transceiver <transceiver-id> Action executing ...  Action succeeded
-        13. Run nv show platform transceiver <random_sw> firmware	actual-firmware   <default>  fw-upgrade-status OK  fw-upgrade-error  N/A
-        14. Run nv show platform transceiver firmware	Fw1 ..
-        15. Run nv show platform transceiver <random_sw>  firmware files
-        16. Run nv show interface <random_sw_ports>	Verify: Verify:"physical-state": "LinkUp", logical-state = up
-        17.  check all dict still the same
-        18. Run nv action reset system factory-default
-        19. Run nv show platform transceiver <random_sw>  firmware
-        20. validate expected output
-        21. Run nv show platform transceiver <random_sw>  firmware files
-        22. validate expected output
+    Install a downgrade FW image on a random optical transceiver, then install
+    the upgrade image, checking the module's reported firmware, the rest of the
+    inventory and the port's counters along the way.
 
-    :param engines:
-    :param test_api:
-    :return:
+    The image names, their expected version strings and the install-time
+    threshold all come from TransceiversConsts.TRANSCEIVERS_DETAILS, keyed on
+    the major of the module's current actual-firmware (e.g. '130' -> Sian2).
+
+    Test Flow:
+        1. Run nv show platform transceiver --view=detail, pick a random
+           optical module whose port is UP (ELS and FNM modules excluded) and
+           save as <random_sw> / <random_port>. Skip the test if there is none.
+        2. Build the module's mst cable name from the primary-asic-device
+           reported by nv show fae interface <random_port>.
+        3. Run nv show platform transceiver <random_sw> firmware and keep
+           actual-firmware as <default_fw>; its major selects the image set for
+           this module family. Keep the fw-version of every transceiver from
+           step 1 as the inventory baseline.
+        4. Run flint on the mst device: unless the module reports DEV, swap
+           both image names from dev-signed to pk-signed.
+        5. Run nv action fetch platform firmware transceiver
+           scp://<sonic_mgmt>/<path>/<FW_downgrade>.
+        6. Run nv action install platform transceiver <random_sw> firmware
+           files <FW_downgrade> -> Action succeeded, and verify it took no
+           longer than the family's installation_time.
+        7. Poll nv show platform transceiver <random_sw> firmware until
+           actual-firmware leaves N/A, i.e. the module has come back from the
+           reset the install performs.
+        8. Re-read the fw-version of every transceiver and verify <random_sw>
+           reads <downgrade_fw> and every other module still matches the
+           step-3 baseline.
+        9. Run nv show platform transceiver <random_sw> firmware and verify
+           actual-firmware = <downgrade_fw>, fw-upgrade-status = OK and
+           fw-upgrade-error-msg = N/A. Skipped while bug 4380004 is open.
+        10. Read nv show interface <random_port> counters around step 9 and
+            verify no counter key disappeared and none grew by more than 20%.
+        11. In a finally block, so it runs even if steps 5-10 failed: repeat
+            steps 5-8 with <FW_upgrade> and verify <random_sw> ends on
+            <upgrade_fw>.
+
     """
 
-    platform, random_transceiver, random_port = _get_random_optical_module_transceiver()
+    platform = Platform()
+    transceivers_show_detailed = platform.transceiver.show_detailed_dict()
+    random_transceiver, random_port = _get_random_optical_module_transceiver(platform, transceivers_show_detailed)
 
     with allure.step(f"get the mst device for transceiver {random_transceiver}"):
         output_dictionary = OutputParsingTool.parse_show_interface_output_to_dictionary(
@@ -139,6 +155,7 @@ def test_install_transceiver_firmware_positive(engines, devices, random_api, tes
 
     default_fw = OutputParsingTool.parse_json_str_to_dictionary(
         platform.transceiver.show(random_transceiver + ' firmware')).verify_result()[PlatformConsts.FW_ACTUAL]
+    expected_transceivers_fw_versions = platform.transceiver.get_fw_versions(transceivers_show_detailed)
 
     with allure.step("Create interface object"):
         interface = Interface(parent_obj=None, port_name=random_port)
@@ -165,6 +182,12 @@ def test_install_transceiver_firmware_positive(engines, devices, random_api, tes
                                                                    random_transceiver, transceiver_obj.downgrade_version_name)
                 OperationTime.verify_operation_time(duration, f"transceiver firmware installation", threshold=transceiver_obj.installation_time).verify_result()
 
+            with allure.step("verify transceivers fw versions after downgrade"):
+                _wait_until_transceiver_fw_ready(platform, random_transceiver)
+                current_transceivers_fw_versions = platform.transceiver.get_fw_versions()
+                expected_transceivers_fw_versions[random_transceiver] = transceiver_obj.downgrade_version_number
+                ValidationTool.compare_dictionaries(expected_transceivers_fw_versions, current_transceivers_fw_versions).verify_result()
+
             with allure.step("run {} show counters command".format(random_port)):
                 counters_before_install = OutputParsingTool.parse_json_str_to_dictionary(
                     interface.counters.show()).verify_result()
@@ -182,6 +205,12 @@ def test_install_transceiver_firmware_positive(engines, devices, random_api, tes
                                                                    '', test_name, platform.transceiver.action_install,
                                                                    random_transceiver, transceiver_obj.upgrade_version_name)
                 OperationTime.verify_operation_time(duration, f"transceiver firmware installation", threshold=transceiver_obj.installation_time).verify_result()
+
+            with allure.independent_step("verify transceivers fw versions after upgrade"):
+                _wait_until_transceiver_fw_ready(platform, random_transceiver)
+                current_transceivers_fw_versions = platform.transceiver.get_fw_versions()
+                expected_transceivers_fw_versions[random_transceiver] = transceiver_obj.upgrade_version_number
+                ValidationTool.compare_dictionaries(expected_transceivers_fw_versions, current_transceivers_fw_versions).verify_result()
 
 
 @pytest.mark.platform
@@ -222,7 +251,8 @@ def test_install_reset_transceiver_firmware_negative_flow(engines, test_api):
     expected_error_msg = 'Failed to complete download of FW image to EEPROM'
     test_name = test_install_reset_transceiver_firmware_negative_flow.__name__
 
-    platform, random_transceiver, random_port = _get_random_optical_module_transceiver()
+    platform = Platform()
+    random_transceiver, random_port = _get_random_optical_module_transceiver(platform)
 
     with allure.step(f"Run nv show platform transceiver {random_transceiver}"):
         output_before_install = OutputParsingTool.parse_json_str_to_dictionary(platform.transceiver.show(random_transceiver + ' firmware')).verify_result()
@@ -316,7 +346,8 @@ def test_install_reset_invalid_transceiver_id(engines, test_api):
 
     with allure.step("try to run transceiver commands with invalid transceiver id and non exist file"):
         with allure.independent_step("Install non exist file"):
-            platform, random_transceiver, random_port = _get_random_optical_module_transceiver()
+            platform = Platform()
+            random_transceiver, random_port = _get_random_optical_module_transceiver(platform)
             platform.transceiver.action_install(random_transceiver, invalid_file_name, expected_str=invalid_file_expected_output).verify_result()
         with allure.independent_step("Install invalid transceiver and non exist file"):
             platform.transceiver.action_install(invalid_transceiver, invalid_file_name, expected_str=invalid_transceiver_expected_output).verify_result()
@@ -399,20 +430,23 @@ def _verify_expected_dict(command_output, default_fw, status='N/A', msg='N/A'):
         assert command_output == expected_dict, "at least one of the values is not as expected {}".format(command_output)
 
 
-def _get_random_optical_module_transceiver():
+def _get_random_optical_module_transceiver(platform, transceivers_show_detailed=None):
     """Pick a random optical-module transceiver whose port is currently UP.
 
     Filtering only by cable-type (as the original did) returns dark modules
     whose fiber has no Rx signal, which then time out at the baseline LinkUp
     wait. Intersect optical hardware with the current UP-port set instead.
+
+    :param platform: the platform object, will be used to get the show detailed output if not provided
+    :param transceivers_show_detailed: the platform show transceiver detailed output.
+        If provided, will be used to get the optical modules and save time by not calling the show detailed command again.
     """
+    if transceivers_show_detailed is None:
+        transceivers_show_detailed = platform.transceiver.show_detailed_dict()
     with allure.step("Get random connected optical module transceiver"):
-        platform = Platform()
-        show_transceiver = OutputParsingTool.parse_json_str_to_dictionary(
-            platform.transceiver.show_detailed()).verify_result()
-        optical = [n for n, e in show_transceiver.items() if isinstance(e, dict) and (
-            e.get(PlatformConsts.TRANSCEIVER_CABLE_TYPE) == 'Optical module' or
-            e.get(PlatformConsts.HARDWARE_TRANCEIVER_DIAGNOSTIC_STATUS) == 'Diagnostic Data Available')]
+        optical = [n for n, e in transceivers_show_detailed.items() if isinstance(e, dict) and (
+            e.get(PlatformConsts.TRANSCEIVER_CABLE_TYPE) == PlatformConsts.TRANSCEIVER_CABLE_OPTICAL_MODULE or
+            e.get(PlatformConsts.HARDWARE_TRANCEIVER_DIAGNOSTIC_STATUS) == PlatformConsts.HARDWARE_TRANCEIVER_DIAGNOSTIC_DATA_AVAILABLE)]
         if not optical:
             pytest.skip("No optical modules available for the setup")
 
@@ -434,7 +468,7 @@ def _get_random_optical_module_transceiver():
                         f"UP ports: {sorted(up_port_names)}")
 
         transceiver = random.choice(list(candidates))
-        return platform, transceiver, random.choice(candidates[transceiver])
+        return transceiver, random.choice(candidates[transceiver])
 
 
 def _collect_counter_changes(before, after, path, changes, threshold=0.2):

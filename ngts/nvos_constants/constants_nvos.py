@@ -1151,6 +1151,7 @@ class PlatformConsts:
     FW_COMPONENTS = [FW_BMC, FW_EROT, FW_CPLD, FW_BIOS, FW_SMA]
     FW_FIELD_NAME_DICT = {"Actual FW": "actual-firmware"}
     FW_ACTUAL = "actual-firmware"
+    FW_VERSION = "fw-version"
     FW_BACKGROUND_COPY_STATUS = 'background-copy-status'
     FW_DEBUG_TOKEN_STATUS = 'debug-token-status'
     FW_AP_BOOT_STATUS = 'ap-boot-status'
