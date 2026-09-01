@@ -77,8 +77,10 @@ class PytestConst:
 class SonicConst:
     PORT_SPLIT_NUM_1 = 1
     PORT_SPLIT_NUM_2 = 2
+    PORT_SPLIT_NUM_3 = 3
     PORT_SPLIT_NUM_4 = 4
     PORT_SPLIT_NUM_8 = 8
+    UNEVEN_PORT_SPLIT_NUMS = [PORT_SPLIT_NUM_3]
     PORT_LANE_NUM_1 = 1
     PORT_LANE_NUM_2 = 2
     PORT_LANE_NUM_4 = 4
@@ -489,6 +491,7 @@ class InterfacesTypeConstants:
 
 
 class FecConstants:
+    FEC_MODES_SPEED_SUPPORT_NOT_AVAILABLE = {}
     FEC_MODES_SPC_SPEED_SUPPORT = {
         SonicConst.FEC_FC_MODE: {
             SonicConst.PORT_SPLIT_NUM_1: {'10G': ['CR'],

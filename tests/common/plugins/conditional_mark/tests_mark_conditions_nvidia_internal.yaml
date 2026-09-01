@@ -92,11 +92,10 @@ tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_ifaces_sta
 
 tests/nightly/auto_negotition:
   skip:
-    reason: "Testcase not supported on simx or on sn6600_ld platform due to RM 4978794"
+    reason: "Testcase not supported on simx platform"
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
-    - "https://redmine.mellanox.com/issues/4978794 and 'sn6600_ld' in platform"
 
 tests/nightly/copp/test_copp.py::test_copp_policer[LLDP_Reboot]:
   skip:

@@ -5,8 +5,9 @@ from ngts.constants.constants import AutonegCommandConstants
 from ngts.tests.nightly.auto_negotition.auto_neg_common import TestAutoNegBase
 from ngts.tests.conftest import get_dut_loopbacks, get_dut_host_loopbacks
 from ngts.tests.nightly.auto_negotition.conftest import update_split_2_if_possible, \
-    update_split_4_if_possible, update_split_8_if_possible, ports_spec_compliance, \
-    is_auto_neg_supported_lb, is_auto_neg_supported_port
+    update_split_3_if_possible, update_split_4_if_possible, update_split_8_if_possible, \
+    ports_spec_compliance, is_auto_neg_supported_lb, is_auto_neg_supported_port, \
+    NO_LOOPBACKS_SKIP_REASON
 
 logger = logging.getLogger()
 
@@ -32,6 +33,7 @@ def tested_lb_all_dict(topology_obj, engines, interfaces, split_mode_supported_s
     }
     if 'simx' not in engines.dut.run_cmd("hostname"):
         update_split_2_if_possible(topology_obj, tested_lb_dict, ports_spec_compliance)
+        update_split_3_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
         update_split_4_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
         update_split_8_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
     for lb in get_dut_loopbacks(topology_obj):
@@ -44,6 +46,21 @@ def tested_lb_all_dict(topology_obj, engines, interfaces, split_mode_supported_s
 
 
 class TestAutoNegScale(TestAutoNegBase):
+
+    @pytest.fixture()
+    def tested_lb_dict(self, available_lb_dict):
+        """
+        :param available_lb_dict: available_lb_dict fixture
+        :return: the dut loopbacks without the session skip, the test runs on tested_lb_all_dict
+        """
+        return available_lb_dict
+
+    @pytest.fixture()
+    def tested_dut_host_lb_dict(self):
+        """
+        :return: an empty dict, the test does not use the dut to host loopbacks
+        """
+        return {}
 
     def test_scale(self, cleanup_list, tested_lb_all_dict, skip_if_rj45_cable):
         """
@@ -62,6 +79,8 @@ class TestAutoNegScale(TestAutoNegBase):
         for port in ports:
             if port in conf:
                 dut_conf[port] = conf[port]
+        if not dut_conf:
+            pytest.skip(NO_LOOPBACKS_SKIP_REASON)
         ports = dut_conf.keys()
         logger.info("Set auto negotiation mode to disabled on ports before test starts")
         self.configure_port_auto_neg(self.cli_objects.dut, ports,

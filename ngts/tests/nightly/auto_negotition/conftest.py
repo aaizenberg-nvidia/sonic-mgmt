@@ -11,6 +11,8 @@ from ngts.cli_util.cli_parsers import parse_show_interfaces_transceiver_eeprom
 
 logger = logging.getLogger()
 
+NO_LOOPBACKS_SKIP_REASON = 'The DUT has no appropriate loopbacks to run the test with.'
+
 
 @pytest.fixture(scope='module', autouse=True)
 def auto_neg_configuration(topology_obj, setup_name, engines, cli_objects, platform_params, is_air):
@@ -30,8 +32,9 @@ def auto_neg_configuration(topology_obj, setup_name, engines, cli_objects, platf
 
 
 @pytest.fixture(scope='session')
-def tested_lb_dict(topology_obj, split_mode_supported_speeds, ports_spec_compliance):
+def available_lb_dict(topology_obj, split_mode_supported_speeds, ports_spec_compliance):
     """
+    Same selection as tested_lb_dict, but does not skip when empty so CLI-only tests can still run.
     :param topology_obj: topology object fixture
     :param ports_spec_compliance: ports_spec_compliance fixture
     :return: a dictionary of loopback list for each split mode on the dut
@@ -42,6 +45,7 @@ def tested_lb_dict(topology_obj, split_mode_supported_speeds, ports_spec_complia
     tested_lb_dict = {1: []
                       }
     update_split_2_if_possible(topology_obj, tested_lb_dict, ports_spec_compliance)
+    update_split_3_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
     update_split_4_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
     update_split_8_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance)
     split_mode = 1
@@ -49,16 +53,89 @@ def tested_lb_dict(topology_obj, split_mode_supported_speeds, ports_spec_complia
                           get_dut_loopbacks(topology_obj)))
     if dut_lbs:
         tested_lb_dict[split_mode].append(get_dut_lb_with_max_capability(dut_lbs, split_mode_supported_speeds))
-    if not any(tested_lb_dict.values()):
-        pytest.skip('The DUT has no appropriate loopbacks to run the test with.')
-    logger.info("Tests will run on the following ports :\n{}".format(tested_lb_dict))
     return tested_lb_dict
+
+
+@pytest.fixture(scope='session')
+def tested_lb_dict(available_lb_dict):
+    """
+    :param available_lb_dict: available_lb_dict fixture
+    :return: a dictionary of loopback list for each split mode on the dut
+    """
+    if not any(available_lb_dict.values()):
+        pytest.skip(NO_LOOPBACKS_SKIP_REASON)
+    logger.info("Tests will run on the following ports :\n{}".format(available_lb_dict))
+    return available_lb_dict
 
 
 def get_dut_lb_with_max_capability(dut_lbs, split_mode_supported_speeds):
     return max(dut_lbs,
                key=lambda lb: speed_string_to_int_in_mb(max(get_lb_mutual_speed(lb, 1, split_mode_supported_speeds),
                                                             key=speed_string_to_int_in_mb)))
+
+
+def get_split_lb_ports(topology_obj, split_mode):
+    """
+    Resolve the loopback pair of the first sub-ports of a split loopback.
+    Setups name split loopback aliases either without a loopback index (dut-lb-splt2-p1-1) or
+    with one (dut-lb1-splt2-p1-1), so both conventions are looked up, index free first.
+    :param topology_obj: topology object fixture
+    :param split_mode: the port split mode i.e, 2/3/4/8
+    :return: a tuple of the two loopback ports, or None when the setup has no such loopback
+    """
+    alias_pattern = re.compile(r"^dut-lb(?P<index>\d*)-splt{}-p1-1$".format(split_mode))
+    matched_aliases = [alias for alias in topology_obj.ports if alias_pattern.match(alias)]
+    for alias in sorted(matched_aliases,
+                        key=lambda alias: int(alias_pattern.match(alias).group('index') or 0)):
+        peer_alias = alias.replace('-p1-1', '-p2-1')
+        port, peer_port = topology_obj.ports.get(alias), topology_obj.ports.get(peer_alias)
+        if port and peer_port:
+            return port, peer_port
+    return None
+
+
+@pytest.fixture(scope='session')
+def even_split_lb_dict(topology_obj):
+    """
+    Even-split loopbacks including optics (no auto-neg filter). Split-3 is not included.
+    :param topology_obj: topology object fixture
+    :return: a dictionary of even-split loopbacks for split modes 1/2/4/8
+    """
+    lbs = {1: []}
+    try:
+        lbs[1] = [lb for lb in get_dut_loopbacks(topology_obj) if all(lb)]
+    except KeyError:
+        logger.warning("Incomplete split-1 loopback aliases in topology")
+    for split_mode in (SonicConst.PORT_SPLIT_NUM_2, SonicConst.PORT_SPLIT_NUM_4, SonicConst.PORT_SPLIT_NUM_8):
+        split_lb = get_split_lb_ports(topology_obj, split_mode)
+        if split_lb:
+            lbs[split_mode] = [split_lb]
+    return lbs
+
+
+@pytest.fixture(scope='session')
+def negative_cli_port(topology_obj, interfaces, even_split_lb_dict, ports_spec_compliance):
+    """
+    DUT port for negative CLI checks. Prefer a loopback port that does not support auto-neg, so that
+    setups whose loopbacks are all uneven split are covered too, and default to the dut host port.
+    :param topology_obj: topology object fixture
+    :param interfaces: interfaces fixture
+    :param even_split_lb_dict: even_split_lb_dict fixture
+    :param ports_spec_compliance: ports_spec_compliance fixture
+    :return: port name
+    """
+    uneven_split_lb = get_split_lb_ports(topology_obj, SonicConst.PORT_SPLIT_NUM_3)
+    lb_lists = [even_split_lb_dict.get(split_mode, [])
+                for split_mode in (SonicConst.PORT_SPLIT_NUM_2, SonicConst.PORT_SPLIT_NUM_4,
+                                   SonicConst.PORT_SPLIT_NUM_8, SonicConst.PORT_SPLIT_NUM_1)]
+    lb_lists.append([uneven_split_lb] if uneven_split_lb else [])
+    lb_ports = (port for lb_list in lb_lists for lb in lb_list for port in lb
+                if port in ports_spec_compliance)
+    for port in lb_ports:
+        if not is_auto_neg_supported_port(port, ports_spec_compliance, used_in_auto_neg_tests=False):
+            logger.info("Negative CLI checks will use port {}".format(port))
+            return port
+    return interfaces.dut_ha_1
 
 
 @pytest.fixture(scope='session')
@@ -69,6 +146,26 @@ def ports_lanes_dict(interfaces_status_dict, interfaces, cli_objects):
         ports_lanes_dict[port] = len(lanes)
     ports_lanes_dict[interfaces.ha_dut_1] = 4
     return ports_lanes_dict
+
+
+def update_split_3_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance):
+    """
+    :param topology_obj: topology object fixture
+    :param split_mode_supported_speeds: a dictionary with available speed options for each split mode on all setup ports
+    :param tested_lb_dict: a dictionary of loopback list for each split mode on the dut
+    :param ports_spec_compliance: ports_spec_compliance fixture
+    :return: Update loopback with split 3 (uneven split) configuration only in cases where there are mutual speeds
+    available, e.g. on platforms such as Mellanox-SN6600_LD-P64O128C2
+    """
+    split_3 = SonicConst.PORT_SPLIT_NUM_3
+    split_3_lb = get_split_lb_ports(topology_obj, split_3)
+    if split_3_lb:
+        if not all(split_mode_supported_speeds.get(port, {}).get(split_3) for port in split_3_lb):
+            logger.info("Skipping split-3 lb %s: mode 3 is not supported on these ports/platform", split_3_lb)
+            return
+        mutual_speeds = get_lb_mutual_speed(split_3_lb, split_3, split_mode_supported_speeds)
+        if len(mutual_speeds) > 1 and is_auto_neg_supported_lb(split_3_lb, ports_spec_compliance):
+            tested_lb_dict.update({split_3: [split_3_lb]})
 
 
 def update_split_4_if_possible(topology_obj, split_mode_supported_speeds, tested_lb_dict, ports_spec_compliance):
@@ -162,7 +259,7 @@ def interfaces_types_dict(engines, platform_params, chip_type):
         supported_speed = InterfacesTypeConstants.INTERFACE_TYPE_SUPPORTED_SPEEDS_SPC2[platform.upper()]
     elif chip_type == "SPC3":
         supported_speed = InterfacesTypeConstants.INTERFACE_TYPE_SUPPORTED_SPEEDS_SPC3[platform.upper()]
-    elif chip_type == "SPC4":
+    elif chip_type in ("SPC4", "SPC5", "SPC6"):
         supported_speed = {}
     else:
         raise AssertionError("Chip type {} is unrecognized".format(chip_type))
@@ -441,8 +538,9 @@ def is_auto_neg_supported_port(port, compliance_info_per_port, used_in_auto_neg_
                 logger.warning(f"Tests will not run on port {port} because of unsupported cable type - "
                                f"{port_spec_type} : {port_spec_value}\n")
         else:
-            raise AssertionError(f"Test failed because port {port} has unknown {port_spec_type} : {port_spec_value}\n"
-                                 f"Check if the cable should support auto-negotiation and update test accordingly\n")
+            logger.warning(f"Tests will not run on port {port} because of unknown cable type - "
+                           f"{port_spec_type} : {port_spec_value}\n")
+            return port_supports_auto_neg
     return port_supports_auto_neg
 
 

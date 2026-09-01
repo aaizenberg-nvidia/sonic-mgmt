@@ -1,5 +1,5 @@
 import re
-from ngts.constants.constants import PlatformTypesConstants
+from ngts.constants.constants import PlatformTypesConstants, SonicConst
 
 
 def get_speed_in_G_format(speed):
@@ -51,6 +51,14 @@ def get_dut_default_ports_list(topology_obj):
         if port_name in dut_ports and not re.search(r"dut-lb-splt\d-p\d-[^1]", port_alias):
             base_ports_list.append(port_name)
     return base_ports_list
+
+
+def is_uneven_split(split_mode):
+    """
+    :param split_mode: the port split mode i.e, 1/2/3/4/8
+    :return: True if the split mode is an uneven split, False otherwise
+    """
+    return split_mode in SonicConst.UNEVEN_PORT_SPLIT_NUMS
 
 
 def get_lb_mutual_speed(lb, split_mode, split_mode_supported_speeds):
