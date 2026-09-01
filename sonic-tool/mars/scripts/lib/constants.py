@@ -17,7 +17,7 @@ DOCKER_NGTS_IMAGE_NAME = "docker-ngts"
 # Single source of truth for the pinned docker-ngts tag.
 # Used to pin the image for sonic-mgmt container creation (update_docker.py) and the
 # devts package installation in the air simulation bringup (air_simulation_bringup.sh).
-DOCKER_NGTS_DEFAULT_TAG = "1.3.107"
+DOCKER_NGTS_DEFAULT_TAG = "1.3.109"
 
 SONIC_MGMT_REPO_URL = "http://10.7.77.140:8080/switchx/sonic/sonic-mgmt"
 
