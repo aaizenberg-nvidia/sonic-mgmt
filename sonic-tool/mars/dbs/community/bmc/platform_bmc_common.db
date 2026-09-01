@@ -37,6 +37,10 @@
     </global>
 
     <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/container_checker_bmc.cases </cases>
+    </test>
+
+    <test>
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/platform_bmc_common.cases </cases>
     </test>
 

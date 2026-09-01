@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> SSH BMC </info>
+            <name> ssh_bmc </name>
+            <owner> SONiC </owner>
+        </Test>
+        <Case>
+            <tags> SSH, BMC </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 55555 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <info> SSH Ciphers </info>
+        <name> ssh_ciphers </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 5400 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts ssh/test_ssh_ciphers.py </static_args>
+            </params>
+        </cmd>
+    </case>
+    <case>
+        <info> SSH Limit </info>
+        <name> ssh_limit </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts ssh/test_ssh_limit.py </static_args>
+            </params>
+        </cmd>
+    </case>
+    <case>
+        <info> SSH Default Password </info>
+        <name> ssh_default_password </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts ssh/test_ssh_default_password.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>

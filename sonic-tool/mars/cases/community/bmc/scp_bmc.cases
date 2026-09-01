@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> SCP Test BMC </info>
+            <name> scp_bmc </name>
+            <owner> </owner>
+        </Test>
+        <Case>
+            <tags> SCP, BMC </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 3600 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <info> SCP Case </info>
+        <name> scp </name>
+        <cmd>
+             <params>
+                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 500 --session-timeout 750 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts scp/test_scp_copy.py </static_args>
+             </params>
+        </cmd>
+    </case>
+</CASEDEF>
