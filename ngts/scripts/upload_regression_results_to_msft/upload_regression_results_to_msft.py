@@ -185,6 +185,7 @@ class ReleaseResultsUploader:
         self.hosts = set()
         self.sessions_testbed_properties = dict()
         self.modified_xml_path = dict()
+        self.exported_hwsku_topologies = dict()
         file_dir_path = os.path.dirname(os.path.realpath(__file__))
         self.build_mail_table = os.path.join(file_dir_path, "build_mail_table.txt")
         if os.path.exists(self.build_mail_table):
@@ -397,6 +398,10 @@ class ReleaseResultsUploader:
         internal_name = self.get_internal_name(old_hostname)
         if internal_name:
             new_hostname = old_hostname.replace(internal_name, commercial_name)
+        elif re.fullmatch(r"slm-\d+(?:-.*)?", old_hostname):
+            # SLM hostnames use a generic lab prefix instead of the platform
+            # codename, so derive the replacement from the platform column.
+            new_hostname = old_hostname.replace("slm", commercial_name, 1)
         return new_hostname
 
     @staticmethod
@@ -1024,6 +1029,7 @@ class ReleaseResultsUploader:
             session = df.loc[i, "session_id"]
             hwsku = df.loc[i, "hwsku"]
             topology = df.loc[i, "topology"]
+            self.exported_hwsku_topologies[hwsku] = topology
             xml_path = df.loc[i, "xml_path"]
             if xml_path not in copied_xmls:
                 folder_name = f"{hwsku}_{topology}"
@@ -1181,14 +1187,7 @@ class ReleaseResultsUploader:
         self.compose_build_tables_content(build_table_dict_content)
 
     def get_exported_hwsku_topologies(self):
-        report_id_dirs = [x[0] for x in os.walk(self.result_folder)]
-        report_id_dirs.remove(self.result_folder)
-        report_id_dir_names = [os.path.basename(os.path.normpath(report_id_dir)) for report_id_dir in report_id_dirs]
-        exported_hwsku_topologies = {}
-        for report_id_dir_name in report_id_dir_names:
-            hwsku, topology = report_id_dir_name.split("_")
-            exported_hwsku_topologies[hwsku] = topology
-        return exported_hwsku_topologies
+        return self.exported_hwsku_topologies
 
     def compose_export_results_mail(self, excel_path):
         build_table_dict_content = {
