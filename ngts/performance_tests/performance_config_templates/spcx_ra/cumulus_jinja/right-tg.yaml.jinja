@@ -204,21 +204,6 @@
       egress-shaper:
         default-global:
           port-max-rate: {{ (speed * 0.98) | int }}
-      {# rx honours the DUT's pause. tx stays off: the ACL above drops the data before it can
-         buffer, so there is nothing here to raise Xoff about. #}
-      pfc:
-        default-global:
-          switch-priority:
-            '3': {}
-          rx: enable
-          tx: disable
-      {# Prerequisite for the pfc profile above, which NVUE rejects without a lossless pool.
-         "default-lossless" and not the DUT's "roce-lossless": that name needs roce mode lossless. #}
-      traffic-pool:
-        default-lossy:
-          memory-percent: 10
-        default-lossless:
-          memory-percent: 90
     system:
       aaa:
         user:
