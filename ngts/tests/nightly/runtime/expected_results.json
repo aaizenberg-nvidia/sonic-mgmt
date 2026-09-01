@@ -15,7 +15,8 @@
         "show_pl_ssdhealth": "1.678",
         "show_pl_syseeprom": "2.0",
         "show_pl_temperature": "1.121",
-        "show_sys_health_summary": "9.9406"
+        "show_sys_health_summary": "9.9406",
+        "show_techsupport": "130.803"
     },
     "SN2700": {
         "add_vlan": "0.912",
@@ -33,7 +34,8 @@
         "show_pl_ssdhealth": "1.678",
         "show_pl_syseeprom": "1.343",
         "show_pl_temperature": "1.121",
-        "show_sys_health_summary": "9.9406"
+        "show_sys_health_summary": "9.9406",
+        "show_techsupport": "130.803"
     },
     "MSN3420": {
         "add_vlan": "0.537",
@@ -51,7 +53,8 @@
         "show_pl_ssdhealth": "1.038",
         "show_pl_syseeprom": "0.653",
         "show_pl_temperature": "0.58",
-        "show_sys_health_summary": "5.4208"
+        "show_sys_health_summary": "5.4208",
+        "show_techsupport": "164.545"
     },
     "MSN3700": {
         "add_vlan": "0.429",
@@ -69,7 +72,8 @@
         "show_pl_ssdhealth": "1.112",
         "show_pl_syseeprom": "0.674",
         "show_pl_temperature": "0.594",
-        "show_sys_health_summary": "5.0404"
+        "show_sys_health_summary": "5.0404",
+        "show_techsupport": "138.878"
     },
     "MSN3700C": {
         "add_vlan": "0.461",
@@ -87,7 +91,8 @@
         "show_pl_ssdhealth": "0.903",
         "show_pl_syseeprom": "0.692",
         "show_pl_temperature": "0.553",
-        "show_sys_health_summary": "5.251"
+        "show_sys_health_summary": "5.251",
+        "show_techsupport": "138.878"
     },
     "MSN4600C": {
         "add_vlan": "0.446",
@@ -105,7 +110,8 @@
         "show_pl_ssdhealth": "1.027",
         "show_pl_syseeprom": "0.608",
         "show_pl_temperature": "0.558",
-        "show_sys_health_summary": "5.0974"
+        "show_sys_health_summary": "5.0974",
+        "show_techsupport": "164.715"
     },
     "MSN4700": {
         "add_vlan": "0.436",
@@ -123,7 +129,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "5.0364"
+        "show_sys_health_summary": "5.0364",
+        "show_techsupport": "128.878"
     },
     "SN4700D": {
         "add_vlan": "0.436",
@@ -141,7 +148,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "5.0364"
+        "show_sys_health_summary": "5.0364",
+        "show_techsupport": "128.878"
     },
     "SN4280": {
         "add_vlan": "0.436",
@@ -159,7 +167,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "5.0364"
+        "show_sys_health_summary": "5.0364",
+        "show_techsupport": "168.406"
     },
     "SN5600": {
         "add_vlan": "0.436",
@@ -177,7 +186,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "4.0962"
+        "show_sys_health_summary": "4.0962",
+        "show_techsupport": "154.468"
     },
     "SN5610N": {
         "add_vlan": "0.436",
@@ -195,7 +205,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "4.0962"
+        "show_sys_health_summary": "4.0962",
+        "show_techsupport": "178.781"
     },
     "SN5640": {
         "add_vlan": "0.436",
@@ -213,7 +224,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "4.0962"
+        "show_sys_health_summary": "4.0962",
+        "show_techsupport": "178.781"
     },
     "SN5810_LD": {
         "add_vlan": "0.654",
@@ -231,7 +243,8 @@
         "show_pl_ssdhealth": "1.488",
         "show_pl_syseeprom": "0.888",
         "show_pl_temperature": "0.798",
-        "show_sys_health_summary": "6.144"
+        "show_sys_health_summary": "6.144",
+        "show_techsupport": "178.781"
     },
     "SN6810_LD": {
         "add_vlan": "0.654",
@@ -249,7 +262,8 @@
         "show_pl_ssdhealth": "1.488",
         "show_pl_syseeprom": "0.888",
         "show_pl_temperature": "0.798",
-        "show_sys_health_summary": "6.144"
+        "show_sys_health_summary": "6.144",
+        "show_techsupport": "162.968"
     },
     "SN6600": {
         "add_vlan": "0.436",
@@ -267,7 +281,8 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "4.0962"
+        "show_sys_health_summary": "4.0962",
+        "show_techsupport": "169.983"
     },
     "SN6600_LD": {
         "add_vlan": "0.436",
@@ -285,6 +300,7 @@
         "show_pl_ssdhealth": "0.992",
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
-        "show_sys_health_summary": "4.0962"
+        "show_sys_health_summary": "4.0962",
+        "show_techsupport": "169.983"
     }
 }

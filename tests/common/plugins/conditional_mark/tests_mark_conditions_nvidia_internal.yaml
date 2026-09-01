@@ -51,6 +51,12 @@ tests/nightly/route/test_async_route.py::test_adding_routes[ipv4-static_routes_i
     conditions:
     - "https://redmine.mellanox.com/issues/5089669"
 
+tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_techsupport]:
+  xfail:
+    reason: "Testcase expected to fail on SPC5 due to RM issue: https://redmine.mellanox.com/issues/5136159"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5136159 and 'sn5640' in platform"
+
 tests/nightly/fec/test_fec.py::TestFec::test_fec_bug_2705016:
   xfail:
     reason: "May fail due to RM 3971501 on r-leopard-56 or due to RM 3969985 on SPC4"
