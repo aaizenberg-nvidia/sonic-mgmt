@@ -871,9 +871,13 @@ def serial_engine(topology_obj, devices):
     :return: serial connection
     """
     serial_engine = SerialConsoleTool.get_serial_console_session(topology_obj)
-    SerialConsoleTool.exit_existing_login(serial_engine)
-    SerialConsoleTool.login_nos(serial_engine, devices.dut.default_username, devices.dut.default_password)
-    return serial_engine
+    try:
+        SerialConsoleTool.exit_existing_login(serial_engine)
+        SerialConsoleTool.login_nos(serial_engine, devices.dut.default_username, devices.dut.default_password)
+        yield serial_engine
+    finally:
+        # simx (QEMU telnet) consoles accept a single client: a leaked session blocks every later test
+        serial_engine.disconnect()
 
 
 @pytest.fixture
