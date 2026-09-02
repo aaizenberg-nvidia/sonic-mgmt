@@ -5,6 +5,7 @@ import collections
 import os
 import signal
 import threading
+import pathlib
 from contextlib import contextmanager
 from multiprocessing.pool import ThreadPool
 import ansible
@@ -130,6 +131,8 @@ class AnsibleHostBase(object):
         def default(self, obj):
             if isinstance(obj, bytes):
                 return obj.decode('utf-8')
+            elif isinstance(obj, pathlib.PurePath):
+                return str(obj)
             elif isinstance(obj, collections.UserDict):
                 return obj.data
             return super().default(obj)
