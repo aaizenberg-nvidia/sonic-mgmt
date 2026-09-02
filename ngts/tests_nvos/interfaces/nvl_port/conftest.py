@@ -9,13 +9,14 @@ from ngts.nvos_constants.constants_nvos import MultiPlanarConsts
 from ngts.nvos_tools.infra.MultiPlanarTool import MultiPlanarTool
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.Devices.IbDevice import RosalindSimx, RosalindStackedSimx, RosalindSwitch  # TODO: Remove RosalindSwitch import when XDR WA is removed
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import MloopConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import MloopConsts, NvosConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
-from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair
+from ngts.tests_nvos.interfaces.nvl_port.helpers import get_acp_ports_in_state, get_linked_ports_pair
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +224,19 @@ def linked_ports_pair(engines: EnginesT, devices: DevicesT, has_loopbox: bool) -
         pytest.skip("No loopbox found, skipping linked ports pair")
 
     return get_linked_ports_pair(devices, engines)
+
+
+@pytest.fixture
+def down_access_ports(access_ports: Port) -> list[str]:
+    """
+    Names of the access ports that are already down before the test touches anything.
+
+    On a standalone or partially cabled setup those ports have no link partner, so they will never
+    come up. Tests pass this list as `exclude_ports` to the range waits, so a port that was never
+    up does not hold the whole link-up budget open and then fail the test. Function-scoped on
+    purpose: the snapshot has to be re-read per test, not cached across them.
+
+    The snapshot reads the all-interfaces show, which exists on both NVUE and OpenAPI, so it does
+    not matter that fixtures run before the test body picks the API for the test.
+    """
+    return get_acp_ports_in_state(access_ports, NvosConsts.LINK_STATE_DOWN)

@@ -193,7 +193,7 @@ from ngts.tests_nvos.general.security.test_ssh_cert_auth.helpers import (
     set_trusted_ca_key,
     verify_user_login,
 )
-from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair
+from ngts.tests_nvos.interfaces.nvl_port.helpers import get_acp_ports_in_state, get_linked_ports_pair
 from ngts.tests_nvos.helpers.interfaces.nvl_port.nvl6.phy_role_helpers import (
     cleanup_phy_role,
     get_fae_objs,
@@ -1378,6 +1378,10 @@ def _check_link_training(engines: EnginesT, devices: DevicesT, **kwargs) -> Gene
         logger.info(f"Linked ports pair: {linked_ports_pair[0]} <-> {linked_ports_pair[1]}")
         fae_port_1, fae_port_2 = get_fae_objs(linked_ports_pair)
         fae_objs_tuple = (fae_port_1, fae_port_2)
+        # Snapshot the already-down access ports BEFORE any mutation: taken later it would also
+        # exclude ports this checker itself broke from their own recovery wait in the cleanup.
+        access_ports = link_training_helpers.get_access_ports_range(devices)
+        down_access_ports = get_acp_ports_in_state(access_ports, nv_consts.NvosConsts.LINK_STATE_DOWN)
 
     try:
         with allure.step("Set fec-measure-mode to enabled on both ports"):
@@ -1439,7 +1443,8 @@ def _check_link_training(engines: EnginesT, devices: DevicesT, **kwargs) -> Gene
                     ).verify_result()
 
     finally:
-        link_training_helpers.cleanup_link_training(devices, fae_objs_tuple)
+        link_training_helpers.cleanup_link_training(
+            devices, access_ports, fae_objs_tuple, down_access_ports)
 
 # #################### End of Feature Checkers ###################
 

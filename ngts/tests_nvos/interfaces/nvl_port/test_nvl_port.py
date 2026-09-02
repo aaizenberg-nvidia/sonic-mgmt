@@ -698,7 +698,8 @@ def _verify_time_to_link_up(
 
 @pytest.mark.interface
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
-def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup):
+def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup,
+                         access_ports, down_access_ports):
     """Validate the time-to-link-up link-show field on an ACP port pair across the three link-up states.
 
     time-to-link-up is updated after the link changes to up and holds how long link-up took,
@@ -724,7 +725,10 @@ def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup)
     faes = [Fae(port_name=name) for name in linked_ports_pair]
     TestToolkit.update_tested_ports(ports)
 
-    register_cleanup(lambda: link_training_helpers.cleanup_link_training(devices, tuple(faes)))
+    # down_access_ports is the function-scoped pre-test snapshot from conftest.py, captured
+    # before the test mutates anything - cleanup must not re-read it after the fact.
+    register_cleanup(lambda: link_training_helpers.cleanup_link_training(
+        devices, access_ports, tuple(faes), down_access_ports))
 
     with allure_step("Default state: fec-measure-mode=disabled on both ends, verify time-to-link-up"):
         for fae in faes:
