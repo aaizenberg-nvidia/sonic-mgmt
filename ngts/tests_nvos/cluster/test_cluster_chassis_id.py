@@ -1,27 +1,24 @@
 import logging
-import random
-import re
 import pytest
+import re
 
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.ValidationTool import ValidationTool
-from ngts.nvos_tools.platform.Platform import Platform
-from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_tools.nmx.Cluster import Cluster
-from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_constants.constants_nvos import ApiType, OutputFormat, ChassisLocationConsts
-from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-
-from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
-
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
+from ngts.nvos_tools.infra.ValidationTool import ValidationTool
+from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.platform.Platform import Platform
+from ngts.nvos_tools.nmx.Cluster import Cluster
+from ngts.ngts_types import EnginesT, DevicesT
+from ngts.nvos_tools.nmx.Sdn import Sdn
 
-
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope='function', autouse=True)
-def enable_stop_cluster(setup_name, devices, engines):
+def enable_stop_cluster(setup_name: str, devices: DevicesT, engines: EnginesT):
     cluster = Cluster()
     ClusterTools.start_cluster(cluster, setup_name, OutputFormat.json, engine=engines.dut, devices=devices)
     yield
@@ -29,7 +26,7 @@ def enable_stop_cluster(setup_name, devices, engines):
 
 
 @pytest.mark.nmx
-def test_cluster_chassis_id(engines, devices, random_api):
+def test_cluster_chassis_id(engines: EnginesT, random_api: str):
 
     with allure.step("Create Cluster object"):
         cluster = Cluster()
@@ -49,7 +46,9 @@ def test_cluster_chassis_id(engines, devices, random_api):
             cluster.action_update_chassis_id(mapping_id=mapping_id).verify_result(False)
 
     with allure.step("Update chassis-id mapping good flow"):
-        mapping_id = random.randint(1, 255)
+        # based on NVBug 6618559, the mapping id should be 1 for single rack systems,
+        # where all our setups are single rack systems.
+        mapping_id = 1
         cluster.action_update_chassis_id(mapping_id=mapping_id).verify_result()
 
     try:
@@ -80,7 +79,7 @@ def test_cluster_chassis_id(engines, devices, random_api):
             ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster)
 
 
-def get_name_from_generate_config_file(output):
+def get_name_from_generate_config_file(output: str) -> str | None:
     match = re.search(r'App config file (\S+)', output)
     filename = match.group(1) if match else None
     return filename
