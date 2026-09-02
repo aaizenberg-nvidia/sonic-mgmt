@@ -13,7 +13,7 @@ CHECK_VERSION_TEMPLATE_ONLY = False
 UPHY_VERSION_REGEX = r"^\d+\.\d+\.\d+$" if CHECK_VERSION_TEMPLATE_ONLY else r"^[78]\.\d+\.\d+$"
 SYSFS_UPHY_VERSION_PATH = "{root}/sx_core/asic{asic_index}/local_parameters/uphy_version"
 DUT_SYSFS_ROOT = "/sys/module"
-TECHSUPPORT_SYSFS_ROOT = "{tech_support_dir}/sdk_sysfs"
+TECHSUPPORT_SYSFS_ROOT = "{tech_support_dir}"
 
 
 def fae_uphy_cmd(asic_numbers: list[str]) -> UphyVersionDictT:
