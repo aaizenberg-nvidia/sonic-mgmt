@@ -532,6 +532,12 @@ autorestart.test_container_autorestart.py::test_containers_autorestart\[.*-bgp\]
     conditions:
     - "https://redmine.mellanox.com/issues/5075468"
 
+autorestart/test_container_autorestart.py::test_containers_autorestart:
+  xfail:
+    reason: "Xfail on BMC: FEATURE|telemetry has no auto_restart field, so the module scoped fixture config_reload_after_tests fails during setup, due to RM issue: https://redmine.mellanox.com/issues/5235361"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5235361"
+
 bgp/test_bgp_bbr.py::test_bbr_enabled_dut_asn_in_aspath:
   xfail:
     reason: "Testcase expected to fail due to RM issue https://redmine.mellanox.com/issues/4989648"

@@ -296,6 +296,12 @@ arp/test_wr_arp.py::test_wr_arp_advance:
 #######################################
 ######        autorestart          #####
 ########################################
+autorestart/test_container_autorestart.py:
+  xfail:
+    reason: "Xfail on BMC due to github issue https://github.com/sonic-net/sonic-mgmt/issues/27271"
+    conditions:
+      - "'bmc' in topo_type and https://github.com/sonic-net/sonic-mgmt/issues/27271"
+
 autorestart/test_container_autorestart.py::test_containers_autorestart.*teamd.*:
   regex: true
   xfail:
