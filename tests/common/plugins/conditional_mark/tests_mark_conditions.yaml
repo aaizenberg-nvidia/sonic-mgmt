@@ -570,16 +570,24 @@ bgp/test_bgp_router_id.py:
     conditions:
       - "'t0-isolated-d256u256s2' in topo_name and platform in ['x86_64-nvidia_sn5640-r0']"
 
+bgp/test_bgp_router_id.py::test_bgp_router_id_set_without_loopback:
+  xfail:
+    reason: "Default route is not defined in the t2-isolated-d128s2 topology"
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27670 and 't2-isolated-d128s2' in topo_name"
+
 bgp/test_bgp_router_id.py::test_bgp_router_id_set[:
   skip:
     reason: "Skip for IPv6-only topologies"
     conditions:
       - "'-v6-' in topo_name"
   xfail:
-    reason: "Test case has issue on the t0-isolated-d256u256s2 topo."
+    reason: "Known issues on '-v6-' topology or t2-isolated-d128s2 topologies or t2-isolated-d128s2 topologies"
+    conditions_logical_operator: or
     conditions:
       - "https://github.com/sonic-net/sonic-mgmt/issues/19916 and '-v6-' in topo_name"
       - "'t0-isolated-d256u256s2' in topo_name and platform in ['x86_64-nvidia_sn5640-r0']"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27670 and 't2-isolated-d128s2' in topo_name"
 
 bgp/test_bgp_router_id.py::test_bgp_router_id_set_ipv6:
   skip:
@@ -5983,6 +5991,10 @@ telemetry/test_telemetry_poll.py::test_poll_mode_default_route:
     reason: "not applicable on BMC because requires upstream BGP neighbor and default route"
     conditions:
       - "'bmc' in topo_type"
+  xfail:
+    reason: "Default route is not defined in the t2-isolated-d128s2 topology"
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27670 and 't2-isolated-d128s2' in topo_name"
 
 test_interfaces.py:
   skip:
