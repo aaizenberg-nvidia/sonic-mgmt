@@ -3305,9 +3305,14 @@ class RosalindSwitch(RosalindSurrogateSwitch):
         self.psu_fan_list = []
         self.transceiver_list = []
 
+        # Rosalind tech-support timing is tracked under its own operation label, not Juliet's.
+        # Must be set before the durations update below, which keys off this attribute.
+        self.generate_tech_support = 'rosalind generate_tech_support'
+
         self.expected_operation_durations.update({
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 10 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
+            self.generate_tech_support: 220,
         })
 
         self.nvl_access_ports_list = [
