@@ -292,6 +292,7 @@ ci-sonic-mgmt-chipsim-61      ansible_host=10.220.75.61 ansible_hostv6="" sonic_
 ci-sonic-mgmt-chipsim-62      ansible_host=10.220.75.62 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-63      ansible_host=10.220.75.63 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-81      ansible_host=10.220.163.81 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7100_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
+portia-chipsim-82      ansible_host=10.220.205.1 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7300_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-86      ansible_host=10.220.163.86 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7200_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 portia-chipsim-87      ansible_host=10.220.163.87 ansible_hostv6="" sonic_version=v2 hwsku="Mellanox-N7200_LD" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000
 nvos-chipsim-64      ansible_host=10.220.75.64 ansible_hostv6="" sonic_version=v2 hwsku="ACS-MQM9700" iface_speed=40000  mgmt_subnet_mask_length=22 vm_base=VM0000

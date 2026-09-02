@@ -1077,6 +1077,9 @@ portia-chipsim-63 ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=A
 portia-chipsim-81-ptf-any ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7100_LD            serial_console="telnet fit-nos-vrt-mec-80 10081" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1F:A3:51 model=N7100_LD_NSO_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7100_ld_simx-r0', '0x22': u'Mellanox-N7100_LD', '0x21': u'N7100_LD_NSO_simx', '0x24': u'00:50:56:1F:A3:51', '0x2b': u'NVIDIA', '0x2a': u'254'}"
 portia-chipsim-81 ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7100_LD             serial_console="telnet fit-nos-vrt-mec-80 10081" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1F:A3:51 model=N7100_LD_NSO_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7100_ld_simx-r0', '0x22': u'Mellanox-N7100_LD', '0x21': u'N7100_LD_NSO_simx', '0x24': u'00:50:56:1F:A3:51', '0x2b': u'NVIDIA', '0x2a': u'254'}"
 
+# NVOS testbed portia-chipsim-82 topologies
+portia-chipsim-82-ptf-any ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7300_LD            serial_console="telnet fit-chipsim-ci-mec-240 10081" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1F:CD:01 model=N7300_LD_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7300_ld_simx-r0', '0x22': u'Mellanox-N7300_LD', '0x21': u'N7300_LD_simx', '0x24': u'00:50:56:1F:CD:01', '0x2b': u'NVIDIA', '0x2a': u'254'}"
+portia-chipsim-82 ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7300_LD             serial_console="telnet fit-chipsim-ci-mec-240 10081" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1F:CD:01 model=N7300_LD_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7300_ld_simx-r0', '0x22': u'Mellanox-N7300_LD', '0x21': u'N7300_LD_simx', '0x24': u'00:50:56:1F:CD:01', '0x2b': u'NVIDIA', '0x2a': u'254'}"
 # NVOS testbed portia-chipsim-86 topologies
 portia-chipsim-86-ptf-any ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7200_LD            serial_console="telnet fit-nos-vrt-mec-80 10086" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1f:a3:56 model=N7200_LD_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7200_ld_simx-r0', '0x22': u'Mellanox-N7200_LD', '0x21': u'N7200_LD_simx', '0x24': u'00:50:56:1f:a3:56', '0x2b': u'NVIDIA', '0x2a': u'254'}"
 portia-chipsim-86 ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=Mellanox-N7200_LD             serial_console="telnet fit-nos-vrt-mec-80 10086" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1f:a3:56 model=N7200_LD_simx-Portia syseeprom_info="{'0x28': u'x86_64-nvidia_n7200_ld_simx-r0', '0x22': u'Mellanox-N7200_LD', '0x21': u'N7200_LD_simx', '0x24': u'00:50:56:1f:a3:56', '0x2b': u'NVIDIA', '0x2a': u'254'}"
@@ -2563,6 +2566,9 @@ portia-chipsim-63
 
 portia-chipsim-81-ptf-any
 portia-chipsim-81
+
+portia-chipsim-82-ptf-any
+portia-chipsim-82
 
 portia-chipsim-86-ptf-any
 portia-chipsim-86
