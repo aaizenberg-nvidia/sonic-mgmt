@@ -55,6 +55,7 @@ def test_cluster_sdn_factory_reset_nmx_down(engines, devices, test_api, has_loop
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, setup_name,

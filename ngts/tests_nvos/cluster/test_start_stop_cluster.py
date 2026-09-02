@@ -41,6 +41,7 @@ INVALID_SHOW_EXPECTED_OUTPUT = {'NVUE': INVALID_SHOW_EXPECTED_OUTPUT_NVUE, 'Open
 
 @disabled_access_ports
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.nvl_ci
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_cluster_app_start_stop(engines, devices, random_api, has_loopbox, standalone_system, setup_name):

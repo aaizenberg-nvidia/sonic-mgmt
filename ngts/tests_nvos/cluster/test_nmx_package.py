@@ -206,6 +206,7 @@ def nmx_package_flow(app, path, new_version):
 
 @pytest.mark.fae
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 def test_nmx_package_bad_flow(devices, engines, test_name, test_api):
