@@ -1084,6 +1084,19 @@ class MRCConsts:
     TC_OCC_ALLOWED_DEVIATION = 0.15
     TC_OCC_ALLOWED_DEVIATION_BISECTION = 1
 
+    # Expected SRv6 egress TC occAvg overhead over the IPv6 reference, in buffer cells.
+    # SRv6 uN costs an extra SID lookup and destination rewrite, which lengthens buffer
+    # residence (~45 ns/packet on SPC4). Measured +2.08..+2.66 cells over 352 regression
+    # observations on SPC4/NVUE. SPC5 and SPC6 overheads fall inside the +-1 cell tolerance,
+    # so they stay at 0 and their comparison band is unchanged.
+    # SPC4 has no SONiC coverage: get_srv6_tests_skip_condition skips SPC4 under SonicCli.
+    # Re-validate the SPC4 value if that skip is ever removed.
+    BISECTION_SRV6_OCC_OVERHEAD_BY_CHIP_TYPE = {
+        "SPC4": 2.4,
+        "SPC5": 0,
+        "SPC6": 0,
+    }
+
     # MRC1 + MRC2 data packets per stream for many-to-one SRv6 tests (workload_1 default is 6).
     MANY_TO_ONE_MRC_NUM_PACKETS_BY_CHIP_TYPE = {
         "SPC6": 15,

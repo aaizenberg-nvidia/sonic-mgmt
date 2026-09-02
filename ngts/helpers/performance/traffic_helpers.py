@@ -830,7 +830,8 @@ def is_tolerance_value_valid(tolerance):
     return 0 < tolerance < 1
 
 
-def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_validate, allowed_deviation, violations_list):
+def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_validate, allowed_deviation,
+                                violations_list, reference_offset=0):
     """
     This function is used to compare the TC occupancy to a reference TC occupancy
     :param traffic_json: current test validation json
@@ -841,6 +842,11 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
     if allowed_deviation is a float, it is interpreted as a percentage deviation from the reference TC occupancy
     if allowed_deviation is an int, it is interpreted as an actual value deviation from the reference TC occupancy
     :param violations_list: list of violations
+    :param reference_offset: expected offset of the measured occupancy from the reference, in buffer cells.
+    The comparison band is centered on reference + reference_offset instead of on the reference itself,
+    which keeps the comparison relative while allowing for a known, expected difference between the two
+    runs (i.e the SRv6 uN forwarding overhead over an IPv6 baseline). Defaults to 0, which reproduces
+    the plain reference-centered band.
     """
     with allure.step(f"Compare TC occupancy to reference for {tc_to_validate}"):
         tc_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
@@ -854,19 +860,29 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
                         for key in tc_keys:
                             tc_occ = tc_dict[key]
                             reference_tc_occ = get_tc_occ_from_traffic_json(reference_json, port_group_name, key, tc_name)
+                            expected_tc_occ = reference_tc_occ + reference_offset
                             if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
-                                min_limit, max_limit = reference_tc_occ * (1 - allowed_deviation), reference_tc_occ * (1 + allowed_deviation)
+                                min_limit = expected_tc_occ * (1 - allowed_deviation)
+                                max_limit = expected_tc_occ * (1 + allowed_deviation)
                             else:
-                                min_limit, max_limit = reference_tc_occ - allowed_deviation, reference_tc_occ + allowed_deviation
+                                min_limit = expected_tc_occ - allowed_deviation
+                                max_limit = expected_tc_occ + allowed_deviation
                             min_limit = max(min_limit, 0)
                             rounded_tc_occ = round_for_reference_comparison(tc_occ, reference_tc_occ)
                             rounded_min_limit = round_for_reference_comparison(min_limit, reference_tc_occ)
                             rounded_max_limit = round_for_reference_comparison(max_limit, reference_tc_occ)
                             if rounded_tc_occ < rounded_min_limit or rounded_tc_occ > rounded_max_limit:
+                                expected_text = ""
+                                if reference_offset:
+                                    rounded_reference = round_for_reference_comparison(reference_tc_occ,
+                                                                                       reference_tc_occ)
+                                    expected_text = (f" (reference {rounded_reference} plus expected "
+                                                     f"offset {reference_offset})")
                                 violations_list.append(
                                     f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {key} "
-                                    f"is not within reference comparison range {rounded_min_limit} - {rounded_max_limit}, "
-                                    f"current value: {rounded_tc_occ}"
+                                    f"is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}"
+                                    f"{expected_text}, current value: {rounded_tc_occ}"
                                 )
 
 

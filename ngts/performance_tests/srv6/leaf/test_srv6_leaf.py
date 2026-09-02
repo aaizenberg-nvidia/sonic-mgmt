@@ -105,9 +105,12 @@ class TestSRv6Leaf(TestSRv6Base):
             self.wait_for_traffic_to_stabilize("bisection")  # TODO: see wait_for_traffic_to_stabilize — replace fixed sleep
 
         with allure.step("Verifying the traffic for all egress ports"):
-            additional_validations = self.get_additional_validations(traffic_type,
-                                                                     tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
-                                                                     drop_over_max_sample_port=upstream[0] if is_drop_over_max else None)
+            tc_occ_reference_offset = MRCConsts.BISECTION_SRV6_OCC_OVERHEAD_BY_CHIP_TYPE[self.chip_type]
+            additional_validations = self.get_additional_validations(
+                traffic_type,
+                tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
+                drop_over_max_sample_port=upstream[0] if is_drop_over_max else None,
+                tc_occ_reference_offset=tc_occ_reference_offset)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
