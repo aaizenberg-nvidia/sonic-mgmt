@@ -706,7 +706,7 @@ def verify_ib_interface_counters_cli_structure_nvl(devices):
         logger.info(f"Counters output: {counters_dict}")
 
         expectations = [
-            (NvlInterfaceConsts.NVL, True),
+            (IbInterfaceConsts.NVL, True),
             (IbInterfaceConsts.IB_PORT_TYPE, False),
             (IbInterfaceConsts.LINK, True)]
 
@@ -719,11 +719,15 @@ def verify_ib_interface_counters_cli_structure_nvl(devices):
     with allure.step('Verify NVL interface counters link'):
         counters_output = selected_port.interface.counters.link.show()
         counters_dict = Tools.OutputParsingTool.parse_json_str_to_dictionary(counters_output).get_returned_value()
-        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.NVL_COUNTERS_LINK_FIELDS).verify_result()
+        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.LINK_STATS_QNT3_UNDER_LINK).verify_result()
 
     with allure.step('Verify NVL interface counters nvl'):
-        selected_port.interface.counters.nvl.errors.show().get_returned_value()
-        selected_port.interface.counters.nvl.drops.show().get_returned_value()
+        counters_output = selected_port.interface.counters.nvl.show()
+        counters_dict = Tools.OutputParsingTool.parse_json_str_to_dictionary(counters_output).get_returned_value()
+        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.NVL_COUNTERS_NVL_FIELDS).verify_result()
+        for sub_counters in IbInterfaceConsts.NVL_COUNTERS_NVL_FIELDS:
+            Tools.OutputParsingTool.parse_json_str_to_dictionary(
+                selected_port.interface.counters.nvl.show(op_param=sub_counters)).verify_result()
 
 
 def verify_ib_interface_counters_cli_structure_ib(devices):

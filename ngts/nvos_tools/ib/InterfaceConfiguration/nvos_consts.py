@@ -223,7 +223,7 @@ class IbInterfaceConsts:
     # IB counters expected fields list (defined at end to reference constants defined above)
     IB_COUNTERS_EXPECTED_OPTIONS = [COUNTERS_ERRORS, COUNTERS_DROPS, COUNTERS_FAST_RECOVERY]
     NVL_COUNTERS_FIELDS = [LINK, NVL]
-    NVL_COUNTERS_LINK_FIELDS = [COUNTERS_ERRORS, COUNTERS_DROPS]
+    NVL_COUNTERS_NVL_FIELDS = [COUNTERS_ERRORS, COUNTERS_DROPS]
 
     # Non-IB interfaces forbidden options (should not have these sub-options under counters)
     # Note: 'nvl' is from NvlInterfaceConsts.NVL_PORT_TYPE, included as string to avoid cross-class reference

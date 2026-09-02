@@ -13,7 +13,7 @@ logger = logging.getLogger()
 
 @pytest.mark.simx
 @pytest.mark.general
-def test_show_commands_validate(engines, random_api):
+def test_show_commands_validate(engines, devices, random_api):
     """
     @summary:
     Basic validation all show commands
@@ -43,6 +43,8 @@ def test_show_commands_validate(engines, random_api):
             show_cmd_list = command_tree.find_paths(cmd_node)
             # create list of full show commands
             show_cmd_list = [(command_start_str + " " + show_cmd) for show_cmd in show_cmd_list]
+            unsupported_cmds = set(devices.dut.unsupported_commands_list)
+            show_cmd_list = [show_cmd for show_cmd in show_cmd_list if show_cmd not in unsupported_cmds]
             logger.info("\nShow command list:\n")
             output = ""
             for show_cmd in show_cmd_list:

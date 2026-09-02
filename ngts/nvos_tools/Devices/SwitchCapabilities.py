@@ -89,6 +89,16 @@ class NoFanCapability(BaseCapability):
         )
 
 
+class NoPdbCapability(BaseCapability):
+    """Capability for switches without PDB DC inputs (environment power leaf pruned)."""
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="NoPDB",
+            unsupported_commands={"nv show platform environment power"},
+        )
+
+
 class NoTransceiverCapability(BaseCapability):
     """Capability for switches without transceivers (transceivers stats category pruned)."""
 

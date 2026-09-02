@@ -32,6 +32,7 @@ from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
 from ngts.nvos_tools.Devices.SwitchCapabilities import (
     CpoCapability,
     NoAsicPowerCapability,
+    NoFanCapability,
     NoPSUCapability,
     PortiaCpoCapability,
     SwitchCapabilityHandler,
@@ -3808,6 +3809,7 @@ class PortiaSwitch(RosalindSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
+        SwitchCapabilityHandler.apply_capabilities(self, [NoPSUCapability(), NoFanCapability()])
 
     def _init_constants(self):
         super()._init_constants()
