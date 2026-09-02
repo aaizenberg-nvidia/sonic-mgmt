@@ -74,6 +74,7 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
         TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
 
         skip_chassis_mapping = is_bug_active(4207869) and standalone_system
+        _wait_until_fm_config_has_gfm_value(engines, sdn)
         config_files_paths = get_current_config_files_paths(sdn, devices, skip_chassis_mapping)
         if not skip_chassis_mapping:
             with allure.step("Wait for chassis_mapping to be populated by nmx-c before baseline snapshot"):
@@ -98,13 +99,14 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
         with allure.step("Running sdn factory reset"):
             ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
 
+        _wait_until_fm_config_has_gfm_value(engines, sdn)
         verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                                  skip_chassis_mapping, GFM_WAIT_EXPECTED_AFTER_SDN_RESET)
+                                                  skip_chassis_mapping)
 
         with allure.step("Reboot and verify configuration not changed"):
             result_obj, duration = OperationTime.save_duration('reboot', '', test_name, system.reboot.action_reboot)
             verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                                      skip_chassis_mapping, GFM_WAIT_EXPECTED_AFTER_REBOOT)
+                                                      skip_chassis_mapping)
 
     finally:
         current_time = get_current_time(engines)
@@ -114,18 +116,8 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
             OperationTime.verify_operation_time(duration, devices.dut.reset_factory, devices).verify_result()
 
 
-# GFM_WAIT_TIMEOUT_SEC is GFM-owned (NVBug 6348727 - Not-a-bug): 'nv action reset sdn
-# factory-default' regenerates it from the GFM package template, where the default is
-# empty, while a running GFM writes 360. The expected rendering therefore depends on the
-# verification point, so each verify call states the exact value it expects instead of
-# byte-comparing this key against the snapshot.
-GFM_WAIT_KEY = 'GFM_WAIT_TIMEOUT_SEC='
-GFM_WAIT_EXPECTED_AFTER_SDN_RESET = ''    # GFM package template default
-GFM_WAIT_EXPECTED_AFTER_REBOOT = '360'    # value written by running GFM
-
-
 def verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
-                                              skip_chassis_mapping, expected_gfm_wait_value):
+                                              skip_chassis_mapping):
     """
     Verify current config equals given config for all apps on this device.
     Uses device-specific app configuration to handle different device types.
@@ -148,17 +140,6 @@ def verify_current_config_equals_given_config(sdn, engines, devices, initial_con
                     continue
                 initial_config_set = set(line.strip() for line in initial_config_contents[file_type].strip().split('\n') if line.strip())
                 current_config_set = set(line.strip() for line in current_config_content.strip().split('\n') if line.strip())
-                if file_type == ClusterConsts.NMX_CONTROLLER_CONFIG_FM:
-                    observed_values = sorted(line[len(GFM_WAIT_KEY):] for line in current_config_set
-                                             if line.startswith(GFM_WAIT_KEY))
-                    logger.info(f"GFM_WAIT_TIMEOUT_SEC rendered as {observed_values}, expected "
-                                f"['{expected_gfm_wait_value}'] at this verification point (NVBug 6348727)")
-                    if observed_values != [expected_gfm_wait_value]:
-                        errors_list.append(f"GFM_WAIT_TIMEOUT_SEC expected to render exactly as "
-                                           f"'{expected_gfm_wait_value}' at this verification point (GFM-owned "
-                                           f"key, NVBug 6348727), got: {observed_values}")
-                    initial_config_set = {line for line in initial_config_set if not line.startswith(GFM_WAIT_KEY)}
-                    current_config_set = {line for line in current_config_set if not line.startswith(GFM_WAIT_KEY)}
                 if initial_config_set != current_config_set:
                     errors_list.append(f"Configuration mismatch in file {file_type}:\nInitial: {initial_config_set}\nCurrent: {current_config_set}")
         assert not errors_list, "\n\n".join(errors_list)
@@ -190,6 +171,29 @@ def get_current_config_files_paths(sdn, devices, skip_chassis_mapping):
                 current_installed_config_path = output[installed_file]['path']
                 files_dict[file_type] = current_installed_config_path
     return files_dict
+
+
+def _wait_until_fm_config_has_gfm_value(engines, sdn):
+    """
+    Wait until a generated fm_config carries a value for GFM_WAIT_TIMEOUT_SEC. Observed: for ~10s after
+    an sdn/system factory reset brings nmx-controller back, `generate` still renders the package template
+    (key empty) before GFM's value appears, and no NVUE state exposes that transition. NVBug 6348727
+    (Not-a-bug) covers the value itself, not this window.
+    """
+    fm_config = sdn.config.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[ClusterConsts.NMX_CONTROLLER_CONFIG_FM]
+    with allure.step("Wait for GFM_WAIT_TIMEOUT_SEC to be populated in generated fm_config"):
+        for _ in range(12):
+            generate_output = fm_config.action_generate_sdn()
+            generated_file = ClusterTools.get_generated_file_name(generate_output.returned_value, 'config')
+            output = OutputParsingTool.parse_show_output_to_dict(fm_config.files.show(output_format=OutputFormat.json),
+                                                                 output_format=OutputFormat.json).get_returned_value()
+            content = engines.dut.run_cmd(f"sudo cat {output[generated_file]['path']}")
+            if any(line.strip().startswith('GFM_WAIT_TIMEOUT_SEC=') and line.strip() != 'GFM_WAIT_TIMEOUT_SEC='
+                   for line in content.split('\n')):
+                return
+            logger.info("GFM_WAIT_TIMEOUT_SEC has no value yet, sleeping for 5 seconds")
+            time.sleep(5)
+        assert False, "fm_config GFM_WAIT_TIMEOUT_SEC did not get a value within 60s after nmx-controller came back"
 
 
 def _wait_until_chassis_mapping_file_has_content(engines, sdn):
