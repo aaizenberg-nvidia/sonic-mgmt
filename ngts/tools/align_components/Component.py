@@ -54,7 +54,8 @@ class BmcComponent(Component):
             self.comp_mapping[Defaults.SMA_NAME] = "MGX_FW_NVSwitch_SMA_0"
 
     def get_installed_version(self) -> str:
-        respond = self.rf_api.get_query(f'{RedfishCollection.FIRMWARE_INVENTORY}/{self.comp_mapping[self.name]}')
+        endpoint: str = f'{RedfishCollection.FIRMWARE_INVENTORY}/{self.comp_mapping[self.name]}'
+        respond = self.rf_api.get_query(endpoint)
         if 'Version' not in respond:
             raise RuntimeError(f"'Version' missing for {self.name}. Response: {respond}")
         return respond['Version']

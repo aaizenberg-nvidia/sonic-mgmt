@@ -112,9 +112,12 @@ def start_components_update(_args):
     if was_update_performed:
         component_manager.perform_pc(switch_info)
         try:
-            _wait_cpu_boot_start(rf_api)
+            _wait_for_bmc(rf_api, RedfishCollection.FIRMWARE_INVENTORY, "CPU firmware inventory",
+                          lambda r: any(RedfishCollection.CPU_REDFISH_NAME in m["@odata.id"] for m in r["Members"]))
+            _wait_for_bmc(rf_api, RedfishCollection.BMC_MANAGER, "BMC manager",
+                          lambda r: r["Status"]["State"] == "Enabled")
         except Exception as e:
-            print("Timed out waiting for BMC to see CPU boot to complete.")
+            print("Timed out waiting for BMC to complete boot.")
             raise e
 
     component_manager.print_installed_versions()
@@ -257,24 +260,22 @@ def _has_non_encrypted_fpga(bmc_ip):
     non_encrypted_fpga_ips = {'10.7.113.148', '10.193.65.142'}
     return bmc_ip in non_encrypted_fpga_ips
 
+# Try for 3 minutes (24 * 5 seconds) to wait for BMC complete boot.
 
-# Try for 2 minutes (24 * 5 seconds) to wait for BMC to see CPU component boot.
-def _wait_cpu_boot_start(rf_api):
-    tries = 24
-    delay = 5
-    cpu_inv_name = RedfishCollection.CPU_REDFISH_NAME
 
+def _wait_for_bmc(rf_api, query_path, what, ready):
+    tries, delay = Defaults.BMC_READY_TRIES, Defaults.BMC_READY_DELAY
     for attempt in range(1, tries + 1):
-        respond = rf_api.get_query(f"{RedfishCollection.FIRMWARE_INVENTORY}")
-        if cpu_inv_name.lower() in str(respond).lower():
-            print(f"{cpu_inv_name} found in firmware inventory.")
-            return True
+        try:
+            if ready(rf_api.get_query(query_path)):
+                print(f"{what} ready.")
+                return
+        except Exception as err:  # BMC still booting: connection refused / partial JSON
+            print(f"{what} query failed: {err}")
+        print(f"{what} not ready; attempt {attempt}/{tries}. Retrying in {delay}s...")
+        time.sleep(delay)
 
-        if attempt < tries:
-            print(f"{cpu_inv_name} not found yet; attempt {attempt}/{tries}. Retrying in {delay}s...")
-            time.sleep(delay)
-
-    raise RuntimeError(f"{cpu_inv_name} not found after {tries} tries")
+    raise RuntimeError(f"{what} not ready after {tries * delay}s")
 
 
 def parse_args():
