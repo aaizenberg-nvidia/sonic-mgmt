@@ -1,1 +1,0 @@
-Fixture setup/teardown failed: DUT health check did not pass. Services not running: swss, syncd.
