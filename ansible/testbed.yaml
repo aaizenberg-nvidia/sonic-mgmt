@@ -12223,6 +12223,51 @@
      - slm-113
   comment: Mellanox MEC testbed
 
+- conf-name: slm-244-ptf-any
+  group-name: vm-t1
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip: 1.1.1.1/16
+  ptf_ipv6:
+  server: server_54
+  vm_base: VM0000
+  dut:
+     - slm-244
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
+- conf-name: slm-175-ptf-any
+  group-name: vm-t1
+  topo: ptf-any
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-dummy
+  ptf_ip: 1.1.1.1/16
+  ptf_ipv6:
+  server: server_54
+  vm_base: VM0000
+  dut:
+     - slm-175
+  inv_name: lab
+  comment: Mellanox MEC testbed
+
+- conf-name: slm-175-bmc-dual-mgmt
+  group-name: slm175bm
+  topo: bmc-dual-mgmt
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-slm-175
+  ptf_ip: 10.220.189.62/23
+  ptf_ipv6:
+  server: server_100
+  vm_base:
+  dut:
+    - slm-175-bmc
+    - slm-175
+  bmc_host: slm-175
+  inv_name: lab
+  auto_recover: 'False'
+  comment: BMC dual-mgmt testbed for slm-175
+
 - conf-name: mtvr-panther-05-t0
   group-name: vm-t1
   topo: t0
