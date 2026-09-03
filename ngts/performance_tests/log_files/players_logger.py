@@ -82,3 +82,17 @@ def init_players_cmd_logger(timestamp, log_file_name_prefix):
 def get_players_cmd_logger():
     """Return the players-command logger, or None if init_players_cmd_logger was not called."""
     return _players_cmd_logger
+
+
+def get_players_cmd_log_paths():
+    """Return existing players-command log file paths, oldest first, or [] if not yet initialized.
+
+    A RotatingFileHandler moves older content into ``<base>.1``, ``<base>.2``, ... as the
+    current file fills up, so the base file alone may miss earlier commands from the same test.
+    """
+    if _players_cmd_logger is None or not _players_cmd_logger.handlers:
+        return []
+    handler = _players_cmd_logger.handlers[0]
+    base = handler.baseFilename
+    rotated = [f"{base}.{i}" for i in range(handler.backupCount, 0, -1)]
+    return [path for path in rotated + [base] if os.path.exists(path)]

@@ -24,6 +24,7 @@ from ngts.helpers.performance.performance_db_helpers import (create_performance_
                                                              add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.thread_log_filter import config_root_logger
 from ngts.performance_tests.log_files.players_logger import (init_players_cmd_logger,
+                                                             get_players_cmd_log_paths,
                                                              PLAYERS_CMD_LOGGER_NAME)
 from ngts.helpers.performance.port_selection import (set_cli_port_selection_options,
                                                      get_cli_port_selection_options,
@@ -222,6 +223,13 @@ def basic_test_configuration(request, players, basic_setup_configuration, burst_
             with allure.step(f"Attaching Players Logs to Allure"):
                 print_players_logs(print_to_stdout=True, players_info=players)
                 remove_players_logs()
+            players_cmd_log_paths = get_players_cmd_log_paths()
+            if players_cmd_log_paths:
+                with allure.step("Attaching Players Commands Log to Allure"):
+                    for players_cmd_log_path in players_cmd_log_paths:
+                        attachment_name = f"{PLAYERS_CMD_LOGGER_NAME}:{os.path.basename(players_cmd_log_path)}"
+                        allure.attach.file(players_cmd_log_path, name=attachment_name,
+                                           attachment_type=allure.attachment_type.TEXT)
 
 
 @pytest.fixture(scope='function', autouse=True)
