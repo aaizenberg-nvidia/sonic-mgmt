@@ -3056,6 +3056,21 @@
   comment: Mellanox MTR testbed
   use_converged_peers: True
 
+- conf-name: r-bison-08-t0-isolated-d2u510s2
+  group-name: vm-t1
+  topo: t0-isolated-d2u510s2
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-r-bison-08
+  ptf_ip: 10.215.40.182/20
+  ptf_ipv6:
+  server: server_95
+  vm_base: VM5557
+  dut:
+    - r-bison-08
+  inv_name: lab
+  comment: Mellanox MTR testbed
+  use_converged_peers: True
+
 - conf-name: r-bison-08-t1
   group-name: vm-t1
   topo: t1
