@@ -1,23 +1,24 @@
-import logging
-import re
 from typing import Callable, Iterable
+import logging
+import retry
+import re
 
-from retry import retry
-
-from ngts.nvos_constants.constants_nvos import HealthConsts, LogsSources
-from ngts.nvos_tools.infra.Fae import Fae
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.Tools import Tools
-from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, DelayedRecovery, InterfaceConsts
+from ngts.nvos_constants.constants_nvos import HealthConsts, LogsSources  # noqa: F401
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.system.System import System
+from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.infra.Fae import Fae
+from ngts.ngts_types import EnginesT
 import time
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
-def _pre_port_config(ports):
+def _pre_port_config(ports: list[Port]) -> list[dict]:
     """
     in this function we will configure the port with the following:
     - description
@@ -44,7 +45,7 @@ def _pre_port_config(ports):
         return show_ports_output
 
 
-def _post_port_config(show_ports_output, ports, ignore_fields=None):
+def _post_port_config(show_ports_output: list[dict], ports: list[Port], ignore_fields: list[str] = None) -> list[dict]:
     diff_result = []
     with allure.step("verify link configurations"):
         for output, port in zip(show_ports_output, ports):
@@ -96,7 +97,8 @@ def find_sensor_in_health_issues(sensor_name: str, health_issues: dict) -> str |
     return None
 
 
-def filter_eligible_sensors(sensor_names: Iterable[str], sensor_output: dict,
+def filter_eligible_sensors(sensor_names: Iterable[str],
+                            sensor_output: dict,
                             available_psu_list: Iterable[str],
                             required_keys: Iterable[str]) -> list[str]:
     """Return sensors that are 'ok', expose every key in `required_keys`, and
@@ -109,14 +111,14 @@ def filter_eligible_sensors(sensor_names: Iterable[str], sensor_output: dict,
     ]
 
 
-@retry(AssertionError, tries=6, delay=10)
-def validate_health(system, expected):
+@retry.retry(AssertionError, tries=6, delay=10)
+def validate_health(system: System, expected: str) -> None:
     """Retry-wrapped wrapper around `system.validate_health_status`."""
     system.validate_health_status(expected)
 
 
-@retry(AssertionError, tries=6, delay=10)
-def validate_sensor_state(show_fn: Callable[[], str], sensor_name: str, expected_state: str):
+@retry.retry(AssertionError, tries=6, delay=10)
+def validate_sensor_state(show_fn: Callable[[], str], sensor_name: str, expected_state: str) -> None:
     """Validate a sensor's `state` field. `show_fn` is the bound
     `nv show platform environment <kind>` callable (e.g.
     `Platform().environment.voltage.show`)."""
@@ -127,8 +129,8 @@ def validate_sensor_state(show_fn: Callable[[], str], sensor_name: str, expected
     )
 
 
-@retry(AssertionError, tries=6, delay=10)
-def validate_health_issues(system, sensor_name: str, *, expected_present: bool):
+@retry.retry(AssertionError, tries=6, delay=10)
+def validate_health_issues(system: System, sensor_name: str, *, expected_present: bool) -> None:
     """Validate that a sensor appears (or not) in the health issues dict."""
     health_output = Tools.OutputParsingTool.parse_json_str_to_dictionary(
         system.health.show()).get_returned_value()
@@ -146,7 +148,7 @@ def validate_health_issues(system, sensor_name: str, *, expected_present: bool):
         )
 
 
-def validate_invalid_voltage_value_logged(system, engine):
+def validate_invalid_voltage_value_logged(system: System, engine: EnginesT) -> None:
     """Verify syslog contains evidence that an unreadable voltage value was detected.
 
     Called after a non-numeric (gibberish) value is injected.  Two messages are
@@ -157,7 +159,7 @@ def validate_invalid_voltage_value_logged(system, engine):
     with allure.step("Verify syslog contains evidence of unreadable voltage value"):
         system.log.verify_expected_logs(
             logs_to_find=[
-                'Voltage sensor reading is not available',
+                'Sensor voltage reading is not available',
                 'voltage=N/A',
             ],
             logs_source=LogsSources.SYSLOG,

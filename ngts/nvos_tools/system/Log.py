@@ -13,7 +13,7 @@ from ngts.nvos_tools.infra.DefaultDict import DefaultDict
 from ngts.constants.constants import BugHandlerConst
 from ngts.tools.test_utils import allure_utils as allure
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class BaseLog(BaseComponent):
@@ -73,10 +73,7 @@ class Log(BaseLog):
                     break
 
                 with allure.step(f"Try to find expected logs in {log_file}"):
-                    cmd = 'zcat' if log_file.endswith('.gz') else 'cat'
-                    output = engine.run_cmd(f'{cmd} {RemarkableLogsConsts.LOGS_PATH}'
-                                            f''
-                                            f'{log_file} | grep -E -a "{grep_logs}"')
+                    output: str = engine.run_cmd(f'zgrep -a -E "{grep_logs}" {RemarkableLogsConsts.LOGS_PATH}{log_file}')
 
                 if output:
                     for log in logs_to_find:
