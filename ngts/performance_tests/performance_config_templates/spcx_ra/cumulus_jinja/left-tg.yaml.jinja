@@ -75,38 +75,6 @@
             action:
               permit: {}
         type: mac
-      {# Bound inbound on the DUT-facing ports only. Never on the mloops: they carry the
-         generated traffic inbound from the physical loopback. #}
-      acl-drop-roce-data-v4:
-        rule:
-          '10':
-            action:
-              deny: {}
-            match:
-              ip:
-                protocol: udp
-                udp:
-                  dest-port:
-                    '4791': {}
-          '20':
-            action:
-              permit: {}
-        type: ipv4
-      acl-drop-roce-data-v6:
-        rule:
-          '10':
-            action:
-              deny: {}
-            match:
-              ip:
-                protocol: udp
-                udp:
-                  dest-port:
-                    '4791': {}
-          '20':
-            action:
-              permit: {}
-        type: ipv6
     bridge:
       domain:
         br_default:
@@ -156,11 +124,6 @@
       {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
-        acl:
-          acl-drop-roce-data-v4:
-            inbound: {}
-          acl-drop-roce-data-v6:
-            inbound: {}
         bridge:
           domain:
             br_default:
