@@ -93,10 +93,10 @@ class TransceiversConsts:
             transceiver_type='Wolverine_sian3',
             last_release_path=f"{TRANSCEIVERS_FIRMWARES_PATH}110_Wolverine2_s3/{TRANSCEIVERS_RELEASE}",
             test_versions_path=f"{TRANSCEIVERS_APPROVED_FIRMWARES_PATH}Wolverine_sian3/",
-            upgrade_version_name="fw_110_030_00086_dev_signed.bin",
-            downgrade_version_name="fw_110_030_00083_dev_signed.bin",
-            upgrade_version_number="110.30.86",
-            downgrade_version_number="110.30.83",
+            upgrade_version_name="fw_110_030_00102_dev_signed.bin",
+            downgrade_version_name="fw_110_030_00086_dev_signed.bin",
+            upgrade_version_number="110.30.102",
+            downgrade_version_number="110.30.86",
             installation_time=300
         ),
         '130': Transceiver(
