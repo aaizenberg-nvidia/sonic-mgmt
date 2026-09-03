@@ -374,11 +374,14 @@ class TestSRv6Base:
                                                                                                           'tolerance': None,
                                                                                                           'port_group_name_to_validate_list': []})
                 if drop_over_max_sample_port is None:
-                    additional_validations['compare_pg_to_reference'] = Validation(compare_pg_to_reference, {'reference_json': ipv6_validation_json,
-                                                                                                             'pg_keys': [ValidationConsts.OCC_AVG],
-                                                                                                             'pg_to_validate': MRCConsts.PG_LIST,
-                                                                                                             'allowed_deviation': MRCConsts.HEADROOM_ALLOWED_DEVIATION,
-                                                                                                             'pg_buffer_type': ValidationConsts.PG_BUFFER_DATAFRAME})
+                    additional_validations['compare_pg_to_reference'] = Validation(
+                        compare_pg_to_reference,
+                        {'reference_json': ipv6_validation_json,
+                         'pg_keys': [ValidationConsts.OCC_AVG],
+                         'pg_to_validate': MRCConsts.PG_LIST,
+                         'allowed_deviation': MRCConsts.HEADROOM_ALLOWED_DEVIATION,
+                         'pg_buffer_type': ValidationConsts.PG_BUFFER_DATAFRAME,
+                         'min_band_cells': MRCConsts.MIN_PG_OCC_BAND_CELLS})
                 if drop_over_max_sample_port is None and validate_pg_total_occ:
                     additional_validations['compare_pg_total_occ_to_reference'] = Validation(
                         compare_pg_total_occ_to_reference,

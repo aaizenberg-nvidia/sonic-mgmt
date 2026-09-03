@@ -3,7 +3,8 @@
 import pytest
 
 from ngts.constants.performance_constants import MRCConsts, ValidationConsts
-from ngts.helpers.performance.traffic_helpers import (compare_pg_total_occ_to_reference,
+from ngts.helpers.performance.traffic_helpers import (compare_pg_to_reference,
+                                                      compare_pg_total_occ_to_reference,
                                                       compare_tc_occ_to_reference)
 
 SAMPLE_ID = "sample #1"
@@ -330,3 +331,140 @@ def test_pg_total_band_matches_the_configured_deviation():
     just_outside = reference_total * (1 + deviation) + 0.001
     assert run_pg_total_comparison([(DOWNSTREAM_GROUP, just_inside, 0.0)], reference) == []
     assert len(run_pg_total_comparison([(DOWNSTREAM_GROUP, just_outside, 0.0)], reference)) == 1
+
+
+# --- shared pool comparison with a band floor ---
+
+# (port group, IPv6 reference occAvg, SRv6 measured occAvg) for the PG0 shared pool.
+# SPC6 keeps this pool nearly empty, so its deviation swings in both directions between
+# runs while the absolute delta stays under half a cell.
+SPC6_SHARED_POOL_SAMPLES = [
+    (DOWNSTREAM_GROUP, 0.211528, 0.331261),
+    (UPSTREAM_GROUP, 0.203402, 0.367000),
+    (DOWNSTREAM_GROUP, 0.331522, 0.337311),
+    (UPSTREAM_GROUP, 0.370878, 0.364700),
+    (DOWNSTREAM_GROUP, 0.558033, 0.215844),
+    (UPSTREAM_GROUP, 0.331639, 0.226739),
+]
+# SPC4 keeps the shared pool loaded, so the percentage band stays the binding rule there.
+SPC4_SHARED_POOL_SAMPLES = [
+    (DOWNSTREAM_GROUP, 51.389547, 57.021492),
+    (UPSTREAM_GROUP, 51.321984, 57.150867),
+]
+
+PG_BAND_FLOOR = MRCConsts.MIN_PG_OCC_BAND_CELLS
+PG_BAND_PERCENTAGE = MRCConsts.HEADROOM_ALLOWED_DEVIATION
+
+
+def build_shared_pool_json(occupancy_by_group):
+    """
+    Build a minimal traffic validation json holding PG0 shared pool occupancy.
+
+    Args:
+        occupancy_by_group (dict): {port_group: occAvg}.
+
+    Returns:
+        dict: Traffic json shaped like the SDK TrafficValidator output.
+    """
+    port_groups = {
+        group_name: {ValidationConsts.PG_BUFFER_DATAFRAME: [
+            {ValidationConsts.PG_BUFFER: 0, ValidationConsts.OCC_AVG: occ_avg}]}
+        for group_name, occ_avg in occupancy_by_group.items()
+    }
+    return {ValidationConsts.TC_PG_SAMPLES: {SAMPLE_ID: port_groups}}
+
+
+def run_shared_pool_comparison(measured_by_group, reference_by_group, min_band_cells=0):
+    """
+    Run compare_pg_to_reference on the shared pool frame and return the violations.
+
+    Args:
+        measured_by_group (dict): {port_group: occAvg} for the run under test.
+        reference_by_group (dict): {port_group: occAvg} for the reference run.
+        min_band_cells: floor for the band half width, in buffer cells.
+
+    Returns:
+        list: Violation strings produced by the comparison.
+    """
+    violations_list = []
+    compare_pg_to_reference(
+        traffic_json=build_shared_pool_json(measured_by_group),
+        reference_json=build_shared_pool_json(reference_by_group),
+        pg_keys=[ValidationConsts.OCC_AVG],
+        pg_to_validate=MRCConsts.PG_LIST,
+        allowed_deviation=PG_BAND_PERCENTAGE,
+        violations_list=violations_list,
+        pg_buffer_type=ValidationConsts.PG_BUFFER_DATAFRAME,
+        min_band_cells=min_band_cells,
+    )
+    return violations_list
+
+
+@pytest.mark.parametrize("group_name,reference_occ,measured_occ", SPC6_SHARED_POOL_SAMPLES)
+def test_shared_pool_floor_accepts_near_empty_buffer(group_name, reference_occ, measured_occ):
+    """Every measured SPC6 shared pool pair sits inside the floored band."""
+    violations = run_shared_pool_comparison({group_name: measured_occ},
+                                            {group_name: reference_occ},
+                                            min_band_cells=PG_BAND_FLOOR)
+    assert violations == [], violations
+
+
+def test_shared_pool_without_floor_rejects_near_empty_buffer():
+    """Without the floor the same SPC6 pairs are rejected, which is today's behaviour."""
+    rejected = 0
+    for group_name, reference_occ, measured_occ in SPC6_SHARED_POOL_SAMPLES:
+        if run_shared_pool_comparison({group_name: measured_occ}, {group_name: reference_occ}):
+            rejected += 1
+    assert rejected == 4, f"expected 4 of 6 rejected without the floor, got {rejected}"
+
+
+@pytest.mark.parametrize("group_name,reference_occ,measured_occ", SPC4_SHARED_POOL_SAMPLES)
+def test_shared_pool_floor_is_inert_on_a_loaded_buffer(group_name, reference_occ, measured_occ):
+    """On SPC4 the percentage is the binding rule, so the floor changes nothing."""
+    with_floor = run_shared_pool_comparison({group_name: measured_occ},
+                                            {group_name: reference_occ},
+                                            min_band_cells=PG_BAND_FLOOR)
+    without_floor = run_shared_pool_comparison({group_name: measured_occ},
+                                               {group_name: reference_occ})
+    assert with_floor == without_floor == []
+
+
+def test_shared_pool_floor_never_narrows_the_band():
+    """The floor can only widen a band, so a value that passed still passes.
+
+    Sweeps references either side of the crossover, where the percentage band equals the
+    floor, and asserts the floor never turns a pass into a violation.
+    """
+    crossover = PG_BAND_FLOOR / PG_BAND_PERCENTAGE
+    for reference_occ in (0.2, 1.0, crossover / 2, crossover, crossover * 2, 20.0, 51.4):
+        for offset in (0.0, reference_occ * PG_BAND_PERCENTAGE):
+            measured_occ = reference_occ + offset
+            without_floor = run_shared_pool_comparison({DOWNSTREAM_GROUP: measured_occ},
+                                                       {DOWNSTREAM_GROUP: reference_occ})
+            with_floor = run_shared_pool_comparison({DOWNSTREAM_GROUP: measured_occ},
+                                                    {DOWNSTREAM_GROUP: reference_occ},
+                                                    min_band_cells=PG_BAND_FLOOR)
+            assert not (without_floor == [] and with_floor != []), (
+                f"floor narrowed the band at reference={reference_occ}, measured={measured_occ}")
+
+
+def test_shared_pool_percentage_binds_above_the_crossover():
+    """Above the crossover the percentage is wider, so the floor stops being the limit."""
+    reference_occ = 40.0
+    # 15% of 40 is 6 cells, far beyond the 1 cell floor, so a 5 cell rise must still pass.
+    assert run_shared_pool_comparison({DOWNSTREAM_GROUP: reference_occ + 5.0},
+                                      {DOWNSTREAM_GROUP: reference_occ},
+                                      min_band_cells=PG_BAND_FLOOR) == []
+    # A 7 cell rise exceeds the percentage band and must be reported.
+    assert len(run_shared_pool_comparison({DOWNSTREAM_GROUP: reference_occ + 7.0},
+                                          {DOWNSTREAM_GROUP: reference_occ},
+                                          min_band_cells=PG_BAND_FLOOR)) == 1
+
+
+def test_shared_pool_floor_still_catches_a_loaded_shared_pool():
+    """A near-empty reference with a sustained rise past the floor is still reported."""
+    violations = run_shared_pool_comparison({DOWNSTREAM_GROUP: 5.0},
+                                            {DOWNSTREAM_GROUP: 0.2158},
+                                            min_band_cells=PG_BAND_FLOOR)
+    assert len(violations) == 1, violations
+    assert f"band widened to the {PG_BAND_FLOOR} cell floor" in violations[0]

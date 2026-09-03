@@ -947,6 +947,17 @@ class MRCConsts:
     TRIMMING_COUNTERPOLL_INTERVAL = 1000
     LATENCY_ALLOWED_DEVIATION = 59
     HEADROOM_ALLOWED_DEVIATION = 0.15
+    # Floor for the ingress PG deviation band, in buffer cells. HEADROOM_ALLOWED_DEVIATION is
+    # a percentage, so its width shrinks with the reference and collapses on a near-empty
+    # buffer. SPC4 and SPC5 keep the shared pool loaded at 51 and 26 cells, where 15% is a
+    # stable band. SPC6 absorbs the same traffic in its reserved headroom, leaving a shared
+    # pool of 0.2 to 0.56 cells that has deviated from the reference by 1.7% to 80.4% in both
+    # directions across three sessions. The floor binds below a reference of about 6.7 cells
+    # and the percentage takes over above it, so the band is never narrower than either rule
+    # alone. On a near-empty buffer the lower limit lands below zero, which leaves the check
+    # effectively one sided; that is the only meaningful direction there, since a lower
+    # shared pool reading just means fewer bursts were sampled.
+    MIN_PG_OCC_BAND_CELLS = 1
     # Allowed deviation of the total ingress PG occAvg from the IPv6 reference.
     # Kept separate from HEADROOM_ALLOWED_DEVIATION so the per-frame and the total
     # comparisons can be tuned independently, even though both start at 15%.

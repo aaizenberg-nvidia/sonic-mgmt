@@ -887,7 +887,7 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
 
 
 def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validate, allowed_deviation, violations_list,
-                            pg_buffer_type):
+                            pg_buffer_type, min_band_cells=0):
     """
     Compare PG occupancy to a reference PG occupancy.
 
@@ -902,6 +902,10 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
         violations_list: list of violations
         pg_buffer_type: which PG buffer to validate - ValidationConsts.PG_HEADROOM_DATAFRAME or
                        ValidationConsts.PG_BUFFER_DATAFRAME (REQUIRED - must be explicitly specified)
+        min_band_cells: floor for the band half width, in buffer cells. A percentage
+            allowed_deviation shrinks with the reference and collapses on a near-empty
+            buffer, so the effective band becomes max(allowed_deviation, min_band_cells).
+            Defaults to 0, which leaves the band exactly as allowed_deviation describes it.
     """
     buffer_type_name = "headroom" if pg_buffer_type == ValidationConsts.PG_HEADROOM_DATAFRAME else "buffer"
     pg_index_key = pg_buffer_type.replace("_dataframe", "")
@@ -919,17 +923,27 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
                             reference_pg_occ = get_pg_occ_from_traffic_json(reference_json, port_group_name, key, pg_name,
                                                                             pg_buffer_type)
                             if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
-                                min_limit, max_limit = reference_pg_occ * (1 - allowed_deviation), reference_pg_occ * (1 + allowed_deviation)
+                                deviation_cells = reference_pg_occ * allowed_deviation
                             else:
-                                min_limit, max_limit = reference_pg_occ - allowed_deviation, reference_pg_occ + allowed_deviation
+                                deviation_cells = allowed_deviation
+                            is_floor_binding = deviation_cells < min_band_cells
+                            if is_floor_binding:
+                                deviation_cells = min_band_cells
+                            min_limit = reference_pg_occ - deviation_cells
+                            max_limit = reference_pg_occ + deviation_cells
                             rounded_pg_occ = round_for_reference_comparison(pg_occ, reference_pg_occ)
                             rounded_min_limit = round_for_reference_comparison(min_limit, reference_pg_occ)
                             rounded_max_limit = round_for_reference_comparison(max_limit, reference_pg_occ)
                             if rounded_pg_occ < rounded_min_limit or rounded_pg_occ > rounded_max_limit:
+                                floor_text = ""
+                                if is_floor_binding:
+                                    floor_text = (f" (band widened to the {min_band_cells} cell floor, "
+                                                  f"reference is too small for a meaningful percentage)")
                                 violations_list.append(
                                     f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
                                     f"{buffer_type_name} {key} is not within reference comparison range "
-                                    f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_pg_occ}"
+                                    f"{rounded_min_limit} - {rounded_max_limit}{floor_text}, "
+                                    f"current value: {rounded_pg_occ}"
                                 )
 
 
