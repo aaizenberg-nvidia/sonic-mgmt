@@ -12,7 +12,8 @@ from collections import defaultdict
 from ngts.helpers.performance.traffic_helpers import (pick_random_non_consecutive_ports,
                                                       pick_random_consecutive_ports,
                                                       validate_per_tc, compare_tc_occ_to_reference,
-                                                      compare_latency_to_reference, compare_pg_to_reference)
+                                                      compare_latency_to_reference, compare_pg_to_reference,
+                                                      compare_pg_total_occ_to_reference)
 from ngts.helpers.performance.performance_setup_helpers import (Validation, ValidationConfig, run_traffic,
                                                                 stop_traffic, run_validation, configure_mloops,
                                                                 skip_test_on_unsupported_os, add_test_mongo_metadata,
@@ -333,7 +334,8 @@ class TestSRv6Base:
                 MRCConsts.INGRESS_PORT_GROUP_NAME: {}}
 
     def get_additional_validations(self, traffic_type, tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION,
-                                   drop_over_max_sample_port=None, tc_occ_reference_offset=0):
+                                   drop_over_max_sample_port=None, tc_occ_reference_offset=0,
+                                   validate_pg_total_occ=False):
         """
         Build the SRv6 specific validations that compare this run against the IPv6 reference run.
 
@@ -345,6 +347,9 @@ class TestSRv6Base:
                 When set, the reference comparisons are skipped and only that validation runs.
             tc_occ_reference_offset: Expected offset of the SRv6 TC occupancy from the IPv6
                 reference, in buffer cells. Defaults to 0 for callers with no known overhead.
+            validate_pg_total_occ (bool): Also compare the total ingress PG occupancy, summed
+                over the headroom and the shared pool, against the reference. Defaults to
+                False for callers with no measured baseline for that metric.
 
         Returns:
             dict: Validation name to Validation, ready for ValidationConfig.
@@ -374,6 +379,14 @@ class TestSRv6Base:
                                                                                                              'pg_to_validate': MRCConsts.PG_LIST,
                                                                                                              'allowed_deviation': MRCConsts.HEADROOM_ALLOWED_DEVIATION,
                                                                                                              'pg_buffer_type': ValidationConsts.PG_BUFFER_DATAFRAME})
+                if drop_over_max_sample_port is None and validate_pg_total_occ:
+                    additional_validations['compare_pg_total_occ_to_reference'] = Validation(
+                        compare_pg_total_occ_to_reference,
+                        {'reference_json': ipv6_validation_json,
+                         'pg_keys': [ValidationConsts.OCC_AVG],
+                         'pg_to_validate': MRCConsts.PG_LIST,
+                         'allowed_deviation': MRCConsts.PG_TOTAL_OCC_ALLOWED_DEVIATION,
+                         'pg_buffer_types': MRCConsts.PG_TOTAL_OCC_FRAMES})
 
                 if not is_redmine_issue_active([4743477])[0]:
                     additional_validations['compare_latency_to_reference'] = Validation(compare_latency_to_reference, {'reference_json': ipv6_validation_json,

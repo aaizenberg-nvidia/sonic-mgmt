@@ -933,6 +933,120 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
                                 )
 
 
+def get_pg_port_group_data(traffic_json, port_group_name):
+    """
+    Get one port group's TC/PG sample data out of a validator json.
+
+    Args:
+        traffic_json: traffic validation json
+        port_group_name (str): name of the port group, i.e 'bisection_downstream'
+
+    Returns:
+        dict: The port group's sample data, or None when the port group is absent.
+    """
+    pg_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
+    pg_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)
+    port_group_data = None
+    for port_groups in pg_samples.values():
+        if port_group_name in port_groups:
+            port_group_data = port_groups[port_group_name]
+    return port_group_data
+
+
+def sum_pg_occ_across_frames(port_group_data, pg_key, pg, pg_buffer_types):
+    """
+    Sum one PG occupancy key across several PG frames.
+
+    A priority group is split between a reserved headroom and a dynamically borrowed
+    shared pool, reported as two separate frames. Summing them gives the total occupancy
+    of the priority group regardless of how a given chip divides the load between them.
+
+    Frames are read defensively, so a validator json produced by a collector that does
+    not populate one of them is reported rather than raising.
+
+    Args:
+        port_group_data (dict): One port group's sample data, from get_pg_port_group_data.
+        pg_key (str): occupancy key, i.e ValidationConsts.OCC_AVG
+        pg (int): PG number to sum for
+        pg_buffer_types (list): PG frames to sum, i.e MRCConsts.PG_TOTAL_OCC_FRAMES
+
+    Returns:
+        tuple: (total, missing_frames) where total is the summed occupancy and
+        missing_frames lists the frames that carried no entry for this PG.
+    """
+    total = 0
+    missing_frames = []
+    for pg_buffer_type in pg_buffer_types:
+        pg_index_key = pg_buffer_type.replace("_dataframe", "")
+        pg_occ = None
+        for pg_dict in (port_group_data or {}).get(pg_buffer_type) or []:
+            if pg_dict.get(pg_index_key) == pg:
+                pg_occ = pg_dict.get(pg_key)
+        if pg_occ is None:
+            missing_frames.append(pg_buffer_type)
+            continue
+        total += pg_occ
+    return total, missing_frames
+
+
+def compare_pg_total_occ_to_reference(traffic_json, reference_json, pg_keys, pg_to_validate,
+                                      allowed_deviation, violations_list, pg_buffer_types):
+    """
+    Compare the total PG occupancy, summed across PG frames, to a reference run.
+
+    Unlike compare_pg_to_reference, which looks at a single frame, this sums the reserved
+    headroom and the shared pool so the comparison does not depend on how a chip splits
+    the load between them. The loop is driven from pg_to_validate rather than from the
+    frame rows, so a PG missing from a frame is reported instead of silently skipped.
+
+    Args:
+        traffic_json: current test validation json
+        reference_json: reference validation json, i.e the IPv6 run of the same session
+        pg_keys (list): occupancy keys to compare, i.e [ValidationConsts.OCC_AVG]
+        pg_to_validate (list): PG numbers to compare, i.e MRCConsts.PG_LIST
+        allowed_deviation: allowed deviation from the reference total.
+            If a float between 0 and 1, interpreted as a percentage (e.g. 0.15 = +-15%).
+            Otherwise interpreted as an absolute value in buffer cells.
+        violations_list (list): list of violations, appended to in place
+        pg_buffer_types (list): PG frames to sum, i.e MRCConsts.PG_TOTAL_OCC_FRAMES
+    """
+    frame_names = " + ".join(frame.replace("_dataframe", "") for frame in pg_buffer_types)
+    with allure.step(f"Compare total PG occupancy ({frame_names}) to reference for {pg_to_validate}"):
+        pg_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
+        pg_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)
+        for sample_id, port_groups in pg_samples.items():
+            for port_group_name, port_group_data in port_groups.items():
+                reference_port_group_data = get_pg_port_group_data(reference_json, port_group_name)
+                for pg_name in pg_to_validate:
+                    for key in pg_keys:
+                        pg_occ, missing = sum_pg_occ_across_frames(port_group_data, key,
+                                                                   pg_name, pg_buffer_types)
+                        reference_pg_occ, reference_missing = sum_pg_occ_across_frames(
+                            reference_port_group_data, key, pg_name, pg_buffer_types)
+                        if missing or reference_missing:
+                            violations_list.append(
+                                f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                f"{key} could not be summed, frames absent from the validator json: "
+                                f"current={missing}, reference={reference_missing}"
+                            )
+                            continue
+                        if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
+                            min_limit = reference_pg_occ * (1 - allowed_deviation)
+                            max_limit = reference_pg_occ * (1 + allowed_deviation)
+                        else:
+                            min_limit = reference_pg_occ - allowed_deviation
+                            max_limit = reference_pg_occ + allowed_deviation
+                        rounded_pg_occ = round_for_reference_comparison(pg_occ, reference_pg_occ)
+                        rounded_min_limit = round_for_reference_comparison(min_limit, reference_pg_occ)
+                        rounded_max_limit = round_for_reference_comparison(max_limit, reference_pg_occ)
+                        if rounded_pg_occ < rounded_min_limit or rounded_pg_occ > rounded_max_limit:
+                            violations_list.append(
+                                f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                f"total ({frame_names}) {key} is not within reference comparison range "
+                                f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_pg_occ}"
+                            )
+
+
 def get_tc_occ_from_traffic_json(traffic_json, port_group_name, tc_key, tc):
     tc_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
     tc_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)

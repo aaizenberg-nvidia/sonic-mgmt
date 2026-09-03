@@ -3,7 +3,8 @@
 import pytest
 
 from ngts.constants.performance_constants import MRCConsts, ValidationConsts
-from ngts.helpers.performance.traffic_helpers import compare_tc_occ_to_reference
+from ngts.helpers.performance.traffic_helpers import (compare_pg_total_occ_to_reference,
+                                                      compare_tc_occ_to_reference)
 
 SAMPLE_ID = "sample #1"
 DOWNSTREAM_GROUP = MRCConsts.BISECTION_DOWNSTREAM_PORT_GROUP_NAME
@@ -195,3 +196,137 @@ def test_untracked_queues_are_ignored():
                                 allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
                                 reference_offset=SPC4_EXPECTED_OVERHEAD)
     assert violations == []
+
+
+# --- total ingress PG occupancy, summed over the headroom and the shared pool ---
+
+# (port group, headroom occAvg, shared pool occAvg) measured on a real bisection session.
+# SPC4 keeps most of the load in the shared pool, SPC6 absorbs it in the headroom, which is
+# why neither frame on its own is a usable comparison target across both chips.
+SPC4_PG_REFERENCE = [(DOWNSTREAM_GROUP, 15.1235, 51.3895), (UPSTREAM_GROUP, 15.1604, 51.3220)]
+SPC4_PG_MEASURED = [(DOWNSTREAM_GROUP, 15.2913, 57.0215), (UPSTREAM_GROUP, 15.2968, 57.1509)]
+SPC6_PG_REFERENCE = [(DOWNSTREAM_GROUP, 17.3760, 0.3315), (UPSTREAM_GROUP, 17.4381, 0.3709)]
+SPC6_PG_MEASURED = [(DOWNSTREAM_GROUP, 17.7356, 0.3373), (UPSTREAM_GROUP, 17.6941, 0.3647)]
+
+
+def build_pg_traffic_json(rows, include_headroom=True, include_buffer=True):
+    """
+    Build a minimal traffic validation json holding ingress PG occupancy samples.
+
+    Args:
+        rows (list): [(port_group, headroom occAvg, shared pool occAvg)].
+        include_headroom (bool): Emit the headroom frame.
+        include_buffer (bool): Emit the shared pool frame.
+
+    Returns:
+        dict: Traffic json shaped like the SDK TrafficValidator output.
+    """
+    port_groups = {}
+    for group_name, headroom_occ, buffer_occ in rows:
+        group_data = {}
+        if include_headroom:
+            group_data[ValidationConsts.PG_HEADROOM_DATAFRAME] = [
+                {ValidationConsts.PG_HEADROOM: 0, ValidationConsts.OCC_AVG: headroom_occ}]
+        if include_buffer:
+            group_data[ValidationConsts.PG_BUFFER_DATAFRAME] = [
+                {ValidationConsts.PG_BUFFER: 0, ValidationConsts.OCC_AVG: buffer_occ}]
+        port_groups[group_name] = group_data
+    return {ValidationConsts.TC_PG_SAMPLES: {SAMPLE_ID: port_groups}}
+
+
+def run_pg_total_comparison(measured_rows, reference_rows,
+                            allowed_deviation=MRCConsts.PG_TOTAL_OCC_ALLOWED_DEVIATION,
+                            include_headroom=True):
+    """
+    Run compare_pg_total_occ_to_reference over freshly built jsons and return the violations.
+
+    Args:
+        measured_rows (list): [(port_group, headroom occAvg, shared pool occAvg)] under test.
+        reference_rows (list): the same shape for the reference run.
+        allowed_deviation: percentage or absolute deviation, as the helper interprets it.
+        include_headroom (bool): Emit the headroom frame on both sides.
+
+    Returns:
+        list: Violation strings produced by the comparison.
+    """
+    violations_list = []
+    compare_pg_total_occ_to_reference(
+        traffic_json=build_pg_traffic_json(measured_rows, include_headroom=include_headroom),
+        reference_json=build_pg_traffic_json(reference_rows, include_headroom=include_headroom),
+        pg_keys=[ValidationConsts.OCC_AVG],
+        pg_to_validate=MRCConsts.PG_LIST,
+        allowed_deviation=allowed_deviation,
+        violations_list=violations_list,
+        pg_buffer_types=MRCConsts.PG_TOTAL_OCC_FRAMES,
+    )
+    return violations_list
+
+
+@pytest.mark.parametrize("reference_rows,measured_rows", [
+    (SPC4_PG_REFERENCE, SPC4_PG_MEASURED),
+    (SPC6_PG_REFERENCE, SPC6_PG_MEASURED),
+])
+def test_measured_pg_totals_pass(reference_rows, measured_rows):
+    """Real SPC4 and SPC6 sessions sit inside the total occupancy band."""
+    violations = run_pg_total_comparison(measured_rows, reference_rows)
+    assert violations == []
+
+
+def test_pg_total_sums_both_frames():
+    """The compared value is the sum of the headroom and the shared pool, not either alone."""
+    reference = [(DOWNSTREAM_GROUP, 10.0, 10.0)]
+    # Total stays at 20.0 while each frame moves far beyond its own +-15% band.
+    measured = [(DOWNSTREAM_GROUP, 19.0, 1.0)]
+    assert run_pg_total_comparison(measured, reference) == []
+
+
+def test_pg_total_catches_headroom_only_regression():
+    """A regression confined to the headroom frame is still detected.
+
+    The shared pool dominates the total on SPC4, so this guards against the headroom half
+    being carried along without ever influencing the verdict.
+    """
+    reference = [(DOWNSTREAM_GROUP, 15.1235, 51.3895)]
+    # Headroom trebles, shared pool untouched, so the total moves well past 15%.
+    measured = [(DOWNSTREAM_GROUP, 45.0, 51.3895)]
+    violations = run_pg_total_comparison(measured, reference)
+    assert len(violations) == 1, violations
+    assert "total (pg_headroom + pg_buffer)" in violations[0]
+
+
+def test_pg_total_catches_shared_pool_regression():
+    """A regression confined to the shared pool frame is still detected."""
+    reference = [(DOWNSTREAM_GROUP, 17.3760, 0.3315)]
+    measured = [(DOWNSTREAM_GROUP, 17.3760, 25.0)]
+    assert len(run_pg_total_comparison(measured, reference)) == 1
+
+
+def test_pg_total_reports_absent_frame_instead_of_raising():
+    """A validator json missing the headroom frame yields a violation, not a KeyError."""
+    violations = run_pg_total_comparison(SPC6_PG_MEASURED, SPC6_PG_REFERENCE,
+                                         include_headroom=False)
+    assert len(violations) == len(SPC6_PG_REFERENCE), violations
+    assert "frames absent from the validator json" in violations[0]
+    assert ValidationConsts.PG_HEADROOM_DATAFRAME in violations[0]
+
+
+def test_pg_total_absolute_deviation_branch():
+    """An integer deviation is applied as absolute cells rather than a percentage."""
+    reference = [(DOWNSTREAM_GROUP, 10.0, 0.5)]
+    inside = run_pg_total_comparison([(DOWNSTREAM_GROUP, 11.0, 0.5)], reference,
+                                     allowed_deviation=2)
+    outside = run_pg_total_comparison([(DOWNSTREAM_GROUP, 13.0, 0.5)], reference,
+                                      allowed_deviation=2)
+    assert inside == []
+    assert len(outside) == 1, outside
+
+
+def test_pg_total_band_matches_the_configured_deviation():
+    """The band edges follow PG_TOTAL_OCC_ALLOWED_DEVIATION exactly."""
+    reference_total = 20.0
+    reference = [(DOWNSTREAM_GROUP, 10.0, 10.0)]
+    deviation = MRCConsts.PG_TOTAL_OCC_ALLOWED_DEVIATION
+    just_inside = reference_total * (1 + deviation) - 0.001
+    just_outside = reference_total * (1 + deviation) + 0.001
+    assert run_pg_total_comparison([(DOWNSTREAM_GROUP, just_inside, 0.0)], reference) == []
+    assert len(run_pg_total_comparison([(DOWNSTREAM_GROUP, just_outside, 0.0)], reference)) == 1

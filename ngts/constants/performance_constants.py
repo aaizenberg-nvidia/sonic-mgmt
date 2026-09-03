@@ -947,6 +947,10 @@ class MRCConsts:
     TRIMMING_COUNTERPOLL_INTERVAL = 1000
     LATENCY_ALLOWED_DEVIATION = 59
     HEADROOM_ALLOWED_DEVIATION = 0.15
+    # Allowed deviation of the total ingress PG occAvg from the IPv6 reference.
+    # Kept separate from HEADROOM_ALLOWED_DEVIATION so the per-frame and the total
+    # comparisons can be tuned independently, even though both start at 15%.
+    PG_TOTAL_OCC_ALLOWED_DEVIATION = 0.15
     MRC_DATA_PACKET_SIZE = 4234
     EGRESS_PORT_GROUP_NAME = EGRESS_PORT_GROUP_NAME
     INGRESS_PORT_GROUP_NAME = INGRESS_PORT_GROUP_NAME
@@ -1102,6 +1106,13 @@ class MRCConsts:
     MRC2_DATA_TC = '2'
     MRC_RETRANSMISSION_TC = '3'
     PG_LIST = [0]
+    # Ingress PG frames summed into the total occupancy comparison. A priority group is
+    # split between a reserved headroom and a dynamically borrowed shared pool, and chips
+    # divide the same load between them differently: SPC4 keeps most of it in the shared
+    # pool while SPC6 absorbs it in the headroom. Summing both makes the comparison
+    # independent of that split. Requires the HFT collector, which is the only path that
+    # populates the headroom frame.
+    PG_TOTAL_OCC_FRAMES = [ValidationConsts.PG_HEADROOM_DATAFRAME, ValidationConsts.PG_BUFFER_DATAFRAME]
     TRIMMING_ELEGABLE_QUEUE_NUM = [int(MRC1_DATA_TC), int(MRC2_DATA_TC), int(MRC_RETRANSMISSION_TC)]
     TRIMMING_DATA_QUEUE_NUM = [int(MRC1_DATA_TC), int(MRC2_DATA_TC)]
     MRC_RETRANSMISSION_TC_NUM = [int(MRC_RETRANSMISSION_TC)]

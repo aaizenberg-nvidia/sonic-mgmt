@@ -110,7 +110,8 @@ class TestSRv6Leaf(TestSRv6Base):
                 traffic_type,
                 tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
                 drop_over_max_sample_port=upstream[0] if is_drop_over_max else None,
-                tc_occ_reference_offset=tc_occ_reference_offset)
+                tc_occ_reference_offset=tc_occ_reference_offset,
+                validate_pg_total_occ=True)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,

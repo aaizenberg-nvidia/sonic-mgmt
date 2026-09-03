@@ -410,7 +410,7 @@ class NvuePerformanceCli(PerformanceCommon):
         self._wait_for_swp_ports_ready(bonus_parent_ports, require_oper_up=False,
                                        timeout=timeout, interval=interval, state_label="admin")
 
-    def wait_for_all_swp_ports_oper_up(self, timeout=45, interval=10):
+    def wait_for_all_swp_ports_oper_up(self, timeout=60, interval=10):
         """Wait until all non-bonus switch ports shown by NVUE are admin and oper up.
 
         Polls ``nv show interface`` every ``interval`` seconds. Raises ``TestIssue`` after
