@@ -1032,8 +1032,8 @@
 - Errors_list:
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 800G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 100G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
   Conditions:
     - Affected_test_cases:
         - tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_nvl_negative
