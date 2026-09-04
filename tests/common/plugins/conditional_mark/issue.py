@@ -58,7 +58,7 @@ def get_conditions_redmine_issues_status():
     conditions = get_conditions_list()
     ignore_list_string = json.dumps(conditions)
     all_redmine_issues = re.findall(r"https:\/\/redmine\.mellanox\.com\/issues\/(\d+)", ignore_list_string)
-    issues_active_status_dict = access_redmine_cache(all_redmine_issues, use_active_status=True)
+    issues_active_status_dict = access_redmine_cache(all_redmine_issues)
     return issues_active_status_dict
     
 @cache(ttl=dt.timedelta(hours=36))

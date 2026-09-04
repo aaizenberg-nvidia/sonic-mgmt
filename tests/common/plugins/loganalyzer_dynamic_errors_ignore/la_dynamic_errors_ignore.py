@@ -128,7 +128,7 @@ def get_redmine_issues_status(cli_type):
     ignore_list = get_ignore_list(cli_type)
     ignore_list_string = json.dumps(ignore_list)
     all_redmine_issues = re.findall(r"\"Redmine\":\s*\[(\d+)\]", ignore_list_string)
-    issues_active_status_dict = access_redmine_cache(all_redmine_issues, use_active_status=True)
+    issues_active_status_dict = access_redmine_cache(all_redmine_issues)
     return issues_active_status_dict
 
 

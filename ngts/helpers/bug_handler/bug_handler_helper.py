@@ -481,7 +481,12 @@ def get_action_based_on_no_action_results(bug_handler_file_result, branch, bug_h
     if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
         cur_version = bug_handler_params["duthost"].os_version
         ticket_id = get_ticket_id(bug_handler_file_result)
-        ticket_status = get_issues_status([ticket_id]).get(str(ticket_id), '')
+        try:
+            ticket_status = get_issues_status([ticket_id])[str(ticket_id)]
+        except Exception as err:
+            logger.error(f"Failed to get the status of ticket {ticket_id} from Redmine: {err}. "
+                         "Keeping no action so the ticket is not updated or reopened")
+            return "no action"
 
         if ticket_status == "Closed":
             # When the script for getting fixed image is ready for RC image,
