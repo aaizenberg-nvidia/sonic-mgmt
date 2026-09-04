@@ -427,16 +427,11 @@ def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: s
 
 
 def handle_file_size_exceedance(tar_file_path):
-    # add double quotes to the tar_file_path to avoid whitespace characters
-    # in the file name to be interpreted as command line arguments
-    result = subprocess.run(f'stat -c%s "{tar_file_path}"', shell=True, capture_output=True)
-    if result.returncode != 0:
-        logger.error(f"Failed to get the sysdump size of {tar_file_path} "
-                     f"with error: {result.stderr.decode('utf-8')}")
-        raise Exception(f"Failed to get the sysdump size of {tar_file_path}")
-    decoded_output = result.stdout.decode('utf-8')
-    cleaned_output = decoded_output.strip()
-    tar_file_size = int(cleaned_output)
+    try:
+        tar_file_size = os.path.getsize(tar_file_path)
+    except OSError as err:
+        logger.error(f"Failed to get the sysdump size of {tar_file_path} with error: {err}")
+        raise Exception(f"Failed to get the sysdump size of {tar_file_path}") from err
 
     if tar_file_size < BugHandlerConst.TAR_FILE_SIZE_RM_LIMIT:
         return tar_file_path
@@ -655,7 +650,7 @@ def get_test_duration(duthost):
     return duration
 
 
-@retry(Exception, tries=5, delay=20)
+@retry(Exception, tries=13, delay=30)
 def _generate_sonic_techsupport(duthost):
     # required by design team to always collect the dump for the past 5 hrs.
     duration = 5 * 3600
