@@ -545,6 +545,12 @@ bgp/:
     - "https://redmine.mellanox.com/issues/4931314"
     - "hwsku in ['Mellanox-SN6600-V448P16S2']"
 
+clock/test_syncd_clock_sync.py::test_syncd_ptp_clock_sync:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5258418"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5258418"
+
 console/test_console_driver.py:
   skip:
     reason: "Not supported on existing testbed. the switch needs to be attached to a DUT via USB link."
@@ -1320,11 +1326,12 @@ platform_tests/test_sensors.py::test_sensors:
     conditions:
     - "https://redmine.mellanox.com/issues/4261914 and 'sn5640_simx' in platform"
   xfail:
-    reason: "Testcase may fail due to RM 4441016 on affected PSUs or RM 5174071 on mtvr-moose-11"
+    reason: "Testcase may fail due to RM 4441016 on affected PSUs, RM 5174071 on mtvr-moose-11 or RM 5125814 on r-bison-12"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/4441016 and psu_manufacture=='Murata-PS' and psu_capacity=='1500'"
     - "https://redmine.mellanox.com/issues/5174071 and 'mtvr-moose-11' in testbed"
+    - "https://redmine.mellanox.com/issues/5125814 and 'r-bison-12' in testbed"
 
 platform_tests/test_platform_info.py::test_turn_on_off_psu_and_check_psustatus:
   skip:
@@ -1718,6 +1725,12 @@ tests/nightly/lag/test_lag.py::test_lags_scale:
     reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5007451 on sn6600_LD platform"
     conditions:
     - "https://redmine.mellanox.com/issues/5007451 and 'sn6600_ld' in platform"
+
+tests/nightly/lag/test_lag.py::test_lag_members_scale:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5252511"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5252511"
 
 platform_tests/test_reboot.py::test_warm_reboot:
   skip:
