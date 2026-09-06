@@ -639,6 +639,7 @@ def _fill_snapshot_fs_and_get_append_capacity(engine, fill_path, snapshot_event_
     path = _snapshot_active_file(asic_id)
     block_size = int(engine.run_cmd(f'sudo stat -f -c %s {path}').strip())
     file_size = int(engine.run_cmd(f'sudo stat -c%s {path}').strip())
+    allocated_bytes = int(engine.run_cmd(f'sudo stat -c%b {path}').strip()) * 512
     df_avail = int(
         engine.run_cmd(f'df -B1 --output=avail {SNAPSHOT_LOG_DIR} | tail -1').strip()
     )
@@ -647,7 +648,8 @@ def _fill_snapshot_fs_and_get_append_capacity(engine, fill_path, snapshot_event_
     )
     used_in_last_block = file_size % block_size
     slack_in_last_block = 0 if used_in_last_block == 0 else block_size - used_in_last_block
-    append_capacity = df_avail + slack_in_last_block
+    allocated_append_capacity = max(slack_in_last_block, allocated_bytes - file_size)
+    append_capacity = df_avail + allocated_append_capacity
     return append_capacity
 
 
