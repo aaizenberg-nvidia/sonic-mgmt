@@ -2,12 +2,14 @@ from typing import List, Tuple
 
 import pytest
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import SystemConsts, UserRole
 from ngts.nvos_tools.infra.FilesTool import FilesTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.general.security.security_test_tools.constants import AddressingType
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
+from ngts.tests_nvos.general.security.test_ssh_cert_auth.constants import CA_KEY_TYPE_MISMATCH_ERRS
 from ngts.tests_nvos.general.security.test_ssh_cert_auth.helpers import (
     SshCertAuthHelper,
     get_random_key_type,
@@ -330,14 +332,13 @@ def test_bad_key_type(
     dut_hostname: str,
 ):
     """
-    This test performs check that user can't connect to the system via key provided if the key type is not matching.
-    Test Flow:
-        1. Generates an SSH key pair and user key
-        2. Set bad key type for the user
-        3. Set the trusted CA public key file
-        4. Verify show commands
-        5. Login using the signed certificate
-        6. Verify that user fails to login
+    Verify apply rejects a trusted CA key type that does not match the key material,
+    and that the matching CA and cert-auth remain.
+
+    1. Enable cert-auth and apply a matching trusted CA key type
+    2. Verify show and login succeed
+    3. Apply a mismatched CA type — expect reject
+    4. Verify the matching CA is still in show and login still succeeds
     """
     system = nv_command.system
     ssh_cert_auth_helper, key_name = ssh_cert_auth_helper_with_cleanup
@@ -352,13 +353,20 @@ def test_bad_key_type(
     ssh_cert_auth_helper.sign_user_certificate(f"{key_name}_ca", f"{key_name}_key", principals=[random_principal])
 
     set_cert_auth(system=system, user=admin, principal=random_principal, state="enabled")
-    set_trusted_ca_key(system, key_name, bad_key_type, ca_val, apply=True)
-    _verify_show_commands(system, [admin], key_name, bad_key_type, random_principal, expected_state="enabled")
-
-    # Verify principals file exists with correct principal (but key type is wrong)
+    with allure.step(f"apply matching trusted CA key type {key_type}"):
+        set_trusted_ca_key(system, key_name, key_type, ca_val, apply=True).verify_result()
+    _verify_show_commands(system, [admin], key_name, key_type, random_principal, expected_state="enabled")
     _verify_principals_file(engines, admin.username, principal=random_principal, should_exist=True)
+    verify_user_login(admin, key_path, hostname, engines, expect_success=True)
 
-    verify_user_login(admin, key_path, hostname, engines, expect_success=False)
+    with allure.step(f"apply CA type {bad_key_type} that does not match key material - expect reject"):
+        set_trusted_ca_key(system, key_name, bad_key_type, ca_val, apply=True).verify_result(
+            should_succeed=False, expected_value=CA_KEY_TYPE_MISMATCH_ERRS)
+        # The rejected value stays staged in the pending revision - discard it so it
+        # does not get re-applied by the next apply in the session.
+        NvueGeneralCli.detach_config(engines.dut)
+    _verify_show_commands(system, [admin], key_name, key_type, random_principal, expected_state="enabled")
+    verify_user_login(admin, key_path, hostname, engines, expect_success=True)
 
 
 @pytest.mark.security

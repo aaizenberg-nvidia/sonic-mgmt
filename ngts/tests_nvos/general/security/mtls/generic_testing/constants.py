@@ -11,7 +11,9 @@ TEST_CACERT_NAMES = [cert.cacert_name for cert in TEST_CERTS]
 
 class Errors:
     CERT_DONT_EXIST = "certificate `{cert_id}` doesn't exist"
-    INSTALLED_CA_DELETE_ERR = "Error: The CA certificate `{ca_id}` is currently being used by the following applications: ['{app_name}']"
+    # nvued wraps this in "Error: Action failed with the following issue:", so the message is not prefixed by "Error:".
+    INSTALLED_CA_DELETE_ERR = ("The CA certificate `{ca_id}` is currently being used "
+                               "by the following applications: ['{app_name}']")
     FAILED_TO_VERIFY_SERVER_ERR = 'curl failed to verify the legitimacy of the server'
     NO_CERT_WAS_SENT_ERR = 'No required SSL certificate was sent'
     SSL_CERT_ERR = 'SSL certificate error'

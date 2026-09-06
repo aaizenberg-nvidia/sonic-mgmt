@@ -198,8 +198,9 @@ def set_cert_auth(system: System, user: UserInfo, principal: str, state: str, ap
 
 def set_trusted_ca_key(system: System, key_name: str, key_type: str, ca_val: str, apply: bool = False):
     with allure.step("set trusted ca"):
-        system.ssh_server.trusted_ca_keys.key_id[key_name].set_key_val(ca_val)
-        system.ssh_server.trusted_ca_keys.key_id[key_name].set_key_type(key_type, apply=apply)
+        key = system.ssh_server.trusted_ca_keys.key_id[key_name]
+        key.set_key_val(ca_val)
+        return key.set_key_type(key_type, apply=apply)
 
 
 def ssh_cert_auth_factory_reset_no_params_check():
