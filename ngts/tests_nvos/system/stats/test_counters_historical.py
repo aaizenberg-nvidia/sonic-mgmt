@@ -776,7 +776,6 @@ def test_counters_historical_techsupport(engines: EnginesT, devices: DevicesT, t
 
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_reboot_persistence(engines: EnginesT, devices: DevicesT, test_api: str):
     """Basic positive: non-default configuration and the on-disk history survive
@@ -845,7 +844,6 @@ def test_counters_historical_reboot_persistence(engines: EnginesT, devices: Devi
 
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_factory_reset(engines: EnginesT, devices: DevicesT, test_api: str):
     """Basic positive: a whole-DUT factory reset returns the new categories to
@@ -959,7 +957,6 @@ def test_counters_historical_error_flows(engines: EnginesT, devices: DevicesT, t
 # ============================================================================ #
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_resilience(engines: EnginesT, devices: DevicesT, test_api: str):
     """Long-running: collection is resilient to a reboot mid-collection, a
