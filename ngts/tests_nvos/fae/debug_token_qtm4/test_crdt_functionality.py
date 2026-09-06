@@ -32,7 +32,7 @@ from ngts.tests_nvos.platform.firmware_telemetry_helpers import (
     assert_gnmi_firmware_version_matches_nvue,
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def _assert_health_ok(nv_command) -> None:
@@ -44,6 +44,7 @@ def _assert_health_ok(nv_command) -> None:
 @pytest.mark.fae
 @pytest.mark.debug_token
 @pytest.mark.crdt
+@pytest.mark.dut_reboot
 @pytest.mark.functionality
 def test_crdt_complete_flow(engines, devices, nv_command, test_name, random_api,
                             topology_obj, serial_log_analyzers, skip_if_prod_asics,

@@ -31,6 +31,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.bmc
 @pytest.mark.parametrize(['test_api', 'force_str'], [[ApiType.NVUE, ""],

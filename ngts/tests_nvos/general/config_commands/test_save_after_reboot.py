@@ -26,6 +26,7 @@ from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.general
 def test_save_reboot(engines, devices):

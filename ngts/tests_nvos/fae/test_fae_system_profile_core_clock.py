@@ -28,6 +28,7 @@ CORE_CLK_SPEED_VALID_LINE_RE = re.compile(r'^core_clk_speed_valid\s*\|\s*(0x[0-9
 CORE_CLK_SPEED_LINE_RE = re.compile(r'^core_clk_speed\s*\|\s*(0x[0-9a-fA-F]+)\s*$', re.MULTILINE)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.interface
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
@@ -120,6 +121,7 @@ def test_fae_core_clock_main_flow(engines, devices, has_loopbox, standalone_syst
             logger.info(f"✓ All access ports restored to {default_speed}")
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.interface
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
@@ -219,6 +221,7 @@ def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_s
             logger.info(f"✓ All access ports restored to {default_speed}")
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.interface
 @pytest.mark.timeout(30 * MINUTE, func_only=True)

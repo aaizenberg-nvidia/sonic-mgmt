@@ -370,6 +370,7 @@ def test_unset_system_message(engines, devices, random_api):
 
 
 @pytest.mark.banner
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.simx
 @pytest.mark.cumulus

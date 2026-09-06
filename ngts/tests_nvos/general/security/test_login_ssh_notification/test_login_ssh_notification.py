@@ -367,6 +367,7 @@ def test_verify_switchd_restart(engines, login_source_ip_addresses, monitor_user
 
 
 @pytest.mark.cumulus_only
+@pytest.mark.dut_reboot
 def test_verify_reboot(engines, login_source_ip_addresses, monitor_user_for_ssh_allowed):
     """
     Verify SSH server config persists after node reboot.

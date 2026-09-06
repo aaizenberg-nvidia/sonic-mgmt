@@ -11,6 +11,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_saved_users_after_reboot(engines):
     """

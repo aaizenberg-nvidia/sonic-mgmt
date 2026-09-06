@@ -1876,6 +1876,7 @@ def send_message_after_rate_limit_reset(remote_server_ip, remote_server_engine, 
     logger.info("Message sent successfully after interval reset")
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.syslog
 def test_syslog_logging_during_system_reboot(engines, random_api):

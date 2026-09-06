@@ -55,6 +55,7 @@ def mlid_mcra_backdoor(devices):
         yield
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_mlid_counters_isolation(engines, devices, nv_command, random_api, test_name):
@@ -341,6 +342,7 @@ def test_mlid_counters_disabled(engines, devices, nv_command, random_api):
             ).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_mlid_counters_version_mismatch(engines, devices, nv_command, random_api):

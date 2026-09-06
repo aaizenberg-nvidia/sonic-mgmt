@@ -292,6 +292,7 @@ AAA_METHOD_KEEP = "AAA method keep"
 LOCAL_USERS_RESTORE = "Local users restore"
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.simx
 @pytest.mark.timeout(LONG_PRESS_RESET_FACTORY_TIMEOUT, func_only=True)
 @pytest.mark.parametrize('config_state, auth_method', [

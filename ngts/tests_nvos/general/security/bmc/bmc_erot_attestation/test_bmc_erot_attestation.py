@@ -211,6 +211,7 @@ def test_generate_give_different_measurement(available_spdm_components):
                 ValidationTool.compare_dictionaries(measurements1, measurements2).verify_result(False)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.bmc
 @pytest.mark.erot
 @pytest.mark.security

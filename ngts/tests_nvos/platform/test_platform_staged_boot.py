@@ -81,6 +81,7 @@ def test_show_set_platform_boot_policy(engines, devices, topology_obj, output_fo
                                    new_values=default_values).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.platform
 @pytest.mark.bmc
 @pytest.mark.timeout(20 * MINUTE, func_only=True)

@@ -7,31 +7,34 @@ import subprocess
 import time
 
 try:
-    from netmiko.ssh_exception import NetmikoAuthenticationException
+    from netmiko.ssh_exception import NetmikoAuthenticationException  # type: ignore
 except ImportError:
     from netmiko.exceptions import NetmikoAuthenticationException
 
-import ngts.tools.test_utils.allure_utils as allure
-from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
+from devts.infra.tools.validations.traffic_validations.ping import send as send_ping
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
-from devts.infra.tools.validations.traffic_validations.ping.send import ping_till_alive
+from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
+
+from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
+from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.nvos_tools.infra.PexpectTool import PexpectTool
-from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
+from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
+from ngts.ngts_types import TopologyT, EnginesT
 
 logger = logging.getLogger(__name__)
 
 
-def recover_dut_with_remote_reboot(topology_obj, engines, wait_after_rr=None, device=None):
+def recover_dut_with_remote_reboot(topology_obj: TopologyT, engines: EnginesT, wait_after_rr: int = None, device: BaseDevice = None) -> None:
     with allure.step('Execute remote reboot'):
         NvueGeneralCli(engines.dut).remote_reboot_nvue(topology_obj)
     if wait_after_rr:
         with allure.step(f'sleep {wait_after_rr} seconds'):
             time.sleep(wait_after_rr)
     with allure.step('Ping switch until shutting down'):
-        ping_till_alive(should_be_alive=False, destination_host=engines.dut.ip)
+        send_ping.ping_till_alive(should_be_alive=False, destination_host=engines.dut.ip)
     with allure.step('Wait for switch to be up'):
         if device:
             DutUtilsTool.wait_for_system_ready_in_serial(
@@ -116,7 +119,7 @@ def new_handle_change_password_prompt(engine: ProxySshEngine):
             return SUCCESS if (pexpect_tool.expect('.*', raise_exception_for_timeout=False) == 0) else FAIL
 
 
-def check_switch_connectivity(topology_obj, engines):
+def check_switch_connectivity(topology_obj: TopologyT, engines: EnginesT, *, allow_dut_reboot: bool = True) -> bool:
     NETMIKO_ERR, SOCKET_ERR, SUCCESS = 'Netmiko', 'Socket', 'success'
 
     def check_connectivity():
@@ -136,7 +139,7 @@ def check_switch_connectivity(topology_obj, engines):
     res = check_connectivity()
     if res == SUCCESS:
         return
-    with allure.step(f'Disconnect dut engine and try again'):
+    with allure.step('Disconnect dut engine and try again'):
         engines.dut.disconnect()
         res = check_connectivity()
         if res == SUCCESS:
@@ -147,6 +150,11 @@ def check_switch_connectivity(topology_obj, engines):
             res = check_connectivity()
             if res == SUCCESS:
                 return
+
+    if not allow_dut_reboot:
+        logger.error("DUT connectivity could not be restored without a reboot")
+        return False
+
     with allure.step(f'Got {res} error. Try recover with remote reboot to dut'):
         recover_dut_with_remote_reboot(topology_obj, engines)
 

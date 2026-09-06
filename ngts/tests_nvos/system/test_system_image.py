@@ -185,6 +185,7 @@ def test_show_system_image(original_version, engines, devices):
                                                                                                              'path'])
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.checklist
 @pytest.mark.simx
 @pytest.mark.image
@@ -433,6 +434,7 @@ def verify_image_boot_next_multiple_changes(system):
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_image_uninstall(release_name, random_api, original_version, test_name, devices, downgrade_version_realpath):
     """
@@ -453,6 +455,7 @@ def test_image_uninstall(release_name, random_api, original_version, test_name, 
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_image_uninstall_force(release_name, original_version, test_name, devices, downgrade_version_realpath):
     """
@@ -562,6 +565,7 @@ def test_system_image_bad_flow(engines, release_name, random_api, original_versi
 
 
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.image
 @pytest.mark.system
 def test_install_multiple_images(release_name, test_name, random_api, original_version, devices, engines):

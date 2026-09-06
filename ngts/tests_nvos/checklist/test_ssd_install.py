@@ -30,6 +30,7 @@ from ngts.tests_nvos.system.gnmi.helpers import verify_msg_in_out_or_err
 
 
 @pytest.mark.timeout(60 * MINUTE, func_only=True)
+@pytest.mark.dut_reboot
 @pytest.mark.ssd
 @pytest.mark.parametrize("platform_component_with_clear", ["ssd"], indirect=True)
 def test_ssd_install(engines, devices, topology_obj, random_api, platform_component_with_clear, test_name, nv_command, show_platform_initial_state):
@@ -193,6 +194,7 @@ def test_ssd_firmware_rename_delete(engines, devices, random_api, platform_compo
 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.ssd
+@pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer  # Disable log analyzer - SSH timeouts and connection errors are EXPECTED during power shutdown
 @pytest.mark.parametrize("platform_component_with_clear", ["ssd"], indirect=True)
 def test_ssd_install_interruption_recovery(engines, devices, topology_obj, random_api, platform_component_with_clear, test_name, show_platform_initial_state):

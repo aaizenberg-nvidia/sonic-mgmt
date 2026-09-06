@@ -342,6 +342,7 @@ def test_system_stats_generation(engines: EnginesT, devices: DevicesT, random_ap
 
 
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.stats
 @pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -472,6 +473,7 @@ def test_system_stats_performance(engines: EnginesT, devices: DevicesT, test_api
 
 
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.stats
 @pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])

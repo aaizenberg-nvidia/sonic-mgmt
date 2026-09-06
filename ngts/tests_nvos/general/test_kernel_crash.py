@@ -29,10 +29,11 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     verify_reboot_telemetry_after_reboot,
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.disable_loganalyzer
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_kernel_crash(engines, devices, topology_obj, random_api):
     """
