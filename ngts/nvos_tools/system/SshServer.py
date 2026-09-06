@@ -56,7 +56,7 @@ class TrustedCaKey(BaseComponent):
         - dsa
         - ssh-ed25519
         """
-        self.set(op_param_name='type', op_param_value=key_type, apply=apply)
+        return self.set(op_param_name='type', op_param_value=key_type, apply=apply)
 
 
 class Port(BaseComponent):

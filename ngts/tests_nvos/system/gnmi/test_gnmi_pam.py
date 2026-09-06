@@ -21,7 +21,8 @@ from ngts.tests_nvos.general.security.conftest import cleanup_after_aaa
 from ngts.tests_nvos.general.security.conftest import local_adminuser
 from ngts.tests_nvos.general.security.radius.constants import RadiusVmServer
 from ngts.tests_nvos.general.security.security_test_tools.constants import AuthConsts, AaaConsts, AddressingType
-from ngts.tests_nvos.general.security.security_test_tools.generic_remote_aaa_testing.constants import RemoteAaaType
+from ngts.tests_nvos.general.security.security_test_tools.generic_remote_aaa_testing.constants import (
+    RemoteAaaType, ValidValues)
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaaServerInfo import RemoteAaaServerInfo
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer0
@@ -371,17 +372,24 @@ def _gnmic_capabilities_mtls_spiffe_success(
 @pytest.fixture()
 def aaa_users(engines, cleanup_after_aaa) -> Dict[str, UserInfo]:
     with allure.step('set AAA servers'):
+        # Copy each server and pin a unique explicit priority: the shared class-level objects
+        # would otherwise be mutated across tests, and letting the DUT auto-assign priorities
+        # makes collisions ("priority 1 must be unique") depend on the random addressing type.
         with allure.step('set tacacs server'):
             tac_server: RemoteAaaServerInfo = TacacsDockerServer0.SERVER_BY_ADDRESSING_TYPE[
-                random.choice(AddressingType.ALL_TYPES)]
-            tac_server.configure(engines)
+                random.choice(AddressingType.ALL_TYPES)].copy()
+            tac_server.priority = ValidValues.PRIORITY[0]
+            tac_server.configure(engines, set_explicit_priority=True)
         with allure.step('set ldap server'):
-            ldap_server: RemoteAaaServerInfo = LdapServersP3.LDAP3_SERVERS[random.choice(AddressingType.ALL_TYPES)]
-            ldap_server.configure(engines)
+            ldap_server: RemoteAaaServerInfo = LdapServersP3.LDAP3_SERVERS[
+                random.choice(AddressingType.ALL_TYPES)].copy()
+            ldap_server.priority = ValidValues.PRIORITY[1]
+            ldap_server.configure(engines, set_explicit_priority=True)
         with allure.step('set radius server'):
             rad_server: RemoteAaaServerInfo = RadiusVmServer.SERVER_BY_ADDRESSING_TYPE[
-                random.choice([AddressingType.IPV4, AddressingType.DN])]
-            rad_server.configure(engines)
+                random.choice([AddressingType.IPV4, AddressingType.DN])].copy()
+            rad_server.priority = ValidValues.PRIORITY[2]
+            rad_server.configure(engines, set_explicit_priority=True)
         with allure.step('enable failthrough'):
             System().aaa.authentication.set(AuthConsts.FAILTHROUGH, AaaConsts.ENABLED, apply=True).verify_result()
     return {RemoteAaaType.TACACS: tac_server.users[0], RemoteAaaType.LDAP: ldap_server.users[0],
