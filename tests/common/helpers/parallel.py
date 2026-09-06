@@ -97,10 +97,12 @@ class SonicProcess(Process):
         try:
             Process.run(self)
             self._cconn.send(None)
-        except Exception as e:
-            tb = traceback.format_exc()
-            self._cconn.send((e, tb))
-            raise e
+        except BaseException as e:
+            if isinstance(e, SystemExit) and e.code in (0, None):
+                self._cconn.send(None)
+            else:
+                self._cconn.send((e, traceback.format_exc()))
+            raise
         finally:
             self._cconn.close()  # Close the child-side pipe
 
@@ -260,6 +262,13 @@ def parallel_run(
                     'exit_code': worker.exitcode,
                     'exception': worker_exception
                 }
+            elif worker.exitcode not in (0, None):
+                logger.error(f"Process {worker.name} exited with code {worker.exitcode} "
+                             f"without reporting an exception.")
+                failed_processes[worker.name] = {
+                    'exit_code': worker.exitcode,
+                    'exception': None
+                }
 
         if len(gone) == 0:
             logger.debug("all processes have timedout")
@@ -296,13 +305,12 @@ def parallel_run(
     # of each Process and fail
     if len(list(failed_processes.keys())):
         for process_name, process in list(failed_processes.items()):
-            p_exitcode = ""
+            p_exitcode = process.get('exit_code', "")
             p_exception = ""
             p_traceback = ""
             if 'exception' in process and process['exception']:
                 p_exception = process['exception'][0]
                 p_traceback = process['exception'][1]
-                p_exitcode = process['exit_code']
             # For analyzed matched syslog, don't need to log the traceback
             if "analyze_logs" in process_name and "Match Messages" in str(p_exception):
                 failure_message = 'Got matched syslog in processes "{}" exit code:"{}"\n{}'.format(
