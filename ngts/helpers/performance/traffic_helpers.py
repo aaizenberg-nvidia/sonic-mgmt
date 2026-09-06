@@ -4,6 +4,7 @@ import json
 import ipaddress
 import random
 import logging
+import re
 import pandas as pd
 from netaddr import EUI
 from ngts.helpers.performance.packet_json_generator import PacketGenerator
@@ -27,6 +28,21 @@ LOOPBACK_FILTER_REDMINE_ISSUE = 5195585
 # Bug #5195585: the traffic pattern raises a few loopback_filter discards per sample. While the issue
 # is open only a per-port value above 5 is a violation; once it is closed 0 restores strict checking.
 LOOPBACK_FILTER_MAX_TOLERATED_VALUE = 5 if is_redmine_issue_active([LOOPBACK_FILTER_REDMINE_ISSUE])[0] else 0
+
+SAMPLE_NUMBER_PATTERN = re.compile(r"sample #(\d+)")
+PAUSE_DISCARDS_REDMINE_ISSUE = 5258617
+# Ports 0x10101 and 0x10102 (the two lanes of cage 30). 0x10102 only exists where the breakout gives
+# one port per lane; in the wider breakouts it is simply never present in the counters frame.
+PAUSE_DISCARDS_PORTS = ('0x10101', '0x10102')
+# Two events under five names, as the SDK dump shows on a single port: the pause pair is the PFC
+# asserted on the lossless priority (11108890 each), and the three drop counters are one ingress
+# no-buffer discard (15815493 / 15815502 / 15815584). All five must be waived together.
+PAUSE_DISCARDS_COUNTERS = ('a_mac_control_frames_transmitted', 'a_pause_mac_ctrl_frames_transmitted',
+                           'if_in_discards', 'ether_stats_drop_events', 'port_rx_no_buffer')
+# Bug #5258617: those ports assert PFC and discard on ingress while the traffic ramps up, on the first
+# two samples of a run. While the issue is open the counters above are not a violation on those ports
+# up to that sample; once it is closed 0 restores strict checking.
+PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE = 2 if is_redmine_issue_active([PAUSE_DISCARDS_REDMINE_ISSUE])[0] else 0
 
 
 def generate_ip_address_list(address_start_v4="172.168.1.1", address_start_v6="172::1:1", step_v4=256, step_v6=0x10000,
@@ -1206,6 +1222,56 @@ def validate_required_counters(traffic_json, required_counter_list, violations_l
                 violations_list.append(f"Required counter '{counter}' was 0 in sample {sample_id}")
 
 
+def get_sample_number(sample_id: str) -> Optional[int]:
+    """
+    Extracts the ordinal of a TrafficValidator sample out of its id.
+
+    Args:
+        sample_id (str): Sample id, e.g. 'sample #2 2026-09-04 03:34:20'.
+
+    Returns:
+        Optional[int]: The sample ordinal, or None when the id does not carry one.
+    """
+    match = SAMPLE_NUMBER_PATTERN.search(sample_id)
+    return int(match.group(1)) if match else None
+
+
+def mask_waived_pause_and_discard_counters(counters_df: pd.DataFrame, sample_id: str,
+                                           port_group_name: str) -> pd.DataFrame:
+    """
+    Zeroes the Bug #5258617 counters on the affected ports while the issue is open.
+
+    Ports 0x10101 and 0x10102 assert PFC and take ingress no-buffer discards while the traffic ramps up,
+    on the first samples of a run. Only those ports' cells are cleared, so the same counters on every
+    other port, and every other counter on those ports, are still verified. A port the current breakout
+    does not expose simply never matches.
+
+    Args:
+        counters_df (pd.DataFrame): Counters of every port in the port group.
+        sample_id (str): Sample id the counters were collected in.
+        port_group_name (str): Port group the counters belong to, used for logging only.
+
+    Returns:
+        pd.DataFrame: A masked copy when the waiver applies, otherwise the frame as given.
+    """
+    sample_number = get_sample_number(sample_id)
+    if not PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE or sample_number is None or \
+            sample_number > PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE:
+        return counters_df
+
+    is_waived_port = counters_df[ValidationConsts.PORT].astype(str).str.lower().isin(PAUSE_DISCARDS_PORTS)
+    waived_counters = [counter for counter in PAUSE_DISCARDS_COUNTERS if counter in counters_df.columns]
+    if not is_waived_port.any() or not waived_counters:
+        return counters_df
+
+    waived_values = counters_df.loc[is_waived_port, [ValidationConsts.PORT] + waived_counters]
+    logger.info(f"Bug #{PAUSE_DISCARDS_REDMINE_ISSUE} is active: skipping {waived_counters} on the ramp-up "
+                f"ports in {sample_id} for {port_group_name} (values: {waived_values.to_dict('records')})")
+    waived_df = counters_df.copy()
+    waived_df.loc[is_waived_port, waived_counters] = 0
+    return waived_df
+
+
 def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, violations_list):
     """
     Validates a single counter sample for any non-zero counter values.
@@ -1218,6 +1284,7 @@ def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, vi
     """
     for port_group_name, port_group_data in counters_sample.items():
         counters_df = pd.DataFrame(port_group_data[ValidationConsts.COUNTERS_DATAFRAME])
+        counters_df = mask_waived_pause_and_discard_counters(counters_df, sample_id, port_group_name)
 
         ports_with_counters = counters_df.loc[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].any(axis=1), ValidationConsts.PORT].to_list()
         counters_with_values = counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].columns[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].gt(0).any()].tolist()

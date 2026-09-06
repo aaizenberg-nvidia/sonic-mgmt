@@ -1,11 +1,13 @@
-"""Unit tests for the reference comparison helpers used by the SRv6 performance tests."""
+"""Unit tests for the traffic validation helpers used by the performance tests."""
 
 import pytest
 
 from ngts.constants.performance_constants import MRCConsts, ValidationConsts
+from ngts.helpers.performance import traffic_helpers
 from ngts.helpers.performance.traffic_helpers import (compare_pg_to_reference,
                                                       compare_pg_total_occ_to_reference,
-                                                      compare_tc_occ_to_reference)
+                                                      compare_tc_occ_to_reference,
+                                                      validate_counters)
 
 SAMPLE_ID = "sample #1"
 DOWNSTREAM_GROUP = MRCConsts.BISECTION_DOWNSTREAM_PORT_GROUP_NAME
@@ -468,3 +470,143 @@ def test_shared_pool_floor_still_catches_a_loaded_shared_pool():
                                             min_band_cells=PG_BAND_FLOOR)
     assert len(violations) == 1, violations
     assert f"band widened to the {PG_BAND_FLOOR} cell floor" in violations[0]
+
+
+# --- counters validation: Bug #5258617 ramp-up ports ---
+
+LEFT_PORTS_GROUP = "left_ports"
+FIRST_WAIVED_PORT, SECOND_WAIVED_PORT = traffic_helpers.PAUSE_DISCARDS_PORTS
+# The neighbouring port of the same cage in a 4x breakout, where 0x10102 does not exist.
+OTHER_PORT = "0x10105"
+MAC_CONTROL_COUNTER = "a_mac_control_frames_transmitted"
+PAUSE_COUNTER = "a_pause_mac_ctrl_frames_transmitted"
+DISCARDS_COUNTER = "if_in_discards"
+DROP_EVENTS_COUNTER = "ether_stats_drop_events"
+NO_BUFFER_COUNTER = "port_rx_no_buffer"
+UNWAIVED_COUNTER = "if_out_discards"
+
+# Counters raised by the ramp-up, as reported by the SDK for one port of a failing regression run:
+# the pause pair is one event and the three drop counters are another, hence the near-equal values.
+RAMP_UP_COUNTERS = {MAC_CONTROL_COUNTER: 11108890,
+                    PAUSE_COUNTER: 11108890,
+                    DISCARDS_COUNTER: 15815493,
+                    DROP_EVENTS_COUNTER: 15815502,
+                    NO_BUFFER_COUNTER: 15815584}
+
+
+def build_counters_sample(counters_by_port, port_group_name=LEFT_PORTS_GROUP):
+    """
+    Build a counters sample shaped like the TrafficValidator output.
+
+    Every row carries every counter mentioned by any port, defaulting to 0, matching the validator
+    which reports the same counter set for all ports of a group.
+
+    Args:
+        counters_by_port (dict): {port: {counter: value}}.
+        port_group_name (str): Port group the ports belong to.
+
+    Returns:
+        dict: A single sample's port groups, keyed by port group name.
+    """
+    all_counters = sorted({counter for counters in counters_by_port.values() for counter in counters})
+    counters_dataframe = [{ValidationConsts.PORT: port,
+                           **{counter: counters.get(counter, 0) for counter in all_counters}}
+                          for port, counters in counters_by_port.items()]
+    return {port_group_name: {ValidationConsts.COUNTERS_DATAFRAME: counters_dataframe}}
+
+
+def build_counters_traffic_json(counters_by_port_per_sample):
+    """
+    Build a traffic validation json holding one counters sample per entry.
+
+    Args:
+        counters_by_port_per_sample (dict): {sample ordinal: {port: {counter: value}}}.
+
+    Returns:
+        dict: Traffic json shaped like the SDK TrafficValidator output.
+    """
+    samples = {f"sample #{sample_number} 2026-09-06 07:51:{sample_number:02d}":
+               build_counters_sample(counters_by_port)
+               for sample_number, counters_by_port in counters_by_port_per_sample.items()}
+    return {ValidationConsts.COUNTERS_SAMPLES: samples}
+
+
+def run_counters_validation(counters_by_port_per_sample, skip_first_counters_iteration=False):
+    """
+    Run validate_counters over freshly built samples and return the violations.
+
+    Args:
+        counters_by_port_per_sample (dict): {sample ordinal: {port: {counter: value}}}.
+        skip_first_counters_iteration (bool): Forwarded to validate_counters.
+
+    Returns:
+        list: Violation strings produced by the validation.
+    """
+    violations_list = []
+    validate_counters(traffic_json=build_counters_traffic_json(counters_by_port_per_sample),
+                      skip_first_counters_iteration=skip_first_counters_iteration,
+                      ignore_counter_list=[],
+                      violations_list=violations_list)
+    return violations_list
+
+
+@pytest.fixture
+def force_ramp_up_issue_open(monkeypatch):
+    """Hold Bug #5258617 open so the waiver is exercised whatever its live Redmine state is."""
+    monkeypatch.setattr(traffic_helpers, "PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE", 2)
+
+
+@pytest.fixture
+def force_ramp_up_issue_closed(monkeypatch):
+    """Close Bug #5258617 so the strict zero-counters rule is exercised from the first sample."""
+    monkeypatch.setattr(traffic_helpers, "PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE", 0)
+
+
+@pytest.mark.parametrize("sample_number", [1, 2])
+def test_ramp_up_counters_are_waived_on_the_affected_ports(force_ramp_up_issue_open, sample_number):
+    """All five counters pass on both affected ports, in either of the two early samples."""
+    violations = run_counters_validation({sample_number: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS,
+                                                          SECOND_WAIVED_PORT: RAMP_UP_COUNTERS,
+                                                          OTHER_PORT: {}}})
+    assert violations == [], violations
+
+
+def test_ramp_up_counters_on_other_ports_are_still_reported(force_ramp_up_issue_open):
+    """The rest of the switch keeps being verified, and the waived ports drop out of the report."""
+    violations = run_counters_validation({1: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS,
+                                              OTHER_PORT: RAMP_UP_COUNTERS}})
+    assert len(violations) == 1, violations
+    assert OTHER_PORT in violations[0]
+    assert FIRST_WAIVED_PORT not in violations[0]
+    assert PAUSE_COUNTER in violations[0] and NO_BUFFER_COUNTER in violations[0]
+
+
+def test_other_counters_on_affected_ports_are_still_reported(force_ramp_up_issue_open):
+    """The waiver covers five named counters, not everything the affected ports report."""
+    violations = run_counters_validation({1: {FIRST_WAIVED_PORT: {**RAMP_UP_COUNTERS,
+                                                                  UNWAIVED_COUNTER: 4},
+                                              OTHER_PORT: {}}})
+    assert len(violations) == 1, violations
+    assert UNWAIVED_COUNTER in violations[0] and FIRST_WAIVED_PORT in violations[0]
+    assert PAUSE_COUNTER not in violations[0]
+
+
+def test_waiver_applies_when_the_breakout_hides_one_port(force_ramp_up_issue_open):
+    """In the wider breakouts 0x10102 is absent, which must not stop 0x10101 being waived."""
+    violations = run_counters_validation({1: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS, OTHER_PORT: {}}})
+    assert violations == [], violations
+
+
+def test_ramp_up_counters_after_the_second_sample_are_reported(force_ramp_up_issue_open):
+    """The bug is a ramp-up effect, so the same counters must fail once the traffic settled."""
+    violations = run_counters_validation({1: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS},
+                                          3: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS}})
+    assert len(violations) == 1, violations
+    assert "sample #3" in violations[0] and FIRST_WAIVED_PORT in violations[0]
+
+
+def test_ramp_up_counters_reported_when_the_issue_is_closed(force_ramp_up_issue_closed):
+    """Closing the bug restores strict checking from the first sample, with no code change."""
+    violations = run_counters_validation({1: {FIRST_WAIVED_PORT: RAMP_UP_COUNTERS}})
+    assert len(violations) == 1, violations
+    assert "sample #1" in violations[0] and FIRST_WAIVED_PORT in violations[0]
