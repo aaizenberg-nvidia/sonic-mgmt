@@ -181,6 +181,7 @@ def test_ztp_json(engines: EnginesT):
 
 @pytest.mark.ztp
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_ztp_image(engines: EnginesT, devices: DevicesT):
     """
     Test flow:
@@ -364,6 +365,7 @@ def test_ztp_connectivity_check(engines: EnginesT):
 
 @pytest.mark.ztp
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_ztp_json_complex(engines: EnginesT, devices: DevicesT):
     """
     Test flow:

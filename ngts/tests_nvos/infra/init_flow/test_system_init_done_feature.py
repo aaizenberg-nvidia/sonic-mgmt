@@ -14,13 +14,14 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.constants import MINUTE
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.check_log_size
 @pytest.mark.check_disk_usage
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.init_flow
+@pytest.mark.dut_reboot
 def test_system_ready_state_up(engines, devices, topology_obj, verify_no_kernel_errors):
     """
     Test flow:
@@ -101,6 +102,7 @@ def test_system_ready_state_up(engines, devices, topology_obj, verify_no_kernel_
 @pytest.mark.check_disk_usage
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 @pytest.mark.init_flow
+@pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer
 def test_system_ready_state_down(engines, devices, topology_obj):
     """

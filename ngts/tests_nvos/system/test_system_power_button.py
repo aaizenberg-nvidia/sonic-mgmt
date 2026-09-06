@@ -23,6 +23,7 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.bmc
 def test_system_power_button(engines, devices, topology_obj):
     """

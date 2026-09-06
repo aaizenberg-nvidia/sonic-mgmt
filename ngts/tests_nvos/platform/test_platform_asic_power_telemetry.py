@@ -89,6 +89,7 @@ def test_platform_asic_power_telemetry_default_fields_values(random_api, devices
                     assert int(gnmi_stream_updates_value) >= 0, f"Error: {gnmi_stream_updates_value} is not a non-negative integer"
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.platform
 @pytest.mark.power_telemetry
 def test_platform_asic_power_telemetry_counters_updates(engines, random_api, devices: DevicesT, nv_command, wrong_shunt_resistor_system):

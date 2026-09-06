@@ -763,6 +763,7 @@ def test_ntp_performance(random_api):
 
 
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.ntp
 @pytest.mark.simx

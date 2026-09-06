@@ -243,6 +243,7 @@ def test_ssh_pka_invalid_values(engines, generate_new_admin_keys):
             admin_key_obj.unset(apply=True)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.security
 def test_ssh_pka_after_reboot_system(engines, generate_new_admin_keys):

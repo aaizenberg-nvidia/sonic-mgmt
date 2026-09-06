@@ -74,8 +74,9 @@ from ngts.nvos_tools.infra.AirTool import get_internal_ip_for_oob_server
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
+_DUT_REBOOT_CACHE_PREFIX = "no_dut_reboot"
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
     re.compile(r".*ib3: multicast join failed for.*, status -\d+"),
@@ -87,16 +88,47 @@ pytest_plugins = [
 ]
 
 
-def pytest_configure(config):
+def _no_dut_reboot_cache_key(config: pytest.Config) -> str:
+    """Return the session-scoped cache key used by separate MARS pytest processes."""
+    session_id = config.getoption("--session_id", default=None)
+    return f"{_DUT_REBOOT_CACHE_PREFIX}/{session_id}" if session_id else ""
+
+
+def _configure_no_dut_reboot(config: pytest.Config) -> None:
+    """Persist the no-reboot policy and exclude DUT-reboot tests.
+
+    The effective policy is stored on ``pytest.Config`` so separately launched
+    MARS post-checkers can continue non-reboot cleanup without restarting the
+    Valgrind-instrumented DUT.
     """
-    Load Vault secrets early in pytest initialization for local (non-MARS) runs.
+    cache_key = _no_dut_reboot_cache_key(config)
+    no_dut_reboot = config.getoption("--no-dut-reboot")
+    if no_dut_reboot and cache_key:
+        # Do not clear this in pytest_sessionfinish: each MARS case and its post-checker run
+        # as separate pytest processes, while MARS session IDs are unique.
+        config.cache.set(cache_key, True)
+    elif cache_key:
+        no_dut_reboot = config.cache.get(cache_key, False)
+
+    setattr(config, "_no_dut_reboot", bool(no_dut_reboot))
+    if not no_dut_reboot:
+        return
+
+    current_markexpr = (getattr(config.option, "markexpr", "") or "").strip()
+    config.option.markexpr = f"({current_markexpr}) and not dut_reboot" if current_markexpr else "not dut_reboot"
+
+
+def pytest_configure(config: pytest.Config):
+    """
+    Configure NVOS-specific options and load Vault secrets for local runs.
+
+    No-reboot filtering applies to both MARS and local runs. Vault loading only
+    applies to local runs because MARS provides secrets through the environment.
+
     This hook runs before session start and any fixtures.
-
-    For MARS runs, secrets are already provided via environment variables.
-    For local runs, we fetch secrets from Vault.
-
-    This only runs when NVOS tests are being executed.
     """
+    _configure_no_dut_reboot(config)
+
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
     if not args or not any('tests_nvos' in str(arg) for arg in args):
@@ -163,6 +195,15 @@ def pytest_addoption(parser: pytest.Parser):
              "NVOS_HUB_AI_INVESTIGATION to one of 0/false/no/off. When enabled, every failing "
              "test fires a best-effort POST to the dashboard and a deep investigation card is "
              "auto-generated; the Allure report gets a link to it.",
+    )
+    parser.addoption(
+        "--no-dut-reboot",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip tests marked as able to reboot, reset, or power-cycle the DUT; "
+            "post-checkers keep non-reboot recovery enabled and stop the run if a reboot is required"
+        ),
     )
 
 
@@ -376,7 +417,7 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                         serial_log_content = file.read()
                 with allure.step('attach content to allure'):
                     allure.attach('Serial Console log during test', serial_log_content)
-            except Exception as e:
+            except Exception:
                 err = f'failed to attach serial output from {serial_log_file_path} : {ExceptionTool.format_traceback()}'
                 logging.warning(err)
                 allure.attach('Attachment Failure', err)
@@ -637,7 +678,7 @@ Top 3 Slowest Commands:
                 for i, (cmd, time_taken, status) in enumerate(stats["slowest_commands"][:3], 1):
                     text_summary += f"{i}. {cmd[:60]}{'...' if len(cmd) > 60 else ''} - {time_taken:.3f}s ({status})\n"
 
-                text_summary += f"\nAll Commands (in execution order):\n"
+                text_summary += "\nAll Commands (in execution order):\n"
                 for i, (cmd, response_time, status) in enumerate(commands, 1):
                     text_summary += f"{i:3d}. [{response_time:6.3f}s] {cmd} ({status})\n"
 

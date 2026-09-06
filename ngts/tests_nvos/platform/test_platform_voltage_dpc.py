@@ -105,6 +105,7 @@ def _dpc_fetch_install_and_verify(voltage_dpc_obj: VoltageDpc, path: str, filena
         System().validate_health_status(HealthConsts.OK)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize("test_api", [random.choice(ApiType.ALL_TYPES)])
 def test_voltage_dpc_install(engines: EnginesT, devices: DevicesT, topology_obj: TopologyT, test_api: ApiType):
     """

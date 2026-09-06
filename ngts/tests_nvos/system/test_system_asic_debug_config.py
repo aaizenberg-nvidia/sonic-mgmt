@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_asic_debug_config_positive(engines, devices, nv_command):
     """
@@ -98,6 +99,7 @@ def test_asic_debug_config_positive(engines, devices, nv_command):
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_asic_debug_config_positive_fae(engines, devices, nv_command):
     """
@@ -137,6 +139,7 @@ def test_asic_debug_config_positive_fae(engines, devices, nv_command):
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_asic_debug_config_negative(engines, devices, nv_command):
     """
@@ -190,6 +193,7 @@ def test_asic_debug_config_negative(engines, devices, nv_command):
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_asic_debug_config_pgcb(engines, devices, nv_command, test_api):
@@ -262,6 +266,7 @@ def test_asic_debug_config_pgcb(engines, devices, nv_command, test_api):
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_asic_debug_config_pgbc(engines, devices, nv_command, standalone_system):
     """
@@ -425,6 +430,7 @@ def test_asic_debug_config_pgbc(engines, devices, nv_command, standalone_system)
 
 
 @pytest.mark.asic_debug_config
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_asic_debug_config_pgrss(engines, devices, nv_command):
     """

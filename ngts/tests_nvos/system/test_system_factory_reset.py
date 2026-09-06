@@ -31,12 +31,13 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
 cumulus_owner = "lharo"
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.timeout(50 * MINUTE)
 @pytest.mark.system
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.reset_factory
 def test_reset_factory_without_params(engines, devices, topology_obj, platform_params, random_api, has_loopbox,
                                       setup_name, standalone_system, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router):
@@ -117,6 +118,7 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
 @pytest.mark.cumulus
 @pytest.mark.system
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.reset_factory
 def test_reset_factory_keep_basic(engines, devices, random_api, test_name, serial_log_analyzers, ib_router):
     """
@@ -173,6 +175,7 @@ def test_reset_factory_keep_basic(engines, devices, random_api, test_name, seria
 @pytest.mark.cumulus
 @pytest.mark.system
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.reset_factory
 def test_reset_factory_keep_all_config(engines, devices, random_api, test_name, serial_log_analyzers, verify_no_kernel_errors, ib_router):
     """
@@ -228,6 +231,7 @@ def test_reset_factory_keep_all_config(engines, devices, random_api, test_name, 
 @pytest.mark.cumulus
 @pytest.mark.system
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.reset_factory
 def test_reset_factory_keep_only_files(engines, devices, random_api, test_name, serial_log_analyzers, ib_router):
     """
@@ -275,6 +279,7 @@ def test_reset_factory_keep_only_files(engines, devices, random_api, test_name, 
 
 @pytest.mark.cumulus
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.checklist
 def test_error_flow_reset_factory_with_params(random_api, engines, devices, topology_obj):
     """

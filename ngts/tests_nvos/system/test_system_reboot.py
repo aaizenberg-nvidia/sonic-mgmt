@@ -43,6 +43,7 @@ def _verify_exact_reboot_fields(output, output_name):
     )
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 def test_system_reset_bit(engines, devices, topology_obj, test_name):
@@ -114,6 +115,7 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.check_log_size
+@pytest.mark.dut_reboot
 @pytest.mark.check_disk_usage
 @pytest.mark.system
 @pytest.mark.nvos_build
@@ -178,6 +180,7 @@ def test_reboot_command(engines, devices, test_name, topology_obj):
             OperationTime.verify_operation_time(duration, devices.dut.reboot_type, devices).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 def test_reboot_command_force(engines, devices, test_name, random_api, topology_obj):
@@ -194,6 +197,7 @@ def test_reboot_command_force(engines, devices, test_name, random_api, topology_
 
 
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_reboot_command_bad_flow(engines, devices):
     """
     Test flow:
@@ -232,6 +236,7 @@ def test_reboot_command_bad_flow(engines, devices):
             ValidationTool.verify_expected_output(output, RebootConsts.POWER_CYCLE_NOT_SUPPORTED_ERR_MSG, True)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 @pytest.mark.parametrize('mode', RebootConsts.DEFAULT_MODES)
@@ -281,6 +286,7 @@ def test_reboot_mode(engines, devices, topology_obj, mode, random_api, test_name
             NvueGeneralCli(TestToolkit.engines.dut).remote_reboot_nvue(topology_obj)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 @pytest.mark.timeout(10 * MINUTE)

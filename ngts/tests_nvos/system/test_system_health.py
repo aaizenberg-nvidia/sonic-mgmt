@@ -265,6 +265,7 @@ def validate_health_history():
         system.health.history.retry_get_health_history_file_summary_line()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.health
 def test_reboot_test(validate_health_history, verify_no_kernel_errors, engines):

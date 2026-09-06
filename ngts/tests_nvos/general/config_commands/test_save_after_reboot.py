@@ -31,6 +31,7 @@ cumulus_owner = "gosaini"
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.general
 def test_save_reboot(engines, devices):

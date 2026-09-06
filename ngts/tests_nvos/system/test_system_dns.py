@@ -452,6 +452,7 @@ def test_system_dns_server_max_set_unset_single_apply(engines, random_api, devic
 
 
 @pytest.mark.dns
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.simx
 @pytest.mark.cumulus
@@ -681,6 +682,7 @@ def test_dns_server_priority(engines, devices, test_api, dns_config_backup_and_r
             clear_system_dns(system, engines)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.dns
 @pytest.mark.cumulus_only
 def test_dns_domain_config(engines, devices, dns_config_backup_and_restore):

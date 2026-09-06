@@ -284,6 +284,7 @@ def test_nmx_t_distributed_bad_flow(devices, dut_engines, single_switch):
                 _set_nmx_telemetry_agent_state(fae, secondary_engine, NvosConst.ENABLED)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.nmx
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_nmx_t_distributed_reboot(dut_engines, devices, random_api, single_switch):

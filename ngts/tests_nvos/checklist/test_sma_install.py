@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.bmc
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 @pytest.mark.parametrize("platform_component_with_clear", ["sma"], indirect=True)
 def test_sma_install(engines, devices, topology_obj, test_api, platform_component_with_clear, test_name, nv_command, show_platform_initial_state):

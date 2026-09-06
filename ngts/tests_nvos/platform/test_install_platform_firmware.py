@@ -98,6 +98,7 @@ def _update_install_threshold(devices):
 
 
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.platform
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_install_platform_firmware(engines, devices, test_name, topology_obj, nv_command, clear_asic_files, verify_no_kernel_errors, show_platform_initial_state, target_version):

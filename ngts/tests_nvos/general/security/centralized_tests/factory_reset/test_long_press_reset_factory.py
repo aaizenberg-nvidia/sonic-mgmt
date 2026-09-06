@@ -207,6 +207,7 @@ AAA_METHOD_KEEP = "AAA method keep"
 LOCAL_USERS_RESTORE = "Local users restore"
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.simx
 @pytest.mark.parametrize('config_state, auth_method', [
     pytest.param(AaaConsts.DISABLED, random.choice(RemoteAaaType.ALL_TYPES), id=AaaConsts.DISABLED),

@@ -911,6 +911,7 @@ def wait_for_param_changed(port_obj, param, param_to_verify, dut_engine=None):
         assert current_param == param_to_verify, f"Current {current_param} is not as expected {param_to_verify}"
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.eth0
 @pytest.mark.system
 @pytest.mark.timeout(8 * MINUTE, func_only=True)
