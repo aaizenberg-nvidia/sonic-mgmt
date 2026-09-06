@@ -25,6 +25,7 @@ from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiConstants, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import _is_gnmi_unavailable, is_gnmi_failure, verify_msg_not_in_out_or_err
 from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_path
+from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -255,6 +256,11 @@ def test_transceiver_supported_ib_speed_na_and_error_paths(engines):
     inside pmon (crafted supported_cable_speed values), plus /var/log/syslog check
     for the expected WARNING(s). Uses TransceiverSysfsTool so the pmon wiring is
     reusable and off the test's main path.
+
+    Note: the crafted inputs are invalid on purpose, so pmon is *expected* to log
+    WARNINGs about them - the test asserts they appear. They are not a failure
+    signal, so the injection is wrapped in loganalyzer_ignore() to keep
+    loganalyzer from flagging the test's own deliberate noise.
     """
     with allure.step("Empty cage -> supported-cable-ib-speed leaf absent (NVUE surface)"):
         empty_module = _get_module_with_status(Platform(), PlatformConsts.REMOVED)
@@ -267,7 +273,11 @@ def test_transceiver_supported_ib_speed_na_and_error_paths(engines):
         marker = TransceiverSysfsTool.mark_syslog(engines.dut)
 
     with allure.step("Drive SfpSysfsParser.get_supported_cable_ib_speed inside pmon"):
-        results = TransceiverSysfsTool.drive_supported_cable_ib_speed_decoder(engines.dut)
+        # Feeding unparseable / unknown-bit values makes pmon log WARNINGs by design.
+        # Ignore them here so loganalyzer does not fail the test on noise it asked for;
+        # the "Verify ... WARNING(s) logged" step below still asserts they were emitted.
+        with loganalyzer_ignore():
+            results = TransceiverSysfsTool.drive_supported_cable_ib_speed_decoder(engines.dut)
         logger.info("Defensive-decode results:")
         for r in results:
             logger.info(f"  input={r['input']!r:>16}  expected={r['expected']!r:<10}  "

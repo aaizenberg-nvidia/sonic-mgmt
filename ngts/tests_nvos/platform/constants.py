@@ -97,7 +97,7 @@ class TransceiversConsts:
             downgrade_version_name="fw_110_030_00086_dev_signed.bin",
             upgrade_version_number="110.30.102",
             downgrade_version_number="110.30.86",
-            installation_time=300
+            installation_time=350
         ),
         '130': Transceiver(
             transceiver_type='Sian2',
