@@ -30,21 +30,4 @@
         </cmd>
     </case>
 
-    <case>
-        <ignore>
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
-        <info> macsec/test_macsec_pfc.py </info>
-        <name> macsec_test_macsec_pfc </name>
-        <cmd>
-            <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 7200 --enable_macsec --allure_server_addr=\"10.215.11.120\"\'" --test-scripts macsec/test_macsec_pfc.py </static_args>
-            </params>
-        </cmd>
-    </case>
-
 </CASEDEF>

@@ -24,11 +24,11 @@
                 <value> no </value>
             </condition>
         </ignore>
-        <info> bgp/test_prefix_list_suppress.py (always-passed cases) </info>
+        <info> bgp/test_prefix_list_suppress.py </info>
         <name> bgp_prefix_list_suppress </name>
         <cmd>
              <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\" -k=\"test_anchor_prefix_rejected_on_non_spine_direct_db or test_malformed_prefix_rejected_via_cli or test_malformed_prefix_via_direct_db_write or test_prefix_list_mgr_running_on_every_device or test_status_allowed_on_every_device or test_unknown_prefix_type_via_direct_db_write\"\'" --test-scripts bgp/test_prefix_list_suppress.py </static_args>
+                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 3600 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts bgp/test_prefix_list_suppress.py </static_args>
              </params>
         </cmd>
     </case>

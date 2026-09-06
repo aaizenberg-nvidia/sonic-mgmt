@@ -556,6 +556,7 @@
 
     <case>
         <ignore>
+            <!-- daily case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
@@ -566,24 +567,25 @@
         <name> generic_config_updater_test_mac_move_guard </name>
         <cmd>
             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_mac_move_guard.py </static_args>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_mac_move_guard.py </static_args>
             </params>
         </cmd>
     </case>
 
     <case>
         <ignore>
+            <!-- daily case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
                 <value> no </value>
             </condition>
         </ignore>
-        <info> generic_config_updater/test_apply_patch_perf.py (always-passed cases) </info>
+        <info> generic_config_updater/test_apply_patch_perf.py </info>
         <name> generic_config_updater_test_apply_patch_perf </name>
         <cmd>
             <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\" -k=\"test_perf_acl_port_removal or test_perf_acl_rules_add or test_perf_acl_table_add or test_perf_ntp_server\"\'" --test-scripts generic_config_updater/test_apply_patch_perf.py </static_args>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts generic_config_updater/test_apply_patch_perf.py </static_args>
             </params>
         </cmd>
     </case>

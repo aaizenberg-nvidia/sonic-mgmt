@@ -31,4 +31,22 @@
         </cmd>
     </case>
 
+    <case>
+        <ignore>
+            <!-- daily case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> Verify transceiver presence via sfputil and show CLI </info>
+        <name> eeprom_presence </name>
+        <cmd>
+             <params>
+                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo ptp-256 --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts transceiver/eeprom/test_presence.py </static_args>
+             </params>
+        </cmd>
+    </case>
+
 </CASEDEF>
