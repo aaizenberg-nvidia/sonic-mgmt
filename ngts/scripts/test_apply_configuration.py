@@ -69,10 +69,10 @@ def configure_machine_conf(dut_engine, is_simx, platform_params):
             logger.info("Configure onie_platform/onie_machine on /host/machine.conf")
             dut_engine.run_cmd(f"sudo sed -i "
                                f"'s/.*onie_machine=.*/onie_machine="
-                               f"nvidia_{platform_params.filtered_platform}/' /host/machine.conf")
+                               f"nvidia_{platform_params.filtered_platform}_simx/' /host/machine.conf")
             dut_engine.run_cmd(f"sudo sed -i "
                                f"'s/.*onie_platform=.*/onie_platform="
-                               f"x86_64-nvidia_{platform_params.filtered_platform}-r0/' /host/machine.conf")
+                               f"x86_64-nvidia_{platform_params.filtered_platform}_simx-r0/' /host/machine.conf")
 
 
 @retry(Exception, tries=6, delay=10)
