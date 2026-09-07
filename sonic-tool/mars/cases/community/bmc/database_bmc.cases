@@ -26,6 +26,14 @@
     </case>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> Database Scripts Case </info>
         <name> db_scripts </name>
         <cmd>

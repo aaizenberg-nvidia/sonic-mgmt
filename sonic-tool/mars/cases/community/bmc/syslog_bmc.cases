@@ -16,14 +16,6 @@
     </global>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> System Log Case </info>
         <name> syslog </name>
         <cmd>
@@ -35,11 +27,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> Syslog rate limit Case </info>
@@ -53,11 +45,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> System Logrotate Case </info>
@@ -71,11 +63,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> Cron Health Case </info>

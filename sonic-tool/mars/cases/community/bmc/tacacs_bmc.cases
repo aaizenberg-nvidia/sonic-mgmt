@@ -34,6 +34,14 @@
     </case>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> RO DISK Case </info>
         <name> ro_disk </name>
         <cmd>
@@ -44,6 +52,14 @@
     </case>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> JIT_USER Case </info>
         <name> jit_user </name>
         <cmd>
@@ -54,6 +70,14 @@
     </case>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> Authorization Case </info>
         <name> tacacs_authorization </name>
         <cmd>
@@ -64,6 +88,14 @@
     </case>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> Accounting Case </info>
         <name> tacacs_accounting </name>
         <cmd>

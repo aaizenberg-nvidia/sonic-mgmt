@@ -16,6 +16,14 @@
     </global>
 
     <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
         <info> DNS </info>
         <name> Static DNS </name>
         <cmd>

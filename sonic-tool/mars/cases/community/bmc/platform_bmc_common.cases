@@ -26,34 +26,6 @@
     </case>
 
     <case>
-        <info> Test Platform Info Case Mocked </info>
-        <name> platform_info_mocked </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals -k=\"test_show_platform_temperature_mocked or test_show_platform_fanstatus_mocked\" --clean-alluredir --alluredir=/tmp/allure-results --timeout 2700 --session-timeout 2700 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_platform_info.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <ignore>
-            <!-- weekend case -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> yes </value>
-            </condition>
-        </ignore>
-        <info> Test Thermal Control Fan Status </info>
-        <name> thermal_control_fan_status </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals -k=\"test_thermal_control_fan_status\" --clean-alluredir --alluredir=/tmp/allure-results --timeout 2700 --session-timeout 2700 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/test_platform_info.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
         <info> Enhance Reboot Cause Test </info>
         <name> test_reboot_cause </name>
         <cmd>
@@ -89,16 +61,6 @@
         <cmd>
              <params>
                  <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/mellanox/test_check_sysfs.py </static_args>
-             </params>
-        </cmd>
-    </case>
-
-    <case>
-        <info> Test Reduce Fan Speed on SN4280 Case </info>
-        <name> reduce_fan_speed_sn4280 </name>
-        <cmd>
-             <params>
-                 <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts platform_tests/mellanox/test_reduce_fan_speed_sn4280.py </static_args>
              </params>
         </cmd>
     </case>
@@ -176,14 +138,6 @@
     </case>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Test Secure Upgrade Non_Signed </info>
         <name> test_secure_upgrade_non_signed </name>
         <cmd>
@@ -194,14 +148,6 @@
     </case>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Test Secure Upgrade Mismatched_Signed </info>
         <name> test_secure_upgrade_mismatched_signed </name>
         <cmd>
@@ -212,14 +158,6 @@
     </case>
 
     <case>
-        <ignore>
-            <!-- weekend case -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> yes </value>
-            </condition>
-        </ignore>
         <info> Test memory exhaustion </info>
         <name> test_memory_exhaustion </name>
         <cmd>
@@ -229,14 +167,6 @@
         </cmd>
     </case>
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Container Hardening Case </info>
         <name> container_hardening </name>
         <cmd>
@@ -247,14 +177,6 @@
     </case>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Process Reboot Cause </info>
         <name> process_reboot_cause </name>
         <cmd>
@@ -265,14 +187,6 @@
     </case>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> Pmon Grep Safe Case </info>
         <name> pmon_grep_safe </name>
         <cmd>

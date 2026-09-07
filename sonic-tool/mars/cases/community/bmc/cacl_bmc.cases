@@ -16,20 +16,6 @@
     </global>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-            <!-- Case only for main hwsku, skip this case if it is non-main hwsku -->
-            <condition>
-                <key> skip_main_hwsku_only_cases </key>
-                <op> == </op>
-                <value> yes </value>
-            </condition>
-        </ignore>
         <info> Control Plane ACL Case </info>
         <name> cacl_function </name>
         <cmd>
@@ -41,15 +27,9 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-            <!-- Case only for main hwsku, skip this case if it is non-main hwsku -->
-            <condition>
-                <key> skip_main_hwsku_only_cases </key>
                 <op> == </op>
                 <value> yes </value>
             </condition>
@@ -65,15 +45,9 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-            <!-- Case only for main hwsku, skip this case if it is non-main hwsku -->
-            <condition>
-                <key> skip_main_hwsku_only_cases </key>
                 <op> == </op>
                 <value> yes </value>
             </condition>
