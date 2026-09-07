@@ -16,7 +16,7 @@
         "show_pl_syseeprom": "2.0",
         "show_pl_temperature": "1.121",
         "show_sys_health_summary": "9.9406",
-        "show_techsupport": "130.803"
+        "show_techsupport": "250.414"
     },
     "SN2700": {
         "add_vlan": "0.912",
@@ -35,7 +35,7 @@
         "show_pl_syseeprom": "1.343",
         "show_pl_temperature": "1.121",
         "show_sys_health_summary": "9.9406",
-        "show_techsupport": "130.803"
+        "show_techsupport": "250.414"
     },
     "MSN3420": {
         "add_vlan": "0.537",
@@ -54,7 +54,7 @@
         "show_pl_syseeprom": "0.653",
         "show_pl_temperature": "0.58",
         "show_sys_health_summary": "5.4208",
-        "show_techsupport": "164.545"
+        "show_techsupport": "176.105"
     },
     "MSN3700": {
         "add_vlan": "0.429",
@@ -130,7 +130,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "5.0364",
-        "show_techsupport": "128.878"
+        "show_techsupport": "154.23"
     },
     "SN4700D": {
         "add_vlan": "0.436",
@@ -149,7 +149,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "5.0364",
-        "show_techsupport": "128.878"
+        "show_techsupport": "154.23"
     },
     "SN4280": {
         "add_vlan": "0.436",
@@ -168,7 +168,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "5.0364",
-        "show_techsupport": "168.406"
+        "show_techsupport": "190.32"
     },
     "SN5600": {
         "add_vlan": "0.436",
@@ -187,7 +187,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "154.468"
+        "show_techsupport": "178.251"
     },
     "SN5610N": {
         "add_vlan": "0.436",
@@ -282,7 +282,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "169.983"
+        "show_techsupport": "204.815"
     },
     "SN6600_LD": {
         "add_vlan": "0.436",
@@ -301,6 +301,6 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "169.983"
+        "show_techsupport": "204.815"
     }
 }
