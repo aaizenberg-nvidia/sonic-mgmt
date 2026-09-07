@@ -1054,7 +1054,6 @@ def update_group_params(copp_dict, trap_group):
     # there is no point in CIR and CBS values, it will change later
     copp_dict[COPP_GROUP][trap_group].update({"meter_type": "packets",
                                               "mode": "sr_tcm",
-                                              "color": "blind",
                                               "cir": "400",
                                               "cbs": "400",
                                               "red_action": "drop"})
