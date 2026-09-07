@@ -77,11 +77,14 @@ class NvueInterfaceCli(SonicInterfaceCli):
         self.engine.run_cmd(f"nv set interface {string_of_ports} link state {port_state}")
         self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)
 
-    def bring_all_existing_swp_ports_up(self):
-        """Bring every currently exposed Cumulus switch interface administratively up.
+    def get_existing_swp_ports(self):
+        """Return every ``swp*`` interface the switch currently exposes, in port order.
+
+        Reads the kernel's interface list rather than NVUE so the result reflects the ports that
+        actually exist, split children (``swpNsM``) included.
 
         Returns:
-            List of existing ``swp*`` interface names updated through NVUE.
+            List of existing ``swp*`` interface names, sorted numerically by port then split index.
 
         Raises:
             RuntimeError: If the switch exposes no ``swp*`` interfaces.
@@ -94,6 +97,18 @@ class NvueInterfaceCli(SonicInterfaceCli):
         ports = sorted(ports, key=lambda port: tuple(int(value) for value in re.findall(r"\d+", port)))
         if not ports:
             raise RuntimeError("No existing swp* interfaces found")
+        return ports
+
+    def bring_all_existing_swp_ports_up(self):
+        """Bring every currently exposed Cumulus switch interface administratively up.
+
+        Returns:
+            List of existing ``swp*`` interface names updated through NVUE.
+
+        Raises:
+            RuntimeError: If the switch exposes no ``swp*`` interfaces.
+        """
+        ports = self.get_existing_swp_ports()
         for port in ports:
             self.engine.run_cmd(f"nv set interface {port} link state up")
         self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)

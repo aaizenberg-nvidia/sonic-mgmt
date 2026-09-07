@@ -347,6 +347,7 @@ class NvuePerformanceCli(PerformanceCommon):
         self.unconnected_ports = self.ports["unconnected_ports"]
         self.port_groups = self.get_right_left_ports_dict()
         self.get_os_ports_name_mapping()
+        self.add_ports_connectivity_to_dut(conf_args)
 
     def _refresh_port_groups_from_lldp(self, timeout=60, interval=10):
         """Refresh left/right port groups once LLDP neighbors are visible on the DUT."""
@@ -516,14 +517,7 @@ class NvuePerformanceCli(PerformanceCommon):
     def retry_get_player_ports(self):
         self.ports = None
         self.ports = self.get_player_ports()
-        connected_ports = self.ports["connected_ports"]
-        unconnected_ports = self.ports["unconnected_ports"]
-        if (not unconnected_ports) and (self.dut_alias == PerfConsts.DUT_ALIAS):
-            return self.ports
-        elif len(connected_ports) != len(unconnected_ports):
-            logging.warning(f"The number of connected ports {len(connected_ports)} is not equal to the number of unconnected ports {len(unconnected_ports)}")
-            logging.warning(f"The connected ports are {connected_ports}")
-            logging.warning(f"The unconnected ports are {unconnected_ports}")
+        if not self.check_connected_unconnected_balance(self.ports["connected_ports"], self.ports["unconnected_ports"]):
             logging.warning(f"Retrying to get the player ports")
             raise Exception("The number of connected ports is not equal to the number of unconnected ports, Retrying once again ..")
         return self.ports
@@ -655,9 +649,11 @@ class NvuePerformanceCli(PerformanceCommon):
             | 0x10001  |  1  |   1   |  0  | ... | DOWN  | UNPLUGGED|
             | 0x10041  |  1  |  65   | 64  | ... | UP    | PLUGGED  |
 
-        The regex extracts (log_port, oper_state, module_state) from each row.
+        The regex extracts (log_port, label_port, oper_state, module_state) from each row.
         Ports with module_state == "PLUGGED" are classified as connected (cable present),
         all others as unconnected. ASIC-specific bonus ports are excluded from the tail.
+        Ports declared in forced_unconnected_ports.yaml for this switch are then moved back to
+        unconnected, so a port cabled to an external traffic generator stays an MLOOP generator.
 
         The result is also saved as tg_ports.json on the switch and locally as
         {dut_alias}_ports.json.
@@ -688,6 +684,35 @@ class NvuePerformanceCli(PerformanceCommon):
     def get_tg_unconnected_ports(self):
         player_ports = self.get_player_ports()
         return player_ports["unconnected_ports"]
+
+    def get_mloop_candidate_ports(self):
+        """Return the swp ports the Cumulus templates should bridge as MLOOP generators.
+
+        ``nv show interface down`` identifies generator ports by their link being down, which holds
+        for an unconnected port but not for one cabled to an external traffic generator (Ixia) - that
+        link is up. This unions in the switch's forced-unconnected ports so the templates agree with
+        the classification done in ``_apply_forced_unconnected``; without it the Ixia-cabled ports
+        would be classified as MLOOP generators yet never appear in the bridge configuration.
+
+        Returns:
+            list: swp port names - the down ports, plus any forced-unconnected port not already
+                among them.
+        """
+        down_ports = self.cli_obj.interface.get_down_ports()
+        if not self.forced_unconnected_label_ports:
+            return down_ports
+        forced_parent_ports = {f"swp{label_port}" for label_port in self.forced_unconnected_label_ports}
+        forced_ports = [port for port in self.cli_obj.interface.get_existing_swp_ports()
+                        if get_swp_parent_port_names([port])[0] in forced_parent_ports]
+        missing_parent_ports = forced_parent_ports - set(get_swp_parent_port_names(forced_ports))
+        if missing_parent_ports:
+            raise TestIssue(f"[{self.dut_alias}] forced-unconnected config lists front-panel label port(s) "
+                            f"{sorted(missing_parent_ports)} for {self.hostname}, but the switch exposes no such swp "
+                            f"port. Fix forced_unconnected_ports.yaml to match the switch.")
+        mloop_ports = down_ports + [port for port in forced_ports if port not in down_ports]
+        logging.info(f"[{self.dut_alias}] MLOOP candidate ports: {len(down_ports)} down port(s) plus forced-unconnected "
+                     f"{[port for port in forced_ports if port not in down_ports]}")
+        return sort_swp_split_port_names(mloop_ports)
 
     def run_traffic(self, scenario, traffic_jsons):
         """Re-scope the traffic JSON to the connected subset, then send.
@@ -1205,7 +1230,7 @@ class NvuePerformanceCli(PerformanceCommon):
         func_dict = {"get_right_left_ports_dict": self.get_right_left_ports_dict,
                      "generate_ip_address_list": generate_ip_address_list,
                      "filter_ports": self.cli_obj.interface.filter_lldp_neighbors,
-                     "down_ports": self.cli_obj.interface.get_down_ports,
+                     "down_ports": self.get_mloop_candidate_ports,
                      "address_calculator": address_calculator,
                      "cumulus_ports_already_logical_split": cumulus_ports_already_logical_split,
                      "cumulus_ports_match_requested_split": cumulus_ports_match_requested_split,
@@ -1515,24 +1540,17 @@ class NvuePerformanceCli(PerformanceCommon):
         """
         pass
 
-    def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
-        ports_file = "ports.json"
-        full_path = os.path.join(PerfConsts.CONFIG_FILES_DIR, ports_file)
-        connected_ports = selected_connected_ports if selected_connected_ports else self.connected_ports
-        ports_connectivity_dict = {
-            "unconnected_ports": self.get_hex_int_sdk_ports(self.unconnected_ports),
-            "connected_ports": self.get_hex_int_sdk_ports(connected_ports),
-            "speed": conf_args["speed"]}
-        with open(full_path, 'w') as f:
-            json.dump(ports_connectivity_dict, f)
-        self.engine.copy_file(source_file=full_path, file_system="/tmp",
-                              dest_file=ports_file, overwrite_file=True, verify_file=False)
-
     @retry(exceptions=TestIssue, tries=6, delay=15)
     def check_mloops_up(self):
         """
         This method is used to check if the mloops are up on the traffic generator
         and if not, it will wait for them to be up.
+
+        An MLOOP generator port is recognized by its LLDP neighbor being the traffic generator
+        itself, because the physical loopback reflects the port's own LLDP frames back to it. A
+        port cabled to an external traffic generator (Ixia) only self-reports that way if the
+        external generator does not emit LLDP of its own, so the failure below names the
+        forced-unconnected ports as a likely cause.
         """
         if not self.dut_neighbor_dict:
             self.dut_neighbor_dict = self.cli_obj.interface.filter_lldp_neighbors(neighbor_list=[PerfConsts.DUT_ALIAS],
@@ -1546,7 +1564,14 @@ class NvuePerformanceCli(PerformanceCommon):
             down_ports_list = ports_dict[dut_lldp_name]
             up_ports_list = ports_dict[PerfConsts.DUT_ALIAS]
         if len(down_ports_list) != len(self.unconnected_ports):
-            raise TestIssue(f"Not all Mloops are up yet on {self.dut_alias}")
+            forced_hint = ""
+            if self.forced_unconnected_label_ports:
+                forced_hint = (f" Label port(s) {sorted(self.forced_unconnected_label_ports)} are forced unconnected on "
+                               f"{self.hostname}; if their external traffic generator emits LLDP they report it as their "
+                               f"neighbor instead of the loopback, and will never be counted here.")
+            raise TestIssue(f"Not all Mloops are up yet on {self.dut_alias}: {len(down_ports_list)} port(s) report the "
+                            f"loopback as their LLDP neighbor but {len(self.unconnected_ports)} are classified as "
+                            f"unconnected.{forced_hint}")
         for up_port, down_port in zip(up_ports_list, down_ports_list):
             mloops_tuples_list.append((up_port, down_port))
         self.mloops = mloops_tuples_list

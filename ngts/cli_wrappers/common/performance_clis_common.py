@@ -11,7 +11,8 @@ from ngts.constants.constants import BugHandlerConst
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
 from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
 from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
-                                                     get_cli_port_selection_options)
+                                                     get_cli_port_selection_options,
+                                                     load_forced_unconnected_label_ports)
 from ngts.nvos_tools.infra.FilesTool import FilesTool
 from ngts.performance_tests.log_files.players_logger import get_players_cmd_logger
 from devts.infra.tools.exceptions.test_issue import TestIssue
@@ -63,6 +64,15 @@ class PerformanceCommon:
         self.port_selection = PortSelection(port_style=self.PORT_STYLE)
         self._port_selection_params = None
         self.excluded_port_names = set()
+        self.hostname = self.get_hostname()
+        self.forced_unconnected_label_ports = load_forced_unconnected_label_ports(self.hostname)
+
+    def get_hostname(self):
+        """Return the switch hostname from Noga metadata, or None when it is unavailable."""
+        try:
+            return self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Common']['Name']
+        except (AttributeError, KeyError, TypeError):
+            return None
 
     def set_port_selection_params(self, params):
         """Store raw port-selection parameters until the scenario is known.
@@ -318,24 +328,30 @@ class PerformanceCommon:
 
     @staticmethod
     def _parse_ports_dump_rows(ports_dump):
-        """Extract (log_port, oper_state, module_state) from every row of an sx_api_ports_dump.py table.
+        """Extract (log_port, label_port, oper_state, module_state) from every row of an sx_api_ports_dump.py table.
 
         The rows keep the order of the dump, which matters because the ASIC bonus ports are identified by
         being the trailing rows.
+
+        The dump columns are ``log_port | local_port | slot | label_port | mtu | truncation | admin_s | oper_s |
+        module_s | ...``, so the front-panel label port is the third of the four leading numeric columns.
 
         Args:
             ports_dump: Raw string output of sx_api_ports_dump.py.
 
         Returns:
-            list: One (log_port_hex, oper_state, module_state) tuple per port, in dump order.
+            list: One (log_port_hex, label_port, oper_state, module_state) tuple per port, in dump order.
+                Both log_port_hex and label_port are the raw strings from the dump.
         """
         _log_port_hex = r"\|\s+(0x[\da-fA-F]+)\|"
-        _four_numeric_columns = r"(?:\s+\d+\|){4}"
+        _local_port_and_slot = r"(?:\s+\d+\|){2}"
+        _label_port = r"\s+(\d+)\|"
+        _mtu = r"\s+\d+\|"
         _two_skip_columns = r"(?:\s+\S+\|){2}"
         _oper_state = r"\s+(\S+)\|"
         _module_state = r"\s+(\S+)\|"
         return re.findall(
-            _log_port_hex + _four_numeric_columns + _two_skip_columns + _oper_state + _module_state,
+            _log_port_hex + _local_port_and_slot + _label_port + _mtu + _two_skip_columns + _oper_state + _module_state,
             ports_dump,
         )
 
@@ -361,12 +377,90 @@ class PerformanceCommon:
             logging.error(error_msg)
             raise TestIssue(msg=error_msg) from e
 
-    @staticmethod
-    def _classify_ports_dump_rows(port_status_list, bonus_ports_to_remove=0):
+    def _apply_forced_unconnected(self, connected, unconnected, port_status_list):
+        """Move the switch's forced-unconnected ports out of the connected list.
+
+        A traffic-generator port cabled to an external generator (Ixia) reports its transceiver as
+        PLUGGED, so plug-state classification files it as DUT-facing. The switch's entry in
+        forced_unconnected_ports.yaml names those front-panel label ports; every logical port behind
+        them is moved back to the unconnected (MLOOP generator) role. Listing the unsplit parent label
+        port therefore covers all of its split sub-ports.
+
+        Args:
+            connected: Sorted SDK logical ports classified as connected.
+            unconnected: Sorted SDK logical ports classified as unconnected.
+            port_status_list: Rows as returned by _parse_ports_dump_rows, already trimmed of bonus ports.
+
+        Returns:
+            tuple: (sorted_connected, sorted_unconnected) with the forced ports moved. The inputs are
+                returned unchanged when this switch declares no forced-unconnected ports.
+
+        Raises:
+            TestIssue: When a declared label port is missing from the dump, or its transceiver is not
+                PLUGGED — either way the YAML no longer describes the switch's actual cabling.
+        """
+        if not self.forced_unconnected_label_ports:
+            return connected, unconnected
+        forced_log_ports, seen_label_ports, plugged_label_ports = set(), set(), set()
+        for log_port, label_port, _, module_s in port_status_list:
+            label_port_int = int(label_port)
+            if label_port_int not in self.forced_unconnected_label_ports:
+                continue
+            seen_label_ports.add(label_port_int)
+            forced_log_ports.add(int(log_port, 16))
+            if module_s == "PLUGGED":
+                plugged_label_ports.add(label_port_int)
+        missing_label_ports = sorted(self.forced_unconnected_label_ports - seen_label_ports)
+        if missing_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config lists front-panel label port(s) "
+                            f"{missing_label_ports} for {self.hostname}, but sx_api_ports_dump.py reports no such "
+                            f"port. Fix forced_unconnected_ports.yaml to match the switch.")
+        unplugged_label_ports = sorted(self.forced_unconnected_label_ports - plugged_label_ports)
+        if unplugged_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config declares front-panel label port(s) "
+                            f"{unplugged_label_ports} on {self.hostname} as cabled to an external traffic "
+                            f"generator, but their transceiver is not PLUGGED. The cable was removed, or "
+                            f"forced_unconnected_ports.yaml is stale.")
+        forced_connected = sorted(forced_log_ports.intersection(connected))
+        logging.info(f"[{self.dut_alias}] Forcing label port(s) {sorted(self.forced_unconnected_label_ports)} on "
+                     f"{self.hostname} to unconnected: moved SDK logical port(s) "
+                     f"{[hex(port) for port in forced_connected]}")
+        return ([port for port in connected if port not in forced_log_ports],
+                sorted(set(unconnected) | forced_log_ports))
+
+    def check_connected_unconnected_balance(self, connected, unconnected):
+        """Report whether the connected/unconnected port counts match on this player.
+
+        MLOOP pairs each unconnected generator port with one connected DUT-facing port, so a traffic
+        generator is expected to split evenly. An imbalance means the classification disagrees with the
+        cabling — most often a port cabled to an external traffic generator that is missing from
+        forced_unconnected_ports.yaml. The DUT is exempt: it has no unconnected ports by design.
+
+        Args:
+            connected: SDK logical ports classified as connected.
+            unconnected: SDK logical ports classified as unconnected.
+
+        Returns:
+            bool: True when the counts match, or the player is the DUT with no unconnected ports.
+        """
+        if not unconnected and self.dut_alias == PerfConsts.DUT_ALIAS:
+            return True
+        if len(connected) == len(unconnected):
+            return True
+        logging.warning(f"[{self.dut_alias}] The number of connected ports {len(connected)} is not equal to the number "
+                        f"of unconnected ports {len(unconnected)}")
+        logging.warning(f"[{self.dut_alias}] The connected ports are {connected}")
+        logging.warning(f"[{self.dut_alias}] The unconnected ports are {unconnected}")
+        logging.warning(f"[{self.dut_alias}] If a port is cabled to an external traffic generator, declare its "
+                        f"front-panel label port under {self.hostname} in forced_unconnected_ports.yaml")
+        return False
+
+    def _classify_ports_dump_rows(self, port_status_list, bonus_ports_to_remove=0):
         """Classify already-parsed ports-dump rows as connected/unconnected.
 
-        Ports with module_state == "PLUGGED" are connected; all others are unconnected.
-        ASIC-specific bonus ports are trimmed from the tail of the list.
+        Ports with module_state == "PLUGGED" are connected; all others are unconnected. ASIC-specific
+        bonus ports are trimmed from the tail of the list. Ports this switch declares forced-unconnected
+        are then moved back to unconnected regardless of their plug state.
 
         Args:
             port_status_list: Rows as returned by _parse_ports_dump_rows, in dump order.
@@ -379,16 +473,15 @@ class PerformanceCommon:
         if bonus_ports_to_remove > 0:
             port_status_list = port_status_list[:-bonus_ports_to_remove]
         connected, unconnected = [], []
-        for log_port, _, module_s in port_status_list:
+        for log_port, _, _, module_s in port_status_list:
             log_port_int = int(log_port, 16)
             if module_s == "PLUGGED":
                 connected.append(log_port_int)
             else:
                 unconnected.append(log_port_int)
-        return sorted(connected), sorted(unconnected)
+        return self._apply_forced_unconnected(sorted(connected), sorted(unconnected), port_status_list)
 
-    @classmethod
-    def _parse_ports_dump(cls, ports_dump, bonus_ports_to_remove=0):
+    def _parse_ports_dump(self, ports_dump, bonus_ports_to_remove=0):
         """Parse sx_api_ports_dump.py output and classify ports as connected/unconnected.
 
         Args:
@@ -399,7 +492,7 @@ class PerformanceCommon:
             tuple: (sorted_connected, sorted_unconnected) — each a sorted list of
                    SDK logical port numbers as ints.
         """
-        return cls._classify_ports_dump_rows(cls._parse_ports_dump_rows(ports_dump), bonus_ports_to_remove)
+        return self._classify_ports_dump_rows(self._parse_ports_dump_rows(ports_dump), bonus_ports_to_remove)
 
     def _write_json_to_remote(self, local_path, data, dst_dut_dir, dest_file):
         """Write `data` as local JSON at `local_path` and copy it to `dest_file` on the switch."""
@@ -419,6 +512,41 @@ class PerformanceCommon:
                                         f"{self.dut_alias}_ports.json")
         self.execute_cmd(f"sudo rm -f {dst_dut_dir}/tg_ports.json")
         self._write_json_to_remote(get_ports_output, player_ports, dst_dut_dir, "tg_ports.json")
+
+    def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
+        """Publish the runner's port classification to /ports.json on the switch.
+
+        DUT-side SDK tests read this file rather than re-deriving connected/unconnected from the
+        transceiver state, so whatever the runner decided reaches them — in particular the
+        forced-unconnected cages, which report as plugged but must stay MLOOP generators.
+
+        Only the port lists are published. conf_args carries its speed in Kbps as a string, while the
+        SDK tests express speed in Gb and resolve it from the hardware themselves, so publishing it
+        would overwrite a correct value with an incompatible one.
+
+        This host-filesystem path serves DVS and Cumulus, where the SDK tests run bare on the switch
+        and both classify ports into SDK logical port numbers via _parse_ports_dump - already the
+        form the SDK tests expect, so the lists are published as they are. SONiC overrides this
+        method: its SDK tests run inside the syncd container and its lists are Ethernet<N> names,
+        which it maps to SDK ports itself.
+
+        Args:
+            conf_args (dict): Scenario configuration. Unused here; kept for the SONiC override.
+            selected_connected_ports: Publish this connected list instead of the cached one, for
+                callers that scope a run to a subset of the switch.
+        """
+        connected_ports = selected_connected_ports if selected_connected_ports else self.connected_ports
+        ports_connectivity_dict = {"unconnected_ports": list(self.unconnected_ports),
+                                   "connected_ports": list(connected_ports)}
+        local_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                  f"{self.dut_alias}_ports_connectivity.json")
+        logging.info(f"[{self.dut_alias}] Publishing port connectivity to /ports.json: "
+                     f"{len(ports_connectivity_dict['connected_ports'])} connected, "
+                     f"{len(ports_connectivity_dict['unconnected_ports'])} unconnected")
+        # Staged through /tmp because the SDK tests read /ports.json from the root filesystem,
+        # which the switch login user cannot write to directly.
+        self._write_json_to_remote(local_path, ports_connectivity_dict, "/tmp", "ports.json")
+        self.execute_cmd("sudo mv /tmp/ports.json /ports.json")
 
     def get_port_mapping_df(self):
         sdk_port_to_local_port_mapping = {}

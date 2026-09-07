@@ -74,6 +74,7 @@ class DvsPerformance(PerformanceCommon):
         cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {test_name}"
         self.execute_cmd(cmd)
         self.update_player_ports()
+        self.add_ports_connectivity_to_dut(conf_args)
 
     def get_configuration_file(self, scenario, conf_args, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR):
         templates_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
@@ -364,9 +365,11 @@ class DvsPerformance(PerformanceCommon):
             | 0x10001  |  1  |   1   |  0  | ... | DOWN  | UNPLUGGED|
             | 0x10041  |  1  |  65   | 64  | ... | UP    | PLUGGED  |
 
-        The regex extracts (log_port, oper_state, module_state) from each row.
+        The regex extracts (log_port, label_port, oper_state, module_state) from each row.
         Ports with module_state == "PLUGGED" are classified as connected (cable present),
         all others as unconnected. ASIC-specific bonus ports are excluded from the tail.
+        Ports declared in forced_unconnected_ports.yaml for this switch are then moved back to
+        unconnected, so a port cabled to an external traffic generator stays an MLOOP generator.
 
         The result is also saved as tg_ports.json on the switch and locally as
         {dut_alias}_ports.json.
@@ -384,6 +387,7 @@ class DvsPerformance(PerformanceCommon):
         self.connected_ports, self.unconnected_ports = self._classify_ports_dump_rows(
             self._ports_dump_rows, bonus_ports_to_remove
         )
+        self.check_connected_unconnected_balance(self.connected_ports, self.unconnected_ports)
         player_ports = {"connected_ports": self.connected_ports,
                         "unconnected_ports": self.unconnected_ports}
         self._save_player_ports(player_ports, dst_dut_dir)
@@ -501,7 +505,7 @@ class DvsPerformance(PerformanceCommon):
         port_status_list = getattr(self, "_ports_dump_rows", None)
         if port_status_list is None:
             port_status_list = self._parse_ports_dump_rows(self.execute_cmd("sx_api_ports_dump.py"))
-        bonus_ports = [int(log_port, 16) for log_port, _, _ in port_status_list[-bonus_ports_count:]]
+        bonus_ports = [int(log_port, 16) for log_port, _, _, _ in port_status_list[-bonus_ports_count:]]
         logging.info(f"Bonus ports on {self.dut_alias}: {self.get_sdk_ports(bonus_ports)}")
         return bonus_ports
 

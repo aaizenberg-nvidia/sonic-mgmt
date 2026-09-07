@@ -45,6 +45,11 @@ _NGTS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 DEFAULT_PORT_SELECTION_CONFIG = os.path.join(_NGTS_DIR, "performance_tests",
                                              "port_selection_config.yaml")
 
+# Default YAML config path for the forced-unconnected port roles:
+# ``ngts/performance_tests/forced_unconnected_ports.yaml``.
+DEFAULT_FORCED_UNCONNECTED_CONFIG = os.path.join(_NGTS_DIR, "performance_tests",
+                                                 "forced_unconnected_ports.yaml")
+
 # Session-wide port-selection options captured from the pytest command line at
 # ``pytest_configure`` time. Stored at module scope (not on a fixture) so they are available
 # even when the config is applied by an earlier, higher-scoped fixture (e.g. a class-scoped
@@ -502,3 +507,55 @@ def build_port_selection(setup_name: str, scenario: str, exclude_enabled: bool,
     if mode == "exclude":
         return PortSelection(exclude=ports, port_style=port_style)
     return PortSelection(include=ports, port_style=port_style)
+
+
+def load_forced_unconnected_label_ports(hostname: str, config_path: Optional[str] = None) -> Set[int]:
+    """Load the front-panel label ports that must be treated as unconnected on ``hostname``.
+
+    A traffic-generator port cabled to an external generator (Ixia) reports its transceiver as
+    present, so the plug-state classification would file it as DUT-facing (``connected``).
+    Listing its front-panel label port here keeps it in the ``unconnected`` role, which is the
+    role MLOOP traffic generation runs on.
+
+    The identifier is the front-panel label port (the physical cage number, unsplit parent),
+    because it is the only identity that survives a redeploy to a different NOS: the same cage is
+    an SDK logical port on DVS, ``swpN`` on Cumulus and ``EthernetN`` on SONiC.
+
+    Args:
+        hostname: Switch hostname as reported by Noga ``Common.Name`` (e.g. ``r-bison-13``).
+        config_path: Optional override; defaults to :data:`DEFAULT_FORCED_UNCONNECTED_CONFIG`.
+
+    Returns:
+        set: Front-panel label ports as ints. Empty when the file is absent or the hostname is
+            not listed, which makes the mechanism a no-op for every switch without Ixia cabling.
+
+    Raises:
+        TestIssue: When the file exists but cannot be parsed, is not a hostname mapping, or the
+            hostname entry is not a list of integer label ports.
+    """
+    if not hostname:
+        return set()
+    path = config_path or DEFAULT_FORCED_UNCONNECTED_CONFIG
+    if not os.path.isfile(path):
+        return set()
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise TestIssue(msg=f"Failed to parse forced-unconnected config {path!r}: {e}") from e
+    if not isinstance(data, dict):
+        raise TestIssue(msg=f"Forced-unconnected config {path!r} must be a mapping of hostname to label ports, "
+                        f"got {type(data).__name__}.")
+    ports = data.get(hostname)
+    if ports is None:
+        return set()
+    if not isinstance(ports, (list, tuple)):
+        raise TestIssue(msg=f"Forced-unconnected config {path!r}: entry for {hostname!r} must be a list of "
+                        f"front-panel label ports, got {ports!r}.")
+    try:
+        label_ports = {int(port) for port in ports}
+    except (TypeError, ValueError) as e:
+        raise TestIssue(msg=f"Forced-unconnected config {path!r}: entry for {hostname!r} must contain only integer "
+                        f"front-panel label ports, got {ports!r}.") from e
+    logger.info(f"Forced-unconnected label ports for {hostname} from {path}: {sorted(label_ports)}")
+    return label_ports

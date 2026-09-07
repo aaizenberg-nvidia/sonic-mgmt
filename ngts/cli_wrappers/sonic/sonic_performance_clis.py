@@ -15,7 +15,6 @@ from ngts.constants.constants import BugHandlerConst, InfraConst, CliType, Sonic
     IndependentModuleConst
 from ngts.constants.performance_constants import PerfConsts, PowerConsts, ValidationConsts, MRCConsts, MongoDbConsts, PortMappingOptionsConsts
 from ngts.cli_wrappers.common.performance_clis_common import PerformanceCommon
-from ngts.helpers.performance.port_selection import PortSelection
 from ngts.helpers.performance.sensors_power_parse import (
     build_controllers_info_dicts_list,
     get_controllers_info_str_list as sensors_get_controllers_info_str_list,
@@ -38,12 +37,7 @@ class SonicPerformanceCli(PerformanceCommon):
     PORT_STYLE = "ethernet"
 
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
-        self.topology_obj = topology_obj
-        self.engine = engine
-        self.dut_alias = dut_alias
-        self.hostname = self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Common'][
-            'Name']
-        self.cli_obj = cli_obj
+        super().__init__(topology_obj, engine, dut_alias, cli_obj)
         self.chip_type = \
             self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Specific']['chip_type']
         self.mac = self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
@@ -56,9 +50,6 @@ class SonicPerformanceCli(PerformanceCommon):
         self.connected_ports, self.unconnected_ports = [], []
         self.mloops = []
         self.port_groups = {}
-        self.port_selection = PortSelection(port_style=self.PORT_STYLE)
-        self._port_selection_params = None
-        self.excluded_port_names = set()
 
     def validate_no_drops_on_tg_ports(self):
         violations = []
@@ -348,6 +339,79 @@ class SonicPerformanceCli(PerformanceCommon):
             self.unconnected_ports, self.connected_ports = ports_list[:middle], ports_list[middle:]
         else:
             self.connected_ports, self.unconnected_ports = ports_list, []
+        self.apply_forced_unconnected_to_sku_ports(sku_ports_dict)
+        self.check_connected_unconnected_balance(self.connected_ports, self.unconnected_ports)
+
+    def apply_forced_unconnected_to_sku_ports(self, sku_ports_dict):
+        """Force this switch's externally-cabled ports into the unconnected role.
+
+        SONiC classifies ports by HWSKU ordering rather than transceiver state, so a port cabled to
+        an external traffic generator (Ixia) keeps whatever role its position gives it. Which role
+        that is depends on which half of the port list the cage falls in and on whether this switch
+        is left_tg or right_tg, so declaring it is what makes the role deterministic instead of
+        leaving it to the port ordering.
+
+        Front-panel label ports are matched through the HWSKU ``alias`` (``etp<label>`` plus an
+        optional split-lane letter), which is the SONiC name for the same physical cage, so one
+        label port covers every split sub-port behind it.
+
+        Args:
+            sku_ports_dict: The HWSKU ``PORT`` table, mapping port name to its attributes.
+
+        Raises:
+            TestIssue: When a declared label port has no matching port in the HWSKU, or its cage
+                holds no transceiver — either way forced_unconnected_ports.yaml no longer describes
+                this switch.
+        """
+        if not self.forced_unconnected_label_ports:
+            return
+        forced_ports_by_label = defaultdict(list)
+        for port, port_info in sku_ports_dict.items():
+            alias_match = re.match(r"etp(\d+)", port_info.get(ConfigDbJsonConst.ALIAS, ""))
+            if not alias_match or int(alias_match.group(1)) not in self.forced_unconnected_label_ports:
+                continue
+            forced_ports_by_label[int(alias_match.group(1))].append(port)
+        missing_label_ports = sorted(self.forced_unconnected_label_ports - set(forced_ports_by_label))
+        if missing_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config lists front-panel label port(s) "
+                            f"{missing_label_ports} for {self.hostname}, but no HWSKU port carries the matching "
+                            f"etp<label> alias. Fix forced_unconnected_ports.yaml to match the switch.")
+        self._validate_forced_unconnected_transceivers(forced_ports_by_label)
+        forced_ports = {port for ports in forced_ports_by_label.values() for port in ports}
+        forced_connected = [port for port in self.connected_ports if port in forced_ports]
+        if not forced_connected:
+            logging.info(f"[{self.dut_alias}] Forced-unconnected label port(s) "
+                         f"{sorted(self.forced_unconnected_label_ports)} on {self.hostname} are already unconnected")
+            return
+        logging.info(f"[{self.dut_alias}] Forcing label port(s) {sorted(self.forced_unconnected_label_ports)} on "
+                     f"{self.hostname} to unconnected: moved port(s) {forced_connected}")
+        self.connected_ports = [port for port in self.connected_ports if port not in forced_ports]
+        self.unconnected_ports = self.unconnected_ports + forced_connected
+
+    def _validate_forced_unconnected_transceivers(self, forced_ports_by_label):
+        """Fail when a declared forced-unconnected cage holds no transceiver.
+
+        The declaration asserts a physical fact: this cage is cabled to an external traffic
+        generator. SONiC cannot see that from the HWSKU, so the transceiver presence table is what
+        confirms the cable is still there. An empty cage means forced_unconnected_ports.yaml no
+        longer describes the lab, and the run would generate MLOOP traffic from a dead port. This is
+        the SONiC counterpart of the PLUGGED check the ports-dump classifier does on DVS and Cumulus.
+
+        Args:
+            forced_ports_by_label: Declared front-panel label port to its HWSKU port names.
+
+        Raises:
+            TestIssue: When a declared label port has no port reporting a present transceiver.
+        """
+        presence_table = self.cli_obj.interface.parse_interfaces_transceiver_presence()
+        unplugged_label_ports = sorted(label_port for label_port, ports in forced_ports_by_label.items()
+                                       if not any(presence_table.get(port, {}).get("Presence") == "Present"
+                                                  for port in ports))
+        if unplugged_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config declares front-panel label port(s) "
+                            f"{unplugged_label_ports} on {self.hostname} as cabled to an external traffic "
+                            f"generator, but their transceiver is not present. The cable was removed, or "
+                            f"forced_unconnected_ports.yaml is stale.")
 
     def remove_service_ports(self, ports_list, chip_type):
         if chip_type == "SPC4":
