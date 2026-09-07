@@ -105,7 +105,7 @@ def run_step(name) {
           container_name = build_container_name(
               env."${name}_container_name"
           )
-          regression_mail_to = env."${name}_regression_mail_to" ?: env.REGRESSION_MAIL_TO
+          regression_mail_to = (env.regression_mail_to ?: "").trim()
           regression_mail_cc = env."${name}_regression_mail_cc" ?: env.REGRESSION_MAIL_CC
           regression_mail_github_authors = env.regression_mail_github_authors?.trim() ?:
               env."${name}_regression_mail_github_authors" ?:
@@ -136,7 +136,7 @@ def run_step(name) {
           report_requested = command == "collect" ||
               (command == "modify" && modify_params.size() > 2 &&
                modify_params[2].trim().equalsIgnoreCase("true"))
-          if (report_requested) {
+          if (report_requested && !regression_mail_to) {
             def causes = currentBuild.getBuildCauses(
                 "hudson.model.Cause\$UserIdCause"
             )
@@ -144,10 +144,10 @@ def run_step(name) {
               def trigger_user = causes[0].userId.toString().trim()
               regression_mail_to = trigger_user.contains("@") ?
                   trigger_user : "${trigger_user}@nvidia.com"
-              echo "${command} regression mail: recipients=${regression_mail_to}"
             }
           }
           if (report_requested) {
+            echo "${command} regression mail: recipients=${regression_mail_to}"
             verify_mail_addresses(regression_mail_to, "regression_mail_to", true)
             verify_mail_addresses(regression_mail_cc, "regression_mail_cc", false)
             verify_github_authors(regression_mail_github_authors)
