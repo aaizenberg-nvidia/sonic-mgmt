@@ -998,7 +998,6 @@ def test_counters_historical_resilience(engines: EnginesT, devices: DevicesT, te
 
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_stress(engines: EnginesT, devices: DevicesT, test_api: str):
     """Long-running: repeated generate/upload/delete/clear plus enable/disable
@@ -1042,7 +1041,6 @@ def test_counters_historical_stress(engines: EnginesT, devices: DevicesT, test_a
 
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_scale(engines: EnginesT, devices: DevicesT, test_api: str):
     """Long-running: all supported new categories enabled at interval 1 on a
@@ -1110,7 +1108,6 @@ def test_counters_historical_scale(engines: EnginesT, devices: DevicesT, test_ap
 
 @pytest.mark.system
 @pytest.mark.stats
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_counters_historical_cpu(engines: EnginesT, devices: DevicesT, test_api: str):
     """Long-running: measure stats-reportd CPU and resident memory in three

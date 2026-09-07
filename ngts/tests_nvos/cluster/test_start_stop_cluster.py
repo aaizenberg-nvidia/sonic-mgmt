@@ -192,6 +192,7 @@ def test_cluster_app_start_stop_under_stressed_resources(engines, devices, test_
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_cluster_app_start_stop_disabled_cluster(engines, devices, test_api):
     TestToolkit.tested_api = test_api

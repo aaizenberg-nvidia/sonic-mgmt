@@ -58,6 +58,7 @@ def test_lldp_enabled(engines, devices, random_api):
 
 
 @pytest.mark.lldp
+@pytest.mark.simx
 @pytest.mark.system
 @pytest.mark.interface
 @pytest.mark.cumulus
@@ -116,6 +117,7 @@ def test_lldp_disabled(engines, devices, random_api):
 
 
 @pytest.mark.lldp
+@pytest.mark.simx
 @pytest.mark.system
 @pytest.mark.interface
 @pytest.mark.cumulus

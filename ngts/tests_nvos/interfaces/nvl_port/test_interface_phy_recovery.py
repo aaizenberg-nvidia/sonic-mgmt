@@ -82,6 +82,7 @@ NV_SET_FAE_INTERFACE_PHY_RECOVERY = "nv set fae interface {port} link phy-recove
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.multiplanar
 def test_phy_recovery_counters(engines, devices, random_api):
     """
@@ -764,6 +765,7 @@ def test_nvl7_phy_recovery_counters_debug(engines, devices, random_api):
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.multiplanar
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_nvl7_phy_recovery_pruning(devices, random_api):

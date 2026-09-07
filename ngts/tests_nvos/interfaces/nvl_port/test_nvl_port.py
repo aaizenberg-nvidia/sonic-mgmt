@@ -80,6 +80,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.air
 @pytest.mark.air_ci
 @pytest.mark.air_sanity
@@ -447,6 +448,7 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.nvl_ci
 def test_link_health_attention_and_toggle_stress(test_name, devices, random_api):
     """Exercise sticky attention on one port while repeatedly toggling another."""
@@ -552,6 +554,7 @@ def _verify_time_to_link_up(
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup):
     """Measure ACP port pair link-up time across the three link-training states.
@@ -695,6 +698,7 @@ def test_nvl_negative(engines, devices, random_api):
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.multiplanar
 def test_interface_xdr_slow_speed_access_ports(engines, devices, random_api, setup_name, standalone_system, has_loopbox, is_simx):
     skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
@@ -704,6 +708,7 @@ def test_interface_xdr_slow_speed_access_ports(engines, devices, random_api, set
 
 
 @pytest.mark.interface
+@pytest.mark.simx
 @pytest.mark.multiplanar
 def test_interface_xdr_slow_speed_trunk_ports(engines, devices, random_api, setup_name, standalone_system):
     skip_if_no_trunk_links(devices)

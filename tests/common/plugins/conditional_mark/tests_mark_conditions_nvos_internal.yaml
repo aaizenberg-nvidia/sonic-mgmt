@@ -221,6 +221,18 @@ tests_nvos/interfaces/nvl_port/test_nvl_port.py:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
       in testbed'
 
+tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_link_health_attention_and_toggle_stress:
+  skip:
+    reason: link-health is supported on NVL6 Rosalind only (skip_if_link_health_not_supported); skip before the mloop setup on Portia
+    conditions:
+    - '''portia'' in testbed'
+
+tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_time_to_link_up:
+  skip:
+    reason: fec-measure-mode link training is QTM4/NVL6 Rosalind only (skip_if_fec_measure_not_supported); skip before the mloop setup on Portia
+    conditions:
+    - '''portia'' in testbed'
+
 tests_nvos/platform/test_platform_environment.py::test_platform_environment_fan_shared_led:
   skip:
     reason: Testcase skipped on non Juliet systems

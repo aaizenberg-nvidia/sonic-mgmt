@@ -21,6 +21,12 @@ from ngts.tests_nvos.interfaces.nvl_port.helpers import get_linked_ports_pair, w
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope='session')
+def has_loopbox(has_loopbox: bool, devices: DevicesT) -> bool:
+    """On simx the FAE mloop loopback configured by nvl_simx_setup plays the loopbox role."""
+    return has_loopbox or devices.dut.require_mloop_setup
+
+
 @pytest.fixture(scope='module')
 def mloop_mode(request) -> MloopConsts.Mode:
     """

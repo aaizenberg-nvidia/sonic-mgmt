@@ -116,6 +116,8 @@ def select_random_nvl_port_name(devices, prefix=None):
 
 
 def skip_if_no_trunk_links(devices):
+    if not devices.dut.nvl_trunk_ports_list:
+        pytest.skip("Skipping test - device has no trunk ports")
     if isinstance(devices.dut, JulietSwitch):
         has_any_connected_transceivers = bool(get_all_interfaces_with_transceivers(devices))
         if isinstance(devices.dut, JulietNonScaleoutSwitch) or not has_any_connected_transceivers:

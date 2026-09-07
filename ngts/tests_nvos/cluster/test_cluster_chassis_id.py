@@ -29,6 +29,7 @@ def enable_stop_cluster(setup_name, devices, engines):
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 def test_cluster_chassis_id(engines, devices, random_api):
 
     with allure.step("Create Cluster object"):

@@ -30,6 +30,7 @@ logger = logging.getLogger()
 
 
 @pytest.mark.eth0
+@pytest.mark.simx
 @pytest.mark.system
 @pytest.mark.timeout(4 * MINUTE, func_only=True)
 def test_interface_eth0_enable_disable(engines, topology_obj, serial_engine):

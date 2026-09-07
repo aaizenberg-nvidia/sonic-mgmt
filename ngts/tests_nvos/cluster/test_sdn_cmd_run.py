@@ -342,6 +342,7 @@ def test_sdn_set_cmd(engines, devices, has_loopbox, setup_name, standalone_syste
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.disable_loganalyzer
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_sdn_invalid_cmd(engines, devices, has_loopbox, setup_name, random_api):
