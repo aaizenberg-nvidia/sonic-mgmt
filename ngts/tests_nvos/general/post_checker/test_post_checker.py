@@ -48,6 +48,7 @@ def test_post_checker(
         10. Check system in fatal state, if yes, stop regression
     """
     no_dut_reboot = getattr(pytestconfig, "_no_dut_reboot", False)
+    no_techsupport_on_fail = getattr(pytestconfig, "_no_techsupport_on_fail", False)
 
     try:
         if security_post_checker:
@@ -83,7 +84,11 @@ def test_post_checker(
                     serial_engine = SerialEngineFactory.create_mellanox(attributes)
 
                 with allure.step("Try to generate techsupport using serial console"):
-                    generate_techsupport(dumps_folder, system, serial_engine)
+                    # no-techsupport-on-fail flag is set in pytest_configure, pytest_addoption, _configure_skip_gen_techsupport_on_fail
+                    if no_techsupport_on_fail:
+                        logger.warning("Skipping techsupport generation on test failure")
+                    else:
+                        generate_techsupport(dumps_folder, system, serial_engine)
 
                 with allure.step("Clear config using serial console"):
                     nvos_config_utils.clear_conf(

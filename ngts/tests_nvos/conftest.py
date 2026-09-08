@@ -77,6 +77,7 @@ from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 logger = logging.getLogger(__name__)
 
 _DUT_REBOOT_CACHE_PREFIX = "no_dut_reboot"
+_NO_TECHSUPPORT_ON_FAIL_CACHE_PREFIX = "no_techsupport_on_fail"
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
     re.compile(r".*ib3: multicast join failed for.*, status -\d+"),
@@ -92,6 +93,12 @@ def _no_dut_reboot_cache_key(config: pytest.Config) -> str:
     """Return the session-scoped cache key used by separate MARS pytest processes."""
     session_id = config.getoption("--session_id", default=None)
     return f"{_DUT_REBOOT_CACHE_PREFIX}/{session_id}" if session_id else ""
+
+
+def _no_techsupport_on_fail_cache_key(config: pytest.Config) -> str:
+    """Return the session-scoped cache key used by separate MARS pytest processes."""
+    session_id = config.getoption("--session_id", default=None)
+    return f"{_NO_TECHSUPPORT_ON_FAIL_CACHE_PREFIX}/{session_id}" if session_id else ""
 
 
 def _configure_no_dut_reboot(config: pytest.Config) -> None:
@@ -118,6 +125,19 @@ def _configure_no_dut_reboot(config: pytest.Config) -> None:
     config.option.markexpr = f"({current_markexpr}) and not dut_reboot" if current_markexpr else "not dut_reboot"
 
 
+def _configure_skip_gen_techsupport_on_fail(config: pytest.Config) -> None:
+    """Persist the skip-techsupport-on-fail policy."""
+    cache_key = _no_techsupport_on_fail_cache_key(config)
+    no_techsupport_on_fail = config.getoption("--no-techsupport-on-fail")
+    if no_techsupport_on_fail and cache_key:
+        # Do not clear this in pytest_sessionfinish: each MARS case and its post-checker run
+        # as separate pytest processes, while MARS session IDs are unique.
+        config.cache.set(cache_key, True)
+    elif cache_key:
+        no_techsupport_on_fail = config.cache.get(cache_key, False)
+    setattr(config, "_no_techsupport_on_fail", bool(no_techsupport_on_fail))
+
+
 def pytest_configure(config: pytest.Config):
     """
     Configure NVOS-specific options and load Vault secrets for local runs.
@@ -128,6 +148,7 @@ def pytest_configure(config: pytest.Config):
     This hook runs before session start and any fixtures.
     """
     _configure_no_dut_reboot(config)
+    _configure_skip_gen_techsupport_on_fail(config)
 
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
@@ -204,6 +225,12 @@ def pytest_addoption(parser: pytest.Parser):
             "Skip tests marked as able to reboot, reset, or power-cycle the DUT; "
             "post-checkers keep non-reboot recovery enabled and stop the run if a reboot is required"
         ),
+    )
+    parser.addoption(
+        "--no-techsupport-on-fail",
+        action="store_true",
+        default=False,
+        help="Skip generating techsupport on test failure",
     )
 
 
