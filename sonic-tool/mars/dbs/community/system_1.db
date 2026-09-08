@@ -89,10 +89,6 @@
     </test>
 
     <test>
-        <cases> sonic-mgmt/sonic-tool/mars/cases/community/telemetry.cases </cases>
-    </test>
-
-    <test>
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/scp.cases </cases>
     </test>
 

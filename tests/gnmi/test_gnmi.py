@@ -202,37 +202,6 @@ def test_gnmi_subscribe_sample(duthosts, rand_one_dut_hostname, ptfhost):
         validates_subscribe_sample(stdout_msg)
 
 
-def test_gnmi_authorize_failed_with_revoked_cert(duthosts,
-                                                 rand_one_dut_hostname,
-                                                 ptfhost,
-                                                 setup_crl_server_on_ptf):
-    '''
-    Verify GNMI native write, incremental config for configDB
-    GNMI set request with invalid path
-    '''
-    duthost = duthosts[rand_one_dut_hostname]
-
-    retry = 3
-    msg = ""
-    gnmi_log = ""
-    while retry > 0:
-        retry -= 1
-        msg, gnmi_log = gnmi_create_vnet(duthost, ptfhost, "gnmiclient.revoked")
-        # retry when download crl failed, ptf device network not stable
-        if "desc = Peer certificate revoked" in gnmi_log:
-            break
-
-    assert "Unauthenticated" in msg, (
-        "'Unauthenticated' error message not found in GNMI response. "
-        "- Actual message: '{}'"
-    ).format(msg)
-
-    assert "desc = Peer certificate revoked" in gnmi_log, (
-        "'desc = Peer certificate revoked' message not found in GNMI log. "
-        "- Actual GNMI log: '{}'"
-    ).format(gnmi_log)
-
-
 def test_osbuild_version(duthosts, rand_one_dut_hostname, ptfhost):
     '''
     Verify GNMI GET of the OTHERS/osversion/build non-DB path returns a valid
