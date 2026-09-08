@@ -7,6 +7,8 @@ class RemoteAaaType:
 
 class RemoteAaaConsts:
     WAIT_TIME_BEFORE_AUTH = 3
+    # Answers of the OpenApi server to a request whose credentials the applied config just revoked
+    AUTH_REVOKED_BY_APPLY_INDICATORS = ['HTTP 401', '401 Authorization Required']
 
 
 class ValidValues:
