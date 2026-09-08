@@ -537,6 +537,7 @@ class ActionConsts:
     BOOT_NEXT = "boot-next"
     GENERATE = "generate"
     FETCH = "fetch"
+    LIST = 'list'
     ENABLE = 'enable'
     DISABLE = 'disable'
     DELETE = 'delete'

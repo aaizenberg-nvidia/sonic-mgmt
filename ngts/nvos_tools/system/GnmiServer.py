@@ -56,6 +56,9 @@ class Status(BaseComponent):
 
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/status')
+        # gNOI has no config node of its own; its per-RPC counters are surfaced under the
+        # gNMI-server status node. Read-only collection keyed by RPC name.
+        self.gnoi_rpc = BaseComponent(self, path='/gnoi-rpc')
 
     def action_clear(self):
         return self.action(ActionConsts.CLEAR)
