@@ -16,6 +16,7 @@ from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils import nvos_general_utils
 from ngts.nvos_tools.system.Server import ServerId
@@ -398,6 +399,25 @@ def generic_aaa_test_unique_priority(test_api: str, remote_aaa_obj: RemoteAaaRes
                                                         apply=True).verify_result(False)
 
 
+def _acting_identity_was_revoked_by_apply(set_result: ResultObj) -> bool:
+    """
+    @summary: Tell whether an apply failed only because it revoked the identity that performed it.
+
+        Promoting a server makes it the authoritative one, so the remote admin of the previously top
+        server is no longer authenticated (failthrough is disabled - there is no local fallback).
+        NVUE keeps working over its already-authenticated SSH session, but OpenApi authenticates per
+        request, so the post-apply status poll answers 401. That 401 can only be produced by the DUT
+        after the new config took effect, which makes it evidence that the apply itself succeeded.
+
+        The promotion is not taken on trust: the next loop iteration waits for readiness and then
+        authenticates as the promoted server's users, so an apply that did not take effect fails
+        there instead of passing silently.
+    """
+    info = str(set_result.info or '')
+    return not set_result.result and any(
+        indicator in info for indicator in RemoteAaaConsts.AUTH_REVOKED_BY_APPLY_INDICATORS)
+
+
 def generic_aaa_test_priority(
     test_flow: str,
     test_api: str,
@@ -481,12 +501,26 @@ def generic_aaa_test_priority(
                     LdapConsts.PORT, worse_server.port,
                     dut_engine=item.active_remote_admin_engine,
                 ).verify_result()
-            worse_server_resource.set(
+            set_result = worse_server_resource.set(
                 AaaConsts.PRIORITY, worse_server.priority, apply=True,
                 dut_engine=item.active_remote_admin_engine,
-            ).verify_result()
-            worse_server, best_server = best_server, worse_server
-            RemoteAaaServerInfo.update_active_aaa_server(item, best_server)
+            )
+            identity_revoked = _acting_identity_was_revoked_by_apply(set_result)
+            if set_result.result or identity_revoked:
+                # Rotate the acting identity only once the apply is known to have taken effect:
+                # authority moved to the promoted server, so further requests (and the teardown)
+                # must use its remote admin. On a real failure the old admin is still the valid one.
+                worse_server, best_server = best_server, worse_server
+                RemoteAaaServerInfo.update_active_aaa_server(item, best_server)
+            if identity_revoked:
+                # The result must be consumed, not just logged: the autouse `verify_result_objects`
+                # fixture fails the test at teardown for any ResultObj left holding a failed result.
+                # Reported as a step so the report shows the 401 was accepted deliberately here.
+                with allure.step(f'Apply revoked the acting remote admin, as expected when promoting '
+                                 f'"{best_server.hostname}" - the config took effect'):
+                    set_result.verify_result(should_succeed=False)
+            else:
+                set_result.verify_result()
             if remote_aaa_type == RemoteAaaType.LDAP:
                 nvos_general_utils.wait_for_ldap_nvued_restart_workaround(item, engine_to_use=engines.dut)
 
