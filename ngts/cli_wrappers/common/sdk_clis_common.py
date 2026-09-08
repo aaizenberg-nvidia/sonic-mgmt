@@ -216,13 +216,62 @@ class SdkCliCommon():
         generic_cmd_prefix = f"{prefix_cmd} '{cmd}'" if prefix_cmd else cmd
         return generic_cmd_prefix
 
-    def overlay_perf_sys_sdk_to_sys_sdk(self, sdk_branch, is_in_syncd=False, tar_file_enabled=False):
+    PERF_SYS_SDK_CHANGE_BRANCH_PREFIX = "branch_"
+
+    def resolve_perf_sys_sdk_change(self, perf_sys_sdk_change):
+        """
+        Resolve a raw ``--perf_sys_sdk_change`` value into an explicit branch or Gerrit
+        change number, before it's passed to methods like ``overlay_perf_sys_sdk_to_sys_sdk``.
+
+        Args:
+            perf_sys_sdk_change (str | None): Raw value: ``'branch_<name>'``, a numeric
+                Gerrit change number, or None.
+
+        Returns:
+            tuple[str | None, str | None]: ``(perf_sys_sdk_branch, perf_sys_sdk_gerrit_change)``.
+            Exactly one is non-None, or both are None when ``perf_sys_sdk_change`` is None.
+        """
+        if perf_sys_sdk_change is None:
+            return None, None
+        if perf_sys_sdk_change.startswith(self.PERF_SYS_SDK_CHANGE_BRANCH_PREFIX):
+            return perf_sys_sdk_change[len(self.PERF_SYS_SDK_CHANGE_BRANCH_PREFIX):], None
+        return None, perf_sys_sdk_change
+
+    def overlay_perf_sys_sdk_to_sys_sdk(self, sdk_branch, is_in_syncd=False, tar_file_enabled=False,
+                                        perf_sys_sdk_branch=None, perf_sys_sdk_gerrit_change=None):
+        """
+        Args:
+            sdk_branch (str): SDK branch derived from the DUT's installed SDK version.
+            perf_sys_sdk_branch (str | None): Explicit perf_sys_sdk branch to clone, overriding
+                ``sdk_branch``. Resolved from ``--perf_sys_sdk_change`` via
+                ``resolve_perf_sys_sdk_change``.
+            perf_sys_sdk_gerrit_change (str | None): Gerrit change number whose latest patchset
+                should be fetched instead of cloning a branch. Mutually exclusive with
+                ``perf_sys_sdk_branch``.
+        """
         docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
         command_prefix = f"{docker_exec_syncd_cmd}" if is_in_syncd else ""
-        if tar_file_enabled:
-            self.get_perf_sys_sdk_with_tar(sdk_branch, command_prefix, is_in_syncd)
+
+        if perf_sys_sdk_gerrit_change is not None:
+            if tar_file_enabled:
+                raise TestIssue(
+                    f"perf_sys_sdk_gerrit_change={perf_sys_sdk_gerrit_change!r} requests a Gerrit "
+                    f"change number, which is not supported together with the perf_sys_sdk "
+                    f"tar-file flow."
+                )
+            logger.info(f"Overlaying perf_sys_sdk onto sys_sdk from Gerrit change {perf_sys_sdk_gerrit_change}")
+            self.get_perf_sys_sdk_with_clone_from_change(perf_sys_sdk_gerrit_change, command_prefix)
         else:
-            self.get_perf_sys_sdk_with_clone(sdk_branch, command_prefix)
+            branch_to_use = perf_sys_sdk_branch or sdk_branch
+            logger.info(
+                f"Overlaying perf_sys_sdk onto sys_sdk using branch '{branch_to_use}' "
+                f"({'explicit --perf_sys_sdk_change branch override' if perf_sys_sdk_branch else 'DUT-derived SDK branch'})"
+            )
+            if tar_file_enabled:
+                self.get_perf_sys_sdk_with_tar(branch_to_use, command_prefix, is_in_syncd)
+            else:
+                self.get_perf_sys_sdk_with_clone(branch_to_use, command_prefix)
+
         self.run_overlay_cmd(command_prefix, is_in_syncd)
 
     def clean_up_existing_sdk_folders(self, sys_sdk_path, sudo_prefix, command_prefix, is_in_syncd):
@@ -326,6 +375,87 @@ class SdkCliCommon():
         sanitized_full_cmd = self.get_generic_cmd_prefix(command_prefix, sanitized_clone_cmd)
         logger.info(f'Running CMD: {sanitized_full_cmd}')
         self.engine.run_cmd(full_cmd, validate=True, print_output=False)
+
+    def get_perf_sys_sdk_change_ref(self, repo_url, change_number):
+        """
+        Resolve the Gerrit ref of the latest patchset for a change number.
+
+        Args:
+            repo_url (str): The URL of the repository.
+            change_number (str): Gerrit change number.
+
+        Returns:
+            str: The ref of the latest patchset, e.g. 'refs/changes/42/347942/1'.
+
+        Raises:
+            RuntimeError: If ``git ls-remote`` fails.
+            TestIssue: If the change has no patch sets on the remote.
+        """
+        sanitized_url = re.sub(r'://[^@]+@', '://***:***@', repo_url)
+        change_prefix = f"{int(change_number) % 100:02d}"
+        ref_pattern = f"refs/changes/{change_prefix}/{change_number}/*"
+        cmd = ["git", "ls-remote", repo_url, ref_pattern]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            sanitized_stderr = re.sub(r'://[^@]+@', '://***:***@', e.stderr or '')
+            sanitized_stdout = re.sub(r'://[^@]+@', '://***:***@', e.stdout or '')
+            raise RuntimeError(
+                f'git ls-remote failed for change {change_number} at {sanitized_url} with exit code '
+                f'{e.returncode}. stderr: {sanitized_stderr.strip()}. stdout: {sanitized_stdout.strip()}'
+            ) from None
+        patchset_ref_pattern = re.compile(rf"^refs/changes/{change_prefix}/{change_number}/(\d+)$")
+        patchsets = {}
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                match = patchset_ref_pattern.match(parts[1])
+                if match:
+                    patchsets[int(match.group(1))] = parts[1]
+        if not patchsets:
+            raise TestIssue(f"No patch sets found for Gerrit change {change_number} at {sanitized_url}")
+        latest_patchset = max(patchsets)
+        latest_ref = patchsets[latest_patchset]
+        logger.info(f"Resolved Gerrit change {change_number} to latest patchset {latest_patchset}: {latest_ref}")
+        return latest_ref
+
+    def get_perf_sys_sdk_with_clone_from_change(self, change_number, command_prefix):
+        """
+        Clone perf_sys_sdk and check out the latest patchset of an unmerged Gerrit change.
+
+        Args:
+            change_number (str): Gerrit change number.
+            command_prefix (str): Command prefix to prepend to commands, for example docker exec.
+        """
+        repo_url = f"https://{Sonic_Cache.gerrit_username}:{Sonic_Cache.gerrit_api_token}@git-nbu-sw.nvidia.com/r/a/switchx/perf_sys_sdk"
+        sanitized_url = re.sub(r'://[^@]+@', '://***:***@', repo_url)
+        change_ref = self.get_perf_sys_sdk_change_ref(repo_url, change_number)
+        sudo_prefix = '' if command_prefix else 'sudo -i '
+        clone_dest = '/root/perf_sys_sdk'
+
+        # Remove any existing clone to avoid "already exists" errors
+        cleanup_cmd = f'{sudo_prefix}rm -rf {clone_dest}'
+        cleanup_full_cmd = self.get_generic_cmd_prefix(command_prefix, cleanup_cmd)
+        self.engine.run_cmd(cleanup_full_cmd, validate=True)
+
+        clone_cmd = f'{sudo_prefix}git clone \"{repo_url}\" {clone_dest}'
+        full_cmd = self.get_generic_cmd_prefix(command_prefix, clone_cmd)
+        sanitized_clone_cmd = f'{sudo_prefix}git clone \"{sanitized_url}\" {clone_dest}'
+        sanitized_full_cmd = self.get_generic_cmd_prefix(command_prefix, sanitized_clone_cmd)
+        logger.info(f'Running CMD: {sanitized_full_cmd}')
+        self.engine.run_cmd(full_cmd, validate=True, print_output=False)
+
+        fetch_checkout_cmd = (
+            f'{sudo_prefix}git -C {clone_dest} fetch \"{repo_url}\" {change_ref} '
+            f'&& {sudo_prefix}git -C {clone_dest} checkout FETCH_HEAD'
+        )
+        full_fetch_checkout_cmd = self.get_generic_cmd_prefix(command_prefix, fetch_checkout_cmd)
+        sanitized_fetch_checkout_cmd = (
+            f'{sudo_prefix}git -C {clone_dest} fetch \"{sanitized_url}\" {change_ref} '
+            f'&& {sudo_prefix}git -C {clone_dest} checkout FETCH_HEAD'
+        )
+        logger.info(f'Running CMD: {self.get_generic_cmd_prefix(command_prefix, sanitized_fetch_checkout_cmd)}')
+        self.engine.run_cmd(full_fetch_checkout_cmd, validate=True, print_output=False)
 
     def get_perf_sys_sdk_with_tar(self, sdk_branch, command_prefix, is_in_syncd):
         path, file_name = self.get_perf_sys_sdk_tar_file_name(sdk_branch)

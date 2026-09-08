@@ -64,7 +64,7 @@ class DeploymentContext:
                  serial_log_analyzers, fanout_target_version, request, is_air,
                  deploy_testbed_in_parallel=False, deploy_image_only=False, deploy_chipless=False,
                  deploy_sequential=False, base_version_bmc="", neighbor_mode="",
-                 sdk_source=None):
+                 sdk_source=None, perf_sys_sdk_change=None):
         """
         Initialize DeploymentContext with all parameters.
 
@@ -111,6 +111,7 @@ class DeploymentContext:
         self.base_version_bmc = base_version_bmc
         self.neighbor_mode = neighbor_mode
         self.sdk_source = sdk_source
+        self.perf_sys_sdk_change = perf_sys_sdk_change
         # Set True for the host-switch phases of a BMC + switch deploy, so the
         # switch deploy skips remove-topo/add-topo
         self.skip_add_remove_topo = False
@@ -622,7 +623,7 @@ class DeployMultiNosHelper:
 
     @staticmethod
     def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False,
-                                          sdk_source=None):
+                                          sdk_source=None, perf_sys_sdk_change=None):
         for dut in duts:
             data_query = json.loads('{ "update": { "CLI_TYPE": "' + target_cli_type +
                                     '", "TYPE": "' + CliType.NOS_TO_TYPE_DICT[target_cli_type] +
@@ -637,7 +638,8 @@ class DeployMultiNosHelper:
             DeployMultiNosHelper.multi_nos_install_traffic_generator(
                 duts,
                 deploy_sequential=deploy_sequential,
-                sdk_source=sdk_source
+                sdk_source=sdk_source,
+                perf_sys_sdk_change=perf_sys_sdk_change
             )
 
     @staticmethod
@@ -653,7 +655,8 @@ class DeployMultiNosHelper:
             logger.warning(f"Failed to remove Noga cache {NOGA_CACHE_FILE}: {e}")
 
     @staticmethod
-    def multi_nos_install_traffic_generator(duts, deploy_sequential=False, sdk_source=None):
+    def multi_nos_install_traffic_generator(duts, deploy_sequential=False, sdk_source=None,
+                                            perf_sys_sdk_change=None):
         install_kwargs = {}
         if sdk_source is not None:
             install_kwargs['latest_version'] = sdk_source == "latest"
@@ -661,6 +664,9 @@ class DeployMultiNosHelper:
                 f"Traffic generator SDK source from pytest args: '{sdk_source}' "
                 f"(latest_version={install_kwargs['latest_version']})"
             )
+        if perf_sys_sdk_change is not None:
+            install_kwargs['perf_sys_sdk_change'] = perf_sys_sdk_change
+            logger.info(f"perf_sys_sdk_change from pytest args: '{perf_sys_sdk_change}'")
         if deploy_sequential:
             for dut in duts:
                 cli_obj = dut['cli_obj']
@@ -820,7 +826,8 @@ class DeployOrchestrator:
                 replace_nos,
                 self.context.is_performance,
                 deploy_sequential=self.context.deploy_sequential,
-                sdk_source=self.context.sdk_source
+                sdk_source=self.context.sdk_source,
+                perf_sys_sdk_change=self.context.perf_sys_sdk_change
             )
 
     def execute_post_install_only(self):

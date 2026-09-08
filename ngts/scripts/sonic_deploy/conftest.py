@@ -49,6 +49,31 @@ def _parse_sdk_source(value):
     )
 
 
+PERF_SYS_SDK_CHANGE_BRANCH_PREFIX = "branch_"
+
+
+def _parse_perf_sys_sdk_change(value):
+    """Validate ``--perf_sys_sdk_change`` and return it unchanged.
+
+    Args:
+        value (str): User-provided ``--perf_sys_sdk_change`` value.
+
+    Returns:
+        str: The validated value, either ``'branch_<name>'`` or a numeric Gerrit change number.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` is neither ``'branch_<name>'`` nor all digits.
+    """
+    if value.startswith(PERF_SYS_SDK_CHANGE_BRANCH_PREFIX) or value.isdigit():
+        return value
+
+    raise argparse.ArgumentTypeError(
+        f"Invalid --perf_sys_sdk_change={value!r}. Must be either "
+        f"'{PERF_SYS_SDK_CHANGE_BRANCH_PREFIX}<branch_name>' to clone a specific perf_sys_sdk "
+        f"branch, or a numeric Gerrit change number to fetch an unmerged CR's latest patchset."
+    )
+
+
 def pytest_addoption(parser):
     """
     Parse pytest options
@@ -171,6 +196,24 @@ def pytest_addoption(parser):
             "'latest' - resolve the newest published SDK for the DUT branch; "
             "'image' - use the SDK version from the installed DUT/image. "
             "If omitted, use the platform default (SONiC: latest, Cumulus: image)."
+        ),
+    )
+    logger.info('Parsing perf_sys_sdk_change')
+    parser.addoption(
+        "--perf_sys_sdk_change",
+        action="store",
+        default=None,
+        type=_parse_perf_sys_sdk_change,
+        metavar="{branch_<name>,<change_number>}",
+        help=(
+            "Explicit perf_sys_sdk source to clone and overlay onto sys_sdk for traffic "
+            "generator installation, overriding the branch derived from the DUT's installed "
+            "SDK version. Supported formats: "
+            "'branch_<name>' - clone that branch (falls back to 'master' if it doesn't exist "
+            "on the remote); "
+            "'<change_number>' - fetch and check out the latest patchset of that Gerrit change "
+            "(e.g. an unmerged CR). "
+            "If omitted, the DUT-derived branch is used."
         ),
     )
 
@@ -539,3 +582,19 @@ def sdk_source(request):
         str | None: ``'latest'`` or ``'image'`` when set; otherwise ``None``.
     """
     return request.config.getoption('--sdk_source')
+
+
+@pytest.fixture(scope="module")
+def perf_sys_sdk_change(request):
+    """
+    Explicit perf_sys_sdk source to clone and overlay onto sys_sdk for traffic
+    generator installation.
+
+    Controlled by ``--perf_sys_sdk_change``: ``'branch_<name>'`` clones that branch, a
+    numeric Gerrit change number fetches that change's latest patchset. Omitted (None)
+    keeps the branch derived from the DUT's installed SDK version.
+
+    Returns:
+        str | None: The validated ``--perf_sys_sdk_change`` value, or None.
+    """
+    return request.config.getoption('--perf_sys_sdk_change')

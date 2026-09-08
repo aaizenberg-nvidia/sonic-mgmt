@@ -26,7 +26,7 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
                             serial_log_analyzers, fanout_target_version, request, is_air,
                             deploy_testbed_in_parallel, deploy_image_only, deploy_chipless,
                             post_install_only, deploy_sequential, base_version_bmc, neighbor_mode,
-                            sdk_source):
+                            sdk_source, perf_sys_sdk_change):
     """
         Deploy SONiC/NVOS testing topology and upgrade switch
 
@@ -81,6 +81,11 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
             (``--sdk_source``): ``latest`` (newest published SDK for the DUT branch),
             ``image`` (SDK from the installed DUT/image),
             or None (platform default: SONiC=latest, Cumulus=image)
+        :param perf_sys_sdk_change: perf_sys_sdk fixture; explicit perf_sys_sdk source to clone
+            and overlay onto sys_sdk for traffic generator installation, overriding the
+            DUT-derived branch (``--perf_sys_sdk_change``): ``'branch_<name>'`` clones that
+            branch, a numeric Gerrit change number fetches that change's latest patchset;
+            omitted (None) keeps the DUT-derived branch
         :raise AssertionError: in case of script failure.
     """
     try:
@@ -101,7 +106,8 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
             deploy_image_only=deploy_image_only, deploy_chipless=deploy_chipless,
             deploy_sequential=deploy_sequential, base_version_bmc=base_version_bmc,
             neighbor_mode=neighbor_mode,
-            sdk_source=sdk_source
+            sdk_source=sdk_source,
+            perf_sys_sdk_change=perf_sys_sdk_change
         )
 
         # Execute deployment using orchestrator

@@ -2193,7 +2193,7 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             for sub_key in sub_keys:
                 self.engine.run_cmd(f'sudo sonic-db-cli CONFIG_DB HDEL "{key}" "{sub_key}"')
 
-    def install_traffic_generator(self, latest_version=False, cli_type=CliType.SONIC):
+    def install_traffic_generator(self, latest_version=False, cli_type=CliType.SONIC, perf_sys_sdk_change=None):
         """
         Function verifies the traffic generator is functional post deploy on SONiC OS
 
@@ -2203,6 +2203,11 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         is running traffic generation script.
         :return: None
         """
+        logger.info(
+            f"install_traffic_generator (SONiC): latest_version={latest_version}, "
+            f"perf_sys_sdk_change={perf_sys_sdk_change!r}"
+        )
+        perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         with allure.step('Get SDK_VER git'):
             sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
                 latest_version=latest_version)
@@ -2234,7 +2239,9 @@ class SonicGeneralCliDefault(GeneralCliCommon):
                 f"--break-system-packages --root-user-action=ignore'")
 
         with allure.step('Prepare SDK_VER git to run tests'):
-            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, is_in_syncd=True)
+            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, is_in_syncd=True,
+                                                 perf_sys_sdk_branch=perf_sys_sdk_branch,
+                                                 perf_sys_sdk_gerrit_change=perf_sys_sdk_gerrit_change)
             self.engine.run_cmd(f"{docker_exec_syncd_cmd} '{PerfConsts.EXPORT_PYTHONPATH} "
                                 f"&& {PerfConsts.DVS_RUN_TEST_PATH} -si'")
 
