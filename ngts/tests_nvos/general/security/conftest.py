@@ -21,6 +21,7 @@ from ngts.nvos_tools.Devices.EthDevice import EthSwitch  # temporary, needed unt
 from .security_test_tools import security_test_utils
 from ngts.tools.test_utils import switch_recovery
 from ngts.nvos_tools.system.System import System
+from ngts.tools.allure_report import allure_set_environment
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +190,27 @@ def is_secure_boot_enabled(engines: EnginesT):
         pytest.skip("The test is skipped - secure boot is disabled")
 
 
-@pytest.fixture(scope='module', autouse=True)
-def show_sys_version(engines: EnginesT):
+def _publish_system_version_to_allure_env(config: pytest.Config, system: System) -> None:
     """
-    For regression analysis, show the system info (and version) before each test case/file
+    Publish the version running on the switch to the allure report environment tab (environment.properties).
+
+    environment.properties is a line based 'key=value' file, so only a single line value may be reported.
+    Reporting metadata must never fail a test, hence a failure here is only logged.
+
+    :param config: pytest config object, which holds the allure environment entries.
+    :param system: System component to read the version from.
+    """
+    try:
+        allure_set_environment(config, 'system_version', system.version.get_running_version())
+    except Exception:
+        logger.warning('Could not publish the system version to the allure environment', exc_info=True)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def show_sys_version(engines: EnginesT, pytestconfig: pytest.Config):
+    """
+    For regression analysis, show the system info (and version) before each test case/file,
+    and report the running version in the allure environment tab
     """
     with allure.step('Before test case: show system info'):
         system = System()
@@ -202,6 +220,7 @@ def show_sys_version(engines: EnginesT):
         else:
             attachment = '\n'.join([system.show(), system.version.show(), NvueGeneralCli.show_config(engines.dut)])
         allure.orig_allure.attach(attachment, 'system_version_and_conf', allure.orig_allure.attachment_type.TEXT)
+        _publish_system_version_to_allure_env(pytestconfig, system)
 
 
 @pytest.fixture(scope='function')
