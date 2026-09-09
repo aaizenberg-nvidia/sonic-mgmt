@@ -154,22 +154,29 @@ def generate_report(allure_server_url, allure_project):
     store_allure_url(allure_project, allure_report_url)
 
     start_time = time.time()
-    response = requests.get('{}/generate-report?project_id={}'.format(allure_server_url, allure_project),
-                            verify=SSL_VERIFICATION, timeout=HTTP_TIMEOUT)
-    logger.info(f"RESPONSE STATUS: {response.ok}")
-    if not response.ok:
-        logger.info("project doesn't exist, creating project")
-        create_project(allure_server_url, allure_project)
+    try:
         response = requests.get('{}/generate-report?project_id={}'.format(allure_server_url, allure_project),
                                 verify=SSL_VERIFICATION, timeout=HTTP_TIMEOUT)
         logger.info(f"RESPONSE STATUS: {response.ok}")
-    response = response.json()
-    diff_time = time.time() - start_time
-    logger.info(f"generating report takes {diff_time}")
-    report_url = response['data']['report_url']
-    logger.info('Allure report URL: {}'.format(report_url))
-
-    cleanup_report(allure_server_url, allure_project)
+        if not response.ok:
+            logger.info("project doesn't exist, creating project")
+            create_project(allure_server_url, allure_project)
+            response = requests.get('{}/generate-report?project_id={}'.format(allure_server_url, allure_project),
+                                    verify=SSL_VERIFICATION, timeout=HTTP_TIMEOUT)
+            logger.info(f"RESPONSE STATUS: {response.ok}")
+        response = response.json()
+        diff_time = time.time() - start_time
+        logger.info(f"generating report takes {diff_time}")
+        report_url = response['data']['report_url']
+        logger.info('Allure report URL: {}'.format(report_url))
+        cleanup_report(allure_server_url, allure_project)
+    except requests.exceptions.Timeout:
+        diff_time = time.time() - start_time
+        logger.warning(
+            "Timed out after {:.0f}s waiting for generate-report response; report generation is "
+            "likely still running on the server. Predicted Allure report URL: {}".format(
+                diff_time, allure_report_url)
+        )
 
 
 def predict_allure_report_link(allure_server_url, allure_project):
