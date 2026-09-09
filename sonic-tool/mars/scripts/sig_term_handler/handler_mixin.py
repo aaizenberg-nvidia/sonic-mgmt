@@ -1,42 +1,17 @@
-import time
-import os
-
-from mlxlib.common import files
-from rpyc.utils.classic import connect, download
-from reg2_wrapper.common.error_code import ErrorCode
-
-
-class TermHandlerMixin(object):
-    def __init__(self, name):
-        super(TermHandlerMixin, self).__init__(name)
-
+class TermHandlerMixin:
     def _kill_handler(self, sig, frm):
         """
-        Used for overloading existed signal handler of TestWrapper class with adding storing logs for terminated run.
+        Log the killed run's output before TestWrapper's kill handler tears the players down.
+        Players only return process output after the process exits, so read the stdout file
+        over the player's existing signal rpyc connection (it already uses the topology RPC_PORT,
+        which on AIR is a forwarded worker port, not the rpyc default).
         """
         player = self.Players[0]
         self.Logger.info("Termination signal handler started")
-        pid_index = 0
-        proc_stdout_index = 0
-
-        for process in player.processes[:]:
-            run_log_file_name = player.process_logger[player.pids[pid_index]][proc_stdout_index]
-            local_dir_path = os.path.join(files.get_mlxtmp_dir(), self.session_id)
-            local_tmp_file = os.path.join(local_dir_path, "term_log.txt")
+        for pid in player.pids:
             try:
-                if not os.path.exists(local_dir_path):
-                    os.mkdir(local_dir_path)
-
-                conn = connect(player.player_ip)
-                download(conn, run_log_file_name, local_tmp_file)
-
-                with open(local_tmp_file) as outfile:
-                    output = outfile.read()
-
-                self.Logger.info(output)
-
-                if os.path.exists(local_tmp_file):
-                    os.remove(local_tmp_file)
+                stdout_file = player.process_logger[pid][0]
+                self.Logger.info(player.serverProxySignal.modules.files.read(stdout_file))
             except Exception as err:
-                self.Logger.error("Unable to load test cases run logs from the player: {}".format(err))
-        super(TermHandlerMixin, self)._kill_handler(sig, frm)
+                self.Logger.error(f"Unable to load test cases run logs from the player: {err}")
+        super()._kill_handler(sig, frm)
