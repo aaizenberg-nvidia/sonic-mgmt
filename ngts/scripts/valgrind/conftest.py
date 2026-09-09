@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 pytest_plugins = (
     "ngts.common.plugins.valgrind.plugin",
+    'ngts.common.plugins.nvos_run_policy',
 )
 
 # Docker side-channel used by NVOS valgrind-compatible builds.

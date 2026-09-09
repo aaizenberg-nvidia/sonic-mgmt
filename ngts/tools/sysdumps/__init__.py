@@ -290,8 +290,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
                     logger.info('### The number of sysdumps for this test suite is more than 3, sysdump will not be created ###')
                 else:
                     with allure.step('The test case has failed, generating a sysdump'):
-                        # no-techsupport-on-fail flag is set in pytest_configure, pytest_addoption, _configure_skip_gen_techsupport_on_fail
-                        if getattr(item.config, "_no_techsupport_on_fail") or item.config.getoption("--no-techsupport-on-fail", default=False):
+                        # The NVOS run-policy plugin publishes the effective value.
+                        # Other runs fall back to the CLI option.
+                        if getattr(item.config, "_no_techsupport_on_fail", False) or item.config.getoption("--no-techsupport-on-fail", False):
                             logger.warning("Skipping sysdump generation on test failure")
                         else:
                             test_suites_dumps[suite_name] += 1
