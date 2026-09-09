@@ -263,6 +263,8 @@ class TestNewTc:
             Gearbox
         """
         sensor_temperature_test_list, tc_config_dict_orig = get_dut_supported_sensors_and_tc_config
+        # Exclude module sensors since they are blacklisted.
+        sensor_temperature_test_list = [s for s in sensor_temperature_test_list if s != "module"]
         sensor_type = request.config.getoption("--sensor_type")
         if sensor_type == "all":
             tested_sensors = sensor_temperature_test_list
