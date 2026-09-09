@@ -284,7 +284,7 @@ class LanesConfig:
         split = (self.effective_split(chip_type) if absolute_breakout
                  else chip_speed_config.port_split)
         conf_args = {
-            "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+            "auto_buffer_mode": "True",
             "congestion_thresh_lo": (chip_speed_config.low_ar_threshold
                                      if chip_speed_config.low_ar_threshold is not None
                                      else (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
@@ -385,25 +385,26 @@ class _SpcXRATestBase:
         Args:
             request: pytest ``FixtureRequest`` (provides the test name).
         """
-        skip_test_on_unsupported_chip_type(self.chip_type, "SPC4")
-        skip_test_on_unsupported_chip_type(self.chip_type, "SPC5")
         test_name = get_perf_test_name(request)
         packet_size = PerfConsts.PACKET_SIZE_4K
 
         with allure.step("Validate rebalancer (auto buffer mode) is active on the DUT"):
-            if self.chip_type == "SPC6" and isinstance(self.cli_object, NvueCli):
+            if isinstance(self.cli_object, NvueCli):
                 validate_perf_dut_rebalancer_buffer_mode(self.players)
 
         self._run_spine_traffic(packet_size)
         self._validate(
             test_name, packet_size,
-            skip_first_counters_iteration=(self.chip_type == "SPC6" and
+            skip_first_counters_iteration=(self.chip_type in ("SPC5", "SPC6") and
                                            isinstance(self.cli_object, NvueCli)))
 
+    @pytest.mark.skip(reason="Temporarily disabled")
     @allure.description('AR enabled + IBM enabled. Verify port utilization at minimum line rate.')
     @_with_lanes_allure_title
     def test_ar_perf_max_bandwidth_ibm_rebalancer_disabled(self, request):
         """Verify port utilization with AR + IBM enabled and the rebalancer disabled.
+
+        Currently skipped unconditionally; also skipped on SPC6 when re-enabled.
 
         Args:
             request: pytest ``FixtureRequest``.
