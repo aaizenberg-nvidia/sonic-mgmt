@@ -529,7 +529,7 @@ def setup_vrf_cfg(duthost, cfg_facts, nbrhosts, tbinfo, loganalyzer):
     port_list = get_port_connected_with_vm(duthost, tbinfo, nbrhosts)
     vm_list = [vm_name for vm_name in nbrhosts.keys() if not vm_name.endswith('PT1')]
     mg_facts = duthost.get_extended_minigraph_facts(tbinfo)
-    port_channel_list = mg_facts['minigraph_portchannels'].keys()
+    port_channel_list = list(mg_facts['minigraph_portchannels'].keys())
     if len(port_channel_list) == 0:
         upstream_port_list = get_port_connected_with_vm(duthost, tbinfo, nbrhosts, vm_type="T2")
         port_list.extend(upstream_port_list)
@@ -1018,8 +1018,8 @@ def param_reboot(request, duthost, localhost, loganalyzer):
     # TODO: remove this override once warm/fast reboot is supported on sn6600_ld
     # (https://redmine.mellanox.com/issues/5154543).
     sn6600_ld_warm_unsupported = (
-        "sn6600_ld" in duthost.facts.get("platform", "")
-        and is_redmine_issue_active([5154543])[0]
+        "sn6600_ld" in duthost.facts.get("platform", "") and
+        is_redmine_issue_active([5154543])[0]
     )
     if sn6600_ld_warm_unsupported:
         reboot_type_list = [rt for rt in reboot_type_list if rt not in ("warm", "fast")]
