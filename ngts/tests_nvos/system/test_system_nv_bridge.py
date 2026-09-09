@@ -282,6 +282,8 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
     TestToolkit.tested_api = test_api
     cluster = Cluster()
     sdn = Sdn()
+    sdnFiles = sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[
+        SystemConsts.NV_BRIDGE_CLIENT_STATE]
     try:
         with allure.step("Enable cluster"):
             output = OutputParsingTool.parse_show_output_to_dict(
@@ -303,41 +305,13 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
                                      local_host=True)
             show_data = OutputParsingTool.parse_json_str_to_dictionary(nv_command.system.nv_bridge.show()).get_returned_value()
 
-        with allure.step("Execute action generate for nv-bridge-client-state"):
-            result = sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].action_generate_sdn()
-            result.verify_result()
-
-        with allure.step("Verify state file is generated"):
-            output = OutputParsingTool.parse_show_output_to_dict(
-                sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].files.show(output_format=OutputFormat.json),
-                output_format=OutputFormat.json).get_returned_value()
-            assert output, "Expected nv-bridge-client-state file to be generated"
-
-        with allure.step("Verify state file content matches nv show system nv-bridge"):
-            file_path = next(iter(output.values()))["path"]
-
-            file_content = engines.dut.run_cmd(f"sudo cat {file_path}")
-            assert file_content, "State file content is empty"
-
-            msg = f"File content is invalid. content: {file_content}"
-
-            with allure.step("Verify hostname in state file"):
-                hostname = engines.dut.run_cmd(f"hostname")
-                assert f'"nvbdUuid": "{hostname}' in file_content, msg
-
-            if show_data.get("connections"):
-                with allure.step("Verify server id in state file"):
-                    server_id = show_data.get("server-id", "")
-                    assert f'"nvbsUuid": "{server_id}"' in file_content, msg
-
-                with allure.step("Verify server address in state file"):
-                    conn = next(iter(show_data["connections"].values()))
-                    server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
-                    assert f'"nvbsAddress": "{server_address}"' in file_content, msg
+        with allure.step("Generate and verify nv-bridge-client-state file"):
+            sdnFiles.files.delete_all_existing_files()
+            _generate_and_verify_state_file(sdnFiles, show_data, engine=engines.dut)
 
     finally:
         with allure.step("Delete generated files"):
-            sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].files.delete_files()
+            sdnFiles.files.delete_all_existing_files()
         with allure.step("Disable cluster"):
             cluster.unset(apply=True, dut_engine=engines.dut)
 
@@ -422,6 +396,42 @@ def _verify_nv_bridge_output(nv_bridge, state=None, health=None, health_reason=N
             ValidationTool.verify_field_value_in_output(output_dictionary['connections']['1'], SystemConsts.NV_BRIDGE_HEARTBEAT, heart_beat).verify_result()
     if no_connection:
         assert output_dictionary['connections'] == {}, 'Connections not empty'
+
+
+# nv-bridge reports its state to nmx-controller every 10 seconds,
+# so the first generated files may not reflect the connection yet
+@retry(Exception, tries=5, delay=2)
+def _generate_and_verify_state_file(sdn_files, show_data, engine):
+    with allure.step("Generate nv-bridge-client-state file"):
+        sdn_files.action_generate_sdn().verify_result()
+
+        output = OutputParsingTool.parse_show_output_to_dict(
+            sdn_files.files.show(output_format=OutputFormat.json),
+            output_format=OutputFormat.json).get_returned_value()
+        assert output, "Expected nv-bridge-client-state file to be generated"
+
+    with allure.step("Verify file content"):
+        # file names are timestamped, so the highest name is the newest file
+        # The file names end in YYYYMMDD_HHMMSS, which sorts correctly as a plain string, so max() on the keys is enough.
+        file_path = output[max(output)]["path"]
+        file_content = engine.run_cmd(f"sudo cat {file_path}")
+        assert file_content, "State file content is empty"
+
+    msg = f"File content is invalid. content: {file_content}"
+
+    with allure.step("Verify hostname in state file"):
+        hostname = engine.run_cmd("hostname")
+        assert f'"nvbdUuid": "{hostname}' in file_content, msg
+
+    if show_data.get("connections"):
+        with allure.step("Verify server id in state file"):
+            server_id = show_data.get("server-id", "")
+            assert f'"nvbsUuid": "{server_id}"' in file_content, msg
+
+        with allure.step("Verify server address in state file"):
+            conn = next(iter(show_data["connections"].values()))
+            server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
+            assert f'"nvbsAddress": "{server_address}"' in file_content, msg
 
 
 def _send_mad_verify_no_errors(dut, tray_index):
