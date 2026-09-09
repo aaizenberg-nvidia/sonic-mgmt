@@ -18,9 +18,10 @@ import os
 import re
 import shlex
 import time
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 
 import pytest
+import yaml
 
 import ngts.tools.test_utils.allure_utils as allure
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
@@ -190,6 +191,40 @@ class OtelCollector:
             scp_file(self.engine, staged_remote, local_path, download_from_remote=True)
         return local_path
 
+    def fetch_artifact_if_any(
+        self,
+        local_dir: str,
+        file_name: str = "otel-out.json",
+    ) -> Optional[str]:
+        """Stage and SCP the latest non-empty artifact, or return ``None`` when there is none.
+
+        The tolerant counterpart of :meth:`fetch_artifact`, which polls until data
+        arrives and fails when it never does. Once the DUT export is disabled the
+        file exporter writes nothing at all, so "no artifact" is the expected
+        outcome and has to be reported instead of polled for until timeout.
+
+        Checked once rather than polled: callers truncate before their collection
+        window, so a single look afterwards sees anything written during it.
+        """
+        with allure.step("Check whether the collector wrote an artifact at all"):
+            remote_path = self._latest_artifact_remote_path()
+        if not remote_path:
+            logger.info(
+                "No non-empty OTEL artifact host=%s label=%s live=%s rotated=%s",
+                self.engine.ip,
+                self.label.value,
+                self.output_json_path,
+                self.output_json_rotated_glob,
+            )
+            return None
+        os.makedirs(local_dir, exist_ok=True)
+        local_path = os.path.join(local_dir, file_name)
+        with allure.step("Stage collector artifact for fetch"):
+            staged_remote = self._stage_for_fetch(remote_path)
+        with allure.step(f"SCP collector artifact to {local_path}"):
+            scp_file(self.engine, staged_remote, local_path, download_from_remote=True)
+        return local_path
+
     def _ensure_installed(self, install_if_missing: bool) -> None:
         with allure.step(f"Check {self.binary_name} is installed"):
             out = self.engine.run_cmd(f"command -v {self.binary_name}", validate=False).strip()
@@ -279,7 +314,8 @@ class OtelCollector:
         """Stop every ``otelcol-contrib`` on this host.
 
         Stale runs (e.g. ``--config=/etc/otelcol/config.yaml``) are not matched by
-        our signature-based pkill but still bind OTLP :4317 and internal :8888.
+        our signature-based pkill but still bind the OTLP receiver ports and
+        internal :8888.
         """
         sudo = self._sudo_prefix
         pattern = shlex.quote(self.binary_name)
@@ -302,18 +338,58 @@ class OtelCollector:
         ).strip()
         return set(out.split()) if out else set()
 
-    def _pid_listening_on_otlp_port(self) -> Optional[str]:
-        port = OtelCollectorConst.OTLP_GRPC_PORT
+    def _pid_listening_on_otlp_port(
+        self, port: int = OtelCollectorConst.OTLP_GRPC_PORT
+    ) -> Optional[str]:
         inner = f"ss -lntp 2>/dev/null | grep ':{port}' || true"
         out = self.engine.run_cmd("bash -lc " + shlex.quote(inner), validate=False)
         match = re.search(r"pid=(\d+)", out)
         return match.group(1) if match else None
 
-    def _otlp_port_owned_by_us(self) -> bool:
-        listener_pid = self._pid_listening_on_otlp_port()
-        if not listener_pid:
-            return False
-        return listener_pid in self._our_collector_pids()
+    def _configured_otlp_ports(self) -> Set[int]:
+        """OTLP receiver ports defined by the config this collector is running.
+
+        Read from the config in force rather than from
+        ``OTLP_PORT_BY_TRANSPORT``, because not every config runs every receiver:
+        the metrics suites serve both transports, while the syslog suites swap in
+        a logs pipeline that keeps gRPC alone. Waiting on a port the running
+        config never binds would hang start-up on exactly those suites.
+
+        An unreadable config falls back to the gRPC port, the one receiver every
+        config in this tree defines.
+        """
+        default = {OtelCollectorConst.OTLP_GRPC_PORT}
+        try:
+            protocols = yaml.safe_load(self.config_yaml)["receivers"]["otlp"]["protocols"]
+            ports = {
+                int(str(protocol["endpoint"]).rsplit(":", 1)[1])
+                for protocol in protocols.values()
+            }
+        except (yaml.YAMLError, AttributeError, IndexError, KeyError, TypeError, ValueError):
+            logger.warning(
+                "Could not read the OTLP receiver ports out of the %s collector "
+                "config; treating :%s as the only expected listener",
+                self.label.value,
+                OtelCollectorConst.OTLP_GRPC_PORT,
+            )
+            return default
+        return ports or default
+
+    def _otlp_ports_not_ours(self) -> Dict[int, Optional[str]]:
+        """Receiver ports this collector does not own, mapped to the holding pid.
+
+        Readiness means every receiver the running config declares is up and
+        ours. A port held by a foreign pid is reported with that pid rather than
+        as a plain absence, which is what tells a stale collector apart from one
+        that has not finished starting.
+        """
+        our_pids = self._our_collector_pids()
+        not_ours: Dict[int, Optional[str]] = {}
+        for port in self._configured_otlp_ports():
+            listener_pid = self._pid_listening_on_otlp_port(port)
+            if listener_pid not in our_pids:
+                not_ours[port] = listener_pid
+        return not_ours
 
     def _restart_collector_process(self) -> None:
         sudo = self._sudo_prefix
@@ -378,9 +454,10 @@ class OtelCollector:
     def _wait_until_listening(self) -> None:
         timeout_sec = OtelCollectorConst.START_TIMEOUT_SEC
         retry_interval = OtelCollectorConst.START_RETRY_INTERVAL_SEC
-        port = OtelCollectorConst.OTLP_GRPC_PORT
+        ports = sorted(self._configured_otlp_ports())
+        port_list = ", ".join(f":{p}" for p in ports)
 
-        with allure.step(f"Wait for OTLP gRPC listener on :{port}"):
+        with allure.step(f"Wait for OTLP listeners on {port_list}"):
             deadline = time.time() + timeout_sec
             # Probe for a listening TCP socket on the OTLP port. Prefer modern
             # ``ss -lntp`` (iproute2: -l listening, -n numeric, -t TCP, -p show
@@ -392,28 +469,28 @@ class OtelCollector:
                 if not self._collector_process_active():
                     time.sleep(retry_interval)
                     continue
-                if self._otlp_port_owned_by_us():
+                not_ours = self._otlp_ports_not_ours()
+                if not not_ours:
                     return
-                foreign_pid = self._pid_listening_on_otlp_port()
-                if foreign_pid:
+                foreign = {p: pid for p, pid in not_ours.items() if pid}
+                if foreign:
                     logger.warning(
-                        "OTLP :%s held by foreign pid=%s (our pids=%s on %s); waiting",
-                        port,
-                        foreign_pid,
+                        "OTLP ports held by foreign pids %s (our pids=%s on %s); waiting",
+                        foreign,
                         sorted(self._our_collector_pids()),
                         self.engine.ip,
                     )
                 time.sleep(retry_interval)
-        foreign_pid = self._pid_listening_on_otlp_port()
+        not_ours = self._otlp_ports_not_ours()
         ours = sorted(self._our_collector_pids())
         pgrep_all = self.engine.run_cmd(
             f"bash -lc {shlex.quote(f'pgrep -af {self.binary_name} || true')}",
             validate=False,
         ).strip()
         pytest.fail(
-            f"{self.binary_name} did not own OTLP :{port} within {timeout_sec}s on "
-            f"{self.engine.ip} (listener_pid={foreign_pid}, our_pids={ours}). "
-            f"Processes: {pgrep_all!r}"
+            f"{self.binary_name} did not own OTLP {port_list} within {timeout_sec}s on "
+            f"{self.engine.ip} (port -> listener pid, null means no listener: "
+            f"{not_ours}, our_pids={ours}). Processes: {pgrep_all!r}"
         )
 
     @staticmethod
@@ -475,8 +552,10 @@ class OtelCollector:
                 f"{sudo}grep -n 'path:' {shlex.quote(self.config_path)} 2>&1 || true",
             ),
             (
-                "otlp_listener",
-                f"bash -lc \"ss -lntp 2>/dev/null | grep ':{OtelCollectorConst.OTLP_GRPC_PORT}' || true\"",
+                "otlp_listeners",
+                "bash -lc \"ss -lntp 2>/dev/null | grep -E '{}' || true\"".format(
+                    "|".join(f":{p}" for p in sorted(self._configured_otlp_ports()))
+                ),
             ),
             (
                 "collector_process",

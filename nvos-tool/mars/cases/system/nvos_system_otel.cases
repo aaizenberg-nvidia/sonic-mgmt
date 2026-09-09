@@ -58,4 +58,48 @@
     </cmd>
   </case>
 
+  <case>
+    <name> test_otel_platform_stats_metrics_present </name>
+    <info> Platform-stats only export: expected metric names arrive on both collectors </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/telemetry/otel/test_otel_metric_coverage.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_otel_platform_stats_metrics_present --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_otel_all_metrics_present </name>
+    <info> Test plan 5.1: OTLP export active, payload valid, metric inventory and agent-mapping contract, export disable and re-enable </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/telemetry/otel/test_otel_metric_coverage.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_otel_all_metrics_present --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_otel_metric_class_disable_during_capture </name>
+    <info> Test plan 5.2 steps 4-5: disable a metric class and then a sub-class of another class mid-capture </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/telemetry/otel/test_otel_nvos_cli_and_functional.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_otel_metric_class_disable_during_capture --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_otel_plus_gnmi_parallel </name>
+    <info> Test plan 5.3: OTEL export and a live gNMI subscription coexist, shared metric agrees, export toggles cleanly </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/telemetry/otel/test_otel_nvos_cli_and_functional.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_otel_plus_gnmi_parallel --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>

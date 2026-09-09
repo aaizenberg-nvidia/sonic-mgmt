@@ -139,16 +139,24 @@ def validate_otlp_conforms_to_agent_mappings(
     *,
     collector_label: str,
     extra_ignore: Optional[Set[str]] = None,
+    require_declared_attributes: bool = False,
 ) -> None:
     """Assert every exported NVUE datapoint conforms to the agent mapping contract.
 
     Prometheus sidecar metrics (``node_*`` / ``scrape_*`` / ...) and ``extra_ignore``
     names are skipped; only ``nvswitch_*`` telemetry is checked.
+
+    ``require_declared_attributes`` additionally asserts the exported attribute keys
+    are not a *strict* subset of the declared ``labels``, i.e. the metric carries its
+    full declared attribute set. Off by default because the ported dual-platform
+    suites only assert the no-undeclared-attribute direction; test-plan items that
+    call for an attribute-count check turn it on.
     """
     ignore = set(extra_ignore or set())
     not_in_contract: Set[str] = set()
     type_mismatch: List[str] = []
     attr_violations: List[str] = []
+    missing_attrs: List[str] = []
     checked: Set[str] = set()
 
     for metric in _iter_exported_metrics(docs):
@@ -184,6 +192,14 @@ def validate_otlp_conforms_to_agent_mappings(
                     f"{name}: attributes {sorted(unexpected)} not declared in mapping "
                     f"labels {sorted(declared)}"
                 )
+            # Union across the metric's datapoints: a declared label is satisfied by
+            # appearing on any series, so per-series attributes are not miscounted.
+            missing = declared - exported
+            if require_declared_attributes and missing:
+                missing_attrs.append(
+                    f"{name}: exported {len(exported)} of {len(declared)} declared "
+                    f"attribute(s), missing {sorted(missing)}"
+                )
 
     with allure.step(
         f"Validate OTLP conforms to agent-mappings on {collector_label} "
@@ -191,14 +207,15 @@ def validate_otlp_conforms_to_agent_mappings(
     ):
         logger.info(
             "agent-mappings validation (%s): checked=%d not_in_contract=%d "
-            "type_mismatch=%d attr_violations=%d",
+            "type_mismatch=%d attr_violations=%d missing_attrs=%d",
             collector_label,
             len(checked),
             len(not_in_contract),
             len(type_mismatch),
             len(attr_violations),
+            len(missing_attrs),
         )
-        if not_in_contract or type_mismatch or attr_violations:
+        if not_in_contract or type_mismatch or attr_violations or missing_attrs:
             lines = [
                 f"OTLP export does not conform to agent-mappings on {collector_label}.",
                 f"  --- not in metricMappings ({len(not_in_contract)}) ---",
@@ -208,6 +225,8 @@ def validate_otlp_conforms_to_agent_mappings(
             lines.extend(sorted(type_mismatch) or ["  (none)"])
             lines.append(f"  --- attribute violations ({len(attr_violations)}) ---")
             lines.extend(sorted(attr_violations) or ["  (none)"])
+            lines.append(f"  --- incomplete attribute sets ({len(missing_attrs)}) ---")
+            lines.extend(sorted(missing_attrs) or ["  (none)"])
             pytest.fail("\n".join(lines))
 
 
@@ -218,6 +237,7 @@ def expected_metrics_conform_to_agent_mappings(
     *,
     collector_label: str,
     extra_ignore: Optional[Set[str]] = None,
+    require_declared_attributes: bool = False,
 ) -> None:
     """Fetch ``agent-mappings.yaml`` from the DUT and validate ``docs`` against it."""
     yaml_path = fetch_agent_mappings_yaml_from_dut(engines, local_output_dir)
@@ -227,4 +247,5 @@ def expected_metrics_conform_to_agent_mappings(
         mappings,
         collector_label=collector_label,
         extra_ignore=extra_ignore,
+        require_declared_attributes=require_declared_attributes,
     )

@@ -88,6 +88,87 @@ class OtelCliTestConst:
     STATS_GROUP_2 = "nvos-plan-sg-two"
 
 
+class OtelFunctionalTestConst:
+    """Test inputs for the NVOS OTEL functional tests (test plan Section 5).
+
+    Section 5 exercises the data plane, so unlike Section 4 these values size
+    collection windows and bound value comparisons.
+    """
+
+    # 5.1 step 2: the window must cover "at least two samples for the max sample
+    # interval of enabled classes", so the slowest enabled class must emit twice.
+    MIN_SAMPLES_IN_WINDOW = 2
+
+    # --- Randomized axes on the data path ------------------------------------
+    # 5.1 and 5.2 both export to "a single gRPC/http destination (chosen
+    # randomly)". Unlike Section 4, which only configures a destination, these
+    # items push real payloads through it, so the collector must actually receive
+    # on the chosen transport — see ``collector_receivers_for``.
+    DATA_PATH_TRANSPORTS: Tuple[str, ...] = OtelCliTestConst.ALL_TRANSPORTS
+
+    # 5.1 additionally randomizes dest_id_type over {ipv4, ipv6, hostname}, with
+    # "external OTEL server reachable over IPv4, IPv6 and hostname" as its stated
+    # precondition. All three point at the same running collector. The IPv6
+    # address is read off the collector host's interface at run time rather than
+    # taken from DNS: the lab publishes no AAAA record for these hosts even where
+    # their management interface carries a ULA the DUT routes to. Not every setup
+    # routes IPv6 between DUT and collector, so the usable subset is probed per
+    # run by ``available_data_path_dest_types``.
+    DATA_PATH_DEST_TYPES: Tuple[str, ...] = (
+        OtelCliTestConst.DEST_TYPE_IPV4,
+        OtelCliTestConst.DEST_TYPE_IPV6,
+        OtelCliTestConst.DEST_TYPE_HOSTNAME,
+    )
+
+    # Name written into the DUT's ``/etc/hosts`` when the collector's own DNS name
+    # is not resolvable from the DUT, so the hostname destination type always has
+    # a real name to resolve.
+    COLLECTOR_HOST_ALIAS = "otel-collector-primary"
+
+    # Probes used to prove a destination is reachable before it is configured. Two
+    # is enough to tell "routed" from "not routed" without padding every run.
+    DEST_PING_COUNT = 2
+
+    # 5.2 step 1: "start OTLP capture for at least three sample intervals". With
+    # interface-stats at its 10s default this is a 30s span, so the suite's 70s
+    # floor already covers it; platform-stats (60s) is what makes the window long.
+    MIN_SAMPLE_INTERVALS = 3
+
+    # 5.2: the family disabled mid-capture (step 4) and the family whose *sub*-class
+    # is disabled afterwards (step 5). Two different families, as the plan requires.
+    DISABLED_FAMILY = TelemetryConsts.PLATFORM_STATS
+    DISABLED_SUB_CLASS_FAMILY = TelemetryConsts.INTERFACE_STATS
+    DISABLED_SUB_CLASS = TelemetryConsts.PHY
+
+    # 5.3: the single metric compared across the OTEL and gNMI paths. NVOS exports
+    # IB/if counters (no ether-stats catalog), so this is the one interface counter
+    # both paths expose — the same pairing the ported coexistence validators use
+    # (``cumulus/coexistence.py`` ``INTERFACE_GNMI_TO_OTEL_METRIC_NVOS``).
+    SHARED_METRIC_OTEL_NAME = "nvswitch_interface_if_in_broadcast_pkts"
+    SHARED_METRIC_GNMI_LEAF = "in-broadcast-pkts"
+    SHARED_METRIC_GNMI_PREFIX_FMT = "interfaces/interface[name={interface}]/state/counters"
+
+    # OTLP attribute naming the interface a datapoint belongs to.
+    INTERFACE_ATTRIBUTE_KEY = "interface"
+
+    # OTLP prefix of the slowest family (platform-stats, 60s), used to prove a
+    # window really spanned several sample intervals.
+    SLOWEST_FAMILY_METRIC_PREFIX = "nvswitch_platform_"
+
+    # OTLP prefix of the family 5.2 keeps enabled, whose values must stay sane
+    # across both disables.
+    KEPT_FAMILY_METRIC_PREFIX = "nvswitch_interface_"
+
+    # 5.3 step 4: "within the expected sampling tolerance". The two paths sample
+    # independently, so a counter read over gNMI and over OTLP in the same window
+    # can legitimately differ by the traffic seen between the two samples.
+    SHARED_METRIC_TOLERANCE_PERCENT = 20.0
+
+    # gnmic budget for a subscription that has to outlive the OTLP window.
+    GNMI_CLIENT_CMD_TIME_SEC = 60
+    GNMI_STREAM_SETTLE_SEC = 5
+
+
 class OtelCollectorLabel(enum.Enum):
     """Identifies which of the two OTel collector instances in the suite this is.
 
@@ -100,20 +181,57 @@ class OtelCollectorLabel(enum.Enum):
     SECONDARY = "secondary"
 
 
+# Default: one gRPC receiver on the IPv4 wildcard, which is what every suite in
+# this tree exports over and what collectors here have always listened on.
+#
+# The http receiver and the dual-stack bind are opt-in per test rather than
+# defaults, so a suite that does not randomize its transport or destination keeps
+# byte-identical collector configuration. Tests that do randomize reconfigure
+# their collector through ``collector_receivers_for`` and restore it afterwards.
+# Module-level so the config builders below can default to it; re-exported as
+# ``OtelCollectorConst.OTLP_GRPC_BIND_ADDR`` for callers outside this module.
+_OTLP_GRPC_BIND_ADDR = "0.0.0.0"
+_OTLP_DUAL_STACK_BIND_ADDR = "[::]"
+
+
+def _endpoint(bind_addr: str, port: int) -> str:
+    """``host:port``, quoted only where YAML needs it.
+
+    A bare ``[::]:4317`` parses as a nested sequence rather than a string, so the
+    dual-stack address has to be quoted. The IPv4 default is left bare, keeping
+    the config of every collector that does not opt into dual-stack identical to
+    what it has always been.
+    """
+    endpoint = f"{bind_addr}:{port}"
+    return f'"{endpoint}"' if bind_addr.startswith("[") else endpoint
+
+
 def _otel_collector_config_yaml(
     otlp_port: int,
     file_exporter_path: str,
     max_megabytes: int,
     max_backups: int,
-    bind_addr: str = "0.0.0.0",
+    bind_addr: str = _OTLP_GRPC_BIND_ADDR,
+    http_port: int = TelemetryConsts.Defaults.HTTP_PORT,
+    include_http: bool = False,
 ) -> str:
-    """OTEL collector config: OTLP gRPC receiver in, file exporter out (with rotation)."""
-    endpoint = f"{bind_addr}:{otlp_port}"
+    """OTEL collector config: OTLP receivers in, file exporter out (with rotation).
+
+    gRPC only by default, which is what every suite here exports over. The test
+    plan also randomizes onto http (5.1, 5.2, 5.4) and enumerates both (5.5,
+    5.6, 5.8); those items switch their collector over via ``include_http``
+    rather than every collector carrying a receiver it never serves.
+    """
+    protocols = f"""      grpc:
+        endpoint: {_endpoint(bind_addr, otlp_port)}"""
+    if include_http:
+        protocols += f"""
+      http:
+        endpoint: {_endpoint(bind_addr, http_port)}"""
     return f"""receivers:
   otlp:
     protocols:
-      grpc:
-        endpoint: {endpoint}
+{protocols}
 processors: {{}}
 exporters:
   file:
@@ -174,7 +292,18 @@ class OtelCollectorConst:
     BINARY_NAME = "otelcol-contrib"
 
     OTLP_GRPC_PORT = 4317
-    OTLP_GRPC_BIND_ADDR = "0.0.0.0"
+    OTLP_HTTP_PORT = TelemetryConsts.Defaults.HTTP_PORT
+    OTLP_GRPC_BIND_ADDR = _OTLP_GRPC_BIND_ADDR
+    # Only for tests that export to an IPv6 destination; see ``_OTLP_GRPC_BIND_ADDR``.
+    OTLP_DUAL_STACK_BIND_ADDR = _OTLP_DUAL_STACK_BIND_ADDR
+
+    # Receiver port per OTLP transport. Only the receivers a config declares are
+    # up (see ``_otel_collector_config_yaml``); this says which port a given
+    # export should be pointed at.
+    OTLP_PORT_BY_TRANSPORT: Dict[str, int] = {
+        TelemetryConsts.GRPC: OTLP_GRPC_PORT,
+        TelemetryConsts.HTTP: OTLP_HTTP_PORT,
+    }
 
     # Both collectors install identically: download the upstream `.tar.gz`, drop the
     # `otelcol-contrib` binary in `/usr/local/bin`, and run it as a `nohup` foreground

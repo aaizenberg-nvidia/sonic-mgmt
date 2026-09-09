@@ -7,26 +7,58 @@ kept separate from the ported Cumulus modules in this folder:
 * Section 4.2 :func:`test_otel_cli_destinations` — destination lifecycle + overrides.
 * Section 4.3 :func:`test_otel_cli_labels_and_metric_classes` — labels, classes, intervals.
 * Section 4.4 :func:`test_otel_cli_stats_groups` — stats-group lifecycle.
+* Section 5.2 :func:`test_otel_metric_class_disable_during_capture` — class and
+  sub-class disable mid-capture.
+* Section 5.3 :func:`test_otel_plus_gnmi_parallel` — OTEL and gNMI coexistence.
 
 Explicit coverage row that skips with a precise blocker:
 
 * Section 4.2 client-certificate leg :func:`test_otel_cli_destination_client_certificate`
   — needs a DUT client certificate the OTEL harness does not stage today.
 
-Every Section 4 item is CLI-only: the DUT is configured and read back through the
-``applied`` datastore, and no OTEL collector reachability is required.
+The two groups differ in what they need from the setup. Every Section 4 item is
+CLI-only: the DUT is configured and read back through the ``applied`` datastore,
+and no OTEL collector reachability is required. The Section 5 items exercise the
+data plane, so they take the suite fixture and assert on what actually reaches the
+collector.
 """
+
+import time
 
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
+from ngts.constants.constants import GnmiConsts
 from ngts.nvos_constants.constants_nvos import ApiType, TelemetryConsts
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
+from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
+from ngts.tests_nvos.system.gnmi.helpers import (
+    gnmi_response_failed,
+    verify_msg_not_in_out_or_err,
+)
+from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_output
 from ngts.tests_nvos.system.telemetry.otel.constants import (
     OtelCliTestConst,
     OtelCollectorConst,
+    OtelFunctionalTestConst,
+)
+from ngts.tests_nvos.system.telemetry.otel.helpers import (
+    assert_metric_values_sane,
+    assert_no_otlp_connection_to_collector,
+    assert_nvos_export_resumed,
+    assert_nvos_export_stopped,
+    assert_nvos_metric_names_for_enablement,
+    assert_otlp_payload_valid,
+    collect_otlp_metrics_window,
+    collection_window_for_samples,
+    collector_receivers_for,
+    enable_nvos_telemetry_families,
+    otel_series_for_interface,
+    percentage_deviation,
+    root_only_enablement,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
     get_interface_telemetry_labels_applied,
@@ -61,6 +93,7 @@ pytestmark = [
 ]
 
 _ENABLED = TelemetryConsts.State.ENABLED.value
+_DISABLED = TelemetryConsts.State.DISABLED.value
 
 
 # =============================================================================
@@ -637,3 +670,345 @@ def test_otel_cli_stats_groups(engines, otel_cli_export_enabled, random_api):
 
     with allure.step(f"Step 14 - {group_2_id} is no longer present"):
         verify_key_absent(show_applied(groups, dut), group_2_id)
+
+
+# =============================================================================
+# Section 5.2 — metric-class and sub-class disable during capture
+# =============================================================================
+
+
+@pytest.fixture
+def data_path_transport(otel_suite_single):
+    """Randomized OTLP transport, with the collector set up to receive on it.
+
+    The draw lives in a fixture so the collector is put back on teardown even if
+    the test fails mid-flight; see :func:`collector_receivers_for` for why the
+    http receiver is not simply left running on every collector.
+    """
+    transport = RandomizationTool.select_random_value(
+        list(OtelFunctionalTestConst.DATA_PATH_TRANSPORTS)
+    ).get_returned_value()
+    with collector_receivers_for(otel_suite_single.primary, transport=transport):
+        yield transport
+
+
+def test_otel_metric_class_disable_during_capture(
+    engines, devices, otel_suite_single, is_ib_router, tmp_path, random_api,
+    data_path_transport
+):
+    """Section 5.2 steps 4-5 — disable a class, then a sub-class of another class.
+
+    Steps 1-3 (OTEL values against the matching CLI fields) stay with the ported
+    suite, which on NVOS means ``test05_otel_platform_stats_validation`` for the
+    platform sensors and ``test_interface_qos_05_interface_in_broadcast_pkts`` for
+    the interface counters — neither is ``cumulus_only``, so both run on NVOS. The
+    remaining ported per-counter validators are ungated too but skip themselves
+    here: they resolve Cumulus ``ether_stats``/``tc_tx`` metric names, of which NVOS
+    exports none (``coexistence.INTERFACE_GNMI_TO_OTEL_METRIC_NVOS`` holds
+    ``if_in_broadcast_pkts`` alone). This test therefore adds the two disable flows
+    plus the baseline they need.
+
+    After each disable the *whole* expected metric-name set is re-asserted rather
+    than just checking the disabled names disappeared. That is what proves the
+    disable was clean: the families left enabled must still export exactly their own
+    metrics, and their values must stay sane.
+
+    The export goes to the single destination the item's precondition calls for,
+    over a transport picked at random per run by ``data_path_transport``, which
+    also points the collector at that transport.
+    """
+    dut = engines.dut
+    system = System()
+    local_dir = str(tmp_path)
+    destination_ip = otel_suite_single.primary_ip
+    transport = data_path_transport
+    base_class = OtelCollectorConst.TELEMETRY_BASE_CLASS
+    kept_family = OtelFunctionalTestConst.DISABLED_SUB_CLASS_FAMILY
+    disabled_family = OtelFunctionalTestConst.DISABLED_FAMILY
+    sub_class = OtelFunctionalTestConst.DISABLED_SUB_CLASS
+    kept_family_node = family_node(system.telemetry, kept_family)
+    disabled_family_node = family_node(system.telemetry, disabled_family)
+    kept_metric_prefix = OtelFunctionalTestConst.KEPT_FAMILY_METRIC_PREFIX
+    platform_classes = frozenset(TelemetryConsts.PLATFORM_CLASSES)
+
+    # Sized on the fast family so the window spans the plan's three sample
+    # intervals; the 70s floor still lets the 60s platform family emit a sample.
+    window_sec = collection_window_for_samples(
+        OtelCollectorConst.INTERFACE_STATS_SAMPLE_INTERVAL_SEC,
+        OtelFunctionalTestConst.MIN_SAMPLE_INTERVALS,
+    )
+
+    def collect(label: str):
+        return collect_otlp_metrics_window(
+            otel_suite_single.primary, local_dir, label=label, wait_sec=window_sec
+        )
+
+    def assert_exported(families_to_classes, actual_names, *, collector_label: str):
+        assert_nvos_metric_names_for_enablement(
+            engines,
+            devices,
+            local_dir,
+            actual_metric_names=actual_names,
+            enablement=root_only_enablement(
+                families_to_classes, destination_ips=(destination_ip,)
+            ),
+            destination_ip=destination_ip,
+            is_ib_router=is_ib_router,
+            collector_label=collector_label,
+        )
+
+    with allure.step(
+        f"Precondition - enable {kept_family} (with class {sub_class}) and "
+        f"{disabled_family} over {transport}"
+    ):
+        enable_nvos_telemetry_families(
+            dut,
+            destination_ip,
+            (kept_family, disabled_family),
+            collector_ips=(destination_ip,),
+            use_stats_group=False,
+            transport=transport,
+            clear_other_transports=True,
+        )
+
+    with allure.step("Baseline - both families export their full metric set"):
+        names, docs, _ = collect("5-2-baseline")
+        assert_otlp_payload_valid(docs, collector_label="baseline")
+        assert_exported(
+            {
+                kept_family: {base_class, sub_class},
+                disabled_family: platform_classes,
+            },
+            names,
+            collector_label="baseline (both families)",
+        )
+        assert_metric_values_sane(
+            docs, metric_name_prefix=kept_metric_prefix, collector_label="baseline"
+        )
+
+    with allure.step(f"Step 4 - disable the {disabled_family} class, then apply"):
+        set_leaf(
+            disabled_family_node.export, dut, TelemetryConsts.STATE, _DISABLED, apply=True
+        )
+        verify_leaf(
+            show_applied(disabled_family_node.export, dut), TelemetryConsts.STATE, _DISABLED
+        )
+
+    with allure.step(
+        f"Step 4 - {disabled_family} metrics stop while {kept_family} keeps exporting cleanly"
+    ):
+        names, docs, _ = collect("5-2-family-disabled")
+        assert_exported(
+            {kept_family: {base_class, sub_class}},
+            names,
+            collector_label=f"{disabled_family} disabled",
+        )
+        assert_metric_values_sane(
+            docs,
+            metric_name_prefix=kept_metric_prefix,
+            collector_label=f"{disabled_family} disabled",
+        )
+
+    with allure.step(f"Step 5 - disable the {kept_family} class {sub_class}, then apply"):
+        set_leaf(
+            kept_family_node.cls.phy, dut, TelemetryConsts.STATE, _DISABLED, apply=True
+        )
+        verify_leaf(
+            show_applied(kept_family_node.cls.phy, dut), TelemetryConsts.STATE, _DISABLED
+        )
+
+    with allure.step(
+        f"Step 5 - the {sub_class} sub-class metrics stop while the rest of "
+        f"{kept_family} keeps exporting cleanly"
+    ):
+        names, docs, _ = collect("5-2-sub-class-disabled")
+        assert_exported(
+            {kept_family: {base_class}},
+            names,
+            collector_label=f"{kept_family} class {sub_class} disabled",
+        )
+        assert_metric_values_sane(
+            docs,
+            metric_name_prefix=kept_metric_prefix,
+            collector_label=f"{kept_family} class {sub_class} disabled",
+        )
+
+
+# =============================================================================
+# Section 5.3 — OTEL and gNMI in parallel
+# =============================================================================
+
+
+@pytest.mark.gnmi
+def test_otel_plus_gnmi_parallel(
+    engines, devices, otel_suite_single, tmp_path, random_api
+):
+    """Section 5.3 — OTEL export and a gNMI subscription coexist without interfering.
+
+    On NVOS both paths are served by the same telemetry core (UMF), so the risk this
+    covers is one path disturbing the other. The test keeps a gNMI subscription live
+    across an OTLP collection window, compares the one counter both paths expose,
+    and then toggles the OTEL export off and on underneath the live subscription.
+
+    Transport is gRPC: unlike 5.1 and 5.2 the item's precondition names no
+    transport, so the suite default is used and the plan wants clarifying.
+    """
+    dut = engines.dut
+    system = System()
+    otlp = system.telemetry.export.otlp
+    local_dir = str(tmp_path)
+    interface = swp_interfaces_for_unset(dut, is_nvos=True)[0]
+    otel_metric = OtelFunctionalTestConst.SHARED_METRIC_OTEL_NAME
+    gnmi_prefix = OtelFunctionalTestConst.SHARED_METRIC_GNMI_PREFIX_FMT.format(
+        interface=interface
+    )
+    gnmi_leaf = OtelFunctionalTestConst.SHARED_METRIC_GNMI_LEAF
+    window_sec = collection_window_for_samples(
+        OtelCollectorConst.INTERFACE_STATS_SAMPLE_INTERVAL_SEC,
+        OtelFunctionalTestConst.MIN_SAMPLES_IN_WINDOW,
+    )
+
+    with allure.step("Step 1 - enable interface-stats export and verify it is active"):
+        enable_nvos_telemetry_families(
+            dut,
+            otel_suite_single.primary_ip,
+            (TelemetryConsts.INTERFACE_STATS,),
+            collector_ips=(otel_suite_single.primary_ip,),
+            use_stats_group=False,
+        )
+        verify_leaf(show_applied(otlp, dut), TelemetryConsts.STATE, _ENABLED)
+
+    gnmi_client = GnmiClient(
+        dut.ip,
+        GnmiConsts.GNMI_DEFAULT_PORT,
+        devices.dut.default_username,
+        devices.dut.default_password,
+        cmd_time=OtelFunctionalTestConst.GNMI_CLIENT_CMD_TIME_SEC,
+    )
+
+    with allure.step("Step 2 - enable the gNMI server and confirm it answers"):
+        system.gnmi_server.set(
+            GnmiConsts.GNMI_STATE_FIELD,
+            GnmiConsts.GNMI_STATE_ENABLED,
+            dut_engine=dut,
+            apply=True,
+        ).verify_result()
+        capabilities_out, capabilities_err = gnmi_client.gnmic_capabilities(
+            skip_cert_verify=True
+        )
+        assert not gnmi_response_failed(capabilities_out, capabilities_err), (
+            f"The gNMI server does not answer on {dut.ip} after being enabled, so "
+            f"OTEL/gNMI coexistence cannot be exercised:\n"
+            f"  stderr: {capabilities_err}\n  stdout: {capabilities_out}"
+        )
+
+    def subscribe_shared_metric():
+        """Start a live gNMI stream on the shared counter."""
+        _, _, _, process = gnmi_client.gnmic_subscribe(
+            prefix=gnmi_prefix,
+            path=gnmi_leaf,
+            mode=GnmiMode.STREAM,
+            flat=True,
+            skip_cert_verify=True,
+            keep_session_alive=True,
+        )
+        time.sleep(OtelFunctionalTestConst.GNMI_STREAM_SETTLE_SEC)
+        return process
+
+    def close_and_assert_gnmi_streamed(process, *, context: str) -> str:
+        """Stop the stream and assert it delivered the counter without error."""
+        out, err = gnmi_client.close_session_and_get_out_and_err(process)
+        with allure.step(f"Validate the gNMI subscription streamed data ({context})"):
+            verify_msg_not_in_out_or_err(GnmicErr.AUTH_FAIL, out, err)
+            # Both streams are inspected: gnmic surfaces some failures on stdout, and
+            # the non-empty check below would otherwise count an error line as data.
+            assert not gnmi_response_failed(out, err), (
+                f"gNMI subscription failed while {context}:\n"
+                f"  stderr: {err}\n  stdout: {out}"
+            )
+            assert (out or "").strip(), (
+                f"gNMI subscription produced no data while {context}; "
+                f"subscribed to {gnmi_prefix}/{gnmi_leaf}"
+            )
+        return out
+
+    with allure.step("Steps 2-3 - stream gNMI while OTLP batches are collected"):
+        gnmi_process = subscribe_shared_metric()
+        names, docs, _ = collect_otlp_metrics_window(
+            otel_suite_single.primary, local_dir, label="5-3-parallel", wait_sec=window_sec
+        )
+        gnmi_out = close_and_assert_gnmi_streamed(
+            gnmi_process, context="OTLP was being collected in parallel"
+        )
+        assert_otlp_payload_valid(docs, collector_label="parallel with gNMI")
+        assert otel_metric in names, (
+            f"{otel_metric} was not exported over OTLP while gNMI was subscribed, so "
+            f"the two paths cannot be compared. Collected {len(names)} metric name(s)."
+        )
+
+    with allure.step(
+        f"Step 4 - {otel_metric} agrees across the OTEL and gNMI paths for {interface}"
+    ):
+        gnmi_raw = parse_gnmic_flat_output(gnmi_out)
+        if gnmi_raw is None:
+            pytest.fail(
+                f"Could not parse a {gnmi_leaf} value out of the gNMI stream for "
+                f"{interface}:\n{gnmi_out}"
+            )
+        try:
+            gnmi_value = float(gnmi_raw)
+        except ValueError:
+            pytest.fail(
+                f"gNMI returned a non-numeric {gnmi_leaf} for {interface}: {gnmi_raw!r}"
+            )
+        otel_values = otel_series_for_interface(docs, otel_metric, interface)
+        assert otel_values, (
+            f"{otel_metric} has no OTLP datapoint carrying "
+            f"{OtelFunctionalTestConst.INTERFACE_ATTRIBUTE_KEY}={interface}."
+        )
+        # The gNMI value is the last streamed update, so it is compared against the
+        # newest OTLP sample rather than the window mean: on a rising counter the
+        # mean of a 70s window sits well below a reading taken at its end, which
+        # would show up as a deviation even when both paths agree. The counter is
+        # monotonic within a window, so the newest sample is the largest.
+        otel_value = max(otel_values)
+        deviation = percentage_deviation(gnmi_value, otel_value)
+        tolerance = OtelFunctionalTestConst.SHARED_METRIC_TOLERANCE_PERCENT
+        assert deviation <= tolerance, (
+            f"{otel_metric} disagrees across the two paths for {interface}: "
+            f"gnmi={gnmi_value}, otel={otel_value} (newest of {len(otel_values)} "
+            f"sample(s)), deviation={deviation:.1f}% > {tolerance}%"
+        )
+
+    with allure.step("Step 5 - disable the OTEL export while the gNMI stream is live"):
+        gnmi_process = subscribe_shared_metric()
+        set_leaf(otlp, dut, TelemetryConsts.STATE, _DISABLED, apply=True)
+        verify_leaf(show_applied(otlp, dut), TelemetryConsts.STATE, _DISABLED)
+        assert_nvos_export_stopped(
+            otel_suite_single.primary,
+            local_dir,
+            label="5-3-otel-disabled",
+            wait_sec=window_sec,
+        )
+        assert_no_otlp_connection_to_collector(
+            dut,
+            collector_ip=otel_suite_single.primary_ip,
+            transport=TelemetryConsts.GRPC,
+        )
+        close_and_assert_gnmi_streamed(
+            gnmi_process, context="the OTEL export was disabled underneath it"
+        )
+
+    with allure.step("Step 6 - re-enable the OTEL export while the gNMI stream is live"):
+        gnmi_process = subscribe_shared_metric()
+        set_leaf(otlp, dut, TelemetryConsts.STATE, _ENABLED, apply=True)
+        verify_leaf(show_applied(otlp, dut), TelemetryConsts.STATE, _ENABLED)
+        assert_nvos_export_resumed(
+            otel_suite_single.primary,
+            local_dir,
+            label="5-3-otel-resumed",
+            wait_sec=window_sec,
+        )
+        close_and_assert_gnmi_streamed(
+            gnmi_process, context="the OTEL export was re-enabled underneath it"
+        )
