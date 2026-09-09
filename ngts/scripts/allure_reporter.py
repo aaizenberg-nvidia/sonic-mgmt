@@ -204,8 +204,17 @@ def predict_allure_report_link(allure_server_url, allure_project):
 
 
 def cleanup_report(allure_server_url, allure_project):
-    requests.get('{}/clean-results?project_id={}'.format(allure_server_url, allure_project),
-                 verify=SSL_VERIFICATION, timeout=HTTP_TIMEOUT)
+    try:
+        requests.get('{}/clean-results?project_id={}'.format(allure_server_url, allure_project),
+                     verify=SSL_VERIFICATION, timeout=HTTP_TIMEOUT)
+    except requests.exceptions.Timeout:
+        # clean-results is a synchronous, potentially slow server-side delete (e.g. a large
+        # staging backlog from a prior session). It keeps running after our client-side read
+        # times out, so don't fail the MARS step for this - it isn't a real failure.
+        logger.warning(
+            "Timed out after {:.0f}s waiting for clean-results response for project {}; "
+            "cleanup is likely still running on the server.".format(HTTP_TIMEOUT, allure_project)
+        )
 
 
 def build_synthetic_result_item(test_name, suite_name, status, body):
