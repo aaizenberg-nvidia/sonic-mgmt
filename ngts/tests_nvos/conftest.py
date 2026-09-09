@@ -75,8 +75,6 @@ from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 
 logger = logging.getLogger(__name__)
 
-_DUT_REBOOT_CACHE_PREFIX = "no_dut_reboot"
-_NO_TECHSUPPORT_ON_FAIL_CACHE_PREFIX = "no_techsupport_on_fail"
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
     re.compile(r".*ib3: multicast join failed for.*, status -\d+"),
@@ -84,70 +82,16 @@ EXPECTED_KERNEL_PATTERNS = [
 
 pytest_plugins = [
     "ngts.common.plugins.valgrind.plugin",
+    'ngts.common.plugins.nvos_run_policy',
 ]
 
 
-def _no_dut_reboot_cache_key(config: pytest.Config) -> str:
-    """Return the session-scoped cache key used by separate MARS pytest processes."""
-    session_id = config.getoption("--session_id", default=None)
-    return f"{_DUT_REBOOT_CACHE_PREFIX}/{session_id}" if session_id else ""
-
-
-def _no_techsupport_on_fail_cache_key(config: pytest.Config) -> str:
-    """Return the session-scoped cache key used by separate MARS pytest processes."""
-    session_id = config.getoption("--session_id", default=None)
-    return f"{_NO_TECHSUPPORT_ON_FAIL_CACHE_PREFIX}/{session_id}" if session_id else ""
-
-
-def _configure_no_dut_reboot(config: pytest.Config) -> None:
-    """Persist the no-reboot policy and exclude DUT-reboot tests.
-
-    The effective policy is stored on ``pytest.Config`` so separately launched
-    MARS post-checkers can continue non-reboot cleanup without restarting the
-    Valgrind-instrumented DUT.
-    """
-    cache_key = _no_dut_reboot_cache_key(config)
-    no_dut_reboot = config.getoption("--no-dut-reboot")
-    if no_dut_reboot and cache_key:
-        # Do not clear this in pytest_sessionfinish: each MARS case and its post-checker run
-        # as separate pytest processes, while MARS session IDs are unique.
-        config.cache.set(cache_key, True)
-    elif cache_key:
-        no_dut_reboot = config.cache.get(cache_key, False)
-
-    setattr(config, "_no_dut_reboot", bool(no_dut_reboot))
-    if not no_dut_reboot:
-        return
-
-    current_markexpr = (getattr(config.option, "markexpr", "") or "").strip()
-    config.option.markexpr = f"({current_markexpr}) and not dut_reboot" if current_markexpr else "not dut_reboot"
-
-
-def _configure_skip_gen_techsupport_on_fail(config: pytest.Config) -> None:
-    """Persist the skip-techsupport-on-fail policy."""
-    cache_key = _no_techsupport_on_fail_cache_key(config)
-    no_techsupport_on_fail = config.getoption("--no-techsupport-on-fail")
-    if no_techsupport_on_fail and cache_key:
-        # Do not clear this in pytest_sessionfinish: each MARS case and its post-checker run
-        # as separate pytest processes, while MARS session IDs are unique.
-        config.cache.set(cache_key, True)
-    elif cache_key:
-        no_techsupport_on_fail = config.cache.get(cache_key, False)
-    setattr(config, "_no_techsupport_on_fail", bool(no_techsupport_on_fail))
-
-
 def pytest_configure(config: pytest.Config):
+    """Load Vault secrets for local NVOS test runs.
+
+    MARS supplies secrets through the environment, so Vault loading is skipped
+    for MARS-managed pytest processes.
     """
-    Configure NVOS-specific options and load Vault secrets for local runs.
-
-    No-reboot filtering applies to both MARS and local runs. Vault loading only
-    applies to local runs because MARS provides secrets through the environment.
-
-    This hook runs before session start and any fixtures.
-    """
-    _configure_no_dut_reboot(config)
-    _configure_skip_gen_techsupport_on_fail(config)
-
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
     if not args or not any('tests_nvos' in str(arg) for arg in args):
@@ -214,21 +158,6 @@ def pytest_addoption(parser: pytest.Parser):
              "NVOS_HUB_AI_INVESTIGATION to one of 0/false/no/off. When enabled, every failing "
              "test fires a best-effort POST to the dashboard and a deep investigation card is "
              "auto-generated; the Allure report gets a link to it.",
-    )
-    parser.addoption(
-        "--no-dut-reboot",
-        action="store_true",
-        default=False,
-        help=(
-            "Skip tests marked as able to reboot, reset, or power-cycle the DUT; "
-            "post-checkers keep non-reboot recovery enabled and stop the run if a reboot is required"
-        ),
-    )
-    parser.addoption(
-        "--no-techsupport-on-fail",
-        action="store_true",
-        default=False,
-        help="Skip generating techsupport on test failure",
     )
 
 
