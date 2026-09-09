@@ -2,19 +2,21 @@
 
 The module is split into two helper types, separated by the banners below:
 
-1. **Suite plumbing** — bring-up, DUT telemetry configuration, collector artifact
+1. **Suite plumbing** â€” bring-up, DUT telemetry configuration, collector artifact
    parsing, and metric-name comparison. Test files call these directly. For telemetry
    master enable, always use :func:`stage_telemetry_master_state` and
    :func:`apply_telemetry_configuration` with ``is_nvos`` (never raw
    ``telemetry.set(state)`` / ``export.otlp.set`` in new code).
-2. **Expected-metrics derivation** — fetch ``metrics-classes.yaml`` from the DUT
+2. **Expected-metrics derivation** â€” fetch ``metrics-classes.yaml`` from the DUT
    and gate the expected metric-name set by DUT capabilities. Only
    :func:`expected_metric_names_from_dut` is consumed by tests; everything else
    in that section is internal.
 """
 
+import contextlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -33,9 +35,27 @@ from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
-from ngts.tests_nvos.system.telemetry.otel.constants import OtelCapability, OtelCollectorConst, OtelCollectorLabel
+from ngts.tests_nvos.system.telemetry.otel.constants import (
+    OtelCapability,
+    OtelCliTestConst,
+    OtelCollectorConst,
+    OtelCollectorLabel,
+    OtelFunctionalTestConst,
+    _otel_collector_config_yaml,
+)
+from ngts.tests_nvos.system.telemetry.otel.nvos_cli_helpers import (
+    destination_node,
+    show_applied,
+    transport_node,
+    unset_path,
+)
 from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
-from ngts.tests_nvos.system.telemetry.otel.metrics_parser import MetricTimestamps, metric_timestamps_from_docs
+from ngts.tests_nvos.system.telemetry.otel.metrics_parser import (
+    AttributeKey,
+    MetricTimestamps,
+    metric_timestamps_from_docs,
+    metric_values_from_docs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +64,7 @@ _DISABLED = TelemetryConsts.State.DISABLED.value
 
 
 # =============================================================================
-# Suite plumbing — bring-up, DUT telemetry configuration, collector artifact
+# Suite plumbing â€” bring-up, DUT telemetry configuration, collector artifact
 # parsing, and metric-name comparison. Test files call these directly.
 # =============================================================================
 
@@ -86,7 +106,7 @@ class EnabledClasses:
     enabled class tokens. A class token is the base sentinel
     :data:`OtelCollectorConst.TELEMETRY_BASE_CLASS` (the always-on non-phy /
     non-categorized metrics), :data:`TelemetryConsts.PHY`, or a platform-stats
-    class name (``cpu``, ``transceiver-info``, …).
+    class name (``cpu``, ``transceiver-info``, â€¦).
     """
 
     families: Dict[str, frozenset]
@@ -96,9 +116,9 @@ class EnabledClasses:
 class TelemetryEnablement:
     """Test-declared model of what telemetry was enabled, per export scope.
 
-    * ``root`` — classes enabled at the telemetry root.
-    * ``stats_groups`` — classes enabled under each ``stats-group <id>``.
-    * ``destination_binding`` — OTLP destination IP -> bound ``stats-group`` id, or
+    * ``root`` â€” classes enabled at the telemetry root.
+    * ``stats_groups`` â€” classes enabled under each ``stats-group <id>``.
+    * ``destination_binding`` â€” OTLP destination IP -> bound ``stats-group`` id, or
       ``None`` when the destination exports the root config.
 
     The expected metric set for a destination is derived from
@@ -140,7 +160,7 @@ def _enabled_classes_for_nvos_stats_group() -> EnabledClasses:
     Platform sub-classes are default-on: enabling ``platform-stats`` exports every
     platform sub-class regardless of which subset the stats-group explicitly turns
     on. The test only enables a subset (``TEST01_STATS_GROUP_PLATFORM_CLASSES``) but
-    the DUT still exports the rest (disk/memory/health-info/…), so the expected set
+    the DUT still exports the rest (disk/memory/health-info/â€¦), so the expected set
     must mirror the full default-on class set. A class is only excluded when it is
     explicitly disabled (no test does so today).
     """
@@ -215,7 +235,7 @@ def cumulus_telemetry_uses_enable_schema(dut) -> bool:
 
     Pre-5.15 Cumulus uses ``nv set system telemetry enable on|off``; 5.15+ switched to
     ``nv set system telemetry state enabled|disabled`` (this is the only telemetry knob
-    that changed schema across 5.15 — every subtree ``export … state`` uses
+    that changed schema across 5.15 â€” every subtree ``export â€¦ state`` uses
     ``state enabled/disabled`` on both, per SSIM ``OM_CHANGED_BEFORE_5_15``).
 
     Applies only to Cumulus (``is_eth_dut``): NVOS always uses the ``state`` schema.
@@ -236,7 +256,7 @@ def stage_telemetry_master_state(
 ) -> None:
     """Stage the platform-specific telemetry master enable (no ``nv config apply``).
 
-    Call before other ``nv set system telemetry …`` knobs in a multi-set block.
+    Call before other ``nv set system telemetry â€¦`` knobs in a multi-set block.
 
     * NVOS: ``nv set system telemetry export otlp state enabled``
     * Cumulus 5.15+: ``nv set system telemetry state enabled``
@@ -334,37 +354,89 @@ def _set_stats_sample_interval(
     target.set(TelemetryConsts.SAMPLE_INTERVAL, seconds, dut_engine=dut).verify_result()
 
 
+def _clear_other_transport_destinations(
+    system: System,
+    dut,
+    transport: str,
+) -> None:
+    """Remove every destination configured under the OTLP transports we are not using.
+
+    Two reasons, both load-bearing once a test picks its transport at random:
+
+    * NVOS refuses a configuration carrying the same destination address under
+      both transports â€” *"cannot be configured for both gRPC and HTTP. Use a
+      unique destination address per protocol."*
+    * The suite bring-up always leaves a gRPC destination pointing at the
+      collector. Leaving it there while adding an http one would export to the
+      same collector twice, so a test claiming a *single* destination would in
+      fact have two, and the collector artifact could not tell which transport
+      delivered a batch.
+
+    Applied on its own rather than folded into the caller's candidate, so the
+    removal and the re-creation are never validated as one change.
+    """
+    removed = False
+    for other in OtelCollectorConst.OTLP_PORT_BY_TRANSPORT:
+        if other == transport:
+            continue
+        node = transport_node(system, other)
+        configured = sorted(show_applied(node.destination, dut))
+        if not configured:
+            continue
+        with allure.step(
+            f"Remove the {other} destination(s) {configured} so {transport} is the "
+            f"only export path"
+        ):
+            for dest_id in configured:
+                unset_path(destination_node(system, other, dest_id), dut)
+            removed = True
+    if removed:
+        apply_telemetry_configuration(system, dut, is_nvos=True)
+
+
+_SECURE_INSECURE_VALUE_BY_TRANSPORT = {
+    TelemetryConsts.GRPC: TelemetryConsts.Defaults.GRPC_INSECURE,
+    TelemetryConsts.HTTP: TelemetryConsts.Defaults.HTTP_INSECURE,
+}
+
+
 def _apply_otlp_grpc_base(
     system: System,
     dut,
-    collector_ip: str,
+    destination_id: str,
     port: int,
     *,
     insecure: bool = True,
+    transport: str = TelemetryConsts.GRPC,
 ) -> None:
-    """Enable OTLP, configure the first gRPC destination + port + security mode. Does NOT apply.
+    """Enable OTLP, configure the first destination + port + security mode. Does NOT apply.
 
     ``insecure=True`` (default) writes the ``insecure`` flag, matching today's OTel test posture.
-    ``insecure=False`` configures TLS: destination ``certificate``, gRPC ``insecure`` disabled,
-    and optional gRPC-level ``certificate`` (default VRF secured topology).
+    ``insecure=False`` configures TLS: destination ``certificate``, transport-level ``insecure``
+    disabled, and optional transport-level ``certificate`` (default VRF secured topology).
+
+    ``destination_id`` is whatever NVUE keys the destination by â€” an IPv4 or IPv6
+    address, or a hostname. ``transport`` selects the ``otlp/<transport>`` subtree;
+    the two are configuration-identical apart from http's extra ``encoding`` leaf,
+    which no caller here sets.
     """
     otlp = system.telemetry.export.otlp
-    grpc = otlp.grpc
+    node = transport_node(system, transport)
     otlp.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
-    grpc.destination.set_resource(collector_ip).verify_result()
-    grpc.destination.resources_dict[collector_ip].set(
+    node.destination.set_resource(destination_id).verify_result()
+    node.destination.resources_dict[destination_id].set(
         TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
-    grpc.set(TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
+    node.set(TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
     if insecure:
-        grpc.set(TelemetryConsts.INSECURE, _ENABLED, dut_engine=dut).verify_result()
+        node.set(TelemetryConsts.INSECURE, _ENABLED, dut_engine=dut).verify_result()
     else:
         cert_name = OtelCollectorConst.OTEL_TLS_CA_NAME
-        grpc.destination.resources_dict[collector_ip].set(
+        node.destination.resources_dict[destination_id].set(
             TelemetryConsts.CERTIFICATE, cert_name, dut_engine=dut
         ).verify_result()
-        grpc.set(
+        node.set(
             TelemetryConsts.INSECURE,
-            TelemetryConsts.Defaults.GRPC_INSECURE,
+            _SECURE_INSECURE_VALUE_BY_TRANSPORT[transport],
             dut_engine=dut,
         ).verify_result()
 
@@ -576,17 +648,19 @@ def enable_nvos_telemetry_families(
     collector_ip: str,
     families: Iterable[str],
     *,
-    port: int = OtelCollectorConst.OTLP_GRPC_PORT,
+    port: Optional[int] = None,
     sample_intervals: Optional[Dict[str, int]] = None,
     insecure: bool = True,
     export_vrf: Optional[str] = None,
     collector_ips: Optional[Iterable[str]] = None,
     stats_group_id: Optional[str] = None,
     use_stats_group: bool = True,
+    transport: str = TelemetryConsts.GRPC,
+    clear_other_transports: bool = False,
 ) -> TelemetryEnablement:
     """Enable OTLP + the given telemetry families on the DUT (others explicitly disabled).
 
-    ``families`` is any subset of :data:`TelemetryConsts.ALL_STATS_SUBTREES` —
+    ``families`` is any subset of :data:`TelemetryConsts.ALL_STATS_SUBTREES` â€”
     pass one family for "X only" tests, all four for full coverage, or any combo
     in between. For each enabled family the per-class metrics are turned on too.
 
@@ -600,12 +674,21 @@ def enable_nvos_telemetry_families(
     ``export_vrf`` sets ``system telemetry export vrf`` (e.g. ``mgmt`` for legacy
     test_01 parity). When omitted the DUT keeps its current export VRF.
 
-    ``collector_ips`` lists the OTLP gRPC destinations to configure (defaults to
+    ``collector_ips`` lists the OTLP destinations to configure (defaults to
     ``(collector_ip,)``). Pass both primary and secondary IPs from
     :class:`OtelSuiteContext` for dual-dest insecure suites. When ``use_stats_group``
     is True (default) ``stats-group sg_01`` is also bound on each destination and the
     test01 stats-group export tree is staged; set ``use_stats_group=False`` to export
     via root telemetry only (no stats-group).
+
+    ``transport`` picks the OTLP transport to export over. ``port`` defaults to
+    that transport's receiver port, so callers randomizing the transport (test
+    plan 5.1 / 5.2) do not have to keep the two in step by hand.
+
+    ``clear_other_transports`` drops any destination left under the transports
+    not being used â€” see :func:`_clear_other_transport_destinations` for why a
+    randomizing test needs that. Off by default so a caller that always exports
+    over gRPC issues exactly the configuration it always did.
 
     Cumulus lab test01 uses :mod:`ngts.tests_nvos.system.telemetry.otel.cumulus.helpers`.
     """
@@ -613,10 +696,21 @@ def enable_nvos_telemetry_families(
     unknown = enabled - set(TelemetryConsts.ALL_STATS_SUBTREES)
     assert not unknown, f"unknown telemetry families: {sorted(unknown)}"
     intervals = {**_DEFAULT_SAMPLE_INTERVALS, **(sample_intervals or {})}
+    if port is None:
+        port = OtelCollectorConst.OTLP_PORT_BY_TRANSPORT[transport]
+    if use_stats_group and transport != TelemetryConsts.GRPC:
+        # The stats-group staging binds on the gRPC destinations only. Rather than
+        # export over one transport while the stats-group hangs off the other,
+        # refuse the combination until a caller needs it.
+        pytest.fail(
+            f"enable_nvos_telemetry_families cannot bind a stats-group while exporting "
+            f"over {transport}; pass use_stats_group=False or transport=grpc."
+        )
 
     system = System()
     families_label = ", ".join(sorted(enabled)) or "(none)"
     step_parts = [f"Enable OTLP + telemetry families: {families_label}"]
+    step_parts.append(f"transport={transport}")
     if export_vrf:
         step_parts.append(f"export vrf={export_vrf}")
     with allure.step(", ".join(step_parts)):
@@ -624,20 +718,23 @@ def enable_nvos_telemetry_families(
             system.telemetry.export.set(
                 TelemetryConsts.VRF, export_vrf, dut_engine=dut
             ).verify_result()
+        otlp_dest_ips = tuple(
+            collector_ips if collector_ips is not None else (collector_ip,)
+        )
+        if clear_other_transports:
+            _clear_other_transport_destinations(system, dut, transport)
         _apply_otlp_grpc_base(
             system,
             dut,
             collector_ip,
             port,
             insecure=insecure,
+            transport=transport,
         )
-        otlp_dest_ips = tuple(
-            collector_ips if collector_ips is not None else (collector_ip,)
-        )
-        grpc = system.telemetry.export.otlp.grpc
+        node = transport_node(system, transport)
         for extra_ip in otlp_dest_ips[1:]:
-            grpc.destination.set_resource(extra_ip).verify_result()
-            grpc.destination.resources_dict[extra_ip].set(
+            node.destination.set_resource(extra_ip).verify_result()
+            node.destination.resources_dict[extra_ip].set(
                 TelemetryConsts.PORT, port, dut_engine=dut
             ).verify_result()
         _configure_stats_families(
@@ -682,7 +779,7 @@ def enable_nvos_families_export(
     family subtrees are staged (Cumulus/NVOS secured test01 parity).
 
     Pass ``collector_ips`` to also bind ``stats-group sg_01`` and stage interface +
-    platform under the stats-group (insecure test01 / dual-dest flows only — not
+    platform under the stats-group (insecure test01 / dual-dest flows only â€” not
     used on secured test01).
     """
     enabled = set(families)
@@ -1107,15 +1204,20 @@ def collect_metric_names_window(
     label: str,
     max_sample_interval_sec: int = OtelCollectorConst.PLATFORM_STATS_SAMPLE_INTERVAL_SEC,
     wait_sec: Optional[int] = None,
+    require_data: bool = True,
 ) -> Set[str]:
     """
     Truncate the collector's export, wait one collection window, fetch the artifact, parse names.
 
-    The wait defaults to :func:`OtelCollectorConst.collection_window_sec` — at minimum
+    The wait defaults to :func:`OtelCollectorConst.collection_window_sec` â€” at minimum
     :data:`OtelCollectorConst.OTEL_COLLECTION_MIN_WAIT_SEC` (70s) so platform-stats (60s
     sample interval) always emits at least one point. Pass ``wait_sec`` explicitly for
     Cumulus collection window (e.g. test01's 177s wait). Returns the de-duplicated set of metric names
     seen in the artifact.
+
+    ``require_data=False`` is for callers asserting that *nothing* is exported: the
+    collector writes no artifact at all in that case, so waiting for one would always
+    time out. An absent artifact then yields an empty name set instead of a failure.
     """
     if wait_sec is None:
         wait_sec = OtelCollectorConst.collection_window_sec(max_sample_interval_sec)
@@ -1126,9 +1228,19 @@ def collect_metric_names_window(
         collector.truncate_artifact()
         with allure.step(f"Sleep {wait_sec}s for collection window"):
             time.sleep(wait_sec)
-        local_json = collector.fetch_artifact(
-            local_dir, file_name=file_name, timeout_sec=poll_timeout
-        )
+        if not require_data:
+            local_json = collector.fetch_artifact_if_any(local_dir, file_name=file_name)
+            if local_json is None:
+                logger.info(
+                    "No artifact on %s after %ds: nothing was exported in the window",
+                    label,
+                    wait_sec,
+                )
+                return set()
+        else:
+            local_json = collector.fetch_artifact(
+                local_dir, file_name=file_name, timeout_sec=poll_timeout
+            )
 
     return load_otel_metric_names(local_json)
 
@@ -1174,7 +1286,7 @@ def _is_prometheus_sidecar_metric(metric_name: str) -> bool:
 def _metric_name_matches_group_prefix(metric_name: str, group_prefix: str) -> bool:
     """Return True when ``metric_name`` belongs to the NVUE telemetry family ``group_prefix``.
 
-    metrics-classes / NVUE group names (``interface-stats``, ``platform-stats``, …) map to
+    metrics-classes / NVUE group names (``interface-stats``, ``platform-stats``, â€¦) map to
     OTLP ``nvswitch_*`` prefixes; each family prefix also matches the metrics of its
     ``-phy`` subgroup.
     """
@@ -1278,7 +1390,7 @@ def log_otel_metric_inventory(
 
     with allure.step(f"OTEL metric inventory ({collector_label})"):
         logger.info("=" * 72)
-        logger.info("OTEL METRIC INVENTORY — %s", collector_label)
+        logger.info("OTEL METRIC INVENTORY â€” %s", collector_label)
         logger.info("  collected (raw):           %d", len(actual))
         logger.info("  after exclude/ignore:      %d (ignore=%d)", len(actual_filtered), len(ignore))
         logger.info("  NVUE telemetry (matched): %d", len(telemetry_matched))
@@ -1428,8 +1540,594 @@ def assert_nvos_metric_names_for_enablement(
     )
 
 
+def collection_window_for_samples(max_sample_interval_sec: int, sample_count: int) -> int:
+    """Window long enough for ``sample_count`` samples of the slowest enabled class.
+
+    :func:`OtelCollectorConst.collection_window_sec` sizes a window for a *single*
+    sample. Test-plan items that compare consecutive samples need more than one, so
+    the interval is multiplied before the warm-up and the suite floor are applied.
+    """
+    return max(
+        max_sample_interval_sec * sample_count + OtelCollectorConst.OTEL_COLLECTION_WARM_UP_SEC,
+        OtelCollectorConst.OTEL_COLLECTION_MIN_WAIT_SEC,
+    )
+
+
+def assert_otlp_payload_valid(
+    docs: List[Dict[str, Any]],
+    *,
+    collector_label: str,
+) -> None:
+    """Assert the collected artifact decoded into OTLP documents with metric data.
+
+    Checks the payload shape the plan calls for: at least one document, at least one
+    ``resourceMetrics`` entry, and at least one metric inside it. An artifact that
+    decodes but carries an empty ``resourceMetrics`` list is the interesting failure
+    â€” the export ran and delivered nothing.
+    """
+    with allure.step(f"Validate OTLP payload shape on {collector_label}"):
+        if not docs:
+            pytest.fail(
+                f"No OTLP documents decoded from the {collector_label} artifact: the "
+                "collector produced no export lines in the collection window."
+            )
+        resource_metrics = [rm for doc in docs for rm in doc.get("resourceMetrics", []) or []]
+        if not resource_metrics:
+            pytest.fail(
+                f"{collector_label} decoded {len(docs)} OTLP document(s) but every one "
+                "has an empty resourceMetrics list."
+            )
+        metric_count = sum(
+            len(scope.get("metrics", []) or [])
+            for rm in resource_metrics
+            for scope in rm.get("scopeMetrics", []) or []
+        )
+        if not metric_count:
+            pytest.fail(
+                f"{collector_label} has {len(resource_metrics)} resourceMetrics "
+                "entries but no metrics inside them."
+            )
+        logger.info(
+            "OTLP payload on %s: docs=%d resourceMetrics=%d metrics=%d",
+            collector_label,
+            len(docs),
+            len(resource_metrics),
+            metric_count,
+        )
+
+
+def assert_min_samples_in_window(
+    timestamps: MetricTimestamps,
+    *,
+    metric_name_prefix: str,
+    min_samples: int,
+    collector_label: str,
+) -> None:
+    """Assert some series under ``metric_name_prefix`` was sampled ``min_samples`` times.
+
+    Proves the collection window actually spanned several sample intervals of the
+    family it is sized for, instead of catching a single batch. The check is
+    per-series (metric + attribute set), and one qualifying series is enough: an
+    individual counter can legitimately be absent on a given platform, but the whole
+    family cannot go under-sampled if the window was long enough.
+    """
+    matching = {
+        (name, attrs): points
+        for name, series in timestamps.items()
+        if name.startswith(metric_name_prefix)
+        for attrs, points in series.items()
+    }
+    with allure.step(
+        f"Validate {metric_name_prefix}* was sampled at least {min_samples}x "
+        f"on {collector_label}"
+    ):
+        if not matching:
+            pytest.fail(
+                f"No {metric_name_prefix}* series on {collector_label}, so the "
+                f"{min_samples}-sample window cannot be verified. Collected metrics: "
+                f"{len(timestamps)}."
+            )
+        best_key, best_points = max(matching.items(), key=lambda item: len(item[1]))
+        if len(best_points) < min_samples:
+            pytest.fail(
+                f"{metric_name_prefix}* on {collector_label} never reached "
+                f"{min_samples} samples in the window: the richest series "
+                f"{best_key[0]} has {len(best_points)}. The collection window is too "
+                "short for the configured sample interval."
+            )
+        logger.info(
+            "%s* on %s: %d series, richest is %s with %d samples",
+            metric_name_prefix,
+            collector_label,
+            len(matching),
+            best_key[0],
+            len(best_points),
+        )
+
+
+def assert_nvos_export_stopped(
+    collector: OtelCollector,
+    local_dir: str,
+    *,
+    label: str,
+    wait_sec: int,
+) -> None:
+    """Collect a fresh window and assert no ``nvswitch_*`` metric arrives in it.
+
+    Used after disabling the export. The collector stays up but its file exporter
+    only writes when data reaches it, so the expected outcome is no artifact at all
+    â€” hence ``require_data=False``, without which this would wait out the artifact
+    timeout on exactly the runs that should pass. A collector also carrying
+    prometheus sidecar scrapes instead yields an artifact of non-catalog names; both
+    outcomes pass, and only ``nvswitch_*`` presence fails.
+    """
+    names = collect_metric_names_window(
+        collector, local_dir, label=label, wait_sec=wait_sec, require_data=False
+    )
+    still_exported = {name for name in names if name.startswith("nvswitch_")}
+    with allure.step(f"Validate no nvswitch_* metric is exported to {label}"):
+        if still_exported:
+            pytest.fail(
+                f"OTLP export was disabled but {len(still_exported)} nvswitch_* "
+                f"metric(s) still arrived at {label} over {wait_sec}s: "
+                f"{sorted(still_exported)[:10]}"
+            )
+        logger.info(
+            "Export stopped for %s: %d non-catalog metric name(s) seen, no nvswitch_*",
+            label,
+            len(names),
+        )
+
+
+def assert_nvos_export_resumed(
+    collector: OtelCollector,
+    local_dir: str,
+    *,
+    label: str,
+    wait_sec: int,
+) -> Set[str]:
+    """Collect a fresh window and assert ``nvswitch_*`` metrics are arriving again.
+
+    The counterpart of :func:`assert_nvos_export_stopped`; returns the names seen so
+    a caller can assert more about them.
+    """
+    names = collect_metric_names_window(collector, local_dir, label=label, wait_sec=wait_sec)
+    exported = {name for name in names if name.startswith("nvswitch_")}
+    with allure.step(f"Validate nvswitch_* metrics resumed on {label}"):
+        if not exported:
+            pytest.fail(
+                f"OTLP export was re-enabled but no nvswitch_* metric arrived at "
+                f"{label} over {wait_sec}s (saw {len(names)} non-catalog name(s))."
+            )
+        logger.info("Export resumed for %s: %d nvswitch_* metric(s)", label, len(exported))
+    return exported
+
+
+def root_only_enablement(
+    families_to_classes: Dict[str, Iterable[str]],
+    *,
+    destination_ips: Iterable[str],
+) -> TelemetryEnablement:
+    """Declare an exact per-family class set enabled at the telemetry root.
+
+    :func:`build_nvos_enablement` derives the class set from the family, which is
+    right for a plain enable but cannot express "this family with one of its classes
+    turned off". Tests that disable a single class mid-flight declare the resulting
+    state here so the strict expected set follows it.
+    """
+    return TelemetryEnablement(
+        root=EnabledClasses(
+            families={
+                family: frozenset(classes) for family, classes in families_to_classes.items()
+            }
+        ),
+        stats_groups={},
+        destination_binding={ip: None for ip in destination_ips},
+    )
+
+
+def assert_metric_values_sane(
+    docs: List[Dict[str, Any]],
+    *,
+    metric_name_prefix: str,
+    collector_label: str,
+) -> None:
+    """Assert every datapoint under ``metric_name_prefix`` is a sane counter value.
+
+    "No corrupted values" for a counter family means finite and non-negative. A
+    disable that tears down part of the pipeline mid-batch would surface here as a
+    negative or non-numeric value on the families left enabled.
+    """
+    values = metric_values_from_docs(docs)
+    offending: List[str] = []
+    checked = 0
+    for name, series in values.items():
+        if not name.startswith(metric_name_prefix):
+            continue
+        for attribute_key, points in series.items():
+            for point in points:
+                checked += 1
+                if not math.isfinite(point):
+                    offending.append(f"{name}{attribute_key}: non-finite {point}")
+                elif point < 0:
+                    offending.append(f"{name}{attribute_key}: negative {point}")
+
+    with allure.step(
+        f"Validate {metric_name_prefix}* datapoint values on {collector_label} "
+        f"(checked={checked})"
+    ):
+        if not checked:
+            pytest.fail(
+                f"No {metric_name_prefix}* datapoint values on {collector_label}, so "
+                "value sanity could not be checked."
+            )
+        if offending:
+            pytest.fail(
+                f"Corrupted {metric_name_prefix}* values on {collector_label}:\n  " +
+                "\n  ".join(sorted(offending)[:20])
+            )
+
+
+def assert_no_otlp_connection_to_collector(
+    dut,
+    *,
+    collector_ip: str,
+    transport: str = TelemetryConsts.GRPC,
+    port: Optional[int] = None,
+) -> None:
+    """Assert the DUT holds no established OTLP socket to the collector.
+
+    The residual-service check after an export disable. On NVOS the telemetry core
+    is shared with gNMI and must keep running, so the meaningful assertion is that
+    the *OTLP exporter* has torn its connection down, not that a unit stopped.
+
+    ``port`` defaults to the receiver port of ``transport``, as in
+    :func:`enable_nvos_telemetry_families`. Looking for a gRPC socket after an
+    export that went out over http would find nothing and pass while the real
+    connection leaked, so the port is never left to a fixed default.
+
+    The socket listing is required to be non-empty first: the test's own SSH session
+    guarantees at least one established socket, so an empty listing means ``ss``
+    could not report and the check would otherwise pass vacuously.
+    """
+    if port is None:
+        port = OtelCollectorConst.OTLP_PORT_BY_TRANSPORT[transport]
+    endpoint = f"{collector_ip}:{port}"
+    with allure.step(f"Validate no established OTLP socket to {endpoint}"):
+        listing = dut.run_cmd("ss -tn state established", validate=False)
+        if not (listing or "").strip():
+            pytest.fail(
+                "Could not list established sockets on the DUT ('ss -tn state "
+                "established' returned nothing), so the residual-connection check "
+                "could not run."
+            )
+        residual = [line for line in listing.splitlines() if endpoint in line]
+        if residual:
+            pytest.fail(
+                f"OTLP export is disabled but the DUT still holds a connection to "
+                f"{endpoint}:\n  " + "\n  ".join(residual)
+            )
+
+
+_DUT_HOSTS_FILE = "/etc/hosts"
+_DUT_HOSTS_MARKER = "# ngts-otel-collector"
+
+
+def _dut_resolves_to(dut, name: str, expected_ip: str) -> bool:
+    """Whether the DUT resolves ``name`` to ``expected_ip``.
+
+    ``getent hosts`` is used rather than ``ping`` or ``dig`` because it goes
+    through the same NSS path (``/etc/hosts`` then DNS) that the exporter itself
+    will use, so a positive answer here means the destination is resolvable the
+    way the product resolves it.
+    """
+    out = dut.run_cmd(f"getent hosts {shlex.quote(name)}", validate=False)
+    for line in (out or "").splitlines():
+        tokens = line.split()
+        if tokens and tokens[0] == expected_ip:
+            return True
+    return False
+
+
+@contextlib.contextmanager
+def collector_hostname_on_dut(dut, collector_ip: str):
+    """Yield a hostname the DUT resolves to ``collector_ip``.
+
+    Prefers the collector's real DNS name, found by reverse lookup from the DUT,
+    so the test exercises the same resolution path a deployment would. Falls back
+    to an ``/etc/hosts`` alias when the DUT cannot reverse-resolve the collector,
+    which keeps the hostname destination type usable on setups without lab DNS;
+    the alias is removed again on exit.
+
+    Either way the name is forward-verified before it is yielded, so a caller
+    never configures a destination that silently resolves to nothing.
+    """
+    reverse = dut.run_cmd(f"getent hosts {shlex.quote(collector_ip)}", validate=False)
+    tokens = (reverse or "").split()
+    dns_name = tokens[1] if len(tokens) >= 2 else None
+    if dns_name and dns_name != collector_ip and _dut_resolves_to(dut, dns_name, collector_ip):
+        # Logged rather than wrapped in an allure step: the caller keeps this
+        # context manager open for the whole test, so a step here would nest
+        # every later step underneath it.
+        logger.info(
+            "Using collector DNS name %s for %s (resolved from the DUT)",
+            dns_name,
+            collector_ip,
+        )
+        yield dns_name
+        return
+
+    alias = OtelFunctionalTestConst.COLLECTOR_HOST_ALIAS
+    with allure.step(f"Alias {alias} -> {collector_ip} in the DUT's {_DUT_HOSTS_FILE}"):
+        _remove_dut_hosts_alias(dut)
+        entry = f"{collector_ip} {alias} {_DUT_HOSTS_MARKER}"
+        dut.run_cmd(
+            "sudo bash -c " + shlex.quote(f"echo {shlex.quote(entry)} >> {_DUT_HOSTS_FILE}")
+        )
+        if not _dut_resolves_to(dut, alias, collector_ip):
+            _remove_dut_hosts_alias(dut)
+            pytest.fail(
+                f"The DUT resolves neither the collector's DNS name nor the "
+                f"{alias} alias just written to {_DUT_HOSTS_FILE}, so a hostname "
+                f"destination for {collector_ip} cannot be configured."
+            )
+    try:
+        yield alias
+    finally:
+        _remove_dut_hosts_alias(dut)
+
+
+def _remove_dut_hosts_alias(dut) -> None:
+    # The marker itself starts with '#', so it cannot double as the sed address
+    # delimiter. Anchoring on '$' matches the way the entry is written, with the
+    # marker last on the line.
+    dut.run_cmd(
+        "sudo sed -i " + shlex.quote(f"/{_DUT_HOSTS_MARKER}$/d") + f" {_DUT_HOSTS_FILE}",
+    )
+
+
+def _collector_global_ipv6_candidates(collector_engine) -> List[str]:
+    """The collector host's stable global IPv6 addresses, in interface order.
+
+    Read off the interface rather than resolved from DNS: the lab publishes no
+    AAAA record for the collector hosts even though their management interface
+    carries a ULA the DUT routes to, so a name lookup reports no IPv6 where there
+    is one.
+
+    ``deprecated`` and ``temporary`` addresses are skipped. The former is on its
+    way out (``preferred_lft 0``) and the latter is a privacy address that rotates,
+    so neither is a dependable destination for the length of a test.
+    """
+    out = collector_engine.run_cmd("ip -6 addr show scope global", validate=False)
+    candidates: List[str] = []
+    for line in (out or "").splitlines():
+        tokens = line.split()
+        if len(tokens) < 2 or tokens[0] != "inet6":
+            continue
+        if "deprecated" in tokens or "temporary" in tokens:
+            continue
+        candidates.append(tokens[1].split("/")[0])
+    return candidates
+
+
+def _dut_reaches_ipv6(dut, address: str) -> bool:
+    """Whether the DUT gets ICMPv6 replies from ``address``."""
+    out = dut.run_cmd(
+        f"ping6 -c {OtelFunctionalTestConst.DEST_PING_COUNT} -W 2 {shlex.quote(address)}",
+        validate=False,
+    )
+    # Parsed from the "N received" counter rather than "0% packet loss", which is
+    # also a substring of "100% packet loss".
+    match = re.search(r"(\d+) received", out or "")
+    return bool(match) and int(match.group(1)) > 0
+
+
+def find_collector_ipv6_reachable_from_dut(dut, collector_engine) -> Optional[str]:
+    """The collector's first IPv6 address the DUT can reach, or None.
+
+    Candidates are probed in interface order, which keeps a host with several
+    global addresses (a static one plus SLAAC, or a docker bridge address the DUT
+    has no route to) from yielding one the DUT cannot reach.
+    """
+    for address in _collector_global_ipv6_candidates(collector_engine):
+        if _dut_reaches_ipv6(dut, address):
+            # Logged rather than an allure step: the caller holds this for the whole
+            # test, so a step here would nest every later step underneath it.
+            logger.info("Using collector IPv6 address %s (reachable from the DUT)", address)
+            return address
+    return None
+
+
+def collector_ipv6_reachable_from_dut(dut, collector_engine) -> str:
+    """As :func:`find_collector_ipv6_reachable_from_dut`, failing if there is none.
+
+    Verifying up front mirrors :func:`collector_hostname_on_dut`: a destination
+    that was never reachable would otherwise surface later as "no metrics
+    exported" and read like a product defect. Callers that randomize the
+    destination type should filter the pool with
+    :func:`available_data_path_dest_types` instead of reaching this failure.
+    """
+    address = find_collector_ipv6_reachable_from_dut(dut, collector_engine)
+    if address is not None:
+        return address
+    candidates = _collector_global_ipv6_candidates(collector_engine)
+    pytest.fail(
+        f"The DUT cannot reach any global IPv6 address of the collector host "
+        f"{collector_engine.ip} ({', '.join(candidates) or 'none advertised'}), so an "
+        f"IPv6 destination would export to nothing. Check IPv6 routing between the "
+        f"DUT and collector subnets."
+    )
+
+
+def available_data_path_dest_types(dut, collector: OtelCollector) -> Tuple[str, ...]:
+    """The destination id types this setup can actually export to.
+
+    The plan has 5.1 randomize the destination id type, but IPv6 reachability is a
+    property of the lab, not of NVOS: some setups route IPv6 between the DUT and
+    the collector and some do not. Randomizing over a type the setup cannot carry
+    would fail a share of runs for an environmental reason, so IPv6 is probed once
+    and dropped from the pool when unreachable. IPv4 and hostname always stay:
+    hostname falls back to an ``/etc/hosts`` alias when lab DNS has no entry.
+    """
+    available = [
+        dest_type
+        for dest_type in OtelFunctionalTestConst.DATA_PATH_DEST_TYPES
+        if dest_type != OtelCliTestConst.DEST_TYPE_IPV6
+    ]
+    with allure.step("Probe which destination id types the DUT can reach"):
+        ipv6 = find_collector_ipv6_reachable_from_dut(dut, collector.engine)
+        if ipv6 is not None:
+            available.append(OtelCliTestConst.DEST_TYPE_IPV6)
+        else:
+            logger.info(
+                "No DUT-reachable IPv6 address on collector host %s; randomizing the "
+                "destination id type over %s only",
+                collector.engine.ip,
+                available,
+            )
+    return tuple(available)
+
+
+@contextlib.contextmanager
+def collector_receivers_for(
+    collector: OtelCollector,
+    *,
+    transport: str = TelemetryConsts.GRPC,
+    dest_type: str = OtelCliTestConst.DEST_TYPE_IPV4,
+):
+    """Run ``collector`` with the receivers a chosen transport / destination needs.
+
+    Collectors listen on IPv4 gRPC, which is what every suite here exports over.
+    An http transport needs the second receiver and an IPv6 destination needs a
+    dual-stack bind, so only those combinations reconfigure and restart the
+    collector, and the original configuration is put back on the way out.
+
+    Left deliberately opt-in: giving every collector both receivers up front was
+    measured to stop the DUT establishing its OTLP session in the secured syslog
+    suite, so a suite that does not randomize keeps the listener it always had.
+    """
+    include_http = transport == TelemetryConsts.HTTP
+    dual_stack = dest_type == OtelCliTestConst.DEST_TYPE_IPV6
+    if not include_http and not dual_stack:
+        yield
+        return
+
+    bind_addr = (
+        OtelCollectorConst.OTLP_DUAL_STACK_BIND_ADDR
+        if dual_stack
+        else OtelCollectorConst.OTLP_GRPC_BIND_ADDR
+    )
+    original_config_yaml = collector.config_yaml
+    reconfigured = False
+    # The restart is inside the ``try`` so a collector that fails to come up on the
+    # new receivers is still put back on its original ones: this collector is
+    # module-scoped, so leaving it reconfigured would hand a half-started listener
+    # to every later test in the module.
+    try:
+        with allure.step(
+            f"Reconfigure {collector.label.value} collector: {transport} receiver on {bind_addr}"
+        ):
+            collector.config_yaml = _otel_collector_config_yaml(
+                OtelCollectorConst.OTLP_GRPC_PORT,
+                collector.output_json_path,
+                OtelCollectorConst.FILE_EXPORT_MAX_MB_BY_LABEL[collector.label],
+                OtelCollectorConst.FILE_EXPORT_MAX_BACKUPS_BY_LABEL[collector.label],
+                bind_addr=bind_addr,
+                include_http=include_http,
+            )
+            reconfigured = True
+            collector.ensure_running(install_if_missing=False)
+        yield
+    finally:
+        if reconfigured:
+            with allure.step(f"Restore {collector.label.value} collector receivers"):
+                collector.config_yaml = original_config_yaml
+                collector.ensure_running(install_if_missing=False)
+
+
+@contextlib.contextmanager
+def otlp_destination_id(
+    dut,
+    collector_ip: str,
+    dest_type: str,
+    *,
+    collector: Optional[OtelCollector] = None,
+):
+    """Yield the NVUE destination id for ``dest_type``, resolvable from the DUT.
+
+    Test plan 5.1 randomizes the destination id type; this turns the chosen type
+    into the concrete id to configure. Unlike Section 4, which only reads the
+    configuration back, the destination is contacted here, so the id has to point
+    at the running collector.
+
+    ``collector`` is required for the ``ipv6`` type only, whose address is read
+    from the collector host itself.
+    """
+    if dest_type == OtelCliTestConst.DEST_TYPE_IPV4:
+        yield collector_ip
+        return
+    if dest_type == OtelCliTestConst.DEST_TYPE_IPV6:
+        if collector is None:
+            raise ValueError(
+                "An ipv6 destination id is read from the collector host's interface, "
+                "so otlp_destination_id needs collector=<OtelCollector>."
+            )
+        yield collector_ipv6_reachable_from_dut(dut, collector.engine)
+        return
+    if dest_type == OtelCliTestConst.DEST_TYPE_HOSTNAME:
+        with collector_hostname_on_dut(dut, collector_ip) as hostname:
+            yield hostname
+        return
+    raise ValueError(
+        f"Unsupported data-path destination id type {dest_type!r}; expected one of "
+        f"{list(OtelFunctionalTestConst.DATA_PATH_DEST_TYPES)}"
+    )
+
+
+def percentage_deviation(reference: float, observed: float) -> float:
+    """Absolute difference between two values as a percentage of ``reference``.
+
+    When ``reference`` is zero the result is 0.0 for an equally-zero ``observed``
+    and 100.0 otherwise, so an unexpectedly non-zero counter is never reported as a
+    0% deviation.
+    """
+    if reference == 0:
+        return 0.0 if observed == 0 else 100.0
+    return abs(observed - reference) / abs(reference) * 100.0
+
+
+def otel_series_for_interface(
+    docs: List[Dict[str, Any]],
+    metric_name: str,
+    interface: str,
+) -> List[float]:
+    """Values of ``metric_name`` whose OTLP attributes name ``interface``.
+
+    Attribute keys are flat ``(key, value, key, value, ...)`` tuples (see
+    :func:`~ngts.tests_nvos.system.telemetry.otel.metrics_parser.prepare_attributes_key`),
+    so the interface is matched on its declared attribute key by position rather
+    than by scanning the whole tuple for the string.
+    """
+    series = metric_values_from_docs(docs).get(metric_name, {})
+    matched: List[float] = []
+    for attribute_key, values in series.items():
+        if _attribute_key_names_interface(attribute_key, interface):
+            matched.extend(values)
+    return matched
+
+
+def _attribute_key_names_interface(attribute_key: AttributeKey, interface: str) -> bool:
+    if not isinstance(attribute_key, tuple):
+        return False
+    pairs = zip(attribute_key[::2], attribute_key[1::2])
+    return any(
+        key == OtelFunctionalTestConst.INTERFACE_ATTRIBUTE_KEY and value == interface
+        for key, value in pairs
+    )
+
+
 # =============================================================================
-# Expected-metrics derivation — fetch metrics-classes.yaml from the DUT and gate
+# Expected-metrics derivation â€” fetch metrics-classes.yaml from the DUT and gate
 # the expected metric-name set by DUT capabilities. Only
 # expected_metric_names_from_dut is consumed by tests; everything below is
 # internal to this section.
@@ -1552,7 +2250,7 @@ def assert_metric_names_for_stats_group_export(
                 "; see OTEL METRIC INVENTORY log above."
             )
         logger.info(
-            "%s: export OK — telemetry=%d, prometheus_sidecar=%d (prefixes=%s)",
+            "%s: export OK â€” telemetry=%d, prometheus_sidecar=%d (prefixes=%s)",
             collector_label,
             summary["telemetry_matched_count"],
             summary["prometheus_sidecar_count"],
@@ -1821,7 +2519,7 @@ def _apply_capability_gating(
                 )
         out -= removed
         summary_lines.append(
-            f"  [ABSENT]  {capability}: prefixes {list(prefixes)} → {len(removed)} names subtracted from expected"
+            f"  [ABSENT]  {capability}: prefixes {list(prefixes)} â†’ {len(removed)} names subtracted from expected"
         )
 
     for capability, names in OtelCollectorConst.OTLP_METRIC_NAMES_GATED_BY_CAPABILITY.items():
@@ -1834,7 +2532,7 @@ def _apply_capability_gating(
         removed = out & gated
         out -= removed
         summary_lines.append(
-            f"  [ABSENT]  {capability}: exact names {sorted(gated)} → "
+            f"  [ABSENT]  {capability}: exact names {sorted(gated)} â†’ "
             f"{len(removed)} names subtracted from expected"
         )
 

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, DefaultDict, Dict, Iterable, List, Tuple, Union
+from typing import Any, DefaultDict, Dict, Iterable, List, Optional, Tuple, Union
 
 AttributeKey = Union[Tuple[Any, ...], str]
 MetricTimestamps = Dict[str, Dict[AttributeKey, List[int]]]
+MetricValues = Dict[str, Dict[AttributeKey, List[float]]]
+
+# Scalar OTLP ``NumberDataPoint`` value fields (protobuf union — exactly one is set).
+_OTLP_NUMBER_FIELDS = ("asInt", "asDouble")
 
 
 # OTLP ``AnyValue`` typed fields, in preference order (protobuf union — exactly one is set).
@@ -68,6 +72,60 @@ def _append_datapoint_timestamps(
         else:
             attribute_key = "No Attr"
         out[metric_name][attribute_key].append(int(dp["timeUnixNano"]))
+
+
+def datapoint_value(datapoint: Dict[str, Any]) -> Optional[float]:
+    """Numeric value of a scalar OTLP datapoint, or ``None`` when it carries none.
+
+    ``asInt`` arrives as a JSON string for 64-bit safety, so both fields go through
+    ``float``. A datapoint carrying neither field is not a scalar one (a histogram,
+    say) and yields ``None``, which callers skip.
+
+    A field that is present but will not parse is corruption rather than absence,
+    so it yields NaN instead: reporting it as "no value" would drop it from the
+    series and hide the very thing a value-sanity check is looking for.
+    """
+    for field in _OTLP_NUMBER_FIELDS:
+        if field in datapoint:
+            try:
+                return float(datapoint[field])
+            except (TypeError, ValueError):
+                return float("nan")
+    return None
+
+
+def metric_values_from_docs(docs: Iterable[Dict[str, Any]]) -> MetricValues:
+    """Return ``{metric_name: {attr_key: [value, ...]}}`` for scalar datapoints.
+
+    The twin of :func:`metric_timestamps_from_docs`, keyed identically, so a caller
+    can line a series' values up with its timestamps. Only ``gauge`` and ``sum``
+    carry a scalar value; histograms are skipped. A scalar value that will not
+    parse stays in its series as NaN — see :func:`datapoint_value`.
+    """
+    out: DefaultDict[str, DefaultDict[AttributeKey, List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for doc in docs:
+        for resource in doc.get("resourceMetrics", []) or []:
+            for scope in resource.get("scopeMetrics", []) or []:
+                for metric in scope.get("metrics", []) or []:
+                    name = metric.get("name")
+                    if not name:
+                        continue
+                    for mtype in ("gauge", "sum"):
+                        payload = metric.get(mtype)
+                        if not payload:
+                            continue
+                        for dp in payload.get("dataPoints", []) or []:
+                            value = datapoint_value(dp)
+                            if value is None:
+                                continue
+                            if "attributes" in dp:
+                                attribute_key = prepare_attributes_key(dp["attributes"])
+                            else:
+                                attribute_key = "No Attr"
+                            out[name][attribute_key].append(value)
+    return {k: dict(v) for k, v in out.items()}
 
 
 def metric_timestamps_from_docs(docs: Iterable[Dict[str, Any]]) -> MetricTimestamps:
