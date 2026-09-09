@@ -216,6 +216,12 @@ tests/nightly/secure:
     conditions:
     - "'sn4280' in platform"
 
+tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_unsgined_vmlinuz_secure_boot:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5261704"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5261704"
+
 tests/nightly/secure/test_secure_corrupt_fw/test_secure_corrupt_fw.py:
   xfail:
     reason: "corrupt MFA need to be regenerated for mtvr-moose-11, tracked by https://redmine.mellanox.com/issues/5222862"
