@@ -31,6 +31,9 @@ logger = logging.getLogger()
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, has_loopbox, standalone_system, setup_name, chassis_info, tray_topology_config):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
 
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -170,6 +173,9 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_reset_keep_basic(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name,
                                           standalone_system, handle_la_marker_in_manufacture):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # SAME AS DEFAULT.
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -257,6 +263,9 @@ def test_cluster_factory_reset_keep_basic(engines, dut_engines, devices, test_ap
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_keep_only_files(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name, standalone_system):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # SAME
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -345,6 +354,9 @@ def test_cluster_factory_keep_only_files(engines, dut_engines, devices, test_api
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_reset_keep_all_config(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name,
                                                standalone_system):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # Only fetched and generated files will be cleaned.
     # SAME
     TestToolkit.tested_api = test_api
