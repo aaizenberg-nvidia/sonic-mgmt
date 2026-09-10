@@ -285,6 +285,7 @@ arp/test_wr_arp.py:
       - "is_mgmt_ipv6_only==True" # Does not support ipv6 mgmt ip on dut, specially the ferret server
       - "topo_type not in ['t0']"
       - "'f2' in topo_name"
+      - "'-v6-' in topo_name"
 
 arp/test_wr_arp.py::test_wr_arp_advance:
   xfail:
