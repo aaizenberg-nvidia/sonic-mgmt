@@ -635,7 +635,7 @@ def bug_handler_wrapper(analyzers, duthosts, la_results):
         clear_files(os.environ.get(InfraConst.ENV_SESSION_ID, 'unknown_session_id'))
         # run bug handler in seperated step to decouple from analyze_logs
         logging.getLogger().handlers = []
-        bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1080)
+        bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1440)
         failed_nodes = [node for node, result in bh_results.items()
                         if isinstance(result, dict) and 'failed' in result]
         if failed_nodes:
