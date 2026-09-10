@@ -67,7 +67,7 @@
     },
     "mtvr-panther-03_setup": {
         "default_hwsku": "Mellanox-SN2700-D40C8S8",
-        "support_hwsku": ["Mellanox-SN2700-D40C8S8"]
+        "support_hwsku": ["Mellanox-SN2700-D40C8S8", "Mellanox-SN2700-D48C8"]
     },
     "sonic-dual-tor-leopard": {
         "default_hwsku": "Mellanox-SN4700-V64",
