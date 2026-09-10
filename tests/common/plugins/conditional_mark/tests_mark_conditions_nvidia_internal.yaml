@@ -1493,6 +1493,12 @@ golden_config_infra/test_config_reload_with_rendered_golden_config.py::test_rend
     conditions:
     - "https://redmine.mellanox.com/issues/4692207 and 'sn5640' in platform"
 
+reboot/test_reboot_blocking_mode.py::TestRebootBlockingModeCLI::test_non_blocking_mode:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5269218"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5269218 and 'sn4280' in platform"
+
 restapi/:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5044612 on sn6600_ld platform"
