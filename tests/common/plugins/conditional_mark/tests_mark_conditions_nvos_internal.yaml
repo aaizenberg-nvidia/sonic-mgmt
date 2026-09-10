@@ -78,12 +78,6 @@ tests_nvos/system/test_system_image.py::test_install_multiple_images:
   skip:
     reason: Need to fix the test - currently installs the same image twice
 
-tests_nvos/platform/test_platform_environment.py::test_show_platform_environment:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5098668'
-    conditions:
-    - https://redmine.mellanox.com/issues/5098668
-
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:
     reason: Testcase skipped on Juliet systems, Juliet Does not have PSU
