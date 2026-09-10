@@ -54,7 +54,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/clock/test_system_clock.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/clock/test_system_clock.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -65,7 +65,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/syslog/test_system_syslog.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/syslog/test_system_syslog.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -76,7 +76,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_cli_commands.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_cli_commands.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -87,7 +87,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_dns.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_dns.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus or cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -98,7 +98,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_events_cumulus.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_events_cumulus.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -109,7 +109,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_factory_reset.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_factory_reset.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -120,7 +120,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_health_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_health_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -131,7 +131,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_health.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_health.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -142,7 +142,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_image.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_image.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -153,7 +153,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_log.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_log.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -164,7 +164,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_message.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_message.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus or cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -175,7 +175,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_version.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_version.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus or cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>
@@ -187,6 +187,72 @@
     <cmd>
       <params>
           <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/aaa/test_limit_session.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not checklist\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System Packages Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/cumulus_only/test_system_packages_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System NTP Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/ntp/test_system_ntp_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System Log Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_log_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System Disk Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_disk_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System Performance Stress Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_performance_stress_cpu_and_memory_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> System Factory Reset Cumulus Only </name>
+    <info></info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_factory_reset_cumulus_only.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus_only\" --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
       </params>
     </cmd>
   </case>

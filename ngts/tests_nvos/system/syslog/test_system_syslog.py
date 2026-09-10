@@ -353,6 +353,7 @@ def test_rsyslog_server_severity_levels(engines, is_air, loganalyzer, random_api
 @pytest.mark.system
 @pytest.mark.syslog
 @pytest.mark.simx
+@pytest.mark.cumulus
 def test_rsyslog_port(engines, random_api):
     """
     Will check the syslog with non default port
