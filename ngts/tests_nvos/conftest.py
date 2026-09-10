@@ -1686,7 +1686,7 @@ def _validate_matrix_arg(matrix_arg: str) -> Optional[Dict]:
     if matrix_arg.endswith('.json'):
         path = Path(matrix_arg)
         if not path.exists():
-            return
+            raise ArgumentTypeError(f"file does not exist: {matrix_arg!r}")
 
         with path.open() as f:
             matrix_arg = f.read()
