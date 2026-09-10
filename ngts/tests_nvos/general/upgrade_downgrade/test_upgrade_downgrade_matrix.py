@@ -127,7 +127,7 @@ def _upgrade_downgrade(*, base: helpers.SystemPackage, target: helpers.SystemPac
     if load_config:  # case of downgrade we don't load config
         with allure.step("Load Configuration"):
             register_cleanup(helpers.remove_added_config_files)
-            helpers.load_config(engines, base.config)
+            result_metadata.update(helpers.load_config(engines, base.config))
 
     if is_upgrade and feature_checkers_it:
         with allure.step("Run feature pre-checkers"):
@@ -227,6 +227,13 @@ def test_change_nvos_version(case: helpers.SystemVersionTransition, engines: Eng
 
     # Step 3: Verify config is preserved
     if case.action in (helpers.Action.UPGRADE, helpers.Action.ROLLBACK):
+        with allure.step("validate config apply & save"):
+            for metadata_key in (helpers.ResultMetadata.CONFIG_APPLY_ERROR, helpers.ResultMetadata.CONFIG_SAVE_ERROR):
+                title = metadata_key.name.replace('_', ' ').title()
+                with allure.independent_step(f"validate {title}"):
+                    err = result_metadata.get(metadata_key)
+                    assert not err, f"Found {title}: {err}"
+
         with allure.step("validate config preserved"):
             expected_config = case.target.config if (case.target and case.action == helpers.Action.UPGRADE) else case.base.config
             logger.debug(f'expected_config file: {expected_config}')

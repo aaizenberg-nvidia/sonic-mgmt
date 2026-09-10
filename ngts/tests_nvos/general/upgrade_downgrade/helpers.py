@@ -15,10 +15,10 @@ from ngts.scripts.sonic_deploy.nvos_only_methods import NvosInstallationSteps
 from ngts.nvos_constants.constants_nvos import ImageConsts, SystemConsts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.nvos_constants.constants_nvos import NvosConst, ConfState
 from ngts.nvos_constants.constants_nvos import PlatformConsts
 from ngts.nvos_tools.system.Firmware import PlatformComponent
 from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_constants.constants_nvos import NvosConst
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.system.System import System
@@ -39,6 +39,8 @@ class ResultMetadata(enum.IntEnum):
     HAD_FW_UPDATE = enum.auto()
     DURATION_ERROR = enum.auto()
     FEATURE_CHECKER_ERROR = enum.auto()
+    CONFIG_APPLY_ERROR = enum.auto()
+    CONFIG_SAVE_ERROR = enum.auto()
 
 
 class Action(enum.IntEnum):
@@ -392,11 +394,11 @@ def _fetch_n_update_single_platform_fw(recipe_component: dict[str, Any], scp_pat
 
             with allure.step("Install platform firmware package without reboot"):
                 state = FWInstallState.INSTALL
-                (res_obj := BmcTool.install_fw_image_without_reboot(
+                BmcTool.install_fw_image_without_reboot(
                     platform_component=component,
                     test_name='test_change_nvos_version',
                     filename=filename,
-                )).verify_result()
+                ).verify_result()
 
             # TODO: check if we need to add verification of the duration of the install operation.
             return [Result(ok=True, operation=f'Platform FW {state}')]
@@ -533,13 +535,16 @@ def update_system_fw(devices: DevicesT, engines: EnginesT, sys_pkg: SystemPackag
     return metadata
 
 
-def load_config(engines: EnginesT, config_file: Path | str) -> None:
+def load_config(engines: EnginesT, config_file: Path | str) -> dict[ResultMetadata, Any]:
     '''
     Load the configuration file to the DUT.
 
     Args:
         engines: Engines object containing the engine to update.
         config_file: Path to the configuration file.
+
+    Returns:
+        dict[ResultMetadata, Any]: Metadata of the config load.
     '''
     if not isinstance(config_file, Path):
         config_file = Path(config_file)
@@ -552,6 +557,7 @@ def load_config(engines: EnginesT, config_file: Path | str) -> None:
     )
 
     system = System()
+    result: dict[ResultMetadata, Any] = {}
     action_expected_str = "File fetched successfully"
 
     with allure.step("Disable password hardening"):
@@ -566,8 +572,18 @@ def load_config(engines: EnginesT, config_file: Path | str) -> None:
         system.aaa.user.user_id[SystemConsts.DEFAULT_USER_ADMIN].set(AaaConsts.PASSWORD, PwhConsts.ADMIN).verify_result()
 
     with allure.step("Apply and save config"):
-        NvueGeneralCli.apply_config(engine=engines.dut, option='-y')
-        NvueGeneralCli.save_config(engine=engines.dut)
+        apply = NvueGeneralCli.apply_config(engine=engines.dut, option='-y')
+        if not (ConfState.APPLIED in apply or NvosConst.NO_CONFIG_DIFF_APPLY_MSG in apply):
+            apply_error = f"Failed to apply base config {config_file.name}: {apply}"
+            logger.error(apply_error)
+            result[ResultMetadata.CONFIG_APPLY_ERROR] = apply_error
+
+        if ConfState.SAVED not in (save := NvueGeneralCli.save_config(engine=engines.dut)):
+            save_error = f"Failed to save config {config_file.name}: {save}"
+            logger.error(save_error)
+            result[ResultMetadata.CONFIG_SAVE_ERROR] = save_error
+
+    return result
 
 
 def rollback(current_build: str | None = None, other_build: str | None = None, boot_next_partition_id: str | None = None) -> str | None:
