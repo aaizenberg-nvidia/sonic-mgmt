@@ -3,14 +3,12 @@ import logging
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
-from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants, HostsConstants
+from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
 
 logger = logging.getLogger(__name__)
 
 DHCPD_CONF_PATH = '/etc/dhcp/dhcpd.conf'
 DHCPD_CONF_BACKUP_PATH = '/etc/dhcp/dhcpd.conf.bak.ztp_test'
-DHCPD_HOSTS_PATH = '/etc/dhcp/dhcpd.hosts'
-DHCPD_HOSTS_BACKUP_PATH = '/etc/dhcp/dhcpd.hosts.bak.ztp_test'
 ZTP_JSON_PATH_ON_OOB = '/home/ubuntu/ztp_data.json'
 ZTP_JSON_NFS_URL = f'{SystemConsts.HTTP_SERVER}{SystemConsts.VERIFICATION_ZTP_PATH}{SystemConsts.POSITIVE_JSON}'
 OOB_SERVER_IP = NvidiaAirConstants.NVIDIA_AIR_OOB_MGMT_SERVER_IP
@@ -58,22 +56,17 @@ def download_ztp_json_to_oob(oob_engine):
 
 
 def backup_dhcpd_configs(oob_engine):
-    """Backup dhcpd.conf and dhcpd.hosts before ZTP modifications."""
-    with allure.step("Backup original dhcpd.conf and dhcpd.hosts"):
+    """Backup dhcpd.conf before ZTP modifications."""
+    with allure.step("Backup original dhcpd.conf"):
         oob_engine.run_cmd(f'sudo cp {DHCPD_CONF_PATH} {DHCPD_CONF_BACKUP_PATH}')
-        oob_engine.run_cmd(f'sudo cp {DHCPD_HOSTS_PATH} {DHCPD_HOSTS_BACKUP_PATH}')
 
 
 def configure_dhcpd_for_ztp(oob_engine):
     """
     Configure DHCP server on oob-mgmt-server for ZTP discovery.
 
-    Modifies two files:
-    - dhcpd.conf: adds global ZTP options (tftp-server-name, bootfile-name)
-    - dhcpd.hosts: adds ``send host-name "dut-ZTP-IPv4";`` to the DUT host block
-      so the switch sends the correct host-name during DHCP discovery
-
-    Restarts isc-dhcp-server after both modifications.
+    Adds global ZTP options (tftp-server-name, bootfile-name) to dhcpd.conf,
+    then restarts isc-dhcp-server.
     """
     scp_url = f'scp://{OOB_USER}:{oob_engine.password}@{OOB_SERVER_IP}{ZTP_JSON_PATH_ON_OOB}'
 
@@ -88,16 +81,6 @@ def configure_dhcpd_for_ztp(oob_engine):
             f"sudo tee -a {DHCPD_CONF_PATH} <<'ZTP_EOF'\n{ztp_options}\nZTP_EOF"
         )
 
-    dut_hostname = HostsConstants.DUT
-    ztp_host_name = f'{dut_hostname}-ZTP-IPv4'
-    with allure.step(f'Add send host-name "{ztp_host_name}" to DUT host block in dhcpd.hosts'):
-        oob_engine.run_cmd(
-            f"sudo sed -i '/host {dut_hostname} {{/a\\    send host-name \"{ztp_host_name}\";' {DHCPD_HOSTS_PATH}"
-        )
-        content = oob_engine.run_cmd(f'cat {DHCPD_HOSTS_PATH}')
-        assert f'send host-name "{ztp_host_name}"' in content, \
-            f'Failed to add send host-name to dhcpd.hosts:\n{content}'
-
     with allure.step("Validate dhcpd.conf syntax"):
         oob_engine.run_cmd(f'sudo dhcpd -t -cf {DHCPD_CONF_PATH}')
         # TODO  VERIFY BY OUTPUT
@@ -109,13 +92,10 @@ def configure_dhcpd_for_ztp(oob_engine):
 
 
 def restore_dhcpd_configs(oob_engine):
-    """Restore dhcpd.conf and dhcpd.hosts from backups, restart DHCP, and clean up."""
+    """Restore dhcpd.conf from backup, restart DHCP, and clean up."""
     with allure.step("Restore original dhcpd.conf"):
         oob_engine.run_cmd(f'sudo cp {DHCPD_CONF_BACKUP_PATH} {DHCPD_CONF_PATH}')
         oob_engine.run_cmd(f'sudo rm -f {DHCPD_CONF_BACKUP_PATH}')
-    with allure.step("Restore original dhcpd.hosts"):
-        oob_engine.run_cmd(f'sudo cp {DHCPD_HOSTS_BACKUP_PATH} {DHCPD_HOSTS_PATH}')
-        oob_engine.run_cmd(f'sudo rm -f {DHCPD_HOSTS_BACKUP_PATH}')
     with allure.step("Restart DHCP server and clean up"):
         oob_engine.run_cmd('sudo systemctl restart isc-dhcp-server')
         oob_engine.run_cmd(f'rm -f {ZTP_JSON_PATH_ON_OOB}')
