@@ -112,6 +112,9 @@ class TestAutoNegBase(TestAutoFecBase):
             for split_mode, lb_list in tested_lb_dict.items():
                 for lb in lb_list:
                     lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
+                    if not lb_mutual_speeds:
+                        logger.warning(f"Skipping loopback {lb}: no mutual speeds in split mode {split_mode}")
+                        continue
                     mutual_speed_in_subset = min(lb_mutual_speeds, key=speed_string_to_int_in_mb)
                     all_adv_speeds = []
                     all_adv_types = []
@@ -650,6 +653,9 @@ class TestAutoNegBase(TestAutoFecBase):
             for split_mode, lb_list in tested_lb_dict.items():
                 for lb in lb_list:
                     lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
+                    if not lb_mutual_speeds:
+                        logger.warning(f"Skipping loopback {lb}: no mutual speeds in split mode {split_mode}")
+                        continue
                     # If it is the port toggle test, using min speed is enough for the test goal
                     # Higher speed may cause issue when dut is AN and peer is forced speed
                     if use_min_speed:
