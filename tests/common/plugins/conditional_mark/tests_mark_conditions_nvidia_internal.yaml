@@ -829,6 +829,24 @@ passw_hardening/test_passw_hardening.py:
     conditions:
     - "'simx' in platform"
 
+platform_tests/test_thermal_polling.py::TestPerComponentPollingIntervals::test_platform_json_polling_intervals_parsed:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
+
+platform_tests/test_thermal_polling.py::TestPerComponentPollingIntervals::test_thermal_sensors_update_at_configured_intervals:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
+
+platform_tests/test_sfp_thermal_state_db.py::TestSfpThermalStateDb::test_no_sfp_entries_in_temperature_info:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
+
 platform_tests/test_service_warm_restart.py:
   skip:
     reason: "The warm service restart is not supported on 202411 and greater releases"
