@@ -26,6 +26,8 @@ NOT_OK = HealthConsts.NOT_OK
 
 # Health daemon typically adds "memory" to issues at 90%+ utilization
 MEMORY_STRESS_TARGET_PERCENT = 90
+# Overshoot the threshold so rounding and normal memory churn cannot leave us just below it.
+MEMORY_STRESS_HEADROOM_PERCENT = 2
 MEMORY_STRESS_MAX_RETRIES = 24
 MEMORY_STRESS_RETRY_INTERVAL_SEC = 5
 MEMORY_NORMALIZE_MAX_RETRIES = 12
@@ -54,11 +56,17 @@ def _allocate_memory(engines_dut, percentage=90):
     system = System()
     output_dictionary = OutputParsingTool.parse_json_str_to_dictionary(system.show("memory")).get_returned_value()
     physical_memory = output_dictionary[SystemConsts.MEMORY_PHYSICAL_KEY]
-    free_memory = physical_memory["free"]
-    available_memory_mb = free_memory / (1024 * 1024)
-    # Allocate most of free memory (cap 98%) so total utilization reliably exceeds 90% and health reports
-    allocate_fraction = min(0.98, (percentage / 100) + 0.08)
-    increase_memory_mb = int(available_memory_mb * allocate_fraction)
+    total_memory_mb = physical_memory["total"] / (1024 * 1024)
+    # Utilization is reported as used/total where used is total minus MemAvailable, and the
+    # health daemon applies the same formula. Size the allocation off available memory:
+    # MemFree undershoots it by the reclaimable page cache that tmpfs pages displace.
+    available_memory_mb = (physical_memory["total"] - physical_memory["used"]) / (1024 * 1024)
+    target_available_mb = total_memory_mb * (1 - (percentage + MEMORY_STRESS_HEADROOM_PERCENT) / 100)
+    increase_memory_mb = int(available_memory_mb - target_available_mb)
+    assert increase_memory_mb > 0, (
+        f"Only {available_memory_mb:.0f}MB of {total_memory_mb:.0f}MB is available; "
+        f"memory usage is already above {percentage}%"
+    )
     mount_point = "/mnt/tmpfs"
     file_path = f"{mount_point}/testfile"
     logger.info("Setting up tmpfs mount at %s", mount_point)
@@ -309,7 +317,7 @@ def test_system_health_cpu_usage(devices, engines):
     finally:
         wait_for_cpu_usage_below_threshold(system)
         StressNgTool.cleanup_stress_ng(engines_dut, remove_bc=True)
-        system.validate_health_status(OK)
+        wait_for_health_status_ok(system)
 
 
 def verify_no_new_issues(engines_dut, initial_issues):
@@ -346,3 +354,15 @@ def wait_for_cpu_usage_below_threshold(system: System) -> None:
     total = usage[SystemConsts.CPU_TOTAL_UTILIZATION_KEY]
     assert total < SystemConsts.CPU_PERCENT_THRESH_MAX, \
         f"CPU usage is not below configured threshold: {total}%"
+
+
+@retry(Exception, tries=30, delay=10)
+def wait_for_health_status_ok(system: System) -> None:
+    """
+    Poll until system health reports OK.
+
+    The cpu health issue tracks a load average rather than instantaneous utilization, so it
+    lingers for a few minutes after the load stops even though 'nv show system cpu' already
+    reports the CPU idle.
+    """
+    system.validate_health_status(OK)

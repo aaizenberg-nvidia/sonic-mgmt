@@ -71,6 +71,8 @@ class CumulusConsts:
     TECHSUPPORT_ACTION_DELETE_SUCCESS_MESSAGE = "File Delete Succeeded"
     TECHSUPPORT_THRESHOLD = 150
     TECHSUPPORT_FILE_NOT_FOUND_MESSAGE = "File not found: nonexist"
+    TECHSUPPORT_MALFORMED_REMOTE_URL_MESSAGE = "Malformed Remote URL"
+    TECHSUPPORT_UPLOAD_FAILED_MESSAGE = "Failed to upload file"
     NTP_SYNCHRONIZATION_MAX_TIME = 300
     NTP_LOGS_COMPONENT_ID = "nvue"
     LOG_MSG_SET_NTP = ["nv set system ntp server 10.80.74.100 state"]

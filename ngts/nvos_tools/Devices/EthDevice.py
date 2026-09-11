@@ -175,6 +175,8 @@ class EthSwitch(BaseSwitch):
         self.techsupport_delete_success_message = CumulusConsts.TECHSUPPORT_ACTION_DELETE_SUCCESS_MESSAGE
         self.techsupport_threshold = CumulusConsts.TECHSUPPORT_THRESHOLD
         self.techsupport_file_not_found_message = CumulusConsts.TECHSUPPORT_FILE_NOT_FOUND_MESSAGE
+        self.techsupport_malformed_remote_url_message = CumulusConsts.TECHSUPPORT_MALFORMED_REMOTE_URL_MESSAGE
+        self.techsupport_upload_failed_message = CumulusConsts.TECHSUPPORT_UPLOAD_FAILED_MESSAGE
         self.ntp_service_name = 'ntpsec@mgmt'
         self.ntp_reboot_action_param = ""
         self.ntp_dict = NtpConsts.CUMULUS_NTP_DEFAULT_DICT
@@ -190,6 +192,9 @@ class EthSwitch(BaseSwitch):
         # System image constants for ETH devices
         self.nfs_server = CumulusConsts.CL_NFS_SERVER
         self.upload_path = f'://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/'
+        self.image_install_abort_message = 'Image install aborted by user'
+        self.image_install_abort_http_status = 200
+        self.image_install_abort_state = 'action_success'
         self.default_username = SystemConsts.DEFAULT_USER_CL
 
         self.voltage_sensors = ["PMIC-1-PSU-12V-RAIL-IN", "PMIC-2-PSU-12V-RAIL-IN",

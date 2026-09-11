@@ -101,9 +101,15 @@ class TechSupport(BaseComponent):
     def parse_techsupport_folder_name(self, techsupport_res) -> PurePosixPath:
         """Extract and return the generated archive path."""
         archive_suffixes = (".tar.gz", ".txz")
+        # Cumulus example:
+        # Generated tech-support
+        # Please open a support case from https://www.nvidia.com/en-us/support/enterprise/
+        #        to send the support file /var/support/cl_support_cumulus_20260916_182535.txz
+        # Please check the Contact Enterprise Support section for methods to open a support case.
         output_formats = (
             ("Generated tech-support", PurePosixPath(SystemConsts.TECHSUPPORT_FILES_PATH)),
             ("Please send", PurePosixPath(CumulusConsts.TECHSUPPORT_FILES_PATH)),
+            ("to send the support file", PurePosixPath(CumulusConsts.TECHSUPPORT_FILES_PATH)),
         )
 
         for line in techsupport_res.returned_value.splitlines():

@@ -32,24 +32,40 @@ cumulus_owner = "yleibovichwe"
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture
+def ssh_login_credentials(engines, devices):
+    """Yield login credentials. On Cumulus, create a temporary admin user and delete it afterwards."""
+    if not devices.dut.is_eth():
+        yield engines.dut.username, engines.dut.password
+        return
+    username, password = System(None).aaa.user.set_new_user(role=devices.dut.aaa_admin_role, apply=True)
+    yield username, password
+    if not delete_user(engines, username):
+        logger.warning("Failed to delete temporary user %s during cleanup", username)
+
+
 @pytest.mark.cumulus
-def test_ssh_login_notifications_default_fields_admin(engines, login_source_ip_addresses):
+def test_ssh_login_notifications_default_fields_admin(engines, login_source_ip_addresses, ssh_login_credentials):
     """
     Validate admin user SSH login notification default fields.
         Test flow:
-            1. Connect to switch before validation to clear failed messages
-            2. Validate SSH login notification (default fields, IP, failed attempts, etc.)
+            1. Create a temporary user on Cumulus; preserve the configured user on NVOS
+            2. Connect to switch before validation to establish a clean login baseline
+            3. Validate SSH login notification (default fields, IP, failed attempts, etc.)
+            4. Delete the temporary Cumulus user
     """
     system = System(None)
+    username, password = ssh_login_credentials
 
-    with allure.step("Connect to switch before validation to clear all failed messages"):
-        successful_login_time = ClockTools.get_local_time_object_from_show_system_date_time_output(system.datetime.show())
-        SshAuthenticator(engines.dut.username, engines.dut.password, engines.dut.ip)
+    with allure.step("Connect to switch to establish a clean login baseline"):
+        successful_login_time = ClockTools.get_local_time_object_from_show_system_date_time_output(
+            system.datetime.show())
+        SshAuthenticator(username, password, engines.dut.ip).attempt_login_success()
 
     with allure.step("Validate ssh login notification"):
         validate_ssh_login_notifications_default_fields(engines, login_source_ip_addresses,
-                                                        username=engines.dut.username,
-                                                        password=engines.dut.password,
+                                                        username=username,
+                                                        password=password,
                                                         capability=Consts.ADMIN_CAPABITILY,
                                                         last_successful_login=successful_login_time)
 
@@ -142,20 +158,23 @@ def test_ssh_login_notification_role_new_user(engines, login_source_ip_addresses
 
 
 @pytest.mark.cumulus
-def test_ssh_login_notification_cli_commands_good_flow(engines, login_source_ip_addresses):
+def test_ssh_login_notification_cli_commands_good_flow(engines, login_source_ip_addresses, ssh_login_credentials):
     """
     Test CLI commands for login SSH notification (login-record-period set/show).
         Test flow:
-            1. Connect to switch and collect successful login time
-            2. Set login-record-period to random value (min-max range)
-            3. Validate SSH login notification with new record period
-            4. Run nv show system ssh-server and verify login-record-period value
+            1. Create a temporary user on Cumulus; preserve the configured user on NVOS
+            2. Connect to switch and collect successful login time
+            3. Set login-record-period to random value (min-max range)
+            4. Validate SSH login notification with new record period
+            5. Run nv show system ssh-server and verify login-record-period value
+            6. Delete the temporary Cumulus user
     """
     system = System(None)
+    username, password = ssh_login_credentials
 
     with allure.step("Connect to switch and collect successful login time"):
         successful_login_time = ClockTools.get_local_time_object_from_show_system_date_time_output(system.datetime.show())
-        SshAuthenticator(engines.dut.username, engines.dut.password, engines.dut.ip).attempt_login_success()
+        SshAuthenticator(username, password, engines.dut.ip).attempt_login_success()
 
     with allure.step("Set new value for login record period"):
         record_days = random.randint(Consts.MIN_RECORD_PERIOD_VAL, Consts.MAX_RECORD_PERIOD_VAL)
@@ -163,8 +182,8 @@ def test_ssh_login_notification_cli_commands_good_flow(engines, login_source_ip_
 
     with allure.step("Validate ssh login notification with new record period"):
         validate_ssh_login_notifications_default_fields(engines, login_source_ip_addresses,
-                                                        username=engines.dut.username,
-                                                        password=engines.dut.password,
+                                                        username=username,
+                                                        password=password,
                                                         capability=SystemConsts.ROLE_CONFIGURATOR,
                                                         check_password_change_msg=False,
                                                         check_role_change_msg=False,
