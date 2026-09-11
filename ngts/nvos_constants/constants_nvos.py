@@ -2984,6 +2984,9 @@ class IssuConsts:
     ERROR_OPENSM_REACH_TIMEOUT = 'No permission to perform ISSU from the SM'
     ERROR_DOWNGRADE_NOT_ALLOWED = ('Error: Action failed with the following issue:\n'
                                    '  ISSU does not support downgrade')
+    ERROR_ISSU_WITH_IB_ROUTING = 'ISSU is not supported when IB routing is enabled'
+    # First NVOS build that rejects ISSU while ib-routing is enabled
+    IB_ROUTING_PREVENTION_MIN_VERSION = '25.03.1950-000'
     ERROR_INVALID_PARAM = "Error: Invalid parameter: 'invalid-flag'"
     LOG_MSG_LIST = ['issue: No permission to perform ISSU from the SM',
                     'issue: System must be rebooted during ISSU',

@@ -59,4 +59,15 @@
     </cmd>
   </case>
 
+  <case>
+    <name> Validate ISSU is rejected while ib-routing profile is enabled </name>
+    <info> Enables the ib-routing profile, verifies ISSU is rejected, then restores the profile. Both steps reboot. Skipped on platforms with no ib-routing profile. </info>
+    <tout> 3000 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/issu/test_system_issu.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_upgrade_image_with_issu_while_ib_routing_on_negative --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --release_name=[[conf:extra_info.release_name]] --clean-alluredir  --disable_loganalyzer --alluredir=/tmp/allure-results --downgrade_version=[[conf:extra_info.downgrade_version]] --issu_version=[[conf:extra_info.issu_version]] --target_version=[[conf:extra_info.target_version]] --showlocals  [[conf:extra_info.additional_options]]  --timeout 3000   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>

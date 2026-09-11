@@ -20,6 +20,8 @@ from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.DutUtilsTool import ping_device
+from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
+from ngts.tests_nvos.ib_router.constants import IbRouterConsts
 from ngts.nvos_tools.infra.FWComponentsTool import FWComponentsTool
 from ngts.nvos_tools.infra.SSDTool import SSDTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
@@ -60,6 +62,19 @@ def _nvos_version_key(version_path: str) -> tuple:
     parts = [int(p) for p in main.split('.')]
     parts.append(int(suffix) if suffix else 0)
     return tuple(parts)
+
+
+def _select_issu_base_with_ib_routing_guard(issu_version, target_version):
+    """Return an image older than target_version that already rejects ISSU while ib-routing is enabled.
+
+    issu_version is used once it has the guard (IssuConsts.IB_ROUTING_PREVENTION_MIN_VERSION). Until then,
+    the newest older build on target_version's branch is used. Returns None if no image qualifies.
+    """
+    min_key = _nvos_version_key(IssuConsts.IB_ROUTING_PREVENTION_MIN_VERSION)
+    if issu_version and min_key <= _nvos_version_key(issu_version) < _nvos_version_key(target_version):
+        return issu_version
+    return NvosGitTool().find_previous_image_path(target_version,
+                                                  min_version=IssuConsts.IB_ROUTING_PREVENTION_MIN_VERSION)
 
 
 @pytest.mark.system
@@ -857,6 +872,91 @@ def test_system_issu_downgrade_prevention(engines, devices, downgrade_version, t
     with allure.step("Validate downgrade-not-supported log in syslog"):
         system.log.verify_expected_logs([IssuConsts.LOG_MSG_DOWNGRADE_NOT_SUPPORTED],
                                         engine=dut_engine, only_latest_log=True)
+
+
+@pytest.mark.system
+@pytest.mark.issu
+def test_upgrade_image_with_issu_while_ib_routing_on_negative(engines, devices, issu_version, target_version,
+                                                              random_api):
+    """
+    Validate that installing a new image with ISSU while the ib-routing profile is enabled
+    is rejected with ERROR_ISSU_WITH_IB_ROUTING error message and that neither
+    the image installation nor the warm reboot is started.
+
+    The ISSU base must be older than target_version and already have the ib-routing prevention
+    (IssuConsts.IB_ROUTING_PREVENTION_MIN_VERSION). issu_version is used once it qualifies; until then,
+    the newest older build on target_version's branch is used.
+
+    Test flow:
+    1. Skip if the DUT does not have ib-routing field in its system profile
+    2. Select the ISSU base image (skip if none qualifies) and install it without ISSU
+    3. Enable the ib-routing profile and verify it took effect
+    4. Prepare the target image and save the config, so no other pre-check fails
+    5. Run 'nv action install system image files <image> issu' and verify the rejection is caused by ib-routing
+    6. Verify no image was installed and no warm reboot was started
+    7. Restore ib-routing to disabled
+    """
+    dut_engine = engines.dut
+    dut_device = devices.dut
+    player = engines.sonic_mgmt
+    system = System()
+
+    profile_output = OutputParsingTool.parse_json_str_to_dictionary(system.profile.show()).get_returned_value()
+    if SystemConsts.PROFILE_IB_ROUTING not in profile_output:
+        pytest.skip(f"system profile has no '{SystemConsts.PROFILE_IB_ROUTING}' field on this platform: "
+                    f"{profile_output}")
+
+    with allure.step("Select an ISSU base image that already has the ib-routing prevention"):
+        issu_base_version = _select_issu_base_with_ib_routing_guard(issu_version, target_version)
+        if not issu_base_version:
+            pytest.skip(f"No image older than {target_version} and not older than "
+                        f"{IssuConsts.IB_ROUTING_PREVENTION_MIN_VERSION} was found to start ISSU from")
+        logger.info(f"ISSU base image: {issu_base_version}")
+
+    with allure.step("Install the ISSU base image"):
+        install_system_image_and_start_opensm(engines, dut_device, system, issu_base_version, start_sm=False)
+
+    try:
+        with allure.step("Enable the ib-routing profile"):
+            IbRouterTool.enable_ib_router_profile()
+            IbRouterTool.verify_profile_status(SystemConsts.PROFILE_STATE_ENABLED, IbRouterConsts.SWID_NUM)
+
+        with allure.step("Prepare system target image for install"):
+            target_filename, _, _ = prepare_image_for_install(player, dut_engine, dut_device, target_version)
+
+        with allure.step("Save configuration. Required for installation with ISSU"):
+            TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(dut_engine)
+
+        with allure.step("Record running image and ISSU status before the attempt"):
+            version_before = system.version.get_nvos_image_version()
+            image_before = OutputParsingTool.parse_json_str_to_dictionary(
+                system.image.show()).get_returned_value()
+
+        with allure.step("Try to install image with ISSU while ib-routing is enabled"):
+            output = system.image.files.file_name[target_filename].action(
+                ActionConsts.INSTALL, flags=IssuConsts.ISSU, send_user_confirmation='y',
+                timeout=IssuConsts.ISSU_READ_TIMEOUT).verify_result(should_succeed=False)
+
+        with allure.step("Verify the rejection is caused by ib-routing"):
+            assert IssuConsts.ERROR_ISSU_WITH_IB_ROUTING in output, \
+                f'error message: {IssuConsts.ERROR_ISSU_WITH_IB_ROUTING} is missing in output: {output}'
+
+        with allure.step("Verify no image was installed and no warm reboot was started"):
+            version_after = system.version.get_nvos_image_version()
+            assert version_after == version_before, \
+                f'system image is: {version_after}, instead of {version_before}: Installation succeeded even though it was rejected'
+
+            image_after = OutputParsingTool.parse_json_str_to_dictionary(system.image.show()).get_returned_value()
+            assert image_after[ImageConsts.NEXT_IMG] == image_before[ImageConsts.NEXT_IMG], \
+                f'next boot partition is {image_after[ImageConsts.NEXT_IMG]}, instead of ' \
+                f'{image_before[ImageConsts.NEXT_IMG]}: the rejected ISSU installation staged an image anyway'
+
+            assert image_after[IssuConsts.ISSU_STATUS] == IssuConsts.IssuStatus.NO_ISSU.value, \
+                f"ISSU status is {image_after[IssuConsts.ISSU_STATUS]}, instead of: {IssuConsts.IssuStatus.NO_ISSU.value}"
+    finally:
+        with allure.step("Restore the ib-routing profile to disabled"):
+            IbRouterTool.disable_ib_router_profile()
+            IbRouterTool.verify_profile_status(SystemConsts.PROFILE_STATE_DISABLED, SystemConsts.DEFAULT_NUM_SWIDS)
 
 
 # -------------------------------------------------------
