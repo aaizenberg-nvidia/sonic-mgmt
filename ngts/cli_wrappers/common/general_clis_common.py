@@ -409,8 +409,10 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         Secure Boot (sonic-buildimage#24249). Instead we always:
           1. Press 'c' to drop into the grub command shell.
           2. Read $grub_platform to tell UEFI (efi) from legacy BIOS (pc).
-          3. efi -> type 'exit' so UEFI boots the ONIE EFI entry directly
-                    (no chainload); then select ONIE: Install OS.
+          3. efi -> from the grub shell load the ONIE partition's grub.cfg with
+                    'configfile' (located via 'search --label ONIE-BOOT'). This
+                    enters ONIE without chainloading the shim and independent of
+                    the UEFI BootOrder (sonic-buildimage#24249, Redmine #5261704).
              pc  -> no chainload issue; go back to the menu and select ONIE
                     the classic way.
         This single path is a safe superset of the old flow, so it is used
@@ -462,20 +464,26 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
             self._select_onie_in_grub_menu_by_serial(serial_engine)
             return
 
-        # UEFI (efi): exit the grub shell so UEFI hands control back to the
-        # firmware, which boots the ONIE EFI entry directly without chainloading
-        # (mandatory on trixie grub 2.12+, sonic-buildimage#24249).
-        # Type 'exit' char-by-char for the same reason as 'echo' above.
-        logger.info("UEFI (efi) detected - typing 'exit' to boot into ONIE grub directly")
-        self._grub_type_command(serial_engine, 'exit')
-        serial_engine.run_cmd(enter_key, expected_value=['ONIE', 'GNU GRUB'],
-                              timeout=60, send_without_enter=True)
-
-        # We are now expected to be in the ONIE grub menu. Select the default
-        # (ONIE: Install OS) by pressing Enter.
-        logger.info("Pressing Enter to boot the default ONIE grub entry (Install OS)")
-        serial_engine.run_cmd(enter_key, expected_value=['ONIE'],
-                              timeout=30, send_without_enter=True)
+        # UEFI (efi): load the ONIE partition's grub.cfg directly from the grub
+        # shell. 'search --label ONIE-BOOT' finds the ONIE partition on any
+        # platform (no hard-coded partition number), then 'configfile' hands
+        # control to ONIE's grub menu - without chainloading the shim (broken on
+        # trixie grub, sonic-buildimage#24249) and independent of the UEFI
+        # BootOrder (which 'exit' depends on, Redmine #5261704). ONIE then
+        # auto-boots its default entry. Type char-by-char for the same reason as
+        # 'echo' above. The transient 'terminal `serial' isn't found' errors are
+        # harmless.
+        logger.info("UEFI (efi) detected - loading ONIE grub via "
+                    "'search ONIE-BOOT' + 'configfile'")
+        self._grub_type_command(serial_engine, 'search --no-floppy --label --set=root ONIE-BOOT')
+        serial_engine.run_cmd(enter_key, expected_value=['grub>'],
+                              timeout=15, send_without_enter=True)
+        self._grub_type_command(serial_engine, 'configfile ($root)/grub/grub.cfg')
+        serial_engine.run_cmd(enter_key,
+                              expected_value=['ONIE: Install OS', 'ONIE: Rescue',
+                                              'ONIE: Uninstall', 'ONIE Rescue Mode',
+                                              'ONIE: OS Install Mode', 'Booting `ONIE'],
+                              timeout=90, send_without_enter=True)
 
     def _grub_type_command(self, serial_engine, cmd, inter_char_delay=0.05):
         """

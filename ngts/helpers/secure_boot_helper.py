@@ -270,25 +270,24 @@ class SonicSecureBootHelper(SecureBootHelper):
         if respond != 0:
             raise RuntimeError(f"Switch is not in ONIE mode. Output: {output}")
 
-    def login_into_onie_mode(self):
+    def login_into_onie_mode(self, topology_obj=None):
         """
         This function will login into onie mode
         After secure boot violation, the switch may be stuck in GRUB menu, so we need to handle that first
         """
-        # First check if we're stuck in GRUB menu and need to select ONIE: Rescue
+        # After a secure-boot violation the DUT is stuck in a 'bad shim' boot
+        # loop and cannot boot SONiC. Power-cycle it so the firmware lands
+        # cleanly on the grub menu, then enter ONIE via the grub-shell
+        # 'configfile' flow (see enter_onie_from_grub_menu_by_serial), which
+        # loads the ONIE partition grub.cfg directly - no chainload, no reliance
+        # on the UEFI BootOrder (sonic-buildimage#24249, Redmine #5261704).
         try:
-            _, respond = self.serial_engine.run_cmd('\r',
-                                                    [
-                                                        "\\*ONIE",
-                                                        "\\*SONiC",
-                                                    ], timeout=10)
-
-            if respond == 0:
-                logger.info("Already selected ONIE")
+            if topology_obj is not None:
+                self.cli_objects.dut.general.remote_reboot(
+                    topology_obj, boot_into_onie=True, wait_till_alive=False)
             else:
-                # Press down arrow to navigate to ONIE
-                logger.info("Pressing down arrow to navigate to ONIE")
-                self.serial_engine.run_cmd('\x1b[B')
+                self.serial_engine.run_cmd('\x1b', ["\\*ONIE", "\\*SONiC", "GNU GRUB"], timeout=15)
+                self.cli_objects.dut.general.enter_onie_from_grub_menu_by_serial(self.serial_engine)
         except Exception as e:
             logger.info(f"No GRUB menu detected or already past it: {str(e)}")
 
@@ -318,7 +317,7 @@ class SonicSecureBootHelper(SecureBootHelper):
         topology_obj.players['dut']['engine'].send_config_set([onie_reboot_script_cmd], exit_config_mode=False,
                                                               cmd_verify=False)
         logger.info("Login to ONIE config mode")
-        self.login_into_onie_mode()
+        self.login_into_onie_mode(topology_obj)
 
     def manipulate_signature(self, test_server_engine, filepath):
         """

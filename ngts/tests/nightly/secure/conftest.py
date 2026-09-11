@@ -154,7 +154,7 @@ def recover_switch_after_secure_boot_violation_message(secure_boot_helper, resto
             if secure_boot_helper.is_sonic_mode():
                 secure_boot_helper.get_into_onie_mode(topology_obj)
             else:
-                secure_boot_helper.login_into_onie_mode()
+                secure_boot_helper.login_into_onie_mode(topology_obj)
             secure_boot_helper.remove_staged_fw_pkg()
 
         if is_fwutil_onie_test:
