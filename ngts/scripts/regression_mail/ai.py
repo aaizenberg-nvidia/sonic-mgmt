@@ -103,6 +103,7 @@ class AiCommentSummarizer:
         model: str,
         batch_size: int = 8,
         timeout: int = 120,
+        max_retries: int = 5,
         client_factory: Optional[Callable[..., Any]] = None,
     ):
         self.api_key = api_key.strip()
@@ -110,6 +111,7 @@ class AiCommentSummarizer:
         self.model = model.strip()
         self.batch_size = batch_size
         self.timeout = timeout
+        self.max_retries = max_retries
         self.client_factory = client_factory
 
     def summarize(
@@ -334,6 +336,7 @@ class AiCommentSummarizer:
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
+            max_retries=self.max_retries,
         )
 
     def _request_batch(

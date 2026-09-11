@@ -1860,14 +1860,20 @@ def _attempt(
     try:
         return operation()
     except Exception as error:
-        report.errors.append(
-            generation_error(
-                stage,
-                error,
-                impact,
-                exit_code,
-                _setting_secrets(settings),
-            )
+        failure = generation_error(
+            stage,
+            error,
+            impact,
+            exit_code,
+            _setting_secrets(settings),
+        )
+        report.errors.append(failure)
+        print(
+            "regression mail stage failed: {}: {}".format(
+                failure.stage,
+                failure.message,
+            ),
+            file=sys.stderr,
         )
         _write_diagnostic(settings, stage, error)
         return None

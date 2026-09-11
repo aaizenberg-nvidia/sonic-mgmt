@@ -129,6 +129,25 @@ class ExternalAdapterTest(unittest.TestCase):
         self.assertTrue(all("5154543" not in value for value in summaries.values()))
         self.assertTrue(all("redmine.mellanox.com" not in value for value in summaries.values()))
 
+    def test_ai_client_retries_transient_service_failures(self) -> None:
+        captured = {}
+        client = ScriptedOpenAIClient(
+            lambda **kwargs: json.dumps({"group": "summary"})
+        )
+
+        summarizer = AiCommentSummarizer(
+            "secret",
+            "https://inference-api.nvidia.com/v1",
+            "openai/openai/gpt-5.6-sol",
+            client_factory=lambda **kwargs: captured.update(kwargs) or client,
+        )
+        summarizer.summarize(
+            [semantic_group(group_id="group")],
+            SetupRedactor({}),
+        )
+
+        self.assertEqual(5, captured["max_retries"])
+
     def test_ai_reviews_only_supplied_redmine_github_candidates(self) -> None:
         issue_url = (
             "https://github.com/sonic-net/sonic-buildimage/issues/123"
