@@ -1,0 +1,6 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+slm-174,10.220.15.174/22,Mellanox-SN6600_LD-P64O128C2,DevSonic,,sonic
+slm-27,10.220.13.27/22,Mellanox-SN6600_LD-P64O128C2,FanoutLeaf,,sonic
+slm-238,10.220.12.238/22,Mellanox-SN6600_LD-P128C2,FanoutLeaf,,sonic
+fit-sonic-vrt-mec-40,10.220.207.40,TestServ,Server,,
+rcon,10.220.12.161,,ConsoleServer,ssh,sonic

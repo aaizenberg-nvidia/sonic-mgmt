@@ -1,0 +1,30 @@
+[sonic_latest]
+# MTVR community testbed slm-174_setup topologies
+slm-174  ansible_host=10.220.15.174 sonic_version=v2 sonic_hwsku=Mellanox-SN6600_LD-P64O128C2 iface_speed=800000 serial_console="ssh -l rcon:7048 10.220.12.161" ptf_host=ptf-slm-174 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host=pdu-slm-174-bmc console_baudrate=115200 base_mac=44:B4:A0:B5:16:00 serial=MT2629604LV3 model=SN6600_LD syseeprom_info="{'0x21': u'SN6600_LD', '0x22': u'920-9N62F-09LI-NS0', '0x23': u'MT2629604LV3', '0x24': u'44:B4:A0:B5:16:00', '0x25': u'08/07/2026 08:05:22', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6600_ld-r0', '0x29': u'2025.05-5.3.0021-9600', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia', '0xFE': u'0xF0ADB721'}"
+slm-174-t0-isolated-d32u32s2-mix ansible_host=10.220.15.174 sonic_version=v2 sonic_hwsku=Mellanox-SN6600_LD-P64O128C2 iface_speed=800000 serial_console="ssh -l rcon:7048 10.220.12.161" ptf_host=ptf-slm-174 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host=pdu-slm-174-bmc console_baudrate=115200 base_mac=44:B4:A0:B5:16:00 serial=MT2629604LV3 model=SN6600_LD syseeprom_info="{'0x21': u'SN6600_LD', '0x22': u'920-9N62F-09LI-NS0', '0x23': u'MT2629604LV3', '0x24': u'44:B4:A0:B5:16:00', '0x25': u'08/07/2026 08:05:22', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6600_ld-r0', '0x29': u'2025.05-5.3.0021-9600', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia', '0xFE': u'0xF0ADB721'}"
+
+
+slm-27 ansible_host=slm-27 ansible_ssh_user="{{ lookup('env','SONIC_SWITCH_USER') }}" ansible_ssh_pass="{{ lookup('env','SONIC_SWITCH_PASSWORD') }}" os=sonic
+slm-238 ansible_host=slm-238 ansible_ssh_user="{{ lookup('env','SONIC_SWITCH_USER') }}" ansible_ssh_pass="{{ lookup('env','SONIC_SWITCH_PASSWORD') }}" os=sonic
+slm-241 ansible_host=slm-241 ansible_ssh_user="{{ lookup('env','SONIC_SWITCH_USER') }}" ansible_ssh_pass="{{ lookup('env','SONIC_SWITCH_PASSWORD') }}" os=sonic
+[sonic:children]
+sonic_latest
+
+[leaf_topo_1]
+slm-174
+slm-174-t0-isolated-d32u32s2-mix
+
+[leaf_topo_1:vars]
+podset_number=200
+
+[lab]
+slm-174
+slm-174-t0-isolated-d32u32s2-mix
+
+[ptf]
+# slm-174_setup PTF host
+ptf-slm-174 ansible_host=10.220.207.47 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+10.220.207.47 ansible_host=10.220.207.47 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+
+[pdu]
+pdu-slm-174-bmc  ansible_host=slm-174-bmc  protocol=bmc  bmc_user="{{ lookup('env','BMC_USER') }}"  bmc_password="{{ lookup('env','BMC_PASSWORD') }}"

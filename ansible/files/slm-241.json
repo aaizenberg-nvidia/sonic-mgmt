@@ -224,10 +224,13 @@
             "brkout_mode": "2x800G[400G]"
         },
         "Ethernet120": {
-            "brkout_mode": "2x800G[400G]"
+            "brkout_mode": "2x400G[200G](4)+1x800G[400G](4)"
+        },
+        "Ethernet122": {
+            "brkout_mode": "2x400G[200G](4)+1x800G[400G](4)"
         },
         "Ethernet124": {
-            "brkout_mode": "2x800G[400G]"
+            "brkout_mode": "2x400G[200G](4)+1x800G[400G](4)"
         },
         "Ethernet128": {
             "brkout_mode": "2x400G[200G](4)+1x800G[400G](4)"
@@ -7338,22 +7341,34 @@
         "Ethernet120": {
             "admin_status": "up",
             "alias": "etp16a",
+            "autoneg": "off",
             "dhcp_rate_limit": "300",
             "fec": "rs",
             "index": "16",
-            "lanes": "120,121,122,123",
-            "speed": "800000",
+            "lanes": "120,121",
+            "speed": "400000",
             "subport": "1"
+        },
+        "Ethernet122": {
+            "admin_status": "up",
+            "alias": "etp16b",
+            "autoneg": "off",
+            "dhcp_rate_limit": "300",
+            "fec": "rs",
+            "index": "16",
+            "lanes": "122,123",
+            "speed": "400000",
+            "subport": "2"
         },
         "Ethernet124": {
             "admin_status": "up",
-            "alias": "etp16b",
+            "alias": "etp16c",
             "dhcp_rate_limit": "300",
             "fec": "rs",
             "index": "16",
             "lanes": "124,125,126,127",
             "speed": "800000",
-            "subport": "2"
+            "subport": "3"
         },
         "Ethernet128": {
             "admin_status": "up",
@@ -17241,6 +17256,189 @@
         "Vlan2230": {
             "vlanid": "2230"
         },
+        "Vlan2231": {
+            "vlanid": "2231"
+        },
+        "Vlan2232": {
+            "vlanid": "2232"
+        },
+        "Vlan2233": {
+            "vlanid": "2233"
+        },
+        "Vlan2234": {
+            "vlanid": "2234"
+        },
+        "Vlan2235": {
+            "vlanid": "2235"
+        },
+        "Vlan2236": {
+            "vlanid": "2236"
+        },
+        "Vlan2237": {
+            "vlanid": "2237"
+        },
+        "Vlan2238": {
+            "vlanid": "2238"
+        },
+        "Vlan2239": {
+            "vlanid": "2239"
+        },
+        "Vlan2240": {
+            "vlanid": "2240"
+        },
+        "Vlan2241": {
+            "vlanid": "2241"
+        },
+        "Vlan2242": {
+            "vlanid": "2242"
+        },
+        "Vlan2243": {
+            "vlanid": "2243"
+        },
+        "Vlan2244": {
+            "vlanid": "2244"
+        },
+        "Vlan2245": {
+            "vlanid": "2245"
+        },
+        "Vlan2246": {
+            "vlanid": "2246"
+        },
+        "Vlan2247": {
+            "vlanid": "2247"
+        },
+        "Vlan2248": {
+            "vlanid": "2248"
+        },
+        "Vlan2249": {
+            "vlanid": "2249"
+        },
+        "Vlan2250": {
+            "vlanid": "2250"
+        },
+        "Vlan2251": {
+            "vlanid": "2251"
+        },
+        "Vlan2252": {
+            "vlanid": "2252"
+        },
+        "Vlan2253": {
+            "vlanid": "2253"
+        },
+        "Vlan2254": {
+            "vlanid": "2254"
+        },
+        "Vlan2255": {
+            "vlanid": "2255"
+        },
+        "Vlan2256": {
+            "vlanid": "2256"
+        },
+        "Vlan2257": {
+            "vlanid": "2257"
+        },
+        "Vlan2258": {
+            "vlanid": "2258"
+        },
+        "Vlan2259": {
+            "vlanid": "2259"
+        },
+        "Vlan2260": {
+            "vlanid": "2260"
+        },
+        "Vlan2261": {
+            "vlanid": "2261"
+        },
+        "Vlan2262": {
+            "vlanid": "2262"
+        },
+        "Vlan2263": {
+            "vlanid": "2263"
+        },
+        "Vlan2264": {
+            "vlanid": "2264"
+        },
+        "Vlan2265": {
+            "vlanid": "2265"
+        },
+        "Vlan2266": {
+            "vlanid": "2266"
+        },
+        "Vlan2267": {
+            "vlanid": "2267"
+        },
+        "Vlan2268": {
+            "vlanid": "2268"
+        },
+        "Vlan2269": {
+            "vlanid": "2269"
+        },
+        "Vlan2270": {
+            "vlanid": "2270"
+        },
+        "Vlan2271": {
+            "vlanid": "2271"
+        },
+        "Vlan2272": {
+            "vlanid": "2272"
+        },
+        "Vlan2273": {
+            "vlanid": "2273"
+        },
+        "Vlan2274": {
+            "vlanid": "2274"
+        },
+        "Vlan2275": {
+            "vlanid": "2275"
+        },
+        "Vlan2276": {
+            "vlanid": "2276"
+        },
+        "Vlan2277": {
+            "vlanid": "2277"
+        },
+        "Vlan2278": {
+            "vlanid": "2278"
+        },
+        "Vlan2279": {
+            "vlanid": "2279"
+        },
+        "Vlan2280": {
+            "vlanid": "2280"
+        },
+        "Vlan2281": {
+            "vlanid": "2281"
+        },
+        "Vlan2282": {
+            "vlanid": "2282"
+        },
+        "Vlan2283": {
+            "vlanid": "2283"
+        },
+        "Vlan2284": {
+            "vlanid": "2284"
+        },
+        "Vlan2285": {
+            "vlanid": "2285"
+        },
+        "Vlan2286": {
+            "vlanid": "2286"
+        },
+        "Vlan2287": {
+            "vlanid": "2287"
+        },
+        "Vlan2288": {
+            "vlanid": "2288"
+        },
+        "Vlan2289": {
+            "vlanid": "2289"
+        },
+        "Vlan2290": {
+            "vlanid": "2290"
+        },
+        "Vlan2291": {
+            "vlanid": "2291"
+        },
         "Vlan3800": {
             "vlanid": "3800"
         },
@@ -17840,6 +18038,15 @@
         },
         "Vlan3999": {
             "vlanid": "3999"
+        },
+        "Vlan2292": {
+            "vlanid": "2292"
+        },
+        "Vlan2293": {
+            "vlanid": "2293"
+        },
+        "Vlan2294": {
+            "vlanid": "2294"
         }
     },
     "VLAN_MEMBER": {
@@ -22883,16 +23090,382 @@
         "Vlan2228|Ethernet160": {
             "tagging_mode": "tagged"
         },
-        "Vlan2229|Ethernet156": {
+        "Vlan2229|Ethernet120": {
             "tagging_mode": "tagged"
         },
         "Vlan2229|Ethernet160": {
             "tagging_mode": "tagged"
         },
-        "Vlan2230|Ethernet156": {
+        "Vlan2230|Ethernet120": {
             "tagging_mode": "tagged"
         },
         "Vlan2230|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2231|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2231|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2232|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2232|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2233|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2233|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2234|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2234|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2235|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2235|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2236|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2236|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2237|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2237|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2238|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2238|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2239|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2239|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2240|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2240|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2241|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2241|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2242|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2242|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2243|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2243|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2244|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2244|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2245|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2245|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2246|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2246|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2247|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2247|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2248|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2248|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2249|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2249|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2250|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2250|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2251|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2251|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2252|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2252|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2253|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2253|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2254|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2254|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2255|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2255|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2256|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2256|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2257|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2257|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2258|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2258|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2259|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2259|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2260|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2260|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2261|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2261|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2262|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2262|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2263|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2263|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2264|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2264|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2265|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2265|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2266|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2266|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2267|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2267|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2268|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2268|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2269|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2269|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2270|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2270|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2271|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2271|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2272|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2272|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2273|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2273|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2274|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2274|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2275|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2275|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2276|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2276|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2277|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2277|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2278|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2278|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2279|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2279|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2280|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2280|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2281|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2281|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2282|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2282|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2283|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2283|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2284|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2284|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2285|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2285|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2286|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2286|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2287|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2287|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2288|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2288|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2289|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2289|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2290|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2290|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2291|Ethernet120": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2291|Ethernet160": {
             "tagging_mode": "tagged"
         },
         "Vlan3800|Ethernet0": {
@@ -24693,6 +25266,24 @@
             "tagging_mode": "tagged"
         },
         "Vlan3999|Ethernet16": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2292|Ethernet156": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2292|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2293|Ethernet156": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2293|Ethernet160": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2294|Ethernet156": {
+            "tagging_mode": "tagged"
+        },
+        "Vlan2294|Ethernet160": {
             "tagging_mode": "tagged"
         }
     },
