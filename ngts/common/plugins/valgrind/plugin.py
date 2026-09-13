@@ -77,7 +77,10 @@ class ValgrindLogFilesSnapshot:
 
             quoted_out = shlex.quote(output_file)
             result: str = self._engine_dut.run_cmd(f'python3 /tmp/vg_scan.py -o {quoted_out}', validate=True)
-            result_file_loc = Path(result.split(':')[-1].strip())
+            match = re.search(r'^Snapshot saved to:\s*(.+)$', result, re.MULTILINE)
+            if not match:
+                raise ValueError(f"Could not find 'Snapshot saved to:' line in vg_scan.py output: {result!r}")
+            result_file_loc = Path(match.group(1).strip())
 
             dest_file = Path(output_file)
             if not result_file_loc.is_absolute():
