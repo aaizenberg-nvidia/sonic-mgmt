@@ -31,6 +31,7 @@ from ngts.helpers.performance.port_selection import (set_cli_port_selection_opti
                                                      port_selection_was_activated,
                                                      DEFAULT_PORT_SELECTION_CONFIG)
 from devts.infra.tools.exceptions.test_issue import TestIssue
+from tests.common.plugins.allure_server import get_pytest_run_cmd, PYTEST_RUN_CMD
 
 logger = logging.getLogger()
 
@@ -86,19 +87,24 @@ def pytest_configure(config):
 
 
 def pytest_runtest_setup(item):
-    """Redirect the players-command log to a per-test file, before any of the test's fixtures.
+    """Redirect the players-command log to a per-test file and attach the pytest run command,
+    before any of the test's fixtures.
 
     A conftest hookimpl runs ahead of pytest's own ``pytest_runtest_setup``, which is what
     triggers fixture setup, so this lands before every fixture for the item at every scope.
     That matters for the class-scoped ``basic_setup_configuration`` most suites use: it runs
     before any function-scoped fixture, so a fixture-based switch would attribute its
-    configuration commands to the previous test.
+    configuration commands to the previous test, and a fixture-based Allure attach would never
+    run if ``basic_setup_configuration`` itself fails.
 
     The name matches the test's MongoDB ``test_name`` so a log file and a DB record can be
     correlated; ``get_perf_test_name`` reads only ``request.node``.
     """
     init_players_cmd_logger(_players_cmd_log_run_timestamp,
                             f"{PLAYERS_CMD_LOG_PREFIX}_{get_perf_test_name(SimpleNamespace(node=item))}")
+    pytest_run_cmd = get_pytest_run_cmd(SimpleNamespace(node=item, config=item.config),
+                                        get_current_test_run_cmd=True)
+    allure.attach(pytest_run_cmd, PYTEST_RUN_CMD, allure.attachment_type.TEXT)
 
 
 def pytest_sessionfinish(session, exitstatus):
