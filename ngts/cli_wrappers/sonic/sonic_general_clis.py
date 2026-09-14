@@ -563,14 +563,15 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             output = self.engine.run_cmd('sudo generate_dump -s \"-{} seconds\"'.format(duration), validate=True)
             return output.splitlines()[-1]
 
-    def do_installation(self, topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias='dut'):
+    def do_installation(self, topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias='dut',
+                        force_uninstall=False):
         if deploy_type == 'onie':
             if 'simx' in platform_params.platform:
                 in_onie = True
             else:
                 with allure.step('Preparing switch for installation'):
                     logger.info("Begin: Preparing switch for installation ")
-                    in_onie = self.prepare_for_installation(topology_obj, dut_alias)
+                    in_onie = self.prepare_for_installation(topology_obj, dut_alias, force_uninstall=force_uninstall)
                     logger.info("End: Preparing switch for installation ")
             self.deploy_onie(image_path, in_onie, fw_pkg_path, platform_params, topology_obj, dut_alias)
 
@@ -606,7 +607,9 @@ class SonicGeneralCliDefault(GeneralCliCommon):
                 self.remote_reboot(topology_obj, dut_alias)
                 logger.info('Sleeping %s seconds to handle ssh flapping' % InfraConst.SLEEP_AFTER_RRBOOT)
                 time.sleep(InfraConst.SLEEP_AFTER_RRBOOT)
-                self.do_installation(topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias)
+                # first attempt already failed - force uninstall+reinstall on this retry
+                self.do_installation(topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias,
+                                     force_uninstall=True)
 
     def modify_init_cfg_timezone(self, timezone):
         """

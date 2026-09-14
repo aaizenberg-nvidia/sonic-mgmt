@@ -1457,6 +1457,16 @@ class SonicDeployConstants:
     SLM_GEN_MG_ALLOWLIST = ['slm-chipless-2700a1-146']
     CHIPLESS_SETUPS = ['sonic_salamandra_r-salamandra-01', 'sonic_slm-chipless-2700a1-146']
 
+    # Top-to-bottom order of the ONIE grub sub-entries, confirmed on real HW
+    ONIE_GRUB_ENTRY_DOWN_COUNT_FROM_TOP = {
+        'install': 0,
+        'rescue': 1,
+        'uninstall': 2,
+        'update_onie': 3,
+        'embed_onie': 4,
+    }
+    CLEANUP_SCRIPT_TIMEOUT = 1200
+
 
 class BmcDeployConstants:
     """

@@ -1035,6 +1035,14 @@ class DeployOrchestrator:
             wait_until_background_procs_done(pre_install_threads)
         except AssertionError:
             # Give it another try if the background processes fail
+            if is_community(self.context.sonic_topo):
+                with allure.step("Cleanup server before remove-topo/add-topo retry"):
+                    try:
+                        hypervisor_engine = self.context.topology_obj.players['hypervisor']['engine']
+                        hypervisor_engine.run_cmd("sudo ./cleanup.scale.sh", validate=False,
+                                                  timeout=SonicDeployConstants.CLEANUP_SCRIPT_TIMEOUT)
+                    except Exception as err:
+                        logger.warning(f'Cleanup script failed, retrying anyway. Got error: {err}')
             self.execute_pre_installation_steps()
             wait_until_background_procs_done(pre_install_threads)
         logger.info("Pre-installation background processes are done")
