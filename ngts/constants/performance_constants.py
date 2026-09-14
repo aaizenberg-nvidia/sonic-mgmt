@@ -1118,6 +1118,8 @@ class MRCConsts:
     # Many to one SRv6 DUT TX Util threshold was lowered to 0.73 because of bug #4527474
     TRIMMING_SRV6_DUT_TX_UTIL_TH = 0.73
     CL_TRIMMING_DUT_TX_UTIL_TH = 0.5
+    # SPC6 trimming DUT TX Util threshold was lowered to 0.85 because of bug #5239628
+    SPC6_TRIMMING_DUT_TX_UTIL_TH = 0.85
     BUFFER_CELL_SIZE = 192
     BUFFER_CELL_SIZE_SPC6 = 256
     BUFFER_CELL_SIZE_BY_CHIP_TYPE = {
