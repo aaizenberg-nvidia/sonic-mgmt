@@ -7,7 +7,6 @@ import logging
 import os
 import random
 import smtplib
-import subprocess
 import time
 import json
 from email.mime.text import MIMEText
@@ -27,6 +26,7 @@ from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 from ngts.helpers.object_filters import filter_objects
 from ngts.nvos_tools.infra.BmcTool import BmcTool
+from ngts.tools.infra import reset_ansible_ssh_control_masters
 from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL
 from ngts.cli_wrappers.linux.linux_general_clis import LinuxGeneralCli
 from ngts.cli_wrappers.nvue.nvue_base_clis import NvueBaseCli
@@ -382,49 +382,6 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                 pass
 
 
-def _reset_ansible_ssh_control_masters():
-    """Close ansible's ssh ControlMaster sockets so the next ansible task reconnects.
-
-    A reboot under test kills the remote sshd session, but ansible.cfg uses
-    'ControlMaster=auto -o ControlPersist=7200s' with a ~35-minute ServerAlive window
-    (ServerAliveInterval=30 * ServerAliveCountMax=70), so the local master socket keeps
-    multiplexing to the dead session and every subsequent ansible task (loganalyzer
-    analyze_logs, sysdumps, serial log analyzer) blocks until the pytest test timeout.
-    Rebuilding the host object does NOT help: ControlMaster=auto re-attaches to the same
-    dead master. We must drop the master itself.
-
-    ansible's default ControlPath is a hash ('%C'), so we cannot map a socket back to a
-    host; for a reboot test it is safe to close them all -- any unrelated master simply
-    reconnects on next use. 'ssh -O exit' only talks to the local control socket (no
-    network), so it cannot hang; we still bound it and fall back to removing the socket file.
-    """
-    cp_dir = os.path.join(os.environ.get("ANSIBLE_HOME", os.path.expanduser("~/.ansible")), "cp")
-    try:
-        sockets = [os.path.join(cp_dir, name) for name in os.listdir(cp_dir)]
-    except OSError:
-        sockets = []
-    closed = 0
-    for sock in sockets:
-        closed_this = False
-        try:
-            res = subprocess.run(["ssh", "-O", "exit", "-o", "ControlPath={}".format(sock), "none"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
-            closed_this = res.returncode == 0
-        except (subprocess.TimeoutExpired, OSError):
-            closed_this = False
-        if not closed_this:
-            # ssh -O exit did not confirm a clean close (no/wedged master or timeout):
-            # remove the socket file so a fresh master is created on the next connect.
-            try:
-                os.unlink(sock)
-                closed_this = True
-            except OSError:
-                pass
-        if closed_this:
-            closed += 1
-    logging.info("Reset %d ansible ssh ControlMaster socket(s) under %s after reboot", closed, cp_dir)
-
-
 @pytest.fixture(autouse=True)
 def reset_ansible_connection_after_reboot(loganalyzer):
     """Refresh the ansible ssh connection after any test that rebooted the DUT.
@@ -452,7 +409,7 @@ def reset_ansible_connection_after_reboot(loganalyzer):
     if getattr(pytest, 'dut_rebooted', False):
         pytest.dut_rebooted = False
         with allure.step('Reset ansible ssh ControlMaster after reboot'):
-            _reset_ansible_ssh_control_masters()
+            reset_ansible_ssh_control_masters()
 
 
 @pytest.fixture(scope='session')
