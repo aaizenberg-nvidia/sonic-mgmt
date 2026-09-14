@@ -13,11 +13,11 @@
     },
     "r-bobcat-09_setup": {
         "default_hwsku": "Mellanox-SN4280-O8C40",
-        "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O8C40", "Mellanox-SN4280-O4X96"]
+        "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O4X96"]
     },
     "r-bobcat-10_setup": {
         "default_hwsku": "Mellanox-SN4280-O8C40",
-        "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O8C40", "Mellanox-SN4280-O4X96"]
+        "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O4X96"]
     },
     "sonic-bobcat-01-03-ha": {
         "default_hwsku": "Mellanox-SN4280-O8C40",
