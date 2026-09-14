@@ -1,6 +1,7 @@
 import pytest
 import pathlib
 import os
+import subprocess
 import sys
 import logging
 import json
@@ -271,3 +272,50 @@ def patch_ansible_shell_action_module():
             logger.debug("ActionModule already exists, patch skipped.")
     except Exception as e:
         logger.warning(f"Failed to patch ansible shell plugin: {e}")
+
+
+def reset_ansible_ssh_control_masters():
+    """Close ansible's ssh ControlMaster sockets so the next ansible task reconnects.
+
+    ansible.cfg uses 'ControlMaster=auto -o ControlPersist=7200s', so a local master
+    socket outlives the pytest process that created it and gets reused by the next one
+    (e.g. the next CI job on the same executor). If the DUT rebooted or was reimaged in
+    between, the remote sshd session behind that master is dead, but ControlMaster=auto
+    re-attaches to it anyway: the reused master returns rc=254 with empty stdout/stderr,
+    which ansible then fails to parse as JSON ('MODULE FAILURE: No start of json char
+    found'). Rebuilding the host object does NOT help; we must drop the master itself.
+
+    ansible's default ControlPath is a hash ('%C'), so we cannot map a socket back to a
+    host; it is safe to close them all -- any unrelated master simply reconnects on next
+    use. 'ssh -O exit' only talks to the local control socket (no network), so it cannot
+    hang; we still bound it and fall back to removing the socket file.
+
+    The socket directory follows ansible's ssh connection plugin: option control_path_dir,
+    env ANSIBLE_SSH_CONTROL_PATH_DIR, default '~/.ansible/cp'. It is NOT relative to
+    ANSIBLE_HOME.
+    """
+    cp_dir = os.path.expanduser(os.environ.get("ANSIBLE_SSH_CONTROL_PATH_DIR", "~/.ansible/cp"))
+    try:
+        sockets = [os.path.join(cp_dir, name) for name in os.listdir(cp_dir)]
+    except OSError:
+        sockets = []
+    closed = 0
+    for sock in sockets:
+        closed_this = False
+        try:
+            res = subprocess.run(["ssh", "-O", "exit", "-o", "ControlPath={}".format(sock), "none"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            closed_this = res.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            closed_this = False
+        if not closed_this:
+            # ssh -O exit did not confirm a clean close (no/wedged master or timeout):
+            # remove the socket file so a fresh master is created on the next connect.
+            try:
+                os.unlink(sock)
+                closed_this = True
+            except OSError:
+                pass
+        if closed_this:
+            closed += 1
+    logger.info("Reset %d ansible ssh ControlMaster socket(s) under %s", closed, cp_dir)

@@ -41,7 +41,7 @@ from ngts.tests.nightly.app_extension.app_extension_helper import APP_INFO, get_
 from ngts.tools.allure_report.allure_report_attacher import add_fixture_end_tag, add_fixture_name, \
     clean_stored_cmds_with_fixture_scope, update_fixture_scope_list, enable_record_cmds
 from ngts.tools.infra import get_platform_info, get_devinfo, is_deploy_run, get_chip_type
-from ngts.tools.infra import get_topology_from_noga
+from ngts.tools.infra import get_topology_from_noga, reset_ansible_ssh_control_masters
 from ngts.tools.test_utils.nvos_general_utils import get_switch_type, is_ipv6_setup
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.scripts.allure_summary.bug_marker import apply_bug_markers, finalize_bug_categories
@@ -81,6 +81,9 @@ def pytest_sessionstart(session: pytest.Session):
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_PLATFORM_TYPE, None)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_BRANCH_NAME, None)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_IMAGE_TYPE, None)
+
+    # Must run before collection: conditional_mark already shells out to ansible there.
+    reset_ansible_ssh_control_masters()
 
     # Disable stream logging if pytest is running in live mode
     _disable_logging_root_handlers()
