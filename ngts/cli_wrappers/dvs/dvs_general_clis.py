@@ -43,7 +43,7 @@ class DvsGeneralCli(GeneralCliCommon):
         Internal method to install SDK and FW with debian flag control
         """
         di_flag = "-di" if debian_enabled else ""
-        install_cmd = "sdk_install -v {} {} && fw_burn -v {} -f --ocr".format(sdk_version, di_flag, fw_version)
+        install_cmd = "sdk_install -v {} {} && fw_burn -v {} -f -m --ocr".format(sdk_version, di_flag, fw_version)
         self.engine.run_cmd(install_cmd, validate=True)
 
     def install_sdk_and_burn_fw_flow(self, sdk_version):
