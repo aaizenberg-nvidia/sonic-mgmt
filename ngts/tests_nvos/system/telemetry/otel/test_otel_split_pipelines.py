@@ -1,4 +1,12 @@
-"""Cumulus lab: OTEL split-pipeline stats-group tests (SSIM ``test_telemetry_split_pipelines``)."""
+"""OTEL split-pipeline stats-group tests (SSIM ``test_telemetry_split_pipelines``).
+
+Ported from Cumulus and adjusted to also run on NVOS. The split-pipeline intent
+(a ``test_01`` stats-group bound to the primary collector overriding root
+sample-intervals) is preserved on both platforms. NVOS only exports the families
+it supports (interface-stats + platform-stats classes) — histogram / buffer-stats /
+control-plane-stats / lldp / software-stats subtrees are Cumulus-only, so the NVOS
+branch stages a narrower stats-group and validates a trimmed set of expected gaps.
+"""
 
 import pytest
 
@@ -8,6 +16,7 @@ from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 from ngts.tests_nvos.system.telemetry.otel.cumulus.split_pipeline import (
     apply_split_pipeline_test01_stats_group,
+    apply_split_pipeline_test01_stats_group_nvos,
     prepare_split_pipeline_insecure_pre_run,
     prepare_split_pipeline_secured_pre_run,
     run_split_pipeline_test01_verification,
@@ -28,15 +37,33 @@ def test01_otel_telemetry_split_mgmt_vrf_TLS(
     engines, otel_suite_mgmt_secured, test_api, tmp_path,
 ):
     TestToolkit.tested_api = test_api
-    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    suite = otel_suite_mgmt_secured
+    vrf = suite.export_vrf
     cur_dir = str(tmp_path)
-    collector = otel_suite_mgmt_secured.primary
+    collector = suite.primary
+
+    if suite.is_nvos:
+        with allure.step("Apply split-pipeline test_01 stats-group (NVOS, TLS)"):
+            apply_split_pipeline_test01_stats_group_nvos(
+                engines.dut, suite.primary_ip, export_vrf=vrf,
+            )
+        run_split_pipeline_test01_verification(
+            engines.dut,
+            collector,
+            cur_dir,
+            vrf=vrf,
+            expected_gaps=CumulusOtelConst.NVOS_SPLIT_EXPECTED_GAPS,
+            prepare_session=False,
+            telemetry_unit=suite.telemetry_unit,
+            family_map=list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP),
+        )
+        return
 
     prepare_split_pipeline_secured_pre_run(engines.dut, collector, vrf=vrf)
     with allure.step("Apply split-pipeline test_01 stats-group (mgmt VRF TLS)"):
         apply_split_pipeline_test01_stats_group(
             engines.dut,
-            otel_suite_mgmt_secured.primary_ip,
+            suite.primary_ip,
             include_router_lldp=False,
         )
 
@@ -54,9 +81,29 @@ def test01_otel_telemetry_split_mgmt_vrf_No_TLS(
     engines, otel_suite_mgmt, test_api, tmp_path,
 ):
     TestToolkit.tested_api = test_api
-    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    suite = otel_suite_mgmt
+    vrf = suite.export_vrf
     cur_dir = str(tmp_path)
-    collector = otel_suite_mgmt.primary
+    collector = suite.primary
+
+    if suite.is_nvos:
+        with allure.step("Verify OTLP session before split-pipeline overlay"):
+            assert_otlp_session_established(collector)
+        with allure.step("Apply split-pipeline test_01 stats-group (NVOS, insecure)"):
+            apply_split_pipeline_test01_stats_group_nvos(
+                engines.dut, suite.primary_ip, export_vrf=vrf,
+            )
+        run_split_pipeline_test01_verification(
+            engines.dut,
+            collector,
+            cur_dir,
+            vrf=vrf,
+            expected_gaps=CumulusOtelConst.NVOS_SPLIT_EXPECTED_GAPS,
+            prepare_session=False,
+            telemetry_unit=suite.telemetry_unit,
+            family_map=list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP),
+        )
+        return
 
     prepare_split_pipeline_insecure_pre_run(engines.dut, vrf=vrf)
     with allure.step("Verify OTLP session before split-pipeline overlay"):
@@ -65,7 +112,7 @@ def test01_otel_telemetry_split_mgmt_vrf_No_TLS(
     with allure.step("Apply split-pipeline test_01 stats-group (mgmt VRF insecure)"):
         apply_split_pipeline_test01_stats_group(
             engines.dut,
-            otel_suite_mgmt.primary_ip,
+            suite.primary_ip,
             include_router_lldp=True,
         )
 

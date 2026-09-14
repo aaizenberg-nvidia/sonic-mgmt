@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _CERTS_SCRIPT_DIR = os.path.join(os.path.dirname(__file__), "certs_gen_scripts")
 _CA_IMPORT_RETRIES = 3
 _CA_IMPORT_RETRY_DELAY_SEC = 2
+_SCP_UPLOAD_RETRIES = 5
 
 
 @dataclass(frozen=True)
@@ -151,50 +152,87 @@ def _upload_local_file_to_dut(dut, local_path: str, remote_path: str) -> None:
     """Upload a file to the DUT (SSIM ``device.put`` / NGTS ``copy_file`` parity)."""
     remote_dir = os.path.dirname(remote_path) or "/tmp"
     remote_name = os.path.basename(remote_path)
-    dut.copy_file(
-        source_file=local_path,
-        dest_file=remote_name,
-        file_system=remote_dir,
-        direction="put",
+    last_err = None
+    for attempt in range(1, _SCP_UPLOAD_RETRIES + 1):
+        try:
+            dut.copy_file(
+                source_file=local_path,
+                dest_file=remote_name,
+                file_system=remote_dir,
+                direction="put",
+            )
+        except Exception as exc:
+            last_err = exc
+            logger.warning(
+                "SCP upload attempt %d/%d failed for %r: %s",
+                attempt,
+                _SCP_UPLOAD_RETRIES,
+                local_path,
+                exc,
+            )
+            time.sleep(_CA_IMPORT_RETRY_DELAY_SEC * attempt)
+            continue
+        if remote_name in dut.run_cmd(
+            f"ls {shlex.quote(remote_path)} 2>&1",
+            validate=False,
+            print_output=False,
+        ):
+            return
+        last_err = RuntimeError(f"remote verify failed for {remote_path!r}")
+        logger.warning(
+            "SCP verify attempt %d/%d failed for %r",
+            attempt,
+            _SCP_UPLOAD_RETRIES,
+            remote_path,
+        )
+        time.sleep(_CA_IMPORT_RETRY_DELAY_SEC * attempt)
+    pytest.fail(
+        f"Failed to upload {local_path!r} to DUT {remote_path!r} "
+        f"after {_SCP_UPLOAD_RETRIES} attempts: {last_err!r}"
     )
-    if remote_name not in dut.run_cmd(
-        f"ls {shlex.quote(remote_path)} 2>&1",
-        validate=False,
-        print_output=False,
-    ):
-        pytest.fail(f"Failed to upload {local_path!r} to DUT {remote_path!r}")
 
 
-def _delete_dut_ca_certificate_if_present(dut, ca_name: str) -> None:
-    """Remove NVUE CA cert if present (SSIM ``OtelMgmtVrfWithTLSConfig`` pre-import delete)."""
+def _nvue_ca_certificate_present(dut, ca_name: str) -> bool:
+    """True when NVUE still holds ``ca_name`` (CA store or on-disk nvue dir)."""
     nvue_ca_dir = "/usr/local/share/ca-certificates/nvue"
-    cert_present = dut.run_cmd(
+    listing = dut.run_cmd(
         f"ls -1 {shlex.quote(nvue_ca_dir)} 2>/dev/null",
         validate=False,
         print_output=False,
     )
-    if f"{ca_name}.crt" in cert_present.splitlines():
-        logger.info("Deleting pre-existing NVUE CA certificate %r on DUT", ca_name)
-        dut.run_cmd(
-            f"nv action delete system security ca-certificate {ca_name}",
-            validate=False,
-        )
-        time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
-        return
-
+    if f"{ca_name}.crt" in (listing or "").splitlines():
+        return True
     show = dut.run_cmd(
         f"nv show system security ca-certificate {ca_name} -o json 2>&1",
         validate=False,
         print_output=False,
     )
-    if "Error:" in show or "does not exist" in show.lower():
-        return
-    logger.info("Deleting pre-existing NVUE CA certificate %r on DUT", ca_name)
-    dut.run_cmd(
-        f"nv action delete system security ca-certificate {ca_name}",
-        validate=False,
-    )
-    time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
+    return not ("Error:" in show or "does not exist" in (show or "").lower())
+
+
+def _delete_dut_ca_certificate_if_present(dut, ca_name: str) -> None:
+    """Remove NVUE CA cert if present (SSIM ``OtelMgmtVrfWithTLSConfig`` pre-import delete).
+
+    Retries: while a gnmi-server or grpc-tunnel still references the CA, ``nv action
+    delete`` is a no-op and the next import fails with "already exists".
+    """
+    for attempt in range(1, _CA_IMPORT_RETRIES + 1):
+        if not _nvue_ca_certificate_present(dut, ca_name):
+            return
+        logger.info("Deleting pre-existing NVUE CA certificate %r (try %d)", ca_name, attempt)
+        dut.run_cmd(
+            f"nv action delete system security ca-certificate {ca_name}",
+            validate=False,
+        )
+        time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
+        if not _nvue_ca_certificate_present(dut, ca_name):
+            return
+        dut.run_cmd(
+            f"nv unset system security ca-certificate {ca_name} -y && nv config apply -y",
+            validate=False,
+            print_output=False,
+        )
+        time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
 
 
 def _regenerate_ca_crt_on_dut(dut, *, ca_key_path: str, ca_crt_path: str) -> None:
@@ -213,7 +251,7 @@ cat > /tmp/otel-ca-ext.cnf <<'CAEOF'
 basicConstraints = CA:TRUE
 CAEOF
 openssl req -key {key_q} -new -sha256 -out /tmp/otel-ca.csr \\
-  -subj "/CN=US/ST=CA/L=Santa Clara/O=NVIDIA Corporation/OU=NBU/CN=ca"
+  -subj "/C=US/ST=CA/L=Santa Clara/O=NVIDIA Corporation/OU=NBU/CN=ca"
 openssl x509 -signkey {key_q} -in /tmp/otel-ca.csr -sha256 -req -days 365 \\
   -out {crt_q} -extensions v3_ca -extfile /tmp/otel-ca-ext.cnf
 chmod 644 {crt_q}
@@ -246,6 +284,8 @@ def _import_ca_certificate_on_dut(dut, ca_name: str, staged_path: str) -> str:
         if "Succeeded in importing" in import_out:
             break
         logger.warning("CA import attempt %d/%d did not succeed yet", attempt, _CA_IMPORT_RETRIES)
+        if "already exists" in (import_out or "").lower():
+            _delete_dut_ca_certificate_if_present(dut, ca_name)
         time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
     return import_out
 
@@ -311,10 +351,12 @@ def install_ca_on_dut(
     staged_key = CumulusOtelConst.OTEL_TLS_DUT_CA_KEY_STAGING
     from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
         cleanup_stale_nvue_censor_files,
+        settle_dut_ssh_after_module_transition,
     )
 
     with allure.step(f"Import CA certificate {ca_name!r} on DUT"):
         cleanup_stale_nvue_censor_files(dut)
+        settle_dut_ssh_after_module_transition(dut, settle_sec=3)
         _delete_dut_ca_certificate_if_present(dut, ca_name)
         dut.run_cmd(f"sudo rm -f {shlex.quote(staged)} {shlex.quote(staged_key)}", validate=False)
         _upload_local_file_to_dut(dut, material.local_ca_key, staged_key)

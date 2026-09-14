@@ -21,13 +21,15 @@ pytestmark = [
 ]
 
 
-def test_otel_platform_stats_metrics_present(engines, devices, otel_suite, is_ib_router, tmp_path):
+@pytest.mark.multiple_otlp_collectors
+def test_otel_platform_stats_metrics_present(engines, devices, otel_suite_dual, is_ib_router, tmp_path):
     """Enable platform-stats only and assert expected metric names appear on both collectors."""
     enable_nvos_telemetry_families(
         engines.dut,
-        otel_suite.primary_ip,
+        otel_suite_dual.primary_ip,
         [TelemetryConsts.PLATFORM_STATS],
-        collector_ips=(otel_suite.primary_ip, otel_suite.secondary_ip),
+        collector_ips=otel_suite_dual.collector_ips,
+        use_stats_group=False,
     )
 
     expected = expected_metric_names_from_dut(
@@ -44,13 +46,13 @@ def test_otel_platform_stats_metrics_present(engines, devices, otel_suite, is_ib
     )
 
     primary_names = collect_metric_names_window(
-        otel_suite.primary,
+        otel_suite_dual.primary,
         str(tmp_path),
         label="primary-platform",
         max_sample_interval_sec=OtelCollectorConst.PLATFORM_STATS_SAMPLE_INTERVAL_SEC,
     )
     secondary_names = collect_metric_names_window(
-        otel_suite.secondary,
+        otel_suite_dual.secondary,
         str(tmp_path),
         label="secondary-platform",
         max_sample_interval_sec=OtelCollectorConst.PLATFORM_STATS_SAMPLE_INTERVAL_SEC,
@@ -66,7 +68,8 @@ def test_otel_all_metrics_present(engines, devices, otel_suite, is_ib_router, tm
         engines.dut,
         otel_suite.primary_ip,
         TelemetryConsts.ALL_STATS_SUBTREES,
-        collector_ips=(otel_suite.primary_ip, otel_suite.secondary_ip),
+        collector_ips=otel_suite.collector_ips,
+        use_stats_group=False,
     )
 
     expected = expected_metric_names_from_dut(

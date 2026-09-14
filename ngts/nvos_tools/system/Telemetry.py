@@ -6,10 +6,10 @@ each subtree is a `BaseComponent` that owns its `path` fragment, and attaches
 its children in `__init__`. Generic `show`/`set`/`unset` are inherited from
 `BaseComponent`, so no per-command CLI wiring is needed.
 
-The four "stats" subtrees (`interface-stats`, `peer-port-stats`,
-`ib-router-stats`, `platform-stats`) live BOTH at the telemetry root and
-inside every `stats-group <id>`. The same classes are instantiated under both
-parents.
+The "stats" subtrees (`interface-stats`, `peer-port-stats`,
+`ib-router-stats`, `platform-stats`, `software-stats`) live BOTH at the
+telemetry root and inside every `stats-group <id>`. The same classes are
+instantiated under both parents.
 """
 import logging
 
@@ -174,8 +174,72 @@ class PlatformStats(BaseComponent):
 
 
 # =========================================================================
+# software-stats / systemd (export + unit-profile/<id>/unit/<id>)
+# =========================================================================
+
+class _SoftwareStatsSystemdExport(BaseComponent):
+    """`software-stats/systemd/export` — settable leaf: `state` (enabled|disabled)."""
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/export')
+
+
+class SoftwareStatsUnitProfileUnits(_CollectionBase):
+    """`software-stats/systemd/unit-profile/<id>/unit` collection.
+
+    Each `<unit-id>` is a keyed member set with an empty body (see `_CollectionBase`).
+    """
+
+    def __init__(self, parent_obj):
+        _CollectionBase.__init__(self, parent_obj=parent_obj, path='/unit')
+
+
+class SoftwareStatsUnitProfile(BaseComponent):
+    """A single `software-stats/systemd/unit-profile/<id>` instance. Child: `unit`."""
+
+    def __init__(self, parent_obj, profile_id):
+        BaseComponent.__init__(self, parent=parent_obj, path='/' + profile_id)
+        self.profile_id = profile_id
+        self.unit = SoftwareStatsUnitProfileUnits(self)
+
+
+class SoftwareStatsUnitProfiles(_CollectionBase):
+    """`software-stats/systemd/unit-profile` collection of `SoftwareStatsUnitProfile`."""
+
+    def __init__(self, parent_obj):
+        _CollectionBase.__init__(self, parent_obj=parent_obj, path='/unit-profile')
+
+    def _create_resource(self, resource_id):
+        return SoftwareStatsUnitProfile(self, resource_id)
+
+
+class _SoftwareStatsSystemd(BaseComponent):
+    """`software-stats/systemd`.
+
+    Settable leaves: `active-profile`, `process-level` (enabled|disabled),
+    `sample-interval`. Children: `export`, `unit-profile`.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/systemd')
+        self.export = _SoftwareStatsSystemdExport(self)
+        self.unit_profile = SoftwareStatsUnitProfiles(self)
+
+
+class SoftwareStats(BaseComponent):
+    """`telemetry/software-stats` subtree (also reused under `stats-group/<id>`).
+
+    Child: `systemd`.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/software-stats')
+        self.systemd = _SoftwareStatsSystemd(self)
+
+# =========================================================================
 # export / otlp / grpc|http / destination
 # =========================================================================
+
 
 class TelemetryOtlpDestination(BaseComponent):
     """Single `<protocol>/destination/<id>` instance.
@@ -246,6 +310,30 @@ class TelemetryExport(BaseComponent):
 
 
 # =========================================================================
+# logs / export  (syslog-over-OTEL)
+# =========================================================================
+
+class TelemetryLogsExport(BaseComponent):
+    """`telemetry/logs/export`.
+
+    Settable leaf: `state` (enabled|disabled) — the syslog-over-OTEL master knob
+    (`nv set system telemetry logs export state …`). Forwarding is only active
+    once OTLP export with a destination is also configured.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/export')
+
+
+class TelemetryLogs(BaseComponent):
+    """`telemetry/logs`. Child: `export`."""
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/logs')
+        self.export = TelemetryLogsExport(self)
+
+
+# =========================================================================
 # label / <label-id>
 # =========================================================================
 
@@ -285,6 +373,7 @@ class TelemetryStatsGroup(BaseComponent):
         self.peer_port_stats = PeerPortStats(self)
         self.ib_router_stats = IbRouterStats(self)
         self.platform_stats = PlatformStats(self)
+        self.software_stats = SoftwareStats(self)
 
 
 class TelemetryStatsGroups(_CollectionBase):
@@ -311,9 +400,11 @@ class Telemetry(BaseComponent):
     def __init__(self, parent_obj=None):
         BaseComponent.__init__(self, parent=parent_obj, path='/telemetry')
         self.export = TelemetryExport(self)
+        self.logs = TelemetryLogs(self)
         self.label = TelemetryLabels(self)
         self.interface_stats = InterfaceStats(self)
         self.peer_port_stats = PeerPortStats(self)
         self.ib_router_stats = IbRouterStats(self)
         self.platform_stats = PlatformStats(self)
+        self.software_stats = SoftwareStats(self)
         self.stats_group = TelemetryStatsGroups(self)

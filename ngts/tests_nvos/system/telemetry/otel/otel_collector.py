@@ -162,13 +162,12 @@ class OtelCollector:
                     )
                     return latest
                 time.sleep(retry_interval_sec)
-            self._probe_artifact_on_collector(poll_attempt=attempt, final=True)
+            probe = self._probe_artifact_on_collector(poll_attempt=attempt, final=True)
             self._maybe_artifact_breakpoint("wait_for_artifact_timeout")
         pytest.fail(
             f"OTEL output artifact not found within {timeout_sec}s "
             f"({self.output_json_path}, {self.output_json_rotated_glob}). "
-            "Set OTEL_ARTIFACT_DEBUG=1 to break into pdb before this failure. "
-            "Search logs for OTEL_ARTIFACT_PROBE and OTEL_ARTIFACT_LOCATE."
+            f"Collector probe:\n{probe[-3000:]}"
         )
 
     def fetch_artifact(

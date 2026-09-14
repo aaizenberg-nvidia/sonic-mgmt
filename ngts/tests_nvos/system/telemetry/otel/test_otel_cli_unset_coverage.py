@@ -1,32 +1,97 @@
-"""Cumulus lab: NV unset CLI coverage (SSIM ``Test_Otel_Mgmt_Vrf_Insecure_CLI_Coverage``)."""
+"""NV unset CLI coverage (SSIM ``Test_Otel_Mgmt_Vrf_Insecure_CLI_Coverage``).
+
+Runs on NVOS and Cumulus. Histogram / interface-stats-buffer unsets are Cumulus-only
+(no NVOS equivalent) and stay marked ``cumulus_only``.
+"""
 
 import pytest
 
-from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_constants.constants_nvos import ApiType, TelemetryConsts
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
     apply_unset_changes,
+    expected_stats_group_platform_stats_classes_after_unset_pre114,
+    expected_stats_group_platform_stats_classes_after_unset_test15b,
+    expected_stats_group_platform_stats_classes_after_unset_v114,
     get_interface_telemetry_labels_applied,
     get_system_interface_stats_egress_tc_applied,
+    get_system_otlp_destination_applied,
+    get_system_platform_stats_class_platform_info_applied,
+    get_system_platform_stats_class_transceiver_info_applied,
+    get_system_telemetry_adaptive_routing_stats_applied,
+    get_system_telemetry_buffer_stats_applied,
+    get_system_telemetry_buffer_stats_export_applied,
+    get_system_telemetry_control_plane_stats_applied,
+    get_system_telemetry_control_plane_stats_export_applied,
+    get_system_telemetry_control_plane_stats_sample_interval_applied,
+    get_system_telemetry_export_otlp_applied,
+    get_system_telemetry_export_otlp_grpc_applied,
+    get_system_telemetry_histogram_applied,
+    get_system_telemetry_histogram_export_applied,
+    get_system_telemetry_interface_stats_applied,
+    get_system_telemetry_interface_stats_export_applied,
+    get_system_telemetry_interface_stats_sample_interval_applied,
+    get_system_telemetry_platform_stats_applied,
+    get_system_telemetry_platform_stats_export_applied,
+    get_system_telemetry_software_stats_applied,
+    get_system_telemetry_software_stats_systemd_applied,
+    get_system_telemetry_software_stats_systemd_export_applied,
+    get_system_telemetry_software_stats_systemd_unit_profile_applied,
+    get_system_telemetry_stats_group_buffer_stats_export_applied,
+    get_system_telemetry_stats_group_router_applied,
+    get_system_telemetry_stats_group_router_export_applied,
+    get_system_telemetry_stats_groups_applied,
+    platform_stats_classes_for_unset,
     require_cumulus_at_least,
+    require_cumulus_equal,
+    restore_otlp_destination_stats_group_binding,
+    set_system_telemetry_histogram,
     swp_interfaces_for_unset,
     unset_interface_histogram_counter,
     unset_interface_histogram_egress_tc,
     unset_interface_histogram_ingress_pg,
     unset_interface_histogram_latency_tc,
     unset_interface_label,
+    unset_system_interface_stats_class_phy,
     unset_system_otlp_destination_port,
+    unset_system_otlp_destination_stats_group,
     unset_system_platform_stats_class,
     unset_system_platform_stats_class_platform_info,
-    get_system_platform_stats_class_platform_info_applied,
+    unset_system_platform_stats_class_transceiver_info,
+    unset_system_telemetry_adaptive_routing_stats,
+    unset_system_telemetry_adaptive_routing_stats_export,
+    unset_system_telemetry_buffer_stats,
+    unset_system_telemetry_buffer_stats_export,
+    unset_system_telemetry_control_plane_stats,
+    unset_system_telemetry_control_plane_stats_export,
+    unset_system_telemetry_control_plane_stats_sample_interval,
+    unset_system_telemetry_export_otlp,
+    unset_system_telemetry_export_otlp_grpc,
+    unset_system_telemetry_histogram,
+    unset_system_telemetry_histogram_export,
+    unset_system_telemetry_interface_stats,
     unset_system_telemetry_interface_stats_egress_tc,
+    unset_system_telemetry_interface_stats_export,
     unset_system_telemetry_interface_stats_ingress_pg,
+    unset_system_telemetry_interface_stats_sample_interval,
     unset_system_telemetry_label,
-    unset_system_interface_stats_class_phy,
+    unset_system_telemetry_platform_stats,
+    unset_system_telemetry_platform_stats_export,
+    unset_system_telemetry_software_stats,
+    unset_system_telemetry_software_stats_systemd,
+    unset_system_telemetry_software_stats_systemd_export,
+    unset_system_telemetry_software_stats_systemd_unit_profile,
+    unset_system_telemetry_software_stats_systemd_unit_profile_unit,
+    unset_system_telemetry_stats_group,
+    unset_system_telemetry_stats_group_buffer_stats_export,
+    unset_system_telemetry_stats_group_router,
+    unset_system_telemetry_stats_group_router_export,
+    validate_unset_stats_group_platform_stats,
 )
 
 pytestmark = [
-    pytest.mark.cumulus,
+    pytest.mark.system,
     pytest.mark.otel,
     pytest.mark.otel_unset,
     pytest.mark.skip_clear_config,
@@ -39,6 +104,7 @@ def _require_cli_coverage_baseline(otel_cli_coverage_baseline):
     return otel_cli_coverage_baseline
 
 
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test01a_otlp_interface_unset_cli_validations(engines, test_api):
     """SSIM test01a: unset interface histogram ingress PG and egress TC."""
@@ -52,6 +118,7 @@ def test01a_otlp_interface_unset_cli_validations(engines, test_api):
     apply_unset_changes(engines.dut)
 
 
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test01b_otlp_interface_unset_cli_validations(engines, test_api):
     """SSIM test01b: unset interface histogram latency TC and counter."""
@@ -73,7 +140,6 @@ def test01c_otlp_interface_unset_cli_validations(engines, test_api):
     for iface in swp_interfaces_for_unset(engines.dut):
         for label in labels:
             unset_interface_label(engines.dut, iface, label)
-    # SSIM queues label unsets without apply; test02 applies and verifies l5–l10 remain.
 
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
@@ -97,9 +163,10 @@ def test02_otlp_interface_unset_cli_validations(engines, test_api):
     assert out == expected, "nv unset interface telemetry label failed"
 
 
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
-    """SSIM test03a: unset system interface-stats TC/PG and secondary destination port."""
+    """SSIM test03a: unset system interface-stats TC/PG and the last destination's port."""
     TestToolkit.tested_api = test_api
     require_cumulus_at_least(engines.dut, "5.10.0")
     for tc in ("0", "1", "4"):
@@ -110,7 +177,7 @@ def test03a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baselin
             "nv unset system telemetry interface-stats egress-buffer traffic-class failed"
         )
     unset_system_otlp_destination_port(
-        engines.dut, otel_cli_coverage_baseline.secondary_ip
+        engines.dut, otel_cli_coverage_baseline.collector_ips[-1]
     )
     for pg in ("0", "5", "6", "7"):
         unset_system_telemetry_interface_stats_ingress_pg(engines.dut, pg)
@@ -159,16 +226,12 @@ def test04b_otlp_system_unset_cli_validations(engines, test_api):
 
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
-def test05_otlp_system_unset_cli_validations(engines, test_api):
-    """SSIM test05: unset platform-stats class cpu/disk/environment/file-system/memory."""
+def test05_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test05: unset platform-stats classes (per-platform class set)."""
     TestToolkit.tested_api = test_api
     require_cumulus_at_least(engines.dut, "5.11.0")
-    for platform_class in (
-        "cpu",
-        "disk",
-        "environment-sensor",
-        "file-system",
-        "memory",
+    for platform_class in platform_stats_classes_for_unset(
+        otel_cli_coverage_baseline.is_nvos
     ):
         unset_system_platform_stats_class(
             engines.dut, platform_class, key="sample-interval", value=""
@@ -180,18 +243,31 @@ def test05_otlp_system_unset_cli_validations(engines, test_api):
 
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
-def test05a_otlp_system_unset_cli_validations(engines, test_api):
-    """SSIM test05a: unset root platform-info sample-interval, state, then class."""
+def test05a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test05a: unset platform-info sample-interval, state, then class.
+
+    NVOS keeps the platform-stats sample-interval default on ``platform-stats export``,
+    not per class, so unset of ``sample-interval`` leaves nothing rendered on the class
+    (vs the rendered ``sample-interval 60`` on Cumulus). Unset of ``state`` reverts to the
+    default ``enabled`` on both platforms, so the fully-unset class still renders
+    ``state enabled`` (NVOS) or ``sample-interval 60`` + ``state enabled`` (Cumulus).
+    """
     TestToolkit.tested_api = test_api
+    is_nvos = otel_cli_coverage_baseline.is_nvos
     require_cumulus_at_least(engines.dut, "5.14.0")
     unset_system_platform_stats_class_platform_info(
         engines.dut, key="sample-interval", value=""
     )
     apply_unset_changes(engines.dut)
     out = get_system_platform_stats_class_platform_info_applied(engines.dut)
-    assert out.get("sample-interval") == 60, (
-        "nv unset system telemetry platform-stats class platform-info sample-interval failed"
-    )
+    if is_nvos:
+        assert "sample-interval" not in out, (
+            "nv unset system telemetry platform-stats class platform-info sample-interval failed"
+        )
+    else:
+        assert out.get("sample-interval") == 60, (
+            "nv unset system telemetry platform-stats class platform-info sample-interval failed"
+        )
     unset_system_platform_stats_class_platform_info(engines.dut, key="state", value="")
     apply_unset_changes(engines.dut)
     out = get_system_platform_stats_class_platform_info_applied(engines.dut)
@@ -201,6 +277,640 @@ def test05a_otlp_system_unset_cli_validations(engines, test_api):
     unset_system_platform_stats_class_platform_info(engines.dut)
     apply_unset_changes(engines.dut)
     out = get_system_platform_stats_class_platform_info_applied(engines.dut)
-    assert out == {"sample-interval": 60, "state": "enabled"}, (
+    expected = {"state": "enabled"} if is_nvos else {"sample-interval": 60, "state": "enabled"}
+    assert out == expected, (
         "nv unset system telemetry platform-stats class platform-info failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test06a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test06a: unset system telemetry interface-stats export state.
+
+    ``nv unset system telemetry interface-stats export state`` → applied state disabled.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_interface_stats_export(engines.dut, key="state", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_interface_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry interface-stats export state failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# NVOS has no control-plane-stats family (absent from TelemetryConsts.ALL_STATS_SUBTREES).
+@pytest.mark.cumulus_only
+def test06b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test06b: unset system telemetry control-plane-stats export state.
+
+    ``nv unset system telemetry control-plane-stats export state`` → applied state disabled.
+
+    Cumulus-only: control-plane-stats has no NVOS equivalent (not in ALL_STATS_SUBTREES).
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.11.0")
+    unset_system_telemetry_control_plane_stats_export(engines.dut, key="state", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_control_plane_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry control-plane-stats export state failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# NVOS has no buffer-stats family (absent from TelemetryConsts.ALL_STATS_SUBTREES).
+@pytest.mark.cumulus_only
+def test06c_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test06c: unset system telemetry buffer-stats export state and sample-interval.
+
+    ``nv unset system telemetry buffer-stats export state`` → applied state disabled.
+    ``nv unset system telemetry buffer-stats sample-interval`` → applied sample-interval 1.
+
+    Cumulus-only: buffer-stats has no NVOS equivalent (not in ALL_STATS_SUBTREES).
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    unset_system_telemetry_buffer_stats_export(engines.dut, key="state", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_buffer_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry buffer-stats export state failed"
+    )
+
+    unset_system_telemetry_buffer_stats(engines.dut, key="sample-interval", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_buffer_stats_applied(engines.dut)
+    assert out.get("sample-interval") == 1, (
+        "nv unset system telemetry buffer-stats sample-interval failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test10a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test10a: unset system telemetry interface-stats export (reverts to disabled)."""
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_interface_stats_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_interface_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry interface-stats export failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# NVOS has no control-plane-stats family (absent from TelemetryConsts.ALL_STATS_SUBTREES).
+@pytest.mark.cumulus_only
+def test10b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test10b: unset system telemetry platform-stats + control-plane-stats export.
+
+    Cumulus-only: control-plane-stats has no NVOS equivalent (not in ALL_STATS_SUBTREES).
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.11.0")
+    unset_system_telemetry_platform_stats_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_platform_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry platform-stats export failed"
+    )
+    unset_system_telemetry_control_plane_stats_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_control_plane_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry control-plane-stats export failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# NVOS has no buffer-stats family (absent from TelemetryConsts.ALL_STATS_SUBTREES).
+@pytest.mark.cumulus_only
+def test10c_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test10c: unset system telemetry buffer-stats export.
+
+    Cumulus-only: buffer-stats has no NVOS equivalent (not in ALL_STATS_SUBTREES).
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    unset_system_telemetry_buffer_stats_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_buffer_stats_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry buffer-stats export failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test11a_otlp_interface_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """
+    SSIM test11a: unset system telemetry interface-stats sample-interval
+    nv unset system telemetry interface-stats sample-interval
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_interface_stats_sample_interval(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_interface_stats_sample_interval_applied(engines.dut)
+    assert out['sample-interval'] == 1, (
+        "nv unset system telemetry interface-stats sample-interval failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.cumulus_only
+def test11b_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """
+    SSIM test11b: unset system telemetry control-plane-stats sample-interval
+    nv unset system telemetry control-plane-stats sample-interval
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.11.0")
+    unset_system_telemetry_control_plane_stats_sample_interval(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_control_plane_stats_sample_interval_applied(engines.dut)
+    assert out['sample-interval'] == 1, (
+        "nv unset system telemetry control-plane-stats sample-interval failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test12a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test12a: unset system telemetry interface-stats (export reverts to disabled)."""
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_interface_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_interface_stats_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry interface-stats failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# NVOS has no control-plane-stats family (absent from TelemetryConsts.ALL_STATS_SUBTREES).
+@pytest.mark.cumulus_only
+def test12b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test12b: unset control-plane-stats and platform-stats (export reverts to disabled).
+
+    Cumulus note: control-plane-stats has no NVOS equivalent (not in ALL_STATS_SUBTREES).
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.11.0")
+    unset_system_telemetry_control_plane_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_control_plane_stats_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry control-plane-stats failed"
+    )
+    unset_system_telemetry_platform_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_platform_stats_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry platform-stats failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.cumulus_only
+def test12c_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """
+    SSIM test12c: unset system telemetry buffer-stats.
+    nv unset system telemetry buffer-stats
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    unset_system_telemetry_buffer_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_buffer_stats_applied(engines.dut)
+    assert out['export']['state'] == 'disabled', (
+        "nv unset system telemetry buffer-stats failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test13a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """
+    SSIM test13a: unset system telemetry export otlp grpc
+    nv unset system telemetry export otlp grpc
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_export_otlp_grpc(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_export_otlp_grpc_applied(engines.dut)
+    assert out == {'destination': {}, 'insecure': 'disabled', 'port': 4317}, (
+        "nv unset system telemetry export otlp grpc failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test13b_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test13b: unset system telemetry export otlp state
+    nv unset system telemetry export otlp state
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    unset_system_telemetry_export_otlp(engines.dut, key="state", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_export_otlp_applied(engines.dut)
+    assert out.get(TelemetryConsts.STATE) == TelemetryConsts.Defaults.OTLP_STATE, (
+        "nv unset system telemetry export otlp state failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.cumulus_only
+def test14_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """
+    SSIM test14: unset software-stats and verify systemd export is disabled.
+    nv unset system telemetry software-stats
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    unset_system_telemetry_software_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_applied(engines.dut)
+    assert out.get("systemd", {}).get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry software-stats failed: "
+        f"actual={out!r}, expected systemd.export.state='disabled'"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# Pins a bounded Cumulus release window (5.12-5.13); NVOS has no analogue.
+@pytest.mark.cumulus_only
+def test15b_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test15b: unset stats-group platform-stats class and export sample-interval.
+    nv unset system telemetry stats-group <stats-group-id> platform-stats class
+    nv unset system telemetry stats-group <stats-group-id> platform-stats export sample-interval
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0", "5.13.0")
+    validate_unset_stats_group_platform_stats(
+        engines.dut,
+        CumulusOtelConst.TEST01_STATS_GROUP_ID,
+        expected_stats_group_platform_stats_classes_after_unset_test15b(),
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+# Pins a bounded Cumulus release window (5.14-5.17); NVOS has no analogue.
+@pytest.mark.cumulus_only
+def test15c_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test15c: unset stats-group platform-stats on CL 5.14–5.17 (pre-NVUE 1.14).
+
+    nv unset system telemetry stats-group <stats-group-id> platform-stats class
+    nv unset system telemetry stats-group <stats-group-id> platform-stats export sample-interval
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.14.0", "5.17.0")
+    validate_unset_stats_group_platform_stats(
+        engines.dut,
+        CumulusOtelConst.TEST01_STATS_GROUP_ID,
+        expected_stats_group_platform_stats_classes_after_unset_pre114(),
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test15c_otlp_system_unset_cli_validations_v518(
+    engines, otel_cli_coverage_baseline, test_api
+):
+    """SSIM test15c v518: unset stats-group platform-stats on CL 5.18+ (NVUE 1.14+).
+
+    Same coverage as test15c, but expects the additional ``asic-resource`` row restored
+    when the class is unset. NVOS has no ``asic-resource`` class, so it is not expected there.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.18.0")
+    validate_unset_stats_group_platform_stats(
+        engines.dut,
+        CumulusOtelConst.TEST01_STATS_GROUP_ID,
+        expected_stats_group_platform_stats_classes_after_unset_v114(
+            is_nvos=otel_cli_coverage_baseline.is_nvos
+        ),
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.cumulus_only
+def test16a_otlp_system_unset_cli_validations(
+    engines, otel_cli_coverage_baseline, test_api
+):
+    """SSIM test16a: unset stats-group router export and sample-interval.
+
+    nv unset system telemetry stats-group <stats-group-id> router export
+    nv unset system telemetry stats-group <stats-group-id> router sample-interval
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    stats_group_id = CumulusOtelConst.TEST01_STATS_GROUP_ID
+
+    unset_system_telemetry_stats_group_router_export(engines.dut, stats_group_id)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_stats_group_router_export_applied(
+        engines.dut, stats_group_id
+    )
+    assert out.get(TelemetryConsts.STATE) == "disabled", (
+        "nv unset system telemetry stats-group "
+        f"{stats_group_id} router export failed: {out!r}"
+    )
+
+    unset_system_telemetry_stats_group_router(engines.dut, stats_group_id)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_stats_group_router_applied(
+        engines.dut, stats_group_id
+    )
+    assert out.get(TelemetryConsts.SAMPLE_INTERVAL) == 30, (
+        "nv unset system telemetry stats-group "
+        f"{stats_group_id} router sample-interval failed: {out!r}"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+@pytest.mark.cumulus_only
+def test16b_otlp_system_unset_cli_validations(
+    engines, otel_cli_coverage_baseline, test_api
+):
+    """SSIM test16b: unset stats-group buffer-stats export.
+
+    nv unset system telemetry stats-group <stats-group-id> buffer-stats export
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    stats_group_id = CumulusOtelConst.TEST01_STATS_GROUP_ID
+
+    unset_system_telemetry_stats_group_buffer_stats_export(
+        engines.dut, stats_group_id
+    )
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_stats_group_buffer_stats_export_applied(
+        engines.dut, stats_group_id
+    )
+    assert out.get(TelemetryConsts.STATE) == "disabled", (
+        "nv unset system telemetry stats-group "
+        f"{stats_group_id} buffer-stats export failed: {out!r}"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test17a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test17a: unset system telemetry software-stats systemd (whole subtree).
+
+    Cumulus-only: software-stats systemd has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    unset_system_telemetry_software_stats_systemd(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry software-stats systemd failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test17b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test17b: unset software-stats systemd export/active-profile/process-level/
+    sample-interval/unit-profile (each reverts to its default).
+
+    Cumulus-only: software-stats systemd has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+
+    unset_system_telemetry_software_stats_systemd_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry software-stats systemd export failed"
+    )
+
+    unset_system_telemetry_software_stats_systemd(engines.dut, key="active-profile")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_applied(engines.dut)
+    assert out.get("active-profile") == "default", (
+        "nv unset system telemetry software-stats systemd active-profile failed"
+    )
+
+    unset_system_telemetry_software_stats_systemd(engines.dut, key="process-level")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_applied(engines.dut)
+    assert out.get("process-level") == "disabled", (
+        "nv unset system telemetry software-stats systemd process-level failed"
+    )
+
+    unset_system_telemetry_software_stats_systemd(engines.dut, key="sample-interval")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_applied(engines.dut)
+    assert out.get("sample-interval") == 60, (
+        "nv unset system telemetry software-stats systemd sample-interval failed"
+    )
+
+    unset_system_telemetry_software_stats_systemd_unit_profile(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_unit_profile_applied(engines.dut)
+    assert "custom" not in out and "default" in out, (
+        "nv unset system telemetry software-stats systemd unit-profile failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test17c_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test17c: unset software-stats systemd export state and unit-profile <id>.
+
+    Cumulus-only: software-stats systemd has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+
+    unset_system_telemetry_software_stats_systemd_export(engines.dut, key="state")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry software-stats systemd export state failed"
+    )
+
+    unset_system_telemetry_software_stats_systemd(engines.dut, key="active-profile")
+    unset_system_telemetry_software_stats_systemd_unit_profile(
+        engines.dut, unit_profile_id="custom"
+    )
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_unit_profile_applied(engines.dut)
+    assert "custom" not in out, (
+        "nv unset system telemetry software-stats systemd unit-profile custom failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test17d_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test17d: unset software-stats systemd unit-profile <id> unit.
+
+    Cumulus-only: software-stats systemd has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    unset_system_telemetry_software_stats_systemd_unit_profile_unit(
+        engines.dut, unit_profile_id="custom"
+    )
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_software_stats_systemd_unit_profile_applied(engines.dut)
+    assert not out.get("custom", {}).get("unit"), (
+        "nv unset system telemetry software-stats systemd unit-profile custom unit failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test18a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test18a: unset system telemetry platform-stats class transceiver-info.
+
+    Cumulus-only: asserts the Cumulus default ``sample-interval 60`` after full class unset.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_equal(engines.dut, "5.13.0")
+    unset_system_platform_stats_class_transceiver_info(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_platform_stats_class_transceiver_info_applied(engines.dut)
+    assert out.get("sample-interval") == 60, (
+        "nv unset system telemetry platform-stats class transceiver-info sample-interval failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test18b_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test18b: unset transceiver-info sample-interval and state."""
+    TestToolkit.tested_api = test_api
+    is_nvos = otel_cli_coverage_baseline.is_nvos
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    unset_system_platform_stats_class_transceiver_info(
+        engines.dut, key="sample-interval", value=""
+    )
+    unset_system_platform_stats_class_transceiver_info(engines.dut, key="state", value="")
+    apply_unset_changes(engines.dut)
+    out = get_system_platform_stats_class_transceiver_info_applied(engines.dut)
+    expected = {"state": "enabled"} if is_nvos else {"sample-interval": 60, "state": "enabled"}
+    assert out == expected, (
+        "nv unset system telemetry platform-stats class transceiver-info sample-interval got failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test20a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test20a: unset system telemetry adaptive-routing-stats."""
+    TestToolkit.tested_api = test_api
+    require_cumulus_equal(engines.dut, "5.13.0")
+    unset_system_telemetry_adaptive_routing_stats(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_adaptive_routing_stats_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled" and out.get("sample-interval") == 1, (
+        "nv unset system telemetry adaptive-routing-stats got failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test20b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test20b: unset adaptive-routing-stats export and sample-interval."""
+    TestToolkit.tested_api = test_api
+    require_cumulus_equal(engines.dut, "5.13.0")
+    unset_system_telemetry_adaptive_routing_stats_export(engines.dut)
+    unset_system_telemetry_adaptive_routing_stats(engines.dut, key="sample-interval")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_adaptive_routing_stats_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry adaptive-routing-stats export got failed"
+    )
+    assert out.get("sample-interval") == 1, (
+        "nv unset system telemetry adaptive-routing-stats sample-interval got failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test21a_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test21a: set histogram temporality cumulative, then unset reverts to delta.
+
+    Cumulus-only: system telemetry histogram has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.13.0")
+    set_system_telemetry_histogram(engines.dut, "temporality", "cumulative")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_histogram_applied(engines.dut)
+    assert out.get("temporality") == "cumulative", (
+        "nv set system telemetry histogram temporality failed"
+    )
+    unset_system_telemetry_histogram(engines.dut, key="temporality")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_histogram_applied(engines.dut)
+    assert out.get("temporality") == "delta", (
+        "nv unset system telemetry histogram temporality failed"
+    )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test21b_otlp_system_unset_cli_validations(engines, test_api):
+    """SSIM test21b: unset histogram export state, then unset histogram export.
+
+    Cumulus-only: system telemetry histogram has no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.10.0")
+    unset_system_telemetry_histogram_export(engines.dut, key="state")
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_histogram_export_applied(engines.dut)
+    assert out.get("state") == "disabled", (
+        "nv unset system telemetry histogram export state failed"
+    )
+    unset_system_telemetry_histogram_export(engines.dut)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_histogram_applied(engines.dut)
+    assert out.get("export", {}).get("state") == "disabled", (
+        "nv unset system telemetry histogram export failed"
+    )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test15a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, test_api):
+    """SSIM test15a: unset OTLP destination stats-group binding and stats-group sg_01.
+    nv unset system telemetry export otlp grpc destination <destination-id> stats-group
+    nv unset system telemetry stats-group <stats-group-id>
+    This destructive test runs after test15b/test15c because the module-scoped
+    baseline is shared and removing ``sg_01`` would break those tests.
+    test13a already unset the whole OTLP gRPC subtree, so the destinations are
+    re-established here before unbinding them.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.12.0")
+    baseline = otel_cli_coverage_baseline
+    stats_group_id = CumulusOtelConst.TEST01_STATS_GROUP_ID
+    restore_otlp_destination_stats_group_binding(
+        engines.dut,
+        baseline.collector_ips,
+        stats_group_id,
+        export_vrf=baseline.export_vrf,
+        is_nvos=baseline.is_nvos,
+    )
+    for destination_id in baseline.collector_ips:
+        unset_system_otlp_destination_stats_group(engines.dut, destination_id)
+    apply_unset_changes(engines.dut)
+    for destination_id in baseline.collector_ips:
+        out = get_system_otlp_destination_applied(engines.dut, destination_id)
+        assert not out.get(TelemetryConsts.STATS_GROUP), (
+            "nv unset system telemetry export otlp grpc destination "
+            f"{destination_id} stats-group failed"
+        )
+    unset_system_telemetry_stats_group(engines.dut, stats_group_id)
+    apply_unset_changes(engines.dut)
+    out = get_system_telemetry_stats_groups_applied(engines.dut)
+    assert stats_group_id not in out, (
+        f"nv unset system telemetry stats-group {stats_group_id} failed"
     )

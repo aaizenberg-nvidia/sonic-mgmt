@@ -91,6 +91,7 @@ class GrpcTunnelServer:
         gnmi_tls_cert_file: Optional[str] = None,
         gnmi_tls_key_file: Optional[str] = None,
         gnmi_target: Optional[str] = None,
+        grpc_auth: bool = False,
         cmd_time: int = 30,
         print_outputs: bool = True,
     ):
@@ -120,6 +121,7 @@ class GrpcTunnelServer:
         self.gnmi_tls_cert_file = gnmi_tls_cert_file
         self.gnmi_tls_key_file = gnmi_tls_key_file
         self.gnmi_target = gnmi_target
+        self.grpc_auth = grpc_auth
         self.cmd_time = cmd_time
         self.cmd_runner = CmdRunner('GrpcTunnelServer', cmd_time, print_outputs)
 
@@ -149,6 +151,10 @@ class GrpcTunnelServer:
             'username': self.username,
             'password': self.password,
         }
+        # SSIM ``mtls_target_*_template.yaml`` + ``grpc_auth=True``: auth-scheme lives in YAML,
+        # not on the gnmic CLI (``GnmiCollectorDialOutVX`` omits ``--auth-scheme Basic``).
+        if self.grpc_auth:
+            cfg['auth-scheme'] = 'Basic'
         if self.skip_verify:
             cfg['skip-verify'] = True
 
@@ -260,14 +266,16 @@ class GrpcTunnelServer:
         """SSIM ``GnmiCollectorDialOutVX`` mtls parity for tunneled gnmi-server (:9339)."""
         if not (self.gnmi_tls_ca_file and self.gnmi_tls_cert_file and self.gnmi_tls_key_file):
             return ''
-        return (
-            ' --tls-ca %s --tls-cert %s --tls-key %s --auth-scheme Basic'
-            % (
-                shlex.quote(self.gnmi_tls_ca_file),
-                shlex.quote(self.gnmi_tls_cert_file),
-                shlex.quote(self.gnmi_tls_key_file),
-            )
+        suffix = ' --tls-ca %s --tls-cert %s --tls-key %s' % (
+            shlex.quote(self.gnmi_tls_ca_file),
+            shlex.quote(self.gnmi_tls_cert_file),
+            shlex.quote(self.gnmi_tls_key_file),
         )
+        # SSIM grpc_auth=True (all dial-out coexistence suites): omit --auth-scheme Basic;
+        # username/password from gnmic YAML are used as gRPC metadata instead.
+        if not self.grpc_auth:
+            suffix += ' --auth-scheme Basic'
+        return suffix
 
     def _gnmic_base(self) -> str:
         """

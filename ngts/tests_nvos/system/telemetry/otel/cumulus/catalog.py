@@ -20,8 +20,9 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.metric_catalog import (
 
 logger = logging.getLogger(__name__)
 
-# ``python3-nvue`` Debian package version → TelemetryOtlp profile id (515/516/517…).
+# ``python3-nvue`` Debian package version → TelemetryOtlp profile id (515/516/517/518…).
 _NVUE_PKG_TO_PROFILE: Tuple[Tuple[Tuple[int, ...], str], ...] = (
+    ((1, 14, 0), "518"),
     ((1, 13, 0), "517"),
     ((1, 12, 0), "516"),
     ((1, 11, 0), "515"),
@@ -176,6 +177,24 @@ class _TelemetryOtlp517(_TelemetryOtlp516):
         )
 
 
+class _TelemetryOtlp518(_TelemetryOtlp517):
+    def __init__(self) -> None:
+        super().__init__()
+        self.supported_metrics.update(
+            {
+                "CL_518_PLATFORM_ASIC_RESOURCE_STATS": (
+                    metrics_parity.CL_518_PLATFORM_ASIC_RESOURCE_STATS
+                ),
+                "CL_518_PLATFORM_PARTITION_STATS": (
+                    metrics_parity.CL_518_PLATFORM_PARTITION_STATS
+                ),
+                "CL_518_PLATFORM_POWER_SUPPLY_STATS": (
+                    metrics_parity.CL_518_PLATFORM_POWER_SUPPLY_STATS
+                ),
+            }
+        )
+
+
 _PROFILE_CLASSES = {
     "510": _TelemetryOtlpBase,
     "511": _TelemetryOtlp511,
@@ -185,6 +204,7 @@ _PROFILE_CLASSES = {
     "515": _TelemetryOtlp515,
     "516": _TelemetryOtlp516,
     "517": _TelemetryOtlp517,
+    "518": _TelemetryOtlp518,
 }
 
 

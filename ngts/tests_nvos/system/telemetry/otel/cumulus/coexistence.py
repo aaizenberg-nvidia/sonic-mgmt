@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from dataclasses import dataclass
+from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pytest
@@ -11,7 +14,7 @@ import pytest
 import ngts.tools.test_utils.allure_utils as allure
 from ngts.tests_nvos.system.telemetry.otel.cumulus import cache as telemetryCache
 from ngts.tests_nvos.system.telemetry.otel.cumulus.catalog import (
-    supported_metrics_for_secured_validation,
+    supported_metrics_for_mgmt_vrf_secured_validation,
     supported_metrics_for_test01_validation,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
@@ -26,18 +29,16 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
     truncate_collector_export,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import dut_root_on_nvme_storage
-from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
-    resolve_cumulus_lab_interfaces_on_dut,
-)
 from ngts.tests_nvos.system.telemetry.otel.cumulus.sample_interval import (
     check_metrics_within_range,
     get_dut_os_info,
     timegap_analysis_v2,
 )
+from ngts.tests_nvos.system.telemetry.otel.cumulus.catalog import detect_nvue_python_pkg_version
 from ngts.tests_nvos.system.telemetry.otel.cumulus.split_pipeline import (
-    apply_split_pipeline_test01_stats_group,
     prepare_split_pipeline_insecure_pre_run,
 )
+from ngts.nvos_tools.platform.Platform import Platform
 from ngts.tests_nvos.system.telemetry.otel.cumulus.validations import OtelDataValidations
 from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
 
@@ -54,34 +55,25 @@ class CoexistenceCollectResult:
 
 @dataclass
 class CoexistenceInterfaceQosBundle:
-    """Module-scoped lazy collector: run ``ensure_collected()`` from test body for Allure nesting."""
+    """Per-test collector: run ``ensure_collected()`` from the test body for a fresh window."""
 
     cur_dir: str
     dut: Any
     collector: OtelCollector
     sonic_mgmt: Any
-    collector_ips: Tuple[str, str]
+    collector_ips: Tuple[str, ...]
+    is_nvos: bool = False
+    export_vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    telemetry_unit: Optional[str] = None
     _collected: bool = False
     _gnmi_session: Any = None
 
     def ensure_collected(self, *, wait_sec: Optional[int] = None) -> None:
-        """Idempotent OTEL+gNMI cache build; steps log under the active test."""
+        """Collect a fresh OTEL+gNMI window for the calling test (no cache reuse)."""
         if wait_sec is None:
             wait_sec = COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC
-        if self._collected:
-            with allure.step('Reuse Interface/QoS coexistence cache (module singleton)'):
-                try:
-                    series = telemetryCache.get_data('gnmi-series-interface')
-                    ts_count = len(series) if isinstance(series, dict) else 0
-                except KeyError:
-                    ts_count = 0
-                allure.attach(
-                    'cur_dir=%s gnmi_timestamps=%d' % (self.cur_dir, ts_count),
-                    'interface_qos_cache_reuse',
-                )
-            return
-
-        with allure.step('Build Interface/QoS coexistence OTEL+gNMI cache (first collect this module)'):
+        self.teardown()
+        with allure.step('Collect fresh Interface/QoS coexistence OTEL+gNMI cache'):
             result = collect_coexistence_interface_qos_cache(
                 self.dut,
                 self.collector,
@@ -90,6 +82,9 @@ class CoexistenceInterfaceQosBundle:
                 sonic_mgmt=self.sonic_mgmt,
                 wait_sec=wait_sec,
                 defer_gnmi_teardown=True,
+                is_nvos=self.is_nvos,
+                export_vrf=self.export_vrf,
+                telemetry_unit=self.telemetry_unit,
             )
             self._gnmi_session = result.gnmi_session
             self._collected = True
@@ -105,6 +100,31 @@ class CoexistenceInterfaceQosBundle:
             teardown_gnmi_coexistence_session(self.dut, self._gnmi_session)
         self._gnmi_session = None
         self._collected = False
+
+
+@dataclass
+class CoexistenceOtelPersistenceBundle:
+    """Per-test OTEL persistence collector for tests 13 and 14."""
+
+    cur_dir: str
+    dut: Any
+    collector: OtelCollector
+    collector_ips: Tuple[str, ...]
+    vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+
+    def ensure_collected(self, *, wait_sec: Optional[int] = None) -> None:
+        """Collect a fresh OTEL persistence window for the calling test (no cache reuse)."""
+        if wait_sec is None:
+            wait_sec = COEXISTENCE_OTEL_PERSISTENCE_COLLECT_WAIT_SEC
+        with allure.step('Collect fresh OTEL persistence cache'):
+            collect_otel_persistence_cache(
+                self.dut,
+                self.collector,
+                self.cur_dir,
+                collector_ips=self.collector_ips,
+                vrf=self.vrf,
+                wait_sec=wait_sec,
+            )
 
 
 # SSIM ``Test_Telemetry_Coexistence_Smoke`` / Interface QoS shared excludes.
@@ -133,6 +153,11 @@ COEXISTENCE_OTEL_EXCLUDE_BASE: Tuple[str, ...] = (
     "nvswitch_dot1x_supplicant_status",
     "nvswitch_dot1x_supplicant_summary",
     "nvswitch_dot1x_system_info",
+    "nvswitch_platform_asic_resource_free",
+    "nvswitch_platform_asic_resource_high_watermark",
+    "nvswitch_platform_asic_resource_high_watermark_timestamp",
+    "nvswitch_platform_asic_resource_max_limit",
+    "nvswitch_platform_asic_resource_used",
     "scrape_duration_seconds",
     "scrape_samples_post_metric_relabeling",
     "scrape_samples_scraped",
@@ -161,31 +186,113 @@ COEXISTENCE_OTEL_EXCLUDE_BGP_PEER: Tuple[str, ...] = (
 
 COEXISTENCE_SMOKE_COLLECT_WAIT_SEC = 150
 COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC = 120
+COEXISTENCE_OTEL_PERSISTENCE_COLLECT_WAIT_SEC = 120
 
-# SSIM smoke ``test_03_validate_otel_time_gaps`` expected gaps (NGTS ``timegap_analysis_v2`` keys).
+# SSIM smoke ``test_03_validate_otel_time_gaps`` / persistence ``test_14`` expected gaps
+# (NGTS ``timegap_analysis_v2`` keys). Secured mgmt mlx-lab:
+# ``SECURED_ROOT_SAMPLE_INTERVALS`` + no spine fabric (AR/FRR absent).
 COEXISTENCE_SMOKE_TIME_GAPS: Dict[str, float] = {
     "histogram_gap": 1.1,
     "interface_stats_gap": 2.0,
-    "control_stats_gap": 1.0,
+    "control_stats_gap": 2.0,
     "platf_cpu_gap": 60.0,
     "platf_mem_gap": 60.0,
     "platf_file_gap": 60.0,
     "platf_envir_gap": 60.0,
     "platf_disk_gap": 60.0,
-    "buffer_gap": 1.0,
+    "buffer_gap": 60.0,
     "phy_gap": 2.0,
-    "frr_gap": 30.0,
-    "lldp_gap": 5.0,
+    "lldp_gap": 20.0,
     "systemd_gap": 60.0,
-    "ar_gap": 30.0,
 }
+
+# Gaps skipped when ``timegap_analysis_v2`` returns 0 (family not exported on mlx lab).
+COEXISTENCE_SMOKE_SKIP_ZERO_GAPS: Tuple[str, ...] = (
+    "frr_gap",
+    "ar_gap",
+)
 
 INTERFACE_GNMI_TO_OTEL_METRIC: Dict[str, str] = {
     "in_broadcast_pkts": "nvswitch_interface_ether_stats_broadcast_pkts",
     "in_multicast_pkts": "nvswitch_interface_ether_stats_multicast_pkts",
     "in_octets": "nvswitch_interface_ether_stats_octets",
     "in_errors": "nvswitch_interface_if_in_errors",
+    "no_buffer_uc_dropped_pkts": "nvswitch_interface_tc_tx_no_buffer_discard_uc",
+    "wred_dropped_pkts": "nvswitch_interface_tc_tx_wred_discard",
+    "transmit_pkts": "nvswitch_interface_tc_tx_frames",
 }
+
+# NVOS OTEL names (IB/if counters; no ether_stats catalog).
+INTERFACE_GNMI_TO_OTEL_METRIC_NVOS: Dict[str, str] = {
+    "in_broadcast_pkts": "nvswitch_interface_if_in_broadcast_pkts",
+}
+
+# Align with ``apply_split_pipeline_test01_stats_group_nvos`` / split-pipeline gaps.
+# Family map + Interface/QoS expected gaps live on CumulusOtelConst (shared with
+# ``test_otel_split_pipelines``). Smoke gaps differ (shorter collect window).
+COEXISTENCE_NVOS_SMOKE_TIME_GAPS: Dict[str, float] = {
+    "interface_stats_gap": 10.0,
+    "platf_cpu_gap": 60.0,
+    "platf_mem_gap": 60.0,
+    "platf_disk_gap": 60.0,
+    "platf_envir_gap": 60.0,
+}
+# Platform-stats classes a given NVOS platform may not export at all; a zero/absent gap
+# for these is tolerated. ``interface_stats_gap`` is deliberately absent from this tuple:
+# it must always stream, and keeping it in the expected set is what stops
+# ``check_metrics_within_range`` from being called with an empty (no-op) expectation.
+COEXISTENCE_NVOS_OPTIONAL_TIME_GAPS: Tuple[str, ...] = (
+    "platf_cpu_gap",
+    "platf_mem_gap",
+    "platf_disk_gap",
+    "platf_envir_gap",
+)
+COEXISTENCE_NVOS_INTERFACE_STATS_MAX_GAP = 15.0
+COEXISTENCE_NVOS_STATS_GROUP_ID = CumulusOtelConst.SPLIT_PIPELINE_STATS_GROUP_ID
+INTERFACE_QOS_NO_BUFFER_UC_CLI_FIELD = "tx-uc-buffer-discards"
+INTERFACE_QOS_NO_BUFFER_UC_DEFAULT_TC = "7"
+INTERFACE_QOS_WRED_CLI_FIELD = "tx-wred-discards"
+INTERFACE_QOS_WRED_DEFAULT_TC = "7"
+INTERFACE_QOS_TRANSMIT_PKTS_CLI_FIELD = "tx-frames"
+INTERFACE_QOS_TRANSMIT_PKTS_DEFAULT_TC = "7"
+
+
+# SSIM ``test_06_validate_otel_metric_attribute_filtering`` — pg/tc/sp values unset from the
+# interface-stats baseline (``_apply_coexistence_split_pipeline_root_config`` enables pg/tc 0-7
+# and sp 0,1,2,3,7). After unset the surviving values are pg/tc {0,2,4,6} and sp {0,2}.
+COEXISTENCE_ATTR_FILTER_UNSET_PGS: Tuple[str, ...] = ("1", "3", "5", "7")
+COEXISTENCE_ATTR_FILTER_UNSET_TCS: Tuple[str, ...] = ("1", "3", "5", "7")
+COEXISTENCE_ATTR_FILTER_UNSET_SPS: Tuple[str, ...] = ("1", "3", "7")
+COEXISTENCE_ATTR_FILTER_SETTLE_SEC = 10
+# Dedicated OTEL cache key for the attribute-filtering suite. Kept distinct from the generic
+# ``otel`` key so this module-scoped collection neither reads nor overwrites other suites' OTEL
+# payloads (the substring ``otel`` still routes it to the OTEL container in ``cache._container_for_key``).
+COEXISTENCE_ATTR_FILTER_CACHE_KEY = "otel_attr_filter"
+
+
+COEXISTENCE_DOT1X_EXCLUDE_METRICS: Tuple[str, ...] = (
+    "nvswitch_dot1x_interface_info",
+    "nvswitch_dot1x_ipv6_profile_info",
+    "nvswitch_dot1x_ipv6_profile_property_info",
+    "nvswitch_dot1x_ipv6_profile_summary",
+    "nvswitch_dot1x_radius_client_info",
+    "nvswitch_dot1x_radius_server_info",
+    "nvswitch_dot1x_reauth_timeouts",
+    "nvswitch_dot1x_supplicant_eapol_counters",
+    "nvswitch_dot1x_supplicant_status",
+    "nvswitch_dot1x_supplicant_summary",
+    "nvswitch_dot1x_system_info",
+)
+
+
+def _dedupe_metric_names(names: Iterable[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for name in names:
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    return out
 
 
 def coexistence_otel_exclude_metrics(*, include_bgp_peer: bool = True) -> List[str]:
@@ -193,13 +300,29 @@ def coexistence_otel_exclude_metrics(*, include_bgp_peer: bool = True) -> List[s
     combined: List[str] = list(COEXISTENCE_OTEL_EXCLUDE_BASE)
     if include_bgp_peer:
         combined.extend(COEXISTENCE_OTEL_EXCLUDE_BGP_PEER)
-    seen = set()
-    out: List[str] = []
-    for name in combined:
-        if name not in seen:
-            out.append(name)
-            seen.add(name)
-    return out
+    return _dedupe_metric_names(combined)
+
+
+def coexistence_otel_exclude_metrics_for_dut(
+    dut,
+    *,
+    secured: bool = False,
+    include_bgp_peer: bool = True,
+    include_dot1x: bool = False,
+) -> List[str]:
+    """SSIM coexistence excludes plus mlx-lab gaps (no spine↔leaf fabric / trap traffic)."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import secured_exclude_metrics
+
+    combined: List[str] = list(coexistence_otel_exclude_metrics(include_bgp_peer=include_bgp_peer))
+    if secured:
+        combined.extend(secured_exclude_metrics(dut, no_routing=True))
+    else:
+        combined.extend(CumulusOtelConst.SECURED_NO_ROUTING_EXCLUDE_METRICS)
+        combined.extend(CumulusOtelConst.SECURED_MGMT_LAB_TOPOLOGY_EXCLUDE_METRICS)
+        combined.extend(CumulusOtelConst.SECURED_MGMT_CP_TRAP_GROUP_EXCLUDE_METRICS)
+    if include_dot1x:
+        combined.extend(COEXISTENCE_DOT1X_EXCLUDE_METRICS)
+    return _dedupe_metric_names(combined)
 
 
 def _append_nvme_excludes(exclude: List[str], dut) -> List[str]:
@@ -260,18 +383,42 @@ def validate_coexistence_otel_metrics(
     *,
     secured: bool = False,
     exclude_metrics: Optional[Iterable[str]] = None,
+    is_nvos: bool = False,
+    engines=None,
+    devices=None,
+    cur_dir: Optional[str] = None,
+    is_ib_router: bool = False,
+    destination_ip: Optional[str] = None,
+    use_stats_group: bool = False,
 ) -> None:
-    """SSIM ``test_*_validate_otel_metrics_collection`` parity."""
+    """SSIM ``test_*_validate_otel_metrics_collection`` parity (Cumulus catalog / NVOS YAML)."""
     otel_data = telemetryCache.get_data("otel")
     metrics_timestamps = (otel_data or {}).get("metrics_timestamps")
     assert metrics_timestamps is not None, "metrics_timestamps missing from OTEL cache"
 
+    if is_nvos:
+        _validate_coexistence_otel_metrics_nvos(
+            metrics_timestamps,
+            engines=engines,
+            devices=devices,
+            cur_dir=cur_dir or "",
+            secured=secured,
+            is_ib_router=is_ib_router,
+            destination_ip=destination_ip,
+            use_stats_group=use_stats_group,
+        )
+        return
+
     hostname = get_dut_hostname(dut)
-    excludes = list(exclude_metrics or coexistence_otel_exclude_metrics())
+    excludes = list(
+        exclude_metrics
+        if exclude_metrics is not None
+        else coexistence_otel_exclude_metrics_for_dut(dut, secured=secured)
+    )
     excludes = _append_nvme_excludes(excludes, dut)
 
     if secured:
-        total_metrics = supported_metrics_for_secured_validation(dut)
+        total_metrics = supported_metrics_for_mgmt_vrf_secured_validation(dut)
     else:
         total_metrics = supported_metrics_for_test01_validation(dut)
 
@@ -291,10 +438,110 @@ def validate_coexistence_otel_metrics(
         )
 
 
+def _validate_coexistence_otel_metrics_nvos(
+    metrics_timestamps: Dict[str, Any],
+    *,
+    engines,
+    devices,
+    cur_dir: str,
+    secured: bool,
+    is_ib_router: bool,
+    destination_ip: Optional[str],
+    use_stats_group: bool,
+) -> None:
+    """Strict metric-name equality from metrics-classes.yaml + declared enablement."""
+    from ngts.nvos_constants.constants_nvos import TelemetryConsts
+    from ngts.tests_nvos.system.telemetry.otel.helpers import (
+        assert_nvos_metric_names_for_enablement,
+        build_nvos_enablement,
+    )
+
+    assert engines is not None and destination_ip, (
+        "NVOS coexistence metric validation requires engines + destination_ip"
+    )
+    families = (
+        TelemetryConsts.INTERFACE_STATS,
+        TelemetryConsts.PLATFORM_STATS,
+    )
+    if secured and not use_stats_group:
+        # Secured smoke: root families only (matches otel_suite_mgmt_secured fixture).
+        enablement = build_nvos_enablement(TelemetryConsts.ALL_STATS_SUBTREES)
+    else:
+        enablement = build_nvos_enablement(
+            families,
+            collector_ips=(destination_ip,),
+            stats_group_id=COEXISTENCE_NVOS_STATS_GROUP_ID,
+            use_stats_group=use_stats_group,
+        )
+    assert_nvos_metric_names_for_enablement(
+        engines,
+        devices,
+        cur_dir,
+        actual_metric_names=metrics_timestamps.keys(),
+        enablement=enablement,
+        destination_ip=destination_ip,
+        is_ib_router=is_ib_router,
+        collector_label="coexistence-nvos",
+    )
+
+
+def collect_otel_all_stats_to_cache(
+    dut,
+    collector: OtelCollector,
+    cur_dir: str,
+    *,
+    collector_ips: Tuple[str, str],
+    wait_sec: int = COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC,
+) -> Dict[str, Any]:
+    """Clear cache and collect a fresh OTEL-only all-stats window (no gNMI).
+
+    Used by ``test_14_collect_otel_all_stats_to_cache`` so validation runs against a
+    dedicated collect, not a reused coexistence OTEL+gNMI cache.
+    """
+    with allure.step("Clear prior telemetry cache"):
+        telemetryCache.clear_data()
+
+    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    with allure.step("Prepare all-stats OTEL export (mgmt VRF, insecure)"):
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+            _restore_otlp_mgmt_insecure_destinations,
+        )
+
+        prepare_split_pipeline_insecure_pre_run(dut)
+        _restore_otlp_mgmt_insecure_destinations(dut, collector_ips, export_vrf=vrf)
+        _apply_coexistence_split_pipeline_root_config(dut)
+        _enable_interface_qos_coexistence_exports(dut)
+        _ensure_insecure_otlp_session_after_config(dut, collector, vrf=vrf)
+
+    collect_dir = os.path.join(cur_dir, "all_stats_otel")
+    os.makedirs(collect_dir, exist_ok=True)
+    with allure.step(
+        "Collect fresh OTEL-only all-stats window (vrf=%s, wait_sec=%d)"
+        % (vrf, wait_sec)
+    ):
+        truncate_collector_export(collector)
+        collect_telemetry_data(dut, collector, vrf, wait_sec, None, collect_dir)
+
+    artifact_path = cumulus_otel_artifact_path(collect_dir)
+    hostname = get_dut_hostname(dut)
+    payload = parse_telemetry_and_cache(
+        OtelDataValidations(),
+        artifact_path=artifact_path,
+        hostname=hostname,
+        include_time_gaps=True,
+        dut=dut,
+    )
+    metrics_timestamps = payload.get("metrics_timestamps")
+    assert isinstance(metrics_timestamps, dict) and metrics_timestamps, (
+        "Fresh OTEL all-stats collection produced no metrics_timestamps data"
+    )
+    return payload
+
+
 def validate_coexistence_otel_time_gaps(
     expected: Optional[Dict[str, float]] = None,
     *,
-    tolerance: float = 0.25,
+    is_nvos: bool = False,
 ) -> None:
     """SSIM smoke ``test_03_validate_otel_time_gaps`` using cached ``time_gaps``."""
     otel_data = telemetryCache.get_data("otel")
@@ -302,9 +549,107 @@ def validate_coexistence_otel_time_gaps(
         "OTEL time_gaps missing in cache; collection must set include_time_gaps=True"
     )
     actual = otel_data["time_gaps"]
-    exp = dict(expected or COEXISTENCE_SMOKE_TIME_GAPS)
+    if expected is not None:
+        exp = dict(expected)
+    elif is_nvos:
+        exp = dict(
+            otel_data.get("coexistence_expected_gaps") or
+            COEXISTENCE_NVOS_SMOKE_TIME_GAPS
+        )
+    else:
+        exp = dict(COEXISTENCE_SMOKE_TIME_GAPS)
+    # Drop only the families allowed to be absent on this platform, so a DUT that stopped
+    # exporting everything still fails instead of validating an empty expectation.
+    optional_gaps = (
+        COEXISTENCE_NVOS_OPTIONAL_TIME_GAPS if is_nvos else COEXISTENCE_SMOKE_SKIP_ZERO_GAPS
+    )
+    for key in optional_gaps:
+        if actual.get(key, 0.0) == 0.0:
+            exp.pop(key, None)
     with allure.step("Validate OTEL sample-interval time gaps (coexistence)"):
         check_metrics_within_range(exp, actual)
+
+
+def validate_otel_persistence_time_gaps() -> None:
+    """Validate time gaps cached by ``test_13`` using ``COEXISTENCE_SMOKE_TIME_GAPS``."""
+    try:
+        otel_data = telemetryCache.get_data("otel")
+    except KeyError:
+        otel_data = None
+    assert isinstance(otel_data, dict) and "time_gaps" in otel_data, (
+        "OTEL data missing; run metrics collection test first"
+    )
+    time_gaps = otel_data["time_gaps"]
+    assert isinstance(time_gaps, dict), (
+        "OTEL time_gaps must be a dictionary; run metrics collection test first"
+    )
+
+    exp = dict(COEXISTENCE_SMOKE_TIME_GAPS)
+    for key in COEXISTENCE_SMOKE_SKIP_ZERO_GAPS:
+        if time_gaps.get(key) == 0.0:
+            exp.pop(key, None)
+    with allure.step("Validate cached OTEL persistence time gaps (primary collector)"):
+        check_metrics_within_range(exp, time_gaps)
+
+
+def collect_otel_persistence_cache(
+    dut,
+    collector: OtelCollector,
+    cur_dir: str,
+    *,
+    collector_ips: Tuple[str, ...],
+    vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
+    wait_sec: int = COEXISTENCE_OTEL_PERSISTENCE_COLLECT_WAIT_SEC,
+) -> Dict[str, Any]:
+    """Collect a fresh OTEL window after earlier coexistence activity.
+
+    Uses mgmt VRF insecure OTLP (mlx lab reachability to sonic-mgmt). Clears the
+    in-memory cache deliberately so this is a new collection window, not reuse of
+    earlier coexistence results.
+    """
+    with allure.step('Clear prior telemetry results'):
+        telemetryCache.clear_data()
+
+    with allure.step('Prepare mgmt VRF insecure OTEL export for persistence collection'):
+        prepare_split_pipeline_insecure_pre_run(dut)
+        _apply_coexistence_persistence_root_config(dut, collector_ips)
+        _enable_interface_qos_coexistence_exports(dut)
+        _ensure_insecure_otlp_session_after_config(
+            dut, collector, vrf=vrf
+        )
+
+    with allure.step(
+        'Collect fresh OTEL persistence window (vrf=%s, wait_sec=%d)'
+        % (vrf, wait_sec)
+    ):
+        truncate_collector_export(collector)
+        collect_telemetry_data(
+            dut,
+            collector,
+            vrf,
+            wait_sec,
+            None,
+            cur_dir,
+        )
+
+    artifact_path = cumulus_otel_artifact_path(cur_dir)
+    hostname = get_dut_hostname(dut)
+    payload = parse_telemetry_and_cache(
+        OtelDataValidations(),
+        artifact_path=artifact_path,
+        hostname=hostname,
+        include_time_gaps=True,
+        dut=dut,
+        attach_debug=True,
+    )
+    metrics_timestamps = payload.get('metrics_timestamps')
+    assert isinstance(metrics_timestamps, dict) and metrics_timestamps, (
+        'Fresh OTEL persistence collection produced no metrics_timestamps data'
+    )
+    assert isinstance(payload.get('time_gaps'), dict), (
+        'Fresh OTEL persistence collection produced no time_gaps data'
+    )
+    return payload
 
 
 def validate_interface_stats_time_gap(*, max_gap: float = 4.0) -> None:
@@ -316,36 +661,173 @@ def validate_interface_stats_time_gap(*, max_gap: float = 4.0) -> None:
     assert gap <= max_gap, f"Time gap analysis failed for Interface metrics: {gap}"
 
 
-def validate_interface_broadcast_pkts_otel_cli(
+# NVUE ``nv show interface <iface> counters`` leaf names per counter. These are the
+# per-interface ether counter totals that match the OTEL ``ether_stats`` semantics.
+# Octets is reported as ``in-bytes`` in the CLI (OpenConfig ``in-octets`` alias). First
+# present leaf wins.
+_INTERFACE_ETHER_CLI_LEAVES: Dict[str, Tuple[str, ...]] = {
+    "in_broadcast_pkts": ("in-broadcast-pkts", "in-broadcast"),
+    "in_multicast_pkts": ("in-multicast-pkts", "in-multicast"),
+    "in_octets": ("in-octets", "in-bytes"),
+}
+
+
+def _interface_ether_counter_cli_value(
+    dut, interface: str, counter: str
+) -> Tuple[Optional[int], str, bool]:
+    """CLI counter total from ``nv show interface <iface> counters``.
+
+    Reads the per-interface ether counters live and deep-searches for the counter's leaf
+    (see ``_INTERFACE_ETHER_CLI_LEAVES``). This is the correct CLI counterpart for the
+    ``nvswitch_interface_ether_stats_*`` OTEL metrics; the cached ingress-buffer-stats
+    snapshot only carries a subset (``rx-frames``/``rx-broadcast``).
+
+    Returns ``(value, reason, fatal)``. On success ``value`` is the integer counter,
+    ``reason`` is empty and ``fatal`` is ``False``. On failure ``value`` is ``None`` and
+    ``reason`` names the specific cause; ``fatal`` distinguishes an actionable regression
+    (``True`` — bad counter mapping, ``nv show`` command failure, unexpected parsed type,
+    or non-numeric leaf value) from a benign data-absence (``False`` — the counter leaf is
+    simply not present in the CLI output). Callers should ``fail`` on ``fatal`` and only
+    ``skip`` otherwise, so CLI execution/parse regressions are not hidden behind a skip.
+    """
+    leaves = _INTERFACE_ETHER_CLI_LEAVES.get(counter)
+    if not leaves:
+        return None, f"no CLI leaf mapping for counter {counter!r}", True
+    from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
+    try:
+        parsed = Interface(None, port_name=interface).counters.parse_show(dut_engine=dut)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("nv show interface %s counters failed: %s", interface, exc)
+        return None, f"nv show interface {interface} counters command failed: {exc}", True
+    if not isinstance(parsed, (dict, list)):
+        return None, (
+            f"nv show interface {interface} counters returned unexpected type "
+            f"{type(parsed).__name__}"
+        ), True
+
+    def _find(obj, key):
+        if isinstance(obj, dict):
+            if key in obj and not isinstance(obj[key], (dict, list)):
+                return obj[key]
+            for value in obj.values():
+                found = _find(value, key)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for item in obj:
+                found = _find(item, key)
+                if found is not None:
+                    return found
+        return None
+
+    for leaf in leaves:
+        raw = _find(parsed, leaf)
+        if raw is not None:
+            try:
+                return int(raw), "", False
+            except (TypeError, ValueError):
+                try:
+                    return int(float(raw)), "", False
+                except (TypeError, ValueError):
+                    return None, (
+                        f"CLI leaf {leaf!r} value {raw!r} is non-numeric on {interface}"
+                    ), True
+    available = sorted(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__
+    logger.warning(
+        "interface %s counters present but none of %s found; available keys=%s",
+        interface, leaves, available,
+    )
+    return None, (
+        f"no matching CLI leaf {leaves} in nv show interface {interface} counters"
+    ), False
+
+
+def _validate_interface_counter_otel_cli(
     dut,
     *,
+    counter: str,
     interface: str,
     tolerance_percent: float = 20.0,
 ) -> None:
-    """OTEL vs CLI for ``in_broadcast_pkts`` (SSIM test_05 OTEL portion only)."""
-    metric = INTERFACE_GNMI_TO_OTEL_METRIC["in_broadcast_pkts"]
+    """OTEL vs CLI for an interface ``ether_stats`` counter (SSIM OTEL portion only).
+
+    Shared implementation for the per-counter wrappers (``in_multicast_pkts``,
+    ``in_octets``). The SSIM GNMI-vs-CLI portion is skipped: it relies on
+    ``populate_gnmi_xpaths`` / gnmi xpath model objects and BGP/LLDP-style show
+    collectors that are not available in the NGTS framework here (same limitation
+    that makes ``test_05`` OTEL-only). The OTEL value is the mean of the cached samples
+    for ``interface``; the CLI value is read from ``nv show interface <iface> counters``
+    (``_INTERFACE_ETHER_CLI_LEAVES``), which is the correct per-interface ether counter
+    total matching the OTEL ``ether_stats`` semantics. When that leaf is unavailable the
+    test skips — we deliberately do not fall back to the ingress-buffer-stats pg0
+    snapshot, whose per-priority-group ``rx-*`` counters are a different physical quantity
+    and would produce a misleading comparison.
+    """
+    metric = INTERFACE_GNMI_TO_OTEL_METRIC[counter]
     otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
-    cli_ingress = telemetryCache.get_data("cli").get("ingress_stats") or {}
-    lab = resolve_cumulus_lab_interfaces_on_dut(dut, get_dut_hostname(dut))
 
     otel_data_val = OtelDataValidations()
     if not otel_intf_stats:
         pytest.skip("intf_stats missing; interface OTEL export not present in cache")
 
-    attr_key = ("interface", interface,) + lab.labels
     if metric not in otel_intf_stats:
         pytest.skip(f"{metric} not in OTEL export on mlx lab")
 
     series = otel_intf_stats[metric]
-    matched_key = None
-    for key in series:
-        if isinstance(key, tuple) and len(key) >= 2 and key[1] == interface:
-            matched_key = key
-            break
+    matched_key = _matching_otel_series_key(series, interface=interface)
     if matched_key is None:
         pytest.skip(f"{metric} has no samples for interface {interface!r}")
 
-    from statistics import mean
+    d_otel = round(mean(series[matched_key]))
+
+    # CLI reference: the per-interface ether counter total from
+    # ``nv show interface <iface> counters`` (matches the OTEL ether_stats semantics).
+    # No pg0 ingress-buffer-stats fallback: those per-priority-group ``rx-*`` counters
+    # are a different physical quantity and would yield a misleading comparison.
+    d_cli, cli_reason, cli_fatal = _interface_ether_counter_cli_value(dut, interface, counter)
+    if d_cli is None:
+        if cli_fatal:
+            pytest.fail(
+                f"CLI counter read failed for {counter!r} on {interface}: {cli_reason}"
+            )
+        pytest.skip(
+            f"No CLI counter value for {counter!r} on {interface}: {cli_reason}"
+        )
+
+    deviation = otel_data_val.get_percentage_deviation(d_cli, d_otel)
+    if deviation > tolerance_percent:
+        pytest.fail(
+            f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
+            f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
+        )
+
+
+def validate_interface_broadcast_pkts_otel_cli(
+    dut,
+    *,
+    interface: str,
+    tolerance_percent: float = 20.0,
+    is_nvos: bool = False,
+) -> None:
+    """OTEL vs CLI for ``in_broadcast_pkts`` (SSIM test_05 OTEL portion only)."""
+    metric_map = (
+        INTERFACE_GNMI_TO_OTEL_METRIC_NVOS if is_nvos else INTERFACE_GNMI_TO_OTEL_METRIC
+    )
+    metric = metric_map["in_broadcast_pkts"]
+    otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
+    cli_ingress = telemetryCache.get_data("cli").get("ingress_stats") or {}
+
+    otel_data_val = OtelDataValidations()
+    if not otel_intf_stats:
+        pytest.skip("intf_stats missing; interface OTEL export not present in cache")
+
+    if metric not in otel_intf_stats:
+        pytest.skip(f"{metric} not in OTEL export")
+
+    series = otel_intf_stats[metric]
+    matched_key = _matching_otel_series_key(series, interface=interface)
+    if matched_key is None:
+        pytest.skip(f"{metric} has no samples for interface {interface!r}")
 
     d_otel = round(mean(series[matched_key]))
     ingress = cli_ingress.get(interface, {})
@@ -358,6 +840,1212 @@ def validate_interface_broadcast_pkts_otel_cli(
             f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
             f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
         )
+
+
+def _attr_tuple_to_pairs(attrs_tuple: Any) -> Dict[str, Any]:
+    """Convert an OTLP attribute key tuple to a ``{key: value}`` dict.
+
+    NGTS builds metric attribute keys as flat tuples of alternating key/value strings,
+    e.g. ``('interface', 'swp1s0', 'pg', '0', 'direction', 'rx')`` (see
+    :func:`ngts.tests_nvos.system.telemetry.otel.metrics_parser.prepare_attributes_key`).
+    Numeric-looking values are normalized to ``int`` to match the SSIM comparison.
+    """
+    pairs: Dict[str, Any] = {}
+    vals = list(attrs_tuple) if isinstance(attrs_tuple, (list, tuple)) else []
+    i = 0
+    while i + 1 < len(vals):
+        key = vals[i]
+        val = vals[i + 1]
+        if isinstance(val, str) and val.isdigit():
+            val = int(val)
+        pairs[str(key)] = val
+        i += 2
+    return pairs
+
+
+def _matching_otel_series_key(
+    series: Any,
+    *,
+    interface: str,
+    traffic_class: Optional[str] = None,
+) -> Any:
+    """Return the first OTEL series key for ``interface`` (and optional ``tc``)."""
+    for key in series:
+        kv = _attr_tuple_to_pairs(key)
+        if str(kv.get("interface")) != str(interface):
+            continue
+        if traffic_class is not None and str(kv.get("tc")) != str(traffic_class):
+            continue
+        return key
+    return None
+
+
+def validate_otel_metric_attribute_filtering(
+    *,
+    metric_name: str,
+    cache_key: str = COEXISTENCE_ATTR_FILTER_CACHE_KEY,
+    disallowed_values: Optional[Dict[str, Iterable[Any]]] = None,
+    required_values: Optional[Dict[str, Iterable[Any]]] = None,
+) -> None:
+    """SSIM ``validate_otel_metric_attribute_filtering`` — pg/sp/tc datapoint filtering.
+
+    After ``nv unset system telemetry interface-stats {ingress-buffer priority-group |
+    egress-buffer traffic-class | switch-priority} <value>``, the exported OTEL metric must
+    no longer carry the unset attribute values and must still carry the surviving ones.
+
+    Skips (mlx lab friendliness) when the metric is not exported at all; otherwise asserts:
+      - no datapoint carries a ``disallowed_values`` pg/sp/tc value, and
+      - at least one datapoint exists for every ``required_values`` pg/sp/tc value.
+    """
+    otel_obj = telemetryCache.get_data_optional(cache_key) or {}
+    metrics_timestamps = otel_obj.get("metrics_timestamps") or {}
+    assert metrics_timestamps, f"No metrics_timestamps found in cache '{cache_key}'"
+    if metric_name not in metrics_timestamps:
+        pytest.skip(f"Metric '{metric_name}' not present in OTEL export on this lab")
+
+    seen_attr_tuples = list((metrics_timestamps[metric_name] or {}).keys())
+    disallowed_values = disallowed_values or {}
+    required_values = required_values or {}
+    failures: List[str] = []
+
+    for attrs in seen_attr_tuples:
+        kv = _attr_tuple_to_pairs(attrs)
+        for key_name in ("pg", "sp", "tc"):
+            if key_name not in disallowed_values:
+                continue
+            disset = {str(x) for x in (disallowed_values.get(key_name) or [])}
+            val = kv.get(key_name)
+            if str(val) in disset:
+                failures.append(
+                    f"{metric_name}: found disallowed {key_name}={val} in attributes {kv}"
+                )
+
+    for key_name, must_vals in required_values.items():
+        must_set = {str(x) for x in (must_vals or [])}
+        present = {
+            str(_attr_tuple_to_pairs(attrs).get(key_name))
+            for attrs in seen_attr_tuples
+            if key_name in _attr_tuple_to_pairs(attrs)
+        }
+        missing = sorted(v for v in must_set if v not in present)
+        if missing:
+            failures.append(
+                f"{metric_name}: required {key_name} values not found: {missing}; "
+                f"present={sorted(present)}"
+            )
+
+    with allure.step(f"Validate OTEL attribute filtering for '{metric_name}'"):
+        assert not failures, "\n".join(failures)
+    logger.info("Attribute filtering passed for '%s'", metric_name)
+
+
+def _cli_interface_in_errors(dut, interface: str) -> int:
+    """Return ``in-errors`` from ``nv show interface <iface> counters``.
+
+    Parse failures fail the test; a genuine zero counter is returned only when
+    the field is present in the parsed payload.
+    """
+    from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
+
+    try:
+        counters = Interface(None, port_name=interface).counters.parse_show(
+            dut_engine=dut
+        )
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail("CLI in-errors parse failed for %s: %s" % (interface, exc))
+    if not isinstance(counters, dict):
+        pytest.fail(
+            "CLI in-errors parse for %s did not return a dict: %r" % (interface, counters)
+        )
+    for field in ("in-errors", "rx-errors", "errors"):
+        if field in counters:
+            return int(counters.get(field) or 0)
+    link = counters.get("link")
+    if isinstance(link, dict):
+        for field in ("in-errors", "rx-errors", "errors"):
+            if field in link:
+                return int(link.get(field) or 0)
+    pytest.fail(
+        "CLI in-errors field missing for %s in counters payload: %s"
+        % (interface, sorted(counters.keys()) if isinstance(counters, dict) else counters)
+    )
+
+
+def validate_interface_in_errors_otel_cli(
+    dut,
+    *,
+    interface: str,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``in_errors`` (SSIM test_11 OTEL portion only)."""
+    metric = INTERFACE_GNMI_TO_OTEL_METRIC["in_errors"]
+    otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
+
+    otel_data_val = OtelDataValidations()
+    if not otel_intf_stats:
+        pytest.skip("intf_stats missing; interface OTEL export not present in cache")
+
+    if metric not in otel_intf_stats:
+        pytest.skip(f"{metric} not in OTEL export on mlx lab")
+
+    series = otel_intf_stats[metric]
+    matched_key = _matching_otel_series_key(series, interface=interface)
+    if matched_key is None:
+        pytest.skip(f"{metric} has no samples for interface {interface!r}")
+
+    d_otel = round(mean(series[matched_key]))
+    d_cli = _cli_interface_in_errors(dut, interface)
+
+    with allure.step(f"Validate {metric} OTEL vs CLI in-errors"):
+        allure.attach(
+            "interface=%s otel=%s cli=%s" % (interface, d_otel, d_cli),
+            "interface_in_errors_comparison",
+        )
+        deviation = otel_data_val.get_percentage_deviation(d_cli, d_otel)
+        if deviation > tolerance_percent:
+            pytest.fail(
+                f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
+                f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
+            )
+
+
+def validate_interface_transmit_pkts_otel_cli(
+    dut,
+    *,
+    interface: str,
+    traffic_class: str = INTERFACE_QOS_TRANSMIT_PKTS_DEFAULT_TC,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``transmit_pkts`` / ``tx-frames`` (SSIM test_10 / test_12)."""
+    metric = INTERFACE_GNMI_TO_OTEL_METRIC["transmit_pkts"]
+    otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
+    cli_egress = telemetryCache.get_data("cli").get("egress_stats") or {}
+
+    otel_data_val = OtelDataValidations()
+    if not otel_intf_stats:
+        pytest.skip("intf_stats missing; interface OTEL export not present in cache")
+
+    if metric not in otel_intf_stats:
+        pytest.skip(f"{metric} not in OTEL export on mlx lab")
+
+    series = otel_intf_stats[metric]
+    matched_key = _matching_otel_series_key(
+        series, interface=interface, traffic_class=traffic_class
+    )
+    if matched_key is None:
+        pytest.skip(
+            f"{metric} has no samples for interface {interface!r} tc={traffic_class!r}"
+        )
+
+    d_otel = round(mean(series[matched_key]))
+    egress = cli_egress.get(interface, {})
+    tc_stats = egress.get(traffic_class, egress) if isinstance(egress, dict) else {}
+    if not isinstance(tc_stats, dict):
+        tc_stats = {}
+    d_cli = int(
+        tc_stats.get(
+            INTERFACE_QOS_TRANSMIT_PKTS_CLI_FIELD,
+            tc_stats.get("tx_frames", 0),
+        ) or
+        0
+    )
+
+    with allure.step(
+        f"Validate {metric} OTEL vs CLI egress-queue tx-frames (tc={traffic_class})"
+    ):
+        allure.attach(
+            "interface=%s tc=%s otel=%s cli=%s"
+            % (interface, traffic_class, d_otel, d_cli),
+            "qos_transmit_pkts_comparison",
+        )
+        deviation = otel_data_val.get_percentage_deviation(d_cli, d_otel)
+        if deviation > tolerance_percent:
+            pytest.fail(
+                f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
+                f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# SSIM ``Test_Telemetry_Component_System_Validation_Coexistence`` platform hw info
+# (MR 344332 chassis pattern; test_09 CPU; test_10 PSU)
+# ---------------------------------------------------------------------------
+
+# SSIM test_09 CLI component job (``component_type='CPU'``) cache key.
+CPU_CLI_CACHE_KEY = "cpu-cli"
+
+# SSIM test_10 CLI component job (``component_type='PSU'``) cache key.
+PSU_CLI_CACHE_KEY = "psu-cli"
+# OTEL ``nvswitch_platform_info_hw_details`` type labels seen for a PSU sample.
+_PSU_OTEL_TYPE_CANDIDATES: Tuple[str, ...] = ("PSU", "POWER_SUPPLY")
+
+# NVUE platform component/inventory field names per SSIM ``cpu_*`` field.
+_CPU_CLI_NVUE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
+    "cpu_serial_no": ("serial-no", "serial-number", "serial"),
+    "cpu_part_no": ("part-no", "part-number"),
+    "cpu_model_name": ("model-name", "model"),
+    "cpu_hardware_version": ("hardware-version", "hw-revision"),
+    "cpu_type": ("type",),
+}
+
+# NVUE platform component/inventory field names per SSIM ``psu_*`` field.
+_PSU_CLI_NVUE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
+    "psu_serial_no": ("serial-no", "serial-number", "serial"),
+    "psu_part_no": ("part-no", "part-number"),
+    "psu_model_name": ("model-name", "model"),
+    "psu_hardware_version": ("hardware-version", "hw-revision"),
+    "psu_type": ("type",),
+}
+
+_CLI_PLACEHOLDER_VALUES = frozenset(
+    {
+        "",
+        "-",
+        "n/a",
+        "na",
+        "not specified",
+        "none",
+        "unknown",
+        "to be filled by o.e.m.",
+        "not provided",
+        "not available",
+        "not present",
+    }
+)
+
+
+def _dmi_first_processor_fields(raw: str) -> Dict[str, str]:
+    """Parse the first Processor Information block from ``dmidecode -t processor``."""
+    fields: Dict[str, str] = {}
+    in_processor = False
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Processor Information"):
+            if fields:
+                break
+            in_processor = True
+            continue
+        if not in_processor:
+            continue
+        if stripped.startswith("Handle ") and fields:
+            break
+        if ":" not in stripped:
+            continue
+        key, _, val = stripped.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if key not in ("Version", "Serial Number", "Part Number"):
+            continue
+        if val.lower() in _CLI_PLACEHOLDER_VALUES:
+            continue
+        fields.setdefault(key, val)
+    return fields
+
+
+def _platform_hw_info_otel_attrs(
+    *,
+    expected_type: str,
+    expected_name: str,
+    expected_types: Optional[Sequence[str]] = None,
+    match_name_normalized: bool = False,
+) -> Dict[str, Any]:
+    """``nvswitch_platform_info_hw_details`` attribute set for one component.
+
+    Locates the metric attribute-set for ``(type in expected_types, name=expected_name)`` and
+    asserts the presence flag is ``1``, skipping when the metric is not exported by the DUT.
+    ``match_name_normalized`` compares names ignoring case/spacing, since the OTEL label may read
+    ``PSU 1`` where NVUE inventory keys it ``PSU1``.
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        normalize_component_name,
+    )
+
+    type_candidates = tuple(expected_types) if expected_types else (expected_type,)
+    otel_data = telemetryCache.get_data("otel") or {}
+    platform_stats = (otel_data or {}).get("platform_stats") or {}
+    metric_map = platform_stats.get("nvswitch_platform_info_hw_details") or {}
+    if not isinstance(metric_map, dict) or not metric_map:
+        pytest.skip("nvswitch_platform_info_hw_details not exported on this DUT")
+    target_attrs: Dict[str, Any] = {}
+    target_key = None
+    for attr_key in metric_map:
+        if not isinstance(attr_key, tuple):
+            continue
+        attrs = _attr_tuple_to_pairs(attr_key)
+        name = str(attrs.get("name"))
+        if match_name_normalized:
+            if normalize_component_name(name) != normalize_component_name(expected_name):
+                continue
+        elif name != expected_name:
+            continue
+        if str(attrs.get("type")) not in type_candidates:
+            continue
+        target_key = attr_key
+        target_attrs = attrs
+        break
+    assert target_key is not None, (
+        "%s attribute set (name=%s, types=%s) not found in nvswitch_platform_info_hw_details"
+        % (expected_type, expected_name, list(type_candidates))
+    )
+
+    values = metric_map[target_key]
+    d_otel = values[-1] if isinstance(values, list) and values else values
+    assert d_otel == 1, (
+        "nvswitch_platform_info_hw_details %s value=%s (expected 1)" % (expected_type, d_otel)
+    )
+    return target_attrs
+
+
+def _validate_platform_hw_info_otel_cli(
+    *,
+    expected_type: str,
+    expected_name: str,
+    cli_by_otel_field: Dict[str, Any],
+    expected_types: Optional[Sequence[str]] = None,
+    match_name_normalized: bool = False,
+) -> None:
+    """Shared ``nvswitch_platform_info_hw_details`` OTEL-vs-CLI comparison for a component.
+
+    Compares each OTEL hw-detail attribute against the CLI value keyed by the same OTEL field
+    name (``serial_no`` / ``part_no`` / ``model_name`` / ``hardware_version`` / ``type``). Fields
+    with a missing OTEL attribute or CLI value are skipped (best-effort leg).
+    """
+    target_attrs = _platform_hw_info_otel_attrs(
+        expected_type=expected_type,
+        expected_name=expected_name,
+        expected_types=expected_types,
+        match_name_normalized=match_name_normalized,
+    )
+    failures: List[str] = []
+    with allure.step("Validate %s OTEL platform-info hw details vs CLI" % expected_type):
+        for otel_field, cli_value in cli_by_otel_field.items():
+            otel_value = target_attrs.get(otel_field)
+            if otel_value is None or cli_value in (None, ""):
+                allure.attach(
+                    otel_field,
+                    "otel=%s cli=%s (skipped)" % (otel_value, cli_value),
+                )
+                continue
+            if str(otel_value) != str(cli_value):
+                failures.append("%s: OTEL=%s CLI=%s" % (otel_field, otel_value, cli_value))
+        if failures:
+            pytest.fail(
+                "%s OTEL vs CLI platform hw info mismatch: %s"
+                % (expected_type, "; ".join(failures))
+            )
+
+
+def _first_present_value(payload: Dict[str, Any], keys: Sequence[str]) -> Optional[str]:
+    """First non-placeholder value in ``payload`` for any of ``keys``."""
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and text.lower() not in _CLI_PLACEHOLDER_VALUES:
+            return text
+    return None
+
+
+def _flatten_cli_leaves(payload: Any, depth: int = 0) -> Dict[str, str]:
+    """Leaf ``key -> value`` map of a NVUE JSON entry; first occurrence of a key wins."""
+    leaves: Dict[str, str] = {}
+    if not isinstance(payload, dict) or depth > 4:
+        return leaves
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            for nested_key, nested_value in _flatten_cli_leaves(value, depth + 1).items():
+                leaves.setdefault(nested_key, nested_value)
+        elif value is not None and not isinstance(value, (list, tuple)):
+            leaves.setdefault(str(key), str(value))
+    return leaves
+
+
+def _find_cpu_component_entry(payload: Any, depth: int = 0) -> Dict[str, Any]:
+    """CPU component sub-dict inside a NVUE platform inventory/component payload.
+
+    Only entries keyed by a ``CPU*`` component name are matched, except at the top level where a
+    component-specific show command (``nv show ... CPU``) returns the entry itself.
+    """
+    if not isinstance(payload, dict) or depth > 4:
+        return {}
+    for key, entry in payload.items():
+        if isinstance(entry, dict) and str(key).strip().upper().startswith("CPU"):
+            return entry
+    if depth == 0 and any(
+        cli_key in payload
+        for cli_keys in _CPU_CLI_NVUE_FIELD_MAP.values()
+        for cli_key in cli_keys
+    ):
+        return payload
+    for entry in payload.values():
+        found = _find_cpu_component_entry(entry, depth + 1)
+        if found:
+            return found
+    return {}
+
+
+def _platform_inventory_parse_show(dut, op_param: str = "") -> Any:
+    """``nv show platform inventory [op_param]`` via ``Platform().inventory.parse_show``."""
+    try:
+        return Platform().inventory.parse_show(op_param=op_param, dut_engine=dut)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Platform().inventory.parse_show(%r) failed: %s", op_param, exc
+        )
+        return None
+
+
+def _nvue_cpu_component_payload(dut) -> Tuple[Dict[str, Any], str]:
+    """CPU entry from NVUE platform inventory (``Platform().inventory``)."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        CPU_COMPONENT_NAME,
+    )
+
+    attempts = (
+        (CPU_COMPONENT_NAME, "platform.inventory.parse_show(%s)" % CPU_COMPONENT_NAME),
+        ("", "platform.inventory.parse_show()"),
+    )
+    for op_param, source in attempts:
+        payload = _platform_inventory_parse_show(dut, op_param)
+        if not isinstance(payload, dict) or not payload:
+            continue
+        entry = _find_cpu_component_entry(payload)
+        if entry:
+            return entry, source
+    return {}, ""
+
+
+def collect_cpu_cli_component_data(dut) -> Dict[str, Any]:
+    """SSIM test_09 CLI component job (``component_type='CPU'``) → ``cpu-cli`` payload.
+
+    The NVUE platform component/inventory tree is the only comparison source: gNMI and OTEL
+    export the platform component view of the CPU (board model), which is a different value
+    than the processor identity ``dmidecode`` reports. ``dmidecode`` output is attached for
+    context only and never compared.
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        CPU_COMPONENT_NAME,
+    )
+
+    with allure.step("CLI: collect CPU platform component hw details (component_type=CPU)"):
+        nvue, source_cmd = _nvue_cpu_component_payload(dut)
+        leaves = _flatten_cli_leaves(nvue)
+        data: Dict[str, Any] = {
+            field_key: _first_present_value(leaves, cli_keys)
+            for field_key, cli_keys in _CPU_CLI_NVUE_FIELD_MAP.items()
+        }
+        if not data.get("cpu_type"):
+            data["cpu_type"] = CPU_COMPONENT_NAME
+        data["cli_source"] = source_cmd
+        dmi_raw = dut.run_cmd(
+            "sudo dmidecode -t processor 2>/dev/null",
+            validate=False,
+            print_output=False,
+        )
+        allure.attach(
+            "cpu_cli_payload",
+            "source=%s nvue_leaves=%s dmidecode=%s"
+            % (source_cmd or "<none>", leaves, _dmi_first_processor_fields(dmi_raw or "")),
+        )
+        return data
+
+
+def _cpu_cli_cache_payload() -> Dict[str, Any]:
+    """SSIM test_09 step 2 — assert the ``cpu-cli`` payload was collected."""
+    assert_telemetry_cache_has_data(
+        [("CPU CLI", CPU_CLI_CACHE_KEY)],
+        context="CPU platform hw info",
+    )
+    payload = telemetryCache.get_data(CPU_CLI_CACHE_KEY)
+    assert isinstance(payload, dict), (
+        "%s cache payload is not a dict: %r" % (CPU_CLI_CACHE_KEY, payload)
+    )
+    return payload
+
+
+def _validate_cpu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
+    """SSIM test_09 gNMI vs CLI for CPU OpenConfig component state leaves."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        CPU_COMPONENT_GNMI_SERIES_KEY,
+        CPU_COMPONENT_NAME,
+        CPU_PLATFORM_HW_GNMI_ATTRS,
+        _component_xpath,
+        latest_gnmi_leaf_for_xpath,
+    )
+
+    skip_unless_gnmi_coexistence(
+        CPU_COMPONENT_GNMI_SERIES_KEY,
+        context="CPU platform hw info gNMI vs CLI",
+    )
+    series = telemetryCache.get_data(CPU_COMPONENT_GNMI_SERIES_KEY)
+    failures: List[str] = []
+    exported = 0
+    compared = 0
+    with allure.step("Validate CPU gNMI state leaves vs CLI"):
+        for attr in CPU_PLATFORM_HW_GNMI_ATTRS:
+            xpath = _component_xpath(attr, component_name=CPU_COMPONENT_NAME)
+            gnmi_value = latest_gnmi_leaf_for_xpath(series, xpath)
+            cli_value = cli.get(attr)
+            if gnmi_value is None:
+                failures.append("%s: not exported over gNMI (xpath=%s)" % (attr, xpath))
+                continue
+            exported += 1
+            if cli_value in (None, ""):
+                allure.attach(
+                    attr,
+                    "gnmi=%s cli=%s xpath=%s (cli skipped)" % (gnmi_value, cli_value, xpath),
+                )
+                continue
+            compared += 1
+            if str(gnmi_value) != str(cli_value):
+                failures.append(
+                    "%s: gNMI=%s CLI=%s (xpath=%s)" % (attr, gnmi_value, cli_value, xpath)
+                )
+            else:
+                allure.attach(
+                    attr,
+                    "gnmi=%s cli=%s xpath=%s" % (gnmi_value, cli_value, xpath),
+                )
+        if exported == 0:
+            pytest.skip("CPU gNMI vs CLI: no platform hw-info leaves present in gNMI component series")
+        if failures:
+            pytest.fail("CPU gNMI vs CLI mismatch: %s" % ("; ".join(failures),))
+    if compared == 0:
+        logger.warning(
+            'No CPU hw-info field is reported by the NVUE platform CLI (source=%r); '
+            'gNMI vs CLI leg had nothing to compare',
+            cli.get("cli_source") or "<none>",
+        )
+
+
+def _validate_cpu_platform_hw_info_gnmi_otel() -> None:
+    """gNMI vs OTEL for the CPU hw-info leaves — both export the platform component view."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        CPU_COMPONENT_GNMI_SERIES_KEY,
+        CPU_COMPONENT_NAME,
+        CPU_PLATFORM_HW_GNMI_ATTRS,
+        _component_xpath,
+        latest_gnmi_leaf_for_xpath,
+    )
+
+    skip_unless_gnmi_coexistence(
+        CPU_COMPONENT_GNMI_SERIES_KEY,
+        context="CPU platform hw info gNMI vs OTEL",
+    )
+    otel_attrs = _platform_hw_info_otel_attrs(expected_type="CPU", expected_name=CPU_COMPONENT_NAME)
+    series = telemetryCache.get_data(CPU_COMPONENT_GNMI_SERIES_KEY)
+    failures: List[str] = []
+    with allure.step("Validate CPU gNMI state leaves vs OTEL platform-info hw details"):
+        for attr in CPU_PLATFORM_HW_GNMI_ATTRS:
+            otel_field = attr[len("cpu_"):]
+            otel_value = otel_attrs.get(otel_field)
+            gnmi_value = latest_gnmi_leaf_for_xpath(
+                series,
+                _component_xpath(attr, component_name=CPU_COMPONENT_NAME),
+            )
+            if otel_value is None or gnmi_value is None:
+                allure.attach(attr, "gnmi=%s otel=%s (skipped)" % (gnmi_value, otel_value))
+                continue
+            if str(gnmi_value) != str(otel_value):
+                failures.append("%s: gNMI=%s OTEL=%s" % (attr, gnmi_value, otel_value))
+            else:
+                allure.attach(attr, "gnmi=%s otel=%s" % (gnmi_value, otel_value))
+        if failures:
+            pytest.fail(
+                "CPU gNMI vs OTEL platform hw info mismatch: %s" % ("; ".join(failures),)
+            )
+
+
+def validate_cpu_platform_hw_info() -> None:
+    """SSIM component/system ``test_09`` CPU platform hw info (gNMI + OTEL vs CLI).
+
+    Uses the suite cache populated during collection: the ``cpu-cli`` component payload,
+    the dedicated ``gnmi-series-component-cpu`` subscription (five ``state`` leaves), and
+    OTEL ``nvswitch_platform_info_hw_details`` for ``type=CPU`` / ``name=CPU``.
+    """
+    cli = _cpu_cli_cache_payload()
+    _validate_cpu_platform_hw_info_gnmi_cli(cli)
+    _validate_cpu_platform_hw_info_gnmi_otel()
+    _validate_platform_hw_info_otel_cli(
+        expected_type="CPU",
+        expected_name="CPU",
+        cli_by_otel_field={
+            "serial_no": cli.get("cpu_serial_no"),
+            "part_no": cli.get("cpu_part_no"),
+            "model_name": cli.get("cpu_model_name"),
+            "hardware_version": cli.get("cpu_hardware_version"),
+            "type": cli.get("cpu_type"),
+        },
+    )
+
+
+def _find_named_component_entry(
+    payload: Any,
+    *,
+    component_name: str,
+    depth: int = 0,
+) -> Dict[str, Any]:
+    """Named component sub-dict inside a NVUE platform inventory/component payload."""
+    if not isinstance(payload, dict) or depth > 4:
+        return {}
+    target = component_name.strip().upper()
+    for key, entry in payload.items():
+        if isinstance(entry, dict) and str(key).strip().upper() == target:
+            return entry
+    if depth == 0 and any(
+        cli_key in payload
+        for cli_keys in _PSU_CLI_NVUE_FIELD_MAP.values()
+        for cli_key in cli_keys
+    ):
+        return payload
+    for entry in payload.values():
+        found = _find_named_component_entry(
+            entry, component_name=component_name, depth=depth + 1
+        )
+        if found:
+            return found
+    return {}
+
+
+def _nvue_psu_component_payload(dut, psu_name: str) -> Tuple[Dict[str, Any], str]:
+    """PSU entry from NVUE platform inventory (``Platform().inventory``)."""
+    attempts = (
+        (psu_name, "platform.inventory.parse_show(%s)" % psu_name),
+        ("", "platform.inventory.parse_show()"),
+    )
+    for op_param, source in attempts:
+        payload = _platform_inventory_parse_show(dut, op_param)
+        if not isinstance(payload, dict) or not payload:
+            continue
+        entry = _find_named_component_entry(payload, component_name=psu_name)
+        if entry:
+            return entry, source
+    return {}, ""
+
+
+def collect_psu_cli_component_data(dut, psu_name: Optional[str] = None) -> Dict[str, Any]:
+    """SSIM test_10 CLI component job (``component_type='PSU'``) → ``psu-cli`` payload.
+
+    Collects the five inventory fields for the same PSU name used by the dedicated gNMI
+    ``component-psu`` subscription (chosen once during job build).
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        get_selected_psu_component_name,
+    )
+
+    name = psu_name or get_selected_psu_component_name()
+    with allure.step(
+        "CLI: collect PSU platform component hw details (component_type=PSU, name=%s)"
+        % (name or "<none>",)
+    ):
+        if not name:
+            allure.attach("psu_cli_payload", "no present PSU selected")
+            return {"psu_name": None}
+        nvue, source_cmd = _nvue_psu_component_payload(dut, name)
+        leaves = _flatten_cli_leaves(nvue)
+        data: Dict[str, Any] = {
+            field_key: _first_present_value(leaves, cli_keys)
+            for field_key, cli_keys in _PSU_CLI_NVUE_FIELD_MAP.items()
+        }
+        if not data.get("psu_type"):
+            data["psu_type"] = "PSU"
+        data["psu_name"] = name
+        data["cli_source"] = source_cmd
+        allure.attach(
+            "psu_cli_payload",
+            "psu=%s source=%s nvue_leaves=%s"
+            % (name, source_cmd or "<none>", leaves),
+        )
+        return data
+
+
+def _psu_cli_cache_payload() -> Dict[str, Any]:
+    """SSIM test_10 — assert the ``psu-cli`` payload was collected for a chosen PSU."""
+    assert_telemetry_cache_has_data(
+        [("PSU CLI", PSU_CLI_CACHE_KEY)],
+        context="PSU platform hw info",
+    )
+    payload = telemetryCache.get_data(PSU_CLI_CACHE_KEY)
+    assert isinstance(payload, dict), (
+        "%s cache payload is not a dict: %r" % (PSU_CLI_CACHE_KEY, payload)
+    )
+    if not payload.get("psu_name"):
+        pytest.skip("No present PSU inventory component on this DUT")
+    return payload
+
+
+def _psu_gnmi_series() -> Dict[str, Any]:
+    """The ``component-psu`` gNMI series, skipping when the DUT exported no PSU components."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        PSU_COMPONENT_GNMI_SERIES_KEY,
+    )
+
+    skip_unless_gnmi_coexistence(
+        PSU_COMPONENT_GNMI_SERIES_KEY,
+        context="PSU platform hw info",
+    )
+    return telemetryCache.get_data(PSU_COMPONENT_GNMI_SERIES_KEY)
+
+
+def _validate_psu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
+    """SSIM test_10 gNMI vs CLI for the chosen PSU OpenConfig component state leaves."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        PSU_PLATFORM_HW_GNMI_ATTRS,
+        PSU_STATE_LEAF_BY_ATTR,
+        gnmi_component_names_in_series,
+        latest_gnmi_component_state_leaf,
+    )
+
+    psu_name = str(cli.get("psu_name") or "")
+    series = _psu_gnmi_series()
+    failures: List[str] = []
+    exported = 0
+    compared = 0
+    with allure.step("Validate PSU gNMI state leaves vs CLI (name=%s)" % psu_name):
+        for attr in PSU_PLATFORM_HW_GNMI_ATTRS:
+            leaf = PSU_STATE_LEAF_BY_ATTR[attr]
+            gnmi_value, xpath = latest_gnmi_component_state_leaf(
+                series, component_name=psu_name, leaf=leaf
+            )
+            cli_value = cli.get(attr)
+            if gnmi_value is None:
+                failures.append(
+                    "%s: not exported over gNMI (component=%s leaf=%s)" % (attr, psu_name, leaf)
+                )
+                continue
+            exported += 1
+            if cli_value in (None, ""):
+                allure.attach(
+                    attr,
+                    "gnmi=%s cli=%s xpath=%s (cli skipped)" % (gnmi_value, cli_value, xpath),
+                )
+                continue
+            compared += 1
+            if str(gnmi_value) != str(cli_value):
+                failures.append(
+                    "%s: gNMI=%s CLI=%s (xpath=%s)" % (attr, gnmi_value, cli_value, xpath)
+                )
+            else:
+                allure.attach(
+                    attr,
+                    "gnmi=%s cli=%s xpath=%s" % (gnmi_value, cli_value, xpath),
+                )
+        if exported == 0:
+            pytest.skip(
+                "PSU gNMI vs CLI: %r has no hw-info state leaves in the gNMI component "
+                "series (components seen: %s)"
+                % (psu_name, gnmi_component_names_in_series(series))
+            )
+        if failures:
+            pytest.fail("PSU gNMI vs CLI mismatch: %s" % ("; ".join(failures),))
+    if compared == 0:
+        logger.warning(
+            "No PSU hw-info field is reported by the NVUE platform CLI (psu=%r source=%r); "
+            "gNMI vs CLI leg had nothing to compare",
+            psu_name,
+            cli.get("cli_source") or "<none>",
+        )
+
+
+def _validate_psu_platform_hw_info_gnmi_otel(cli: Dict[str, Any]) -> None:
+    """gNMI vs OTEL for the chosen PSU hw-info leaves."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        PSU_PLATFORM_HW_GNMI_ATTRS,
+        PSU_STATE_LEAF_BY_ATTR,
+        latest_gnmi_component_state_leaf,
+    )
+
+    psu_name = str(cli.get("psu_name") or "")
+    series = _psu_gnmi_series()
+    otel_attrs = _platform_hw_info_otel_attrs(
+        expected_type="PSU",
+        expected_name=psu_name,
+        expected_types=_PSU_OTEL_TYPE_CANDIDATES,
+        match_name_normalized=True,
+    )
+    failures: List[str] = []
+    with allure.step(
+        "Validate PSU gNMI state leaves vs OTEL platform-info hw details (name=%s)"
+        % psu_name
+    ):
+        for attr in PSU_PLATFORM_HW_GNMI_ATTRS:
+            otel_field = attr[len("psu_"):]
+            otel_value = otel_attrs.get(otel_field)
+            gnmi_value, _ = latest_gnmi_component_state_leaf(
+                series,
+                component_name=psu_name,
+                leaf=PSU_STATE_LEAF_BY_ATTR[attr],
+            )
+            if otel_value is None or gnmi_value is None:
+                allure.attach(attr, "gnmi=%s otel=%s (skipped)" % (gnmi_value, otel_value))
+                continue
+            if str(gnmi_value) != str(otel_value):
+                failures.append("%s: gNMI=%s OTEL=%s" % (attr, gnmi_value, otel_value))
+            else:
+                allure.attach(attr, "gnmi=%s otel=%s" % (gnmi_value, otel_value))
+        if failures:
+            pytest.fail(
+                "PSU gNMI vs OTEL platform hw info mismatch: %s" % ("; ".join(failures),)
+            )
+
+
+def validate_psu_platform_hw_info() -> None:
+    """SSIM component/system ``test_10`` PSU platform hw info (gNMI + OTEL vs CLI).
+
+    Uses the suite cache populated during collection: the ``psu-cli`` component payload for one
+    randomly chosen present PSU, the dedicated ``gnmi-series-component-psu`` subscription (five
+    ``state`` leaves), and OTEL ``nvswitch_platform_info_hw_details`` for that PSU name.
+    """
+    cli = _psu_cli_cache_payload()
+    _validate_psu_platform_hw_info_gnmi_cli(cli)
+    _validate_psu_platform_hw_info_gnmi_otel(cli)
+    _validate_platform_hw_info_otel_cli(
+        expected_type="PSU",
+        expected_name=str(cli.get("psu_name")),
+        expected_types=_PSU_OTEL_TYPE_CANDIDATES,
+        match_name_normalized=True,
+        cli_by_otel_field={
+            "serial_no": cli.get("psu_serial_no"),
+            "part_no": cli.get("psu_part_no"),
+            "model_name": cli.get("psu_model_name"),
+            "hardware_version": cli.get("psu_hardware_version"),
+            "type": cli.get("psu_type"),
+        },
+    )
+
+
+def validate_interface_multicast_pkts_otel_cli(
+    dut,
+    *,
+    interface: str,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``in_multicast_pkts`` (SSIM test_06 OTEL portion only)."""
+    _validate_interface_counter_otel_cli(
+        dut,
+        counter="in_multicast_pkts",
+        interface=interface,
+        tolerance_percent=tolerance_percent,
+    )
+
+
+def validate_interface_octets_otel_cli(
+    dut,
+    *,
+    interface: str,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``in_octets`` (SSIM test_07 OTEL portion only)."""
+    _validate_interface_counter_otel_cli(
+        dut,
+        counter="in_octets",
+        interface=interface,
+        tolerance_percent=tolerance_percent,
+    )
+
+
+def validate_interface_no_buffer_uc_dropped_pkts_otel_cli(
+    dut,
+    *,
+    interface: str,
+    traffic_class: str = INTERFACE_QOS_NO_BUFFER_UC_DEFAULT_TC,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``no_buffer_uc_dropped_pkts`` (SSIM test_08 OTEL portion only)."""
+    metric = INTERFACE_GNMI_TO_OTEL_METRIC["no_buffer_uc_dropped_pkts"]
+    otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
+    cli_egress = telemetryCache.get_data("cli").get("egress_stats") or {}
+
+    otel_data_val = OtelDataValidations()
+    if not otel_intf_stats:
+        pytest.skip("intf_stats missing; interface OTEL export not present in cache")
+
+    if metric not in otel_intf_stats:
+        pytest.skip(f"{metric} not in OTEL export on mlx lab")
+
+    series = otel_intf_stats[metric]
+    matched_key = _matching_otel_series_key(
+        series, interface=interface, traffic_class=traffic_class
+    )
+    if matched_key is None:
+        pytest.skip(
+            f"{metric} has no samples for interface {interface!r} tc={traffic_class!r}"
+        )
+
+    d_otel = round(mean(series[matched_key]))
+    egress = cli_egress.get(interface, {})
+    tc_stats = egress.get(traffic_class, egress) if isinstance(egress, dict) else {}
+    if not isinstance(tc_stats, dict):
+        tc_stats = {}
+    d_cli = int(
+        tc_stats.get(
+            INTERFACE_QOS_NO_BUFFER_UC_CLI_FIELD,
+            tc_stats.get("tx_no_buffer_discard_uc", 0),
+        ) or
+        0
+    )
+
+    deviation = otel_data_val.get_percentage_deviation(d_cli, d_otel)
+    if deviation > tolerance_percent:
+        pytest.fail(
+            f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
+            f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
+        )
+
+
+def validate_interface_wred_dropped_pkts_otel_cli(
+    dut,
+    *,
+    interface: str,
+    traffic_class: str = INTERFACE_QOS_WRED_DEFAULT_TC,
+    tolerance_percent: float = 20.0,
+) -> None:
+    """OTEL vs CLI for ``wred_dropped_pkts`` (SSIM test_09 OTEL portion only)."""
+    metric = INTERFACE_GNMI_TO_OTEL_METRIC["wred_dropped_pkts"]
+    otel_intf_stats = telemetryCache.get_data("otel").get("intf_stats") or {}
+    cli_egress = telemetryCache.get_data("cli").get("egress_stats") or {}
+
+    otel_data_val = OtelDataValidations()
+    if not otel_intf_stats:
+        pytest.skip("intf_stats missing; interface OTEL export not present in cache")
+
+    if metric not in otel_intf_stats:
+        pytest.skip(f"{metric} not in OTEL export on mlx lab")
+
+    series = otel_intf_stats[metric]
+    matched_key = _matching_otel_series_key(
+        series, interface=interface, traffic_class=traffic_class
+    )
+    if matched_key is None:
+        pytest.skip(
+            f"{metric} has no samples for interface {interface!r} tc={traffic_class!r}"
+        )
+
+    d_otel = round(mean(series[matched_key]))
+    egress = cli_egress.get(interface, {})
+    tc_stats = egress.get(traffic_class, egress) if isinstance(egress, dict) else {}
+    if not isinstance(tc_stats, dict):
+        tc_stats = {}
+    d_cli = int(
+        tc_stats.get(
+            INTERFACE_QOS_WRED_CLI_FIELD,
+            tc_stats.get("tx_wred_discard", 0),
+        ) or
+        0
+    )
+
+    deviation = otel_data_val.get_percentage_deviation(d_cli, d_otel)
+    if deviation > tolerance_percent:
+        pytest.fail(
+            f"{metric} OTEL vs CLI failed: otel={d_otel}, cli={d_cli}, "
+            f"deviation={deviation:.1f}% (max {tolerance_percent}%)"
+        )
+
+
+def _nvue_version_gte(dut, version: str) -> bool:
+    pkg_version = detect_nvue_python_pkg_version(dut)
+    if not pkg_version:
+        return False
+    try:
+        return tuple(int(part) for part in pkg_version.split(".")) >= tuple(
+            int(part) for part in version.split(".")
+        )
+    except ValueError:
+        return False
+
+
+def _apply_coexistence_split_pipeline_root_config(dut) -> None:
+    with allure.step("Apply coexistence split-pipeline root OTLP (SSIM OtelSplitPipelineMgmtVrfNoTLS)"):
+        cmds = [
+            "nv set system telemetry interface-stats export state enabled",
+            "nv set system telemetry interface-stats sample-interval 3",
+            "nv set system telemetry control-plane-stats export state enabled",
+            "nv set system telemetry control-plane-stats sample-interval 2",
+            "nv set system telemetry platform-stats export state enabled",
+            "nv set system telemetry platform-stats export sample-interval 61",
+            "nv set system telemetry platform-stats class cpu state enabled",
+            "nv set system telemetry platform-stats class cpu sample-interval 70",
+            "nv set system telemetry platform-stats class disk state enabled",
+            "nv set system telemetry platform-stats class disk sample-interval 74",
+            "nv set system telemetry platform-stats class environment-sensor state enabled",
+            "nv set system telemetry platform-stats class environment-sensor sample-interval 65",
+            "nv set system telemetry platform-stats class file-system state enabled",
+            "nv set system telemetry platform-stats class file-system sample-interval 72",
+            "nv set system telemetry platform-stats class memory state enabled",
+            "nv set system telemetry platform-stats class memory sample-interval 75",
+        ]
+        for pg in range(8):
+            cmds.append(
+                "nv set system telemetry interface-stats ingress-buffer priority-group %d" % pg
+            )
+        for tc in range(8):
+            cmds.append(
+                "nv set system telemetry interface-stats egress-buffer traffic-class %d" % tc
+            )
+        for sp in ("0", "1", "2", "3", "7"):
+            cmds.append("nv set system telemetry interface-stats switch-priority %s" % sp)
+        if _nvue_version_gte(dut, "1.13.0"):
+            cmds.append("nv set system telemetry interface-stats class debounce state enabled")
+        for cmd in cmds:
+            dut.run_cmd(cmd, validate=False)
+        dut.run_cmd("nv config apply -y", validate=True)
+
+
+def _enable_nvos_coexistence_phy(dut, *, stats_group_id: str) -> None:
+    """Enable interface-stats class phy at root and under stats-group (validator expects PHY)."""
+    from ngts.nvos_constants.constants_nvos import TelemetryConsts
+    from ngts.nvos_tools.system.System import System
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import _enable_family_classes
+    from ngts.tests_nvos.system.telemetry.otel.helpers import apply_telemetry_configuration
+
+    system = System()
+    with allure.step(
+        "Enable NVOS interface-stats class phy (root + stats-group %s)" % (stats_group_id,)
+    ):
+        _enable_family_classes(
+            system, dut, TelemetryConsts.INTERFACE_STATS, stats_group_id=None
+        )
+        _enable_family_classes(
+            system,
+            dut,
+            TelemetryConsts.INTERFACE_STATS,
+            stats_group_id=stats_group_id,
+            enable_phy_under_stats_group=True,
+        )
+        apply_telemetry_configuration(system, dut, is_nvos=True)
+
+
+def _apply_coexistence_root_telemetry_config(
+    dut,
+    collector_ips: Tuple[str, ...],
+    *,
+    is_nvos: bool,
+    export_vrf: str,
+) -> None:
+    if is_nvos:
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.split_pipeline import (
+            apply_split_pipeline_test01_stats_group_nvos,
+        )
+
+        with allure.step("Apply NVOS split-pipeline test_01 stats-group (coexistence)"):
+            apply_split_pipeline_test01_stats_group_nvos(
+                dut,
+                collector_ips[0],
+                export_vrf=export_vrf,
+                stats_group_id=COEXISTENCE_NVOS_STATS_GROUP_ID,
+            )
+            _enable_nvos_coexistence_phy(
+                dut, stats_group_id=COEXISTENCE_NVOS_STATS_GROUP_ID
+            )
+    else:
+        _apply_coexistence_split_pipeline_root_config(dut)
+
+
+def _apply_coexistence_persistence_root_config(
+    dut,
+    collector_ips: Tuple[str, ...],
+) -> None:
+    """Root OTLP intervals aligned with ``COEXISTENCE_SMOKE_TIME_GAPS`` / secured smoke."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+        _restore_otlp_mgmt_insecure_destinations,
+    )
+
+    with allure.step(
+        "Apply coexistence persistence root OTLP "
+        "(interface=2s, control=2s, buffer=60s, lldp=20s, platform≈60s)"
+    ):
+        _restore_otlp_mgmt_insecure_destinations(dut, collector_ips)
+        cmds = [
+            "nv set system telemetry interface-stats export state enabled",
+            "nv set system telemetry interface-stats sample-interval 2",
+            "nv set system telemetry control-plane-stats export state enabled",
+            "nv set system telemetry control-plane-stats sample-interval 2",
+            "nv set system telemetry buffer-stats export state enabled",
+            "nv set system telemetry buffer-stats sample-interval 60",
+            "nv set system telemetry lldp export state enabled",
+            "nv set system telemetry lldp sample-interval 20",
+            "nv set system telemetry platform-stats export state enabled",
+            "nv set system telemetry platform-stats export sample-interval 60",
+            "nv set system telemetry platform-stats class cpu state enabled",
+            "nv set system telemetry platform-stats class cpu sample-interval 60",
+            "nv set system telemetry platform-stats class disk state enabled",
+            "nv set system telemetry platform-stats class disk sample-interval 60",
+            "nv set system telemetry platform-stats class environment-sensor state enabled",
+            "nv set system telemetry platform-stats class environment-sensor sample-interval 60",
+            "nv set system telemetry platform-stats class file-system state enabled",
+            "nv set system telemetry platform-stats class file-system sample-interval 60",
+            "nv set system telemetry platform-stats class memory state enabled",
+            "nv set system telemetry platform-stats class memory sample-interval 60",
+            "nv set system telemetry interface-stats class phy state enabled",
+            "nv set system telemetry interface-stats class phy sample-interval 2",
+            "nv set system telemetry software-stats systemd export state enabled",
+            "nv set system telemetry software-stats systemd sample-interval 60",
+            "nv set system telemetry router export state enabled",
+            "nv set system telemetry router bgp export state enabled",
+            "nv set system telemetry router rib export state enabled",
+        ]
+        for pg in range(8):
+            cmds.append(
+                "nv set system telemetry interface-stats ingress-buffer priority-group %d" % pg
+            )
+        for tc in range(8):
+            cmds.append(
+                "nv set system telemetry interface-stats egress-buffer traffic-class %d" % tc
+            )
+        for sp in ("0", "1", "2", "3", "7"):
+            cmds.append("nv set system telemetry interface-stats switch-priority %s" % sp)
+        if _nvue_version_gte(dut, "1.13.0"):
+            cmds.append("nv set system telemetry interface-stats class debounce state enabled")
+        for cmd in cmds:
+            dut.run_cmd(cmd, validate=False)
+        dut.run_cmd("nv config apply -y", validate=True)
+
+
+def _prepare_coexistence_gnmi_dialout(dut) -> None:
+    """Release stale dial-out security before a fresh gNMI coexistence session."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        settle_dut_ssh_after_module_transition,
+    )
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
+        _release_stale_gnmi_dialout_security,
+    )
+
+    with allure.step('Prepare gNMI dial-out security (coexistence)'):
+        _release_stale_gnmi_dialout_security(dut)
+        settle_dut_ssh_after_module_transition(dut, settle_sec=3)
+
+
+def _ensure_insecure_otlp_session_after_config(
+    dut,
+    collector: OtelCollector,
+    *,
+    vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
+    telemetry_unit: Optional[str] = None,
+    is_nvos: bool = False,
+) -> None:
+    """Re-bind insecure OTLP after secured smoke or ``clear_config``."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
+        assert_otlp_session_established,
+        verify_otlp_client_active,
+    )
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        restart_asic_monitor,
+        restart_nvtelemetry,
+    )
+
+    with allure.step("Ensure insecure OTLP session (post-NVUE apply)"):
+        truncate_collector_export(collector)
+        collector.ensure_running(install_if_missing=False)
+        restart_nvtelemetry(dut, vrf, unit=telemetry_unit)
+        if not is_nvos:
+            restart_asic_monitor(dut, vrf)
+        verify_otlp_client_active(
+            dut, vrf, is_nvos=is_nvos, telemetry_unit=telemetry_unit
+        )
+        assert_otlp_session_established(collector)
 
 
 def _enable_interface_qos_coexistence_exports(dut) -> None:
@@ -374,11 +2062,52 @@ def _enable_interface_qos_coexistence_exports(dut) -> None:
         "nv set system telemetry router bgp export state enabled",
         "nv set system telemetry router rib export state enabled",
         "nv set system telemetry buffer-stats export state enabled",
+        "nv set system telemetry platform-stats export state enabled",
     ]
     with allure.step("Enable coexistence telemetry exports (Interface/QoS)"):
         for cmd in cmds:
             dut.run_cmd(cmd, validate=False)
         dut.run_cmd("nv config apply -y", validate=True)
+
+
+def _prepare_coexistence_insecure_otel(
+    dut,
+    collector: OtelCollector,
+    collector_ips: Tuple[str, ...],
+    *,
+    is_nvos: bool,
+    export_vrf: str,
+    telemetry_unit: Optional[str] = None,
+) -> None:
+    """Shared Cumulus/NVOS insecure coexistence prep (same step order; platform bodies differ)."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+        _restore_otlp_mgmt_insecure_destinations,
+    )
+
+    with allure.step("Prepare coexistence insecure OTEL (shared Cumulus/NVOS steps)"):
+        _restore_otlp_mgmt_insecure_destinations(
+            dut, collector_ips, export_vrf=export_vrf, is_nvos=is_nvos
+        )
+        if is_nvos:
+            # NVOS has no histogram subtree, so there is no insecure pre-run to stage.
+            logger.info("NVOS: skipping Cumulus histogram / split-pipeline insecure pre-run")
+        else:
+            prepare_split_pipeline_insecure_pre_run(dut)
+        _apply_coexistence_root_telemetry_config(
+            dut, collector_ips, is_nvos=is_nvos, export_vrf=export_vrf
+        )
+        if is_nvos:
+            # lldp / acl-stats / router / buffer-stats / software-stats are Cumulus-only subtrees.
+            logger.info("NVOS: skipping Cumulus-only coexistence telemetry exports")
+        else:
+            _enable_interface_qos_coexistence_exports(dut)
+        _ensure_insecure_otlp_session_after_config(
+            dut,
+            collector,
+            vrf=export_vrf,
+            telemetry_unit=telemetry_unit,
+            is_nvos=is_nvos,
+        )
 
 
 def collect_coexistence_smoke_cache(
@@ -391,15 +2120,26 @@ def collect_coexistence_smoke_cache(
     wait_sec: int = COEXISTENCE_SMOKE_COLLECT_WAIT_SEC,
     cleanup_session: bool = True,
     defer_gnmi_teardown: bool = False,
+    is_nvos: bool = False,
+    telemetry_unit: Optional[str] = None,
 ) -> CoexistenceCollectResult:
-    """``Test_Telemetry_Coexistence_Smoke`` OTEL + gNMI (``OtelMgmtVrfWithTLSConfig``)."""
+    """``Test_Telemetry_Coexistence_Smoke`` OTEL (+ gNMI on Cumulus only).
+
+    Cumulus: BGP/LLDP gNMI jobs + secured catalog families.
+    NVOS: OTEL only (smoke_01/03); BGP/LLDP gNMI tests are cumulus_only.
+    """
     from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
         build_smoke_gnmi_jobs,
         run_gnmi_with_parallel_work,
     )
 
     telemetryCache.clear_data()
-    gnmi_jobs = build_smoke_gnmi_jobs(dut, duration_sec=wait_sec)
+    if is_nvos:
+        gnmi_jobs: List[Any] = []
+    else:
+        gnmi_jobs = build_smoke_gnmi_jobs(dut, duration_sec=wait_sec)
+    if gnmi_jobs and sonic_mgmt is not None:
+        _prepare_coexistence_gnmi_dialout(dut)
 
     def _collect_otlp() -> Dict[str, Any]:
         return collect_and_cache_secured_otel_session(
@@ -409,6 +2149,8 @@ def collect_coexistence_smoke_cache(
             vrf=vrf,
             wait_sec=wait_sec,
             cleanup_session=cleanup_session,
+            telemetry_unit=telemetry_unit,
+            is_nvos=is_nvos,
         )
 
     gnmi_session = None
@@ -424,6 +2166,7 @@ def collect_coexistence_smoke_cache(
             gnmi_jobs,
             _otlp_and_store,
             defer_teardown=defer_gnmi_teardown,
+            use_mtls=True,
         )
         otel_payload = otel_holder['payload']
     else:
@@ -433,11 +2176,15 @@ def collect_coexistence_smoke_cache(
 
     artifact_path = cumulus_otel_artifact_path(cur_dir)
     hostname = get_dut_hostname(dut)
+    family_map = list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP) if is_nvos else None
     otel_payload["time_gaps"] = timegap_analysis_v2(
         artifact_path,
         hostname,
         os_info=get_dut_os_info(dut),
+        family_map=family_map,
     )
+    if is_nvos:
+        otel_payload["coexistence_expected_gaps"] = dict(COEXISTENCE_NVOS_SMOKE_TIME_GAPS)
     telemetryCache.add_data("otel", otel_payload)
     return CoexistenceCollectResult(otel_payload=otel_payload, gnmi_session=gnmi_session)
 
@@ -447,10 +2194,13 @@ def collect_coexistence_interface_qos_cache(
     collector: OtelCollector,
     cur_dir: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     sonic_mgmt=None,
     wait_sec: int = COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC,
     defer_gnmi_teardown: bool = False,
+    is_nvos: bool = False,
+    export_vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
+    telemetry_unit: Optional[str] = None,
 ) -> CoexistenceCollectResult:
     """``Test_Telemetry_Interface_QoS_Validation_Coexistence`` OTEL + gNMI cache."""
     from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
@@ -459,21 +2209,31 @@ def collect_coexistence_interface_qos_cache(
     )
 
     telemetryCache.clear_data()
-    primary_collector_ip = collector_ips[0]
-    with allure.step('Prepare split-pipeline mgmt VRF OTEL (test01 stats-group)'):
-        prepare_split_pipeline_insecure_pre_run(dut)
-        apply_split_pipeline_test01_stats_group(dut, primary_collector_ip)
-        _enable_interface_qos_coexistence_exports(dut)
+    vrf = export_vrf
+    _prepare_coexistence_insecure_otel(
+        dut,
+        collector,
+        collector_ips,
+        is_nvos=is_nvos,
+        export_vrf=vrf,
+        telemetry_unit=telemetry_unit,
+    )
 
-    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
     cp_stats_pre = get_cp_stat_sx_api_cli(dut)
-    gnmi_jobs = build_interface_qos_gnmi_jobs(dut, duration_sec=wait_sec)
+    gnmi_jobs = build_interface_qos_gnmi_jobs(dut, duration_sec=wait_sec, is_nvos=is_nvos)
+    # NVOS: plain dial-out (addr+port). Cumulus: SSIM mTLS dial-out.
+    use_mtls = not is_nvos
+    if gnmi_jobs and sonic_mgmt is not None:
+        _prepare_coexistence_gnmi_dialout(dut)
     otel_holder: Dict[str, Any] = {}
+    family_map = list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP) if is_nvos else None
 
     def _collect_otlp_and_cli():
         with allure.step('Collect OTLP export and CLI baseline (parallel with gNMI)'):
             truncate_collector_export(collector)
-            collect_telemetry_data(dut, collector, vrf, wait_sec, None, cur_dir)
+            collect_telemetry_data(
+                dut, collector, vrf, wait_sec, None, cur_dir, telemetry_unit=telemetry_unit
+            )
             artifact_path = cumulus_otel_artifact_path(cur_dir)
             hostname = get_dut_hostname(dut)
             otel_holder['payload'] = parse_telemetry_and_cache(
@@ -482,7 +2242,13 @@ def collect_coexistence_interface_qos_cache(
                 hostname=hostname,
                 include_time_gaps=True,
                 dut=dut,
+                family_map=family_map,
             )
+            if is_nvos:
+                otel_holder['payload']['coexistence_expected_gaps'] = dict(
+                    CumulusOtelConst.NVOS_SPLIT_EXPECTED_GAPS
+                )
+                telemetryCache.add_data('otel', otel_holder['payload'])
             otel_holder['cli'] = collect_cli_mgmt_vrf_session_data(dut, cp_stats_pre=cp_stats_pre)
 
     gnmi_session = None
@@ -490,8 +2256,8 @@ def collect_coexistence_interface_qos_cache(
     try:
         if gnmi_jobs and sonic_mgmt is not None:
             with allure.step(
-                'Run gNMI dial-out + OTLP in parallel (wait_sec=%d, jobs=%d)'
-                % (wait_sec, len(gnmi_jobs))
+                'Run gNMI dial-out + OTLP in parallel (wait_sec=%d, jobs=%d, use_mtls=%s)'
+                % (wait_sec, len(gnmi_jobs), use_mtls)
             ):
                 gnmi_session = run_gnmi_with_parallel_work(
                     dut,
@@ -499,6 +2265,8 @@ def collect_coexistence_interface_qos_cache(
                     gnmi_jobs,
                     _collect_otlp_and_cli,
                     defer_teardown=defer_gnmi_teardown,
+                    use_mtls=use_mtls,
+                    is_nvos=is_nvos,
                 )
         else:
             _collect_otlp_and_cli()
@@ -531,10 +2299,13 @@ def collect_coexistence_component_system_cache(
     collector: OtelCollector,
     cur_dir: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     sonic_mgmt=None,
     wait_sec: int = COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC,
     defer_gnmi_teardown: bool = False,
+    is_nvos: bool = False,
+    export_vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
+    telemetry_unit: Optional[str] = None,
 ) -> CoexistenceCollectResult:
     """``Test_Telemetry_Component_System_Validation_Coexistence`` OTEL + gNMI cache."""
     from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
@@ -542,20 +2313,37 @@ def collect_coexistence_component_system_cache(
         run_gnmi_with_parallel_work,
     )
 
-    telemetryCache.clear_data()
-    primary_collector_ip = collector_ips[0]
-    prepare_split_pipeline_insecure_pre_run(dut)
-    apply_split_pipeline_test01_stats_group(dut, primary_collector_ip)
-    _enable_interface_qos_coexistence_exports(dut)
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        settle_dut_ssh_after_module_transition,
+    )
 
-    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    telemetryCache.clear_data()
+    vrf = export_vrf
+    settle_dut_ssh_after_module_transition(dut)
+    _prepare_coexistence_insecure_otel(
+        dut,
+        collector,
+        collector_ips,
+        is_nvos=is_nvos,
+        export_vrf=vrf,
+        telemetry_unit=telemetry_unit,
+    )
+
     cp_stats_pre = get_cp_stat_sx_api_cli(dut)
-    gnmi_jobs = build_component_system_gnmi_jobs(dut, duration_sec=wait_sec)
+    if is_nvos:
+        gnmi_jobs: List[Any] = []
+    else:
+        gnmi_jobs = build_component_system_gnmi_jobs(dut, duration_sec=wait_sec)
+    if gnmi_jobs and sonic_mgmt is not None:
+        _prepare_coexistence_gnmi_dialout(dut)
     otel_holder: Dict[str, Any] = {}
+    family_map = list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP) if is_nvos else None
 
     def _collect_otlp_and_cli():
         truncate_collector_export(collector)
-        collect_telemetry_data(dut, collector, vrf, wait_sec, None, cur_dir)
+        collect_telemetry_data(
+            dut, collector, vrf, wait_sec, None, cur_dir, telemetry_unit=telemetry_unit
+        )
         artifact_path = cumulus_otel_artifact_path(cur_dir)
         hostname = get_dut_hostname(dut)
         otel_holder['payload'] = parse_telemetry_and_cache(
@@ -564,8 +2352,18 @@ def collect_coexistence_component_system_cache(
             hostname=hostname,
             include_time_gaps=True,
             dut=dut,
+            family_map=family_map,
         )
+        if is_nvos:
+            otel_holder['payload']['coexistence_expected_gaps'] = dict(
+                CumulusOtelConst.NVOS_SPLIT_EXPECTED_GAPS
+            )
+            telemetryCache.add_data('otel', otel_holder['payload'])
         otel_holder['cli'] = collect_cli_mgmt_vrf_session_data(dut, cp_stats_pre=cp_stats_pre)
+        # SSIM test_09 CLI component job (component_type='CPU'), collected in the same window.
+        otel_holder['cpu_cli'] = collect_cpu_cli_component_data(dut)
+        # SSIM test_10 CLI component job (component_type='PSU'), same chosen PSU as gNMI job.
+        otel_holder['psu_cli'] = collect_psu_cli_component_data(dut)
 
     gnmi_session = None
     if gnmi_jobs and sonic_mgmt is not None:
@@ -575,12 +2373,89 @@ def collect_coexistence_component_system_cache(
             gnmi_jobs,
             _collect_otlp_and_cli,
             defer_teardown=defer_gnmi_teardown,
+            use_mtls=True,
         )
     else:
         _collect_otlp_and_cli()
 
     telemetryCache.add_data('cli', otel_holder['cli'])
+    telemetryCache.add_data(CPU_CLI_CACHE_KEY, otel_holder['cpu_cli'])
+    telemetryCache.add_data(PSU_CLI_CACHE_KEY, otel_holder['psu_cli'])
     return CoexistenceCollectResult(
         otel_payload=otel_holder['payload'],
         gnmi_session=gnmi_session,
     )
+
+
+def _unset_interface_stats_attribute_filters(dut) -> None:
+    """SSIM ``test_06`` pg/tc/sp unsets on the interface-stats baseline."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+        apply_unset_changes,
+        unset_system_telemetry_interface_stats_egress_tc,
+        unset_system_telemetry_interface_stats_ingress_pg,
+        unset_system_telemetry_interface_stats_switch_priority,
+    )
+
+    with allure.step("Unset interface-stats pg/tc/sp attribute filters (SSIM test_06)"):
+        for pg in COEXISTENCE_ATTR_FILTER_UNSET_PGS:
+            unset_system_telemetry_interface_stats_ingress_pg(dut, pg)
+        for tc in COEXISTENCE_ATTR_FILTER_UNSET_TCS:
+            unset_system_telemetry_interface_stats_egress_tc(dut, tc)
+        for sp in COEXISTENCE_ATTR_FILTER_UNSET_SPS:
+            unset_system_telemetry_interface_stats_switch_priority(dut, sp)
+        apply_unset_changes(dut)
+
+
+def collect_coexistence_attribute_filtering_cache(
+    dut,
+    collector: OtelCollector,
+    cur_dir: str,
+    *,
+    collector_ips: Tuple[str, ...],
+    wait_sec: int = COEXISTENCE_INTERFACE_QOS_COLLECT_WAIT_SEC,
+    settle_sec: int = COEXISTENCE_ATTR_FILTER_SETTLE_SEC,
+) -> Dict[str, Any]:
+    """SSIM ``test_06_validate_otel_metric_attribute_filtering`` OTEL cache.
+
+    Rebuilds the Interface/QoS interface-stats baseline (pg/tc 0-7, sp 0,1,2,3,7), unsets the
+    pg/tc/sp values under test, re-collects the OTLP export and caches ``metrics_timestamps``
+    under the dedicated ``COEXISTENCE_ATTR_FILTER_CACHE_KEY`` for
+    :func:`validate_otel_metric_attribute_filtering`. Deliberately does NOT clear the shared
+    telemetry cache: this fixture is module-scoped and a global clear would wipe other suites'
+    cached payloads, coupling otherwise-independent tests.
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        settle_dut_ssh_after_module_transition,
+    )
+
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+        _restore_otlp_mgmt_insecure_destinations,
+    )
+
+    vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    settle_dut_ssh_after_module_transition(dut)
+    with allure.step('Prepare interface-stats baseline and unset pg/tc/sp (SSIM test_06)'):
+        _restore_otlp_mgmt_insecure_destinations(dut, collector_ips, export_vrf=vrf)
+        prepare_split_pipeline_insecure_pre_run(dut)
+        _apply_coexistence_split_pipeline_root_config(dut)
+        _enable_interface_qos_coexistence_exports(dut)
+        _unset_interface_stats_attribute_filters(dut)
+        _ensure_insecure_otlp_session_after_config(dut, collector, vrf=vrf)
+
+    with allure.step('Settle before OTLP re-collection (%ds)' % settle_sec):
+        time.sleep(settle_sec)
+
+    with allure.step('Collect OTLP export after attribute-filter unset (wait_sec=%d)' % wait_sec):
+        truncate_collector_export(collector)
+        collect_telemetry_data(dut, collector, vrf, wait_sec, None, cur_dir)
+        artifact_path = cumulus_otel_artifact_path(cur_dir)
+        hostname = get_dut_hostname(dut)
+        otel_payload = parse_telemetry_and_cache(
+            OtelDataValidations(),
+            artifact_path=artifact_path,
+            hostname=hostname,
+            cache_key=COEXISTENCE_ATTR_FILTER_CACHE_KEY,
+            include_time_gaps=True,
+            dut=dut,
+        )
+    return otel_payload

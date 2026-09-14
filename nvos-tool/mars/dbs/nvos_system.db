@@ -104,6 +104,12 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/system/nvos_system_gnmi.cases </cases>
     </test>
     <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/system/nvos_system_otel.cases </cases>
+    </test>
+    <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/system/nvos_system_otel_imported.cases </cases>
+    </test>
+    <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/system/nvos_system_grpc_tunnel.cases </cases>
     </test>
 	<test>

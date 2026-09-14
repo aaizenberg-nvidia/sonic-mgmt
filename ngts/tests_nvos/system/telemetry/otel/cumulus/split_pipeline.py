@@ -15,8 +15,19 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
     restart_nvtelemetry,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
+    _bind_stats_group_on_otlp_destinations,
+    _enable_family_classes,
     _enable_histogram_root,
+    _enable_simple_telemetry_export,
+    _enable_stats_group_simple_export,
+    _enable_stats_group_software_stats_systemd,
+    _stats_group_subtree,
     enable_cumulus_lab_interface_histogram,
+)
+from ngts.tests_nvos.system.telemetry.otel.helpers import (
+    _set_stats_sample_interval,
+    _stats_node,
+    _telemetry_stats_parent,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.sample_interval import (
     verify_metrics_sample_interval_server1,
@@ -40,11 +51,42 @@ def _nv_apply(dut) -> None:
     time.sleep(10)
 
 
-def _ensure_stats_group(dut, stats_group_id: str) -> None:
-    dut.run_cmd(
-        f"nv set system telemetry stats-group {stats_group_id}",
-        validate=True,
+_SPLIT_PIPELINE_PLATFORM_CLASSES = (
+    TelemetryConsts.PLATFORM_CLASS_CPU,
+    TelemetryConsts.PLATFORM_CLASS_DISK,
+    TelemetryConsts.PLATFORM_CLASS_ENVIRONMENT_SENSOR,
+    CumulusOtelConst.STATS_GROUP_PLATFORM_CLASS_FILE_SYSTEM,
+    TelemetryConsts.PLATFORM_CLASS_MEMORY,
+)
+_SPLIT_PIPELINE_PLATFORM_CLASS_INTERVALS = {
+    cls: 70 for cls in _SPLIT_PIPELINE_PLATFORM_CLASSES
+}
+
+_NVOS_SPLIT_PIPELINE_PLATFORM_CLASSES = (
+    TelemetryConsts.PLATFORM_CLASS_CPU,
+    TelemetryConsts.PLATFORM_CLASS_DISK,
+    TelemetryConsts.PLATFORM_CLASS_MEMORY,
+    TelemetryConsts.PLATFORM_CLASS_ENVIRONMENT_SENSOR,
+)
+_NVOS_SPLIT_PIPELINE_PLATFORM_CLASS_INTERVALS = {
+    cls: 70 for cls in _NVOS_SPLIT_PIPELINE_PLATFORM_CLASSES
+}
+
+
+def _try_stats_group_export_enabled(system: System, dut, stats_group_id: str, path: str) -> None:
+    """Best-effort enable export under a stats-group subtree (optional Cumulus knobs)."""
+    result = _stats_group_subtree(system, stats_group_id, path).set(
+        TelemetryConsts.STATE, _ENABLED, dut_engine=dut
     )
+    if result.result:
+        result.verify_result()
+    else:
+        result.ignore_result()
+        logger.info(
+            "Skipping stats-group %s export enable under %s (NVUE rejected set)",
+            stats_group_id,
+            path,
+        )
 
 
 def apply_split_pipeline_test01_stats_group(
@@ -58,86 +100,121 @@ def apply_split_pipeline_test01_stats_group(
     system = System()
     sg = stats_group_id
     with allure.step(f"Apply split-pipeline stats-group {sg} (mgmt VRF)"):
-        _ensure_stats_group(dut, sg)
-        dut.run_cmd("nv set system telemetry interface-stats sample-interval 10", validate=True)
-        dut.run_cmd(
-            "nv set system telemetry platform-stats export sample-interval 60",
-            validate=True,
+        _telemetry_stats_parent(system, sg)
+        _set_stats_sample_interval(
+            system, dut, TelemetryConsts.INTERFACE_STATS, 10
         )
-        dut.run_cmd(
-            "nv set system telemetry control-plane-stats export state enabled",
-            validate=True,
+        _set_stats_sample_interval(
+            system, dut, TelemetryConsts.PLATFORM_STATS, 60
         )
-        dut.run_cmd(
-            "nv set system telemetry control-plane-stats sample-interval 10",
-            validate=True,
+        _enable_simple_telemetry_export(system, dut, "control-plane-stats", 10)
+
+        _stats_group_subtree(system, sg, "/histogram/export").set(
+            TelemetryConsts.STATE, _ENABLED, dut_engine=dut
+        ).verify_result()
+        _enable_stats_group_simple_export(
+            system, dut, sg, "control-plane-stats", 15
+        )
+        _enable_stats_group_simple_export(system, dut, sg, "buffer-stats", 15)
+        _enable_stats_group_simple_export(
+            system, dut, sg, TelemetryConsts.INTERFACE_STATS, 15
+        )
+        _stats_node(
+            system, TelemetryConsts.PLATFORM_STATS, stats_group_id=sg
+        ).export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
+        _enable_family_classes(
+            system,
+            dut,
+            TelemetryConsts.PLATFORM_STATS,
+            stats_group_id=sg,
+            platform_classes=_SPLIT_PIPELINE_PLATFORM_CLASSES,
+            platform_class_intervals=_SPLIT_PIPELINE_PLATFORM_CLASS_INTERVALS,
+        )
+        _bind_stats_group_on_otlp_destinations(
+            system, dut, [primary_collector_ip], sg
         )
 
-        cmds = [
-            f"nv set system telemetry stats-group {sg} histogram export state enabled",
-            f"nv set system telemetry stats-group {sg} control-plane-stats export state enabled",
-            f"nv set system telemetry stats-group {sg} control-plane-stats sample-interval 15",
-            f"nv set system telemetry stats-group {sg} buffer-stats export state enabled",
-            f"nv set system telemetry stats-group {sg} buffer-stats sample-interval 15",
-            f"nv set system telemetry stats-group {sg} interface-stats export state enabled",
-            f"nv set system telemetry stats-group {sg} interface-stats sample-interval 15",
-            f"nv set system telemetry stats-group {sg} platform-stats export state enabled",
-            f"nv set system telemetry stats-group {sg} platform-stats class cpu state enabled",
-            f"nv set system telemetry stats-group {sg} platform-stats class cpu sample-interval 70",
-            f"nv set system telemetry stats-group {sg} platform-stats class disk state enabled",
-            f"nv set system telemetry stats-group {sg} platform-stats class disk sample-interval 70",
-            (
-                f"nv set system telemetry stats-group {sg} platform-stats class "
-                "environment-sensor state enabled"
-            ),
-            (
-                f"nv set system telemetry stats-group {sg} platform-stats class "
-                "environment-sensor sample-interval 70"
-            ),
-            (
-                f"nv set system telemetry stats-group {sg} platform-stats class "
-                "file-system state enabled"
-            ),
-            (
-                f"nv set system telemetry stats-group {sg} platform-stats class "
-                "file-system sample-interval 70"
-            ),
-            f"nv set system telemetry stats-group {sg} platform-stats class memory state enabled",
-            f"nv set system telemetry stats-group {sg} platform-stats class memory sample-interval 70",
-            (
-                f"nv set system telemetry export otlp grpc destination "
-                f"{primary_collector_ip} stats-group {sg}"
-            ),
-        ]
-        optional_cmds = []
         if include_router_lldp:
-            optional_cmds.extend(
-                [
-                    f"nv set system telemetry stats-group {sg} router export state enabled",
-                    f"nv set system telemetry stats-group {sg} lldp export state enabled",
-                    f"nv set system telemetry stats-group {sg} lldp sample-interval 30",
-                    (
-                        f"nv set system telemetry stats-group {sg} platform-stats class "
-                        "transceiver-info state enabled"
-                    ),
-                    (
-                        f"nv set system telemetry stats-group {sg} platform-stats class "
-                        "transceiver-info sample-interval 60"
-                    ),
-                    (
-                        f"nv set system telemetry stats-group {sg} software-stats systemd "
-                        "export state enabled"
-                    ),
-                    (
-                        f"nv set system telemetry stats-group {sg} software-stats systemd "
-                        "sample-interval 70"
-                    ),
-                ]
+            _try_stats_group_export_enabled(
+                system, dut, sg, "/router/export"
             )
-        for cmd in cmds:
-            dut.run_cmd(cmd, validate=True)
-        for cmd in optional_cmds:
-            dut.run_cmd(cmd, validate=False)
+            _enable_stats_group_simple_export(system, dut, sg, "lldp", 30)
+            _enable_family_classes(
+                system,
+                dut,
+                TelemetryConsts.PLATFORM_STATS,
+                stats_group_id=sg,
+                platform_classes=(TelemetryConsts.PLATFORM_CLASS_TRANSCEIVER_INFO,),
+                platform_class_intervals={
+                    TelemetryConsts.PLATFORM_CLASS_TRANSCEIVER_INFO: 60
+                },
+            )
+            _enable_stats_group_software_stats_systemd(system, dut, sg, 70)
+
+        system.telemetry.export.otlp.set(
+            TelemetryConsts.STATE,
+            _ENABLED,
+            apply=False,
+            dut_engine=dut,
+        )
+        _nv_apply(dut)
+
+
+def apply_split_pipeline_test01_stats_group_nvos(
+    dut,
+    primary_collector_ip: str,
+    *,
+    export_vrf: str,
+    stats_group_id: str = _STATS_GROUP,
+) -> None:
+    """NVOS split-pipeline stats-group ``test_01`` (interface + platform only).
+
+    NVOS has no histogram / buffer-stats / control-plane-stats / lldp / software-stats
+    telemetry subtrees, so this stages only the split-pipeline families NVOS supports:
+    root interface/platform intervals that differ from the ``test_01`` stats-group
+    bound to the primary collector. Intervals here must match the ``expected_gaps``
+    the test passes to :func:`run_split_pipeline_test01_verification`.
+    """
+    system = System()
+    sg = stats_group_id
+    with allure.step(
+        f"Apply NVOS split-pipeline stats-group {sg} (vrf={export_vrf})"
+    ):
+        _telemetry_stats_parent(system, sg)
+
+        _stats_node(system, TelemetryConsts.INTERFACE_STATS).export.set(
+            TelemetryConsts.STATE, _ENABLED, dut_engine=dut
+        ).verify_result()
+        _set_stats_sample_interval(
+            system, dut, TelemetryConsts.INTERFACE_STATS, 10
+        )
+        _stats_node(system, TelemetryConsts.PLATFORM_STATS).export.set(
+            TelemetryConsts.STATE, _ENABLED, dut_engine=dut
+        ).verify_result()
+        _set_stats_sample_interval(
+            system, dut, TelemetryConsts.PLATFORM_STATS, 60
+        )
+
+        _stats_node(
+            system, TelemetryConsts.INTERFACE_STATS, stats_group_id=sg
+        ).export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
+        _set_stats_sample_interval(
+            system, dut, TelemetryConsts.INTERFACE_STATS, 15, stats_group_id=sg
+        )
+        _stats_node(
+            system, TelemetryConsts.PLATFORM_STATS, stats_group_id=sg
+        ).export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
+        _enable_family_classes(
+            system,
+            dut,
+            TelemetryConsts.PLATFORM_STATS,
+            stats_group_id=sg,
+            platform_classes=_NVOS_SPLIT_PIPELINE_PLATFORM_CLASSES,
+            platform_class_intervals=_NVOS_SPLIT_PIPELINE_PLATFORM_CLASS_INTERVALS,
+        )
+        _bind_stats_group_on_otlp_destinations(
+            system, dut, [primary_collector_ip], sg
+        )
 
         system.telemetry.export.otlp.set(
             TelemetryConsts.STATE,
@@ -186,8 +263,15 @@ def run_split_pipeline_test01_verification(
     vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
     expected_gaps: dict | None = None,
     prepare_session: bool = True,
+    telemetry_unit: str | None = None,
+    family_map: list | None = None,
 ) -> None:
-    """Shared test01 body: sample-interval validation for stats-group ``test_01``."""
+    """Shared test01 body: sample-interval validation for stats-group ``test_01``.
+
+    ``telemetry_unit`` overrides the systemd unit used by collection (NVOS passes
+    ``nv-telemetry.service``); defaults to the Cumulus per-VRF ``nv-telemetry@<vrf>``.
+    ``family_map`` overrides the metric-prefix -> gap-key pairs (NVOS metric names).
+    """
     hostname = get_dut_hostname(dut)
     expected = expected_gaps or CumulusOtelConst.SPLIT_PIPELINE_TEST01_EXPECTED_GAPS
     verify_metrics_sample_interval_server1(
@@ -198,6 +282,8 @@ def run_split_pipeline_test01_verification(
         vrf,
         expected,
         prepare_session=prepare_session,
+        telemetry_unit=telemetry_unit,
+        family_map=family_map,
     )
 
 

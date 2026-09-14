@@ -1995,6 +1995,11 @@ class TelemetryConsts:
 
     # --- Field names (used as op_param_name in BaseComponent.set/unset, and as JSON keys) ---
     STATE = 'state'
+    # Pre-5.15 Cumulus toggles the telemetry master feature via `enable on/off`
+    # (5.15+ uses `state enabled/disabled`). See cumulus_telemetry_uses_enable_schema.
+    ENABLE = 'enable'
+    ENABLE_ON = 'on'
+    ENABLE_OFF = 'off'
     SAMPLE_INTERVAL = 'sample-interval'
     VRF = 'vrf'
     INSECURE = 'insecure'
@@ -2013,10 +2018,14 @@ class TelemetryConsts:
     HTTP = 'http'
     DESTINATION = 'destination'
     LABEL = 'label'
+    LOGS = 'logs'
     INTERFACE_STATS = 'interface-stats'
     PEER_PORT_STATS = 'peer-port-stats'
     IB_ROUTER_STATS = 'ib-router-stats'
     PLATFORM_STATS = 'platform-stats'
+    # Cumulus-lab control-plane stats family (test04). Not part of ALL_STATS_SUBTREES:
+    # the sx_api CLI reference is Cumulus-only, so test04 runs cumulus_only.
+    CONTROL_PLANE_STATS = 'control-plane-stats'
     CLASS = 'class'
     PHY = 'phy'
 
@@ -2076,6 +2085,9 @@ class TelemetryConsts:
         HTTP_INSECURE = 'disabled'
         HTTP_PORT = 4318
         HTTP_ENCODING = 'proto'
+
+        # `logs export state` (syslog-over-OTEL) is opt-in; disabled on a fresh system.
+        LOGS_EXPORT_STATE = 'disabled'
 
         # Default `state` for export and class.phy nodes of interface-stats / peer-port-stats /
         # ib-router-stats / platform-stats.export

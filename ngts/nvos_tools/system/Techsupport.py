@@ -196,7 +196,25 @@ class TechSupport(BaseComponent):
             output = engine.run_cmd("ls " + full_path + "/" + tech_folder)
             return output.split()
 
-    def check_techsupport_file_age(self, engine, system, tech_support_path: str = "", max_age_hours: int = 24):
+    def bundle_contains_file(self, engine, file_name, tech_support_dir=''):
+        """
+        Check whether a file appears anywhere under the extracted tech-support tree.
+
+        Depth-agnostic: matches by name at any depth below the dump directory, since
+        the exact in-bundle location of an artifact is not guaranteed.
+
+        :param engine: engine
+        :param file_name: file name to look for (e.g. '47-otel-syslog.conf')
+        :param tech_support_dir: extracted dump directory (defaults to the last generated one)
+        :return: True if the file is present in the bundle
+        """
+        if not tech_support_dir:
+            tech_support_dir = SystemConsts.TECHSUPPORT_FILES_PATH + self.file_name.replace('.tar.gz', "")
+        with allure.step(f'Check tech-support bundle for {file_name}'):
+            output = engine.run_cmd(f'sudo find {tech_support_dir} -name {file_name}')
+            return bool(output.strip())
+
+    def check_techsupport_file_age(self, engine, system, tech_support_path: str = '', max_age_hours: int = 24):
         """
         Verify that tech-support file was generated within a specified number of hours.
 

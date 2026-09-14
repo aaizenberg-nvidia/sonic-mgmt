@@ -75,8 +75,14 @@ def timegap_analysis_v2(
     expected: Optional[Dict[str, float]] = None,
     tolerance_pct: float = _TOLERANCE_PCT,
     os_info: str = "",
+    family_map: Optional[list] = None,
 ) -> Dict[str, float]:
-    """Streaming gap analysis (SSIM ``test_telemetry_split_pipelines.timegap_analysis_v2``)."""
+    """Streaming gap analysis (SSIM ``test_telemetry_split_pipelines.timegap_analysis_v2``).
+
+    ``family_map`` overrides the ``(metric-name-prefix, gap-key)`` pairs scanned for
+    gaps. Defaults to the Cumulus/node-exporter prefixes; NVOS passes its unified
+    ``nvswitch_platform_*`` / IB ``nvswitch_interface_if`` prefixes instead.
+    """
 
     def _hosts_in_obj(obj: Dict[str, Any]) -> list[str]:
         hosts = []
@@ -189,30 +195,33 @@ def timegap_analysis_v2(
             if count >= max_objects:
                 break
 
-    families = [
-        ("nvswitch_histogram", "histogram_gap"),
-        ("nvswitch_interface_ether", "interface_stats_gap"),
-        ("nvswitch_control", "control_stats_gap"),
-    ]
-    if _node_netstat_sample_interval_supported(os_info):
-        families.append(("node_netstat", "netstats_gap"))
-    families.extend(
-        [
-            ("node_cpu", "platf_cpu_gap"),
-            ("node_memory", "platf_mem_gap"),
-            ("node_filesystem", "platf_file_gap"),
-            ("nvswitch_platform_environment", "platf_envir_gap"),
-            ("node_disk", "platf_disk_gap"),
-            ("nvswitch_platform_transceiver", "platf_transceiver_gap"),
-            ("shared_buffer", "buffer_gap"),
-            ("nvswitch_interface_phy", "phy_gap"),
-            ("phy_stats", "phy_gap"),
-            ("nvrouting", "frr_gap"),
-            ("nvswitch_systemd", "systemd_gap"),
-            ("nvswitch_ar", "ar_gap"),
-            ("nvswitch_lldp", "lldp_gap"),
+    if family_map is not None:
+        families = list(family_map)
+    else:
+        families = [
+            ("nvswitch_histogram", "histogram_gap"),
+            ("nvswitch_interface_ether", "interface_stats_gap"),
+            ("nvswitch_control", "control_stats_gap"),
         ]
-    )
+        if _node_netstat_sample_interval_supported(os_info):
+            families.append(("node_netstat", "netstats_gap"))
+        families.extend(
+            [
+                ("node_cpu", "platf_cpu_gap"),
+                ("node_memory", "platf_mem_gap"),
+                ("node_filesystem", "platf_file_gap"),
+                ("nvswitch_platform_environment", "platf_envir_gap"),
+                ("node_disk", "platf_disk_gap"),
+                ("nvswitch_platform_transceiver", "platf_transceiver_gap"),
+                ("shared_buffer", "buffer_gap"),
+                ("nvswitch_interface_phy", "phy_gap"),
+                ("phy_stats", "phy_gap"),
+                ("nvrouting", "frr_gap"),
+                ("nvswitch_systemd", "systemd_gap"),
+                ("nvswitch_ar", "ar_gap"),
+                ("nvswitch_lldp", "lldp_gap"),
+            ]
+        )
 
     result: Dict[str, float] = {}
     for met_type, key in families:
@@ -292,8 +301,15 @@ def verify_metrics_sample_interval_server1(
     *,
     timeout_sec: int = CumulusOtelConst.SPLIT_PIPELINE_COLLECT_WAIT_SEC,
     prepare_session: bool = True,
+    telemetry_unit: Optional[str] = None,
+    family_map: Optional[list] = None,
 ) -> None:
-    """Collect OTLP export and validate sample-interval gaps (SSIM server1 helper)."""
+    """Collect OTLP export and validate sample-interval gaps (SSIM server1 helper).
+
+    ``telemetry_unit`` overrides the systemd unit for stop/copy/restart collection
+    (NVOS passes ``nv-telemetry.service``); defaults to Cumulus ``nv-telemetry@<vrf>``.
+    ``family_map`` overrides the metric-prefix -> gap-key pairs (NVOS metric names).
+    """
     os_info = get_dut_os_info(dut)
     expected = _expected_sample_intervals_for_os(expected_result, os_info)
 
@@ -302,7 +318,10 @@ def verify_metrics_sample_interval_server1(
 
     truncate_collector_export(collector)
     with allure.step(f"Collect split-pipeline OTLP export ({timeout_sec}s)"):
-        collect_telemetry_data(dut, collector, vrf, timeout_sec, None, cur_dir)
+        collect_telemetry_data(
+            dut, collector, vrf, timeout_sec, None, cur_dir,
+            telemetry_unit=telemetry_unit,
+        )
 
     artifact = cumulus_otel_artifact_path(cur_dir)
     with allure.step("Analyze metric sample intervals (timegap v2)"):
@@ -312,6 +331,7 @@ def verify_metrics_sample_interval_server1(
             expected=expected,
             tolerance_pct=_TOLERANCE_PCT,
             os_info=os_info,
+            family_map=family_map,
         )
         try:
             allure.attach(

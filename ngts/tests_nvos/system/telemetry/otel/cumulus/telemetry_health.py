@@ -250,20 +250,24 @@ def cleanup_otlp_export_session(
     dut,
     collector: OtelCollector,
     vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
+    *,
+    telemetry_unit: Optional[str] = None,
+    is_nvos: bool = False,
 ) -> None:
     """Stop DUT + collector, truncate export, restart (SSIM ``cleanup_server_export_file``).
 
-    Also restarts ``asic-monitor@<vrf>`` and waits so ``histogram-export-service`` can
-    report active (SSIM topo configures per-interface histogram; see
-    :func:`~ngts.tests_nvos.system.telemetry.otel.cumulus.helpers.enable_cumulus_lab_interface_histogram`).
+    On Cumulus, also restarts ``asic-monitor@<vrf>`` and waits so
+    ``histogram-export-service`` can report active. NVOS runs a single
+    ``nv-telemetry.service`` (``telemetry_unit``) and has no asic-monitor.
     """
     with allure.step("Cleanup and restart OTLP export session"):
-        stop_nvtelemetry(dut, vrf)
+        stop_nvtelemetry(dut, vrf, unit=telemetry_unit)
         collector.stop()
         collector.truncate_artifact()
         collector.ensure_running(install_if_missing=False)
-        start_nvtelemetry(dut, vrf)
-        restart_asic_monitor(dut, vrf)
+        start_nvtelemetry(dut, vrf, unit=telemetry_unit)
+        if not is_nvos:
+            restart_asic_monitor(dut, vrf)
         settle = CumulusOtelConst.OTEL_HEALTH_POST_CLEANUP_SETTLE_SEC
         logger.info(
             "Waiting %ss for OTLP export and histogram-export-service to stabilize",
@@ -318,19 +322,32 @@ def verify_drop_counter(dut, server: str) -> None:
     logger.info("export destination %s drop-counter=0", server)
 
 
-def verify_otlp_client_active(dut, vrf: str) -> None:
-    """DUT OTLP client services are running (SSIM ``is_otlp_client_active``)."""
+def verify_otlp_client_active(
+    dut,
+    vrf: str,
+    *,
+    is_nvos: bool = False,
+    telemetry_unit: Optional[str] = None,
+) -> None:
+    """DUT OTLP client services are running (SSIM ``is_otlp_client_active``).
+
+    NVOS runs a single ``nv-telemetry.service`` and has no prometheus sidecars or
+    per-VRF ``asic-monitor`` histogram export, so only that unit is checked there.
+    """
     from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
         _asic_monitor_active,
         _parse_systemctl_is_active,
     )
 
-    units = (
-        f"nv-telemetry@{vrf}",
-        "prometheus-sdk-stats",
-        "prometheus-node-exporter",
-    )
-    with allure.step(f"Verify OTLP client services active (vrf={vrf})"):
+    if is_nvos:
+        units = (telemetry_unit or "nv-telemetry.service",)
+    else:
+        units = (
+            f"nv-telemetry@{vrf}",
+            "prometheus-sdk-stats",
+            "prometheus-node-exporter",
+        )
+    with allure.step(f"Verify OTLP client services active (vrf={vrf}, is_nvos={is_nvos})"):
         for unit in units:
             state = _parse_systemctl_is_active(
                 dut.run_cmd(
@@ -350,6 +367,10 @@ def verify_otlp_client_active(dut, vrf: str) -> None:
                     f"is-active={state!r}):\n{status}"
                 )
             logger.info("service %s is active", unit)
+
+        if is_nvos:
+            # NVOS has no asic-monitor / histogram-export-service.
+            return
 
         if not _asic_monitor_active(dut, vrf):
             unit = f"asic-monitor@{vrf}"

@@ -411,7 +411,7 @@ pytestmark = [
 #     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test02a_otel_interface_pg_rx_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -428,7 +428,7 @@ def test02a_otel_interface_pg_rx_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test02b_otel_interface_tc_tx_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -445,7 +445,7 @@ def test02b_otel_interface_tc_tx_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03a_otel_histogram_counter_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -462,7 +462,7 @@ def test03a_otel_histogram_counter_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03b_otel_histogram_ingress_buffer_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -479,7 +479,7 @@ def test03b_otel_histogram_ingress_buffer_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03c_otel_histogram_egress_buffer_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -496,7 +496,7 @@ def test03c_otel_histogram_egress_buffer_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03d_otel_histogram_latency_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
@@ -513,7 +513,7 @@ def test03d_otel_histogram_latency_validation(
     )
 
 
-@pytest.mark.cumulus
+@pytest.mark.cumulus_only
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test03e_otel_histogram_structure_validation(
     engines, otel_mgmt_insecure_validation_cache, test_api
