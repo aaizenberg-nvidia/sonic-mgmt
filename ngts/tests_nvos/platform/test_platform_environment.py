@@ -3,8 +3,9 @@ import random
 import time
 from contextlib import contextmanager
 import pytest
+from retry.api import retry_call
 
-from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_constants.constants_nvos import AlarmsConsts, ApiType
 from ngts.nvos_constants.constants_nvos import FansConsts
 from ngts.nvos_constants.constants_nvos import OutputFormat
 from ngts.nvos_constants.constants_nvos import PlatformConsts, HealthConsts, ActionConsts, SystemConsts
@@ -16,6 +17,8 @@ from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.helpers.alarms.system_alarm_helpers import validate_all_alarms_once
+from ngts.tests_nvos.helpers.alarms.system_alarms_gnmi_helpers import gnmi_client_for_alarms
 from ngts.tests_nvos.system.test_system_health import verify_health_status_and_led
 from ngts.tests_nvos.helpers import redmine_helpers
 from ngts.tests_nvos.platform.helpers import get_available_temperature_sensor_list
@@ -313,7 +316,7 @@ def test_show_platform_environment_temperature(engines, devices, random_api):
 @pytest.mark.platform
 @pytest.mark.simx
 @pytest.mark.disable_loganalyzer
-def test_platform_environment_events_performance(engines, devices, skip_for_fanless_setup):
+def test_platform_environment_events_performance(engines, devices, skip_for_fanless_setup, otel_alarms_collector, tmp_path, random_api):
     """
      Simulate an event and verify that show event is not flooded with multiple entries
 
@@ -324,11 +327,14 @@ def test_platform_environment_events_performance(engines, devices, skip_for_fanl
      4. Assign wrong FAN direction for this system
      5. Change FAN direction to wrong direction and verify via CLI
      6. Wait for 2:10 minutes and verify that show event is not flooded with multiple entries for the same fan
-     7. Change FAN direction to system default
+     7. Validate the fan direction error appears in the system log but is not flooded
+     8. Validate a fan-airflow-mismatch alarm is raised for the fan (NVUE, gNMI and OTEL)
+     9. Change FAN direction to system default
      """
     TestToolkit.tested_api = ApiType.NVUE
     platform = Platform()
     system = System()
+    gnmiclient = gnmi_client_for_alarms(engines)
     fan_to_check = devices.dut.fan_list[2]
     op_param_val = " | grep '" + str(FansConsts.FAN_DIRECTION_MISMATCH_ERR) + "'"
     with allure.step('Check is Juliet Device'):
@@ -387,6 +393,9 @@ def test_platform_environment_events_performance(engines, devices, skip_for_fanl
                 logger.info("Fan direction errors are being repeated in logs, retry to check for flooding")
                 ret, _ = _check_fan_error_logs(system, op_param_val, no_of_errors_2, 60)
                 assert ret, "Fan direction errors are being flooded in logs"
+
+        with allure.step("Validate Fan direction error appears in system alarms"):
+            validate_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path, fan_to_check, [AlarmsConsts.FAN_AIRFLOW_MISMATCH], expected_present=True)
 
     finally:
         with allure.step("Change Fan direction of {} to default({}) and verify".format(fan_to_check, def_dir)):
@@ -544,6 +553,12 @@ def _set_platform_environment_fan_direction(engines, devices, platform, fan_to_c
     else:
         fan_name = fan_to_check.split('/')[0].lower()
 
+    # Right after the fixtures' config apply the DUT may undo/ignore the simulated value - re-write until it sticks
+    retry_call(_simulate_and_check_fan_direction, fargs=[engines, devices, platform, fan_to_check, fan_name, direction],
+               tries=6, delay=5, logger=logger)
+
+
+def _simulate_and_check_fan_direction(engines, devices, platform, fan_to_check, fan_name, direction):
     with allure.step("Set the direction of the fan {} to {} direction".format(fan_name, direction)):
         simulate_fan_direction(engines, devices, fan_name, direction)
 

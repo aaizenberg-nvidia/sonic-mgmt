@@ -1222,6 +1222,7 @@ class PlatformConsts:
     ENV_TEMP_MIN = 15  # [Celsius]
     ENV_TEMP_MAX = 90  # [Celsius]
     VOLTAGE_FILES_PATH = '/var/run/hw-management/ui/voltage'
+    POWER_FILES_PATH = '/var/run/hw-management/power'
     TEMPERATURE_FILES_PATH = '/var/run/hw-management/ui/temperature'
     HEALTH_STATUS_NOT_OK_EVENT = 'Health status is not ok'
     LEAKAGE_STATUS_OK = 'ok'
@@ -2042,6 +2043,12 @@ class TelemetryConsts:
     DESTINATION = 'destination'
     LABEL = 'label'
     LOGS = 'logs'
+    # `alarms` exports the system alarms healthd keeps (the ones
+    # `nv show system alarms` lists) as OTLP metrics; `suppress-zeroes` is the
+    # node under `alarms export` that governs the tail of a cleared alarm.
+    ALARMS = 'alarms'
+    SUPPRESS_ZEROES = 'suppress-zeroes'
+    DELAY_INTERVALS = 'delay-intervals'
     INTERFACE_STATS = 'interface-stats'
     PEER_PORT_STATS = 'peer-port-stats'
     IB_ROUTER_STATS = 'ib-router-stats'
@@ -2091,6 +2098,11 @@ class TelemetryConsts:
         PLATFORM_CLASS_TRANSCEIVER_INFO,
     ]
 
+    # --- Alarms class names (each is a child of `alarms class`) ---
+    ALARMS_CLASS_PLATFORM = 'platform'
+    ALARMS_CLASS_SOFTWARE = 'software'
+    ALARMS_CLASSES = [ALARMS_CLASS_PLATFORM, ALARMS_CLASS_SOFTWARE]
+
     # --- Numeric ranges (per the CLI grammar) ---
     SAMPLE_INTERVAL_MIN = 1
     SAMPLE_INTERVAL_MAX = 86400
@@ -2111,6 +2123,15 @@ class TelemetryConsts:
 
         # `logs export state` (syslog-over-OTEL) is opt-in; disabled on a fresh system.
         LOGS_EXPORT_STATE = 'disabled'
+
+        # `alarms export` (system-alarms-over-OTLP) is opt-in as well, and samples
+        # at 30s. A cleared alarm keeps being exported as a zero for
+        # ALARMS_DELAY_INTERVALS samples before its series is suppressed, which is
+        # what lets a consumer see the clear instead of just the series going away.
+        ALARMS_EXPORT_STATE = 'disabled'
+        ALARMS_SAMPLE_INTERVAL = 30
+        ALARMS_SUPPRESS_ZEROES_STATE = 'enabled'
+        ALARMS_DELAY_INTERVALS = 5
 
         # Default `state` for export and class.phy nodes of interface-stats / peer-port-stats /
         # ib-router-stats / platform-stats.export
@@ -2548,6 +2569,163 @@ class HealthConsts:
         HEALTHY = 'HEALTHY'
         UNHEALTHY = 'UNHEALTHY'
         INSTANCE = 'instance'
+
+
+class AlarmsConsts:
+    """`nv show system alarms`: the sticky alarms healthd keeps in STATE_DB.
+
+    The output holds two collections, each keyed by '<resource>:<alarm-type>'
+    and containing only the alarms that are ACTIVE right now (a cleared alarm
+    is dropped from the output rather than listed as inactive):
+        {"component-alarms": {"TEMPERATURE_SENSOR:TEMPERATURE_HIGH": {...}},
+        "software-alarms": {}}
+    """
+    # Hardware alarms are published under COMPONENT_ALARMS, process and
+    # container alarms under SOFTWARE_ALARMS.
+    COMPONENT_ALARMS = "component-alarms"
+    SOFTWARE_ALARMS = "software-alarms"
+    COLLECTIONS = [COMPONENT_ALARMS, SOFTWARE_ALARMS]
+
+    # Leaves of a single alarm row.
+    RESOURCE = "resource"
+    TYPE = "alarm-type"
+    SEVERITY = "severity"
+    DESCRIPTION = "description"
+    TIME_CREATED = "time-created"
+    ROW_FIELDS = [RESOURCE, TYPE, SEVERITY, DESCRIPTION, TIME_CREATED]
+
+    # Alarm severities, low to high.
+    MINOR = "MINOR"
+    WARNING = "WARNING"
+    MAJOR = "MAJOR"
+    CRITICAL = "CRITICAL"
+    SEVERITIES = [MINOR, WARNING, MAJOR, CRITICAL]
+
+    # Alarm types, mirroring the healthd alarm catalog.
+    FATAL_STATE = "FATAL_STATE"
+    TEMPERATURE_HIGH = "TEMPERATURE_HIGH"
+    TEMPERATURE_LOW = "TEMPERATURE_LOW"
+    VOLTAGE_OUT_OF_RANGE = "VOLTAGE_OUT_OF_RANGE"
+    LEAK_DETECTED = "LEAK_DETECTED"
+    FAN_SPEED_OUT_OF_RANGE = "FAN_SPEED_OUT_OF_RANGE"
+    FAN_AIRFLOW_MISMATCH = "FAN_AIRFLOW_MISMATCH"
+    DEVICE_MISSING = "DEVICE_MISSING"
+    HW_FAULT = "HW_FAULT"
+    NO_POWER = "NO_POWER"
+    POWER_FAILURE = "POWER_FAILURE"
+    PSU_OVERLOADED = "PSU_OVERLOADED"
+    REDUNDANCY_VIOLATED = "REDUNDANCY_VIOLATED"
+    PROCESS_NOT_RUNNING = "PROCESS_NOT_RUNNING"
+    CONTAINER_NOT_RUNNING = "CONTAINER_NOT_RUNNING"
+
+    # The component family an alarm was raised by. A resource names one
+    # instance ('PSU1', 'FAN3/1', 'lldpd'); the family is the component kind
+    # behind it, and it is what selects the description, since one alarm type
+    # reads differently per component.
+    ASIC = "ASIC"
+    CPU = "CPU"
+    PSU = "PSU"
+    FAN = "FAN"
+    TRANSCEIVER = "Transceiver"
+    LEAKAGE_SENSOR = "Leakage sensor"
+    TEMPERATURE_SENSOR = "TEMPERATURE_SENSOR"
+    VOLTAGE_SENSOR = "VOLTAGE_SENSOR"
+    SOFTWARE = "Software"
+    SYSTEM = "System"
+
+    # Instance resources ('PSU1', 'FAN3/1', 'psu1_fan1') carry their family
+    # in the name, matched on the normalized name. First match wins, so FAN
+    # is tried before PSU to resolve a PSU fan to FAN rather than to PSU.
+    # Transceiver and software resources are port and process names that no
+    # such rule can recognize: software alarms are identified by the
+    # collection they are published under instead.
+    RESOURCE_BY_TOKEN = [
+        ("fan", FAN),
+        ("psu", PSU),
+        ("leak", LEAKAGE_SENSOR),
+        ("asic", ASIC),
+        ("cpu", CPU),
+        ("system", SYSTEM),
+        ("transceiver", TRANSCEIVER),
+        ("software", SOFTWARE),
+        ("temperature", TEMPERATURE_SENSOR),
+        ("voltage", VOLTAGE_SENSOR),
+    ]
+
+    # The severity per alarm type, for the types that carry the same one
+    # whichever component raised them. FATAL_STATE is the exception (MAJOR
+    # from the ASIC, CRITICAL from the system as a whole), so it is absent
+    # here and only resolvable through CATALOG.
+    SEVERITY_BY_TYPE = {
+        TEMPERATURE_HIGH: WARNING,
+        TEMPERATURE_LOW: WARNING,
+        VOLTAGE_OUT_OF_RANGE: WARNING,
+        LEAK_DETECTED: MAJOR,
+        FAN_SPEED_OUT_OF_RANGE: WARNING,
+        FAN_AIRFLOW_MISMATCH: WARNING,
+        DEVICE_MISSING: WARNING,
+        HW_FAULT: WARNING,
+        NO_POWER: WARNING,
+        POWER_FAILURE: WARNING,
+        PSU_OVERLOADED: WARNING,
+        REDUNDANCY_VIOLATED: WARNING,
+        PROCESS_NOT_RUNNING: WARNING,
+        CONTAINER_NOT_RUNNING: WARNING,
+    }
+
+    # The collection each alarm type is published under. Types absent here
+    # are hardware alarms and belong to COMPONENT_ALARMS, as healthd
+    # defaults them.
+    COLLECTION_BY_TYPE = {
+        PROCESS_NOT_RUNNING: SOFTWARE_ALARMS,
+        CONTAINER_NOT_RUNNING: SOFTWARE_ALARMS,
+    }
+
+    # (family, alarm type) -> (severity, description). A '<...>' placeholder
+    # stands for a value filled in when the alarm is raised (the process or
+    # container name).
+    CATALOG = {
+        (ASIC, FATAL_STATE): (MAJOR, "Switch ASIC in fatal state"),
+        (ASIC, TEMPERATURE_HIGH): (WARNING, "Temperature is too hot"),
+        (LEAKAGE_SENSOR, LEAK_DETECTED): (MAJOR, "leakage detected"),
+        (VOLTAGE_SENSOR, VOLTAGE_OUT_OF_RANGE): (WARNING, "Sensor voltage is out of range"),
+        (TEMPERATURE_SENSOR, TEMPERATURE_HIGH): (
+            WARNING, "Temperature is too hot"),
+        # PROCESS_NOT_RUNNING covers the monit service like any other process.
+        (SOFTWARE, PROCESS_NOT_RUNNING): (
+            WARNING, "Critical process is not running: <process name>"),
+        (SOFTWARE, CONTAINER_NOT_RUNNING): (
+            WARNING, "Container is not running: <container name>"),
+        (SYSTEM, FATAL_STATE): (CRITICAL, "System fatal state detected"),
+        (TRANSCEIVER, TEMPERATURE_HIGH): (
+            WARNING, "Temperature is too hot"),
+        (TRANSCEIVER, TEMPERATURE_LOW): (
+            WARNING, "Temperature is too low"),
+        (PSU, DEVICE_MISSING): (WARNING, "Component is missing"),
+        (PSU, NO_POWER): (WARNING, "PSU has no power"),
+        (PSU, TEMPERATURE_HIGH): (WARNING, "Temperature is too hot"),
+        (PSU, VOLTAGE_OUT_OF_RANGE): (WARNING, "Sensor voltage is out of range"),
+        (PSU, PSU_OVERLOADED): (
+            WARNING, "PSU is overloaded (system power exceeds critical threshold)"),
+        (PSU, POWER_FAILURE): (WARNING, "PSU is providing zero power"),
+        (PSU, REDUNDANCY_VIOLATED): (WARNING, "Power redundancy policy is violated"),
+        (CPU, TEMPERATURE_HIGH): (WARNING, "Temperature is too hot"),
+        (CPU, TEMPERATURE_LOW): (WARNING, "Temperature is too low"),
+        (CPU, HW_FAULT): (WARNING, "Hardware fault detected"),
+        (FAN, FAN_SPEED_OUT_OF_RANGE): (WARNING, "FAN speed is out of range"),
+        (FAN, HW_FAULT): (WARNING, "Hardware fault detected"),
+        (FAN, DEVICE_MISSING): (WARNING, "Component is missing"),
+        (FAN, FAN_AIRFLOW_MISMATCH): (
+            WARNING, "FAN direction is not aligned with the reference fan direction"),
+    }
+
+    # time-created is rendered as '<YYYY-MM-DD HH:MM:SS> <timezone>'; a row
+    # that was never raised shows NEVER_RAISED_TIME instead. The timezone is a
+    # name ('IDT') that no lookup resolves, so the timestamp is parsed
+    # without it and compared as DUT-local time.
+    TIME_CREATED_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\b")
+    TIME_CREATED_FORMAT = "%Y-%m-%d %H:%M:%S"
+    NEVER_RAISED_TIME = "N/A"
 
 
 class OperationTimeConsts:

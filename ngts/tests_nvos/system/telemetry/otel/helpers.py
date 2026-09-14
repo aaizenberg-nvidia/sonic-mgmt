@@ -470,6 +470,7 @@ def configure_switch_otlp_grpc_dual_destination(
     export_vrf: Optional[str] = None,
     *,
     is_nvos: bool = False,
+    fast_startup: bool = False
 ) -> None:
     """Enable OTLP, set the interface-stats sample interval, and add the OTLP destination(s).
 
@@ -502,10 +503,11 @@ def configure_switch_otlp_grpc_dual_destination(
             grpc.destination.resources_dict[secondary_ip].set(
                 TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
 
-        iface.export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
-        _set_stats_sample_interval(system, dut, TelemetryConsts.INTERFACE_STATS, interface_sample_interval_sec)
+        if not fast_startup:
+            iface.export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
+            _set_stats_sample_interval(system, dut, TelemetryConsts.INTERFACE_STATS, interface_sample_interval_sec)
 
-        apply_telemetry_configuration(system, dut, is_nvos=is_nvos)
+            apply_telemetry_configuration(system, dut, is_nvos=is_nvos)
 
 
 def configure_switch_otlp_grpc_secured_destination(
@@ -850,6 +852,7 @@ def setup_otel_suite(
     export_vrf: Optional[str] = None,
     is_nvos: bool = False,
     use_secondary: bool = False,
+    fast_startup: bool = False,
 ) -> OtelSuiteContext:
     """
     Bring the OTEL suite up end-to-end (idempotent; safe to re-run after a previous broken run).
@@ -922,31 +925,34 @@ def setup_otel_suite(
             insecure=insecure,
             export_vrf=export_vrf,
             is_nvos=is_nvos,
+            fast_startup=fast_startup
         )
-
-    with allure.step("Verify collectors receive non-empty artifacts"):
-        wait_sec = OtelCollectorConst.collection_window_sec(interface_sample_interval_sec)
-        poll_timeout = OtelCollectorConst.artifact_poll_timeout_sec(
-            interface_sample_interval_sec
-        )
-        vrf = export_vrf or TelemetryConsts.Defaults.EXPORT_VRF
-        with allure.step(f"Sleep {wait_sec}s for first OTLP batch"):
-            time.sleep(wait_sec)
-        for collector in collectors:
-            with allure.step(
-                f"{collector.label.value} artifact non-empty (poll timeout={poll_timeout}s)"
-            ):
-                try:
-                    collector.wait_for_artifact(timeout_sec=poll_timeout)
-                except Exception:
-                    _probe_dut_otlp_export(
-                        dut, export_vrf=vrf, is_nvos=is_nvos, collector_ip=collector.ip,
-                        tag=collector.label.value,
-                    )
-                    raise
-        with allure.step("Truncate artifacts before tests start"):
+    if fast_startup:
+        time.sleep(10)
+    else:
+        with allure.step("Verify collectors receive non-empty artifacts"):
+            wait_sec = OtelCollectorConst.collection_window_sec(interface_sample_interval_sec)
+            poll_timeout = OtelCollectorConst.artifact_poll_timeout_sec(
+                interface_sample_interval_sec
+            )
+            vrf = export_vrf or TelemetryConsts.Defaults.EXPORT_VRF
+            with allure.step(f"Sleep {wait_sec}s for first OTLP batch"):
+                time.sleep(wait_sec)
             for collector in collectors:
-                collector.truncate_artifact()
+                with allure.step(
+                    f"{collector.label.value} artifact non-empty (poll timeout={poll_timeout}s)"
+                ):
+                    try:
+                        collector.wait_for_artifact(timeout_sec=poll_timeout)
+                    except Exception:
+                        _probe_dut_otlp_export(
+                            dut, export_vrf=vrf, is_nvos=is_nvos, collector_ip=collector.ip,
+                            tag=collector.label.value,
+                        )
+                        raise
+            with allure.step("Truncate artifacts before tests start"):
+                for collector in collectors:
+                    collector.truncate_artifact()
 
     return OtelSuiteContext(
         primary=primary,
@@ -1127,7 +1133,7 @@ def teardown_otel_suite(engines, suite: OtelSuiteContext) -> None:
 # --- Collector artifact parsing & metric-name comparison ---------------------
 
 
-def _read_otel_collector_documents(otel_json_path: str) -> List[Dict[str, Any]]:
+def read_otel_collector_documents(otel_json_path: str) -> List[Dict[str, Any]]:
     """Read 1+ OTEL JSON documents from a single file (handles concatenated / line-delimited JSON)."""
     file_size = os.path.getsize(otel_json_path) if os.path.exists(otel_json_path) else -1
     assert file_size > 0, (
@@ -1195,7 +1201,7 @@ def _metric_names_from_docs(docs: Iterable[Dict[str, Any]]) -> Set[str]:
 
 def load_otel_metric_names(otel_json_path: str) -> Set[str]:
     """Extract the unique set of OTEL metric names from a collector file exporter artifact."""
-    return _metric_names_from_docs(_read_otel_collector_documents(otel_json_path))
+    return _metric_names_from_docs(read_otel_collector_documents(otel_json_path))
 
 
 def collect_metric_names_window(
@@ -1268,7 +1274,7 @@ def collect_otlp_metrics_window(
             local_dir, file_name=file_name, timeout_sec=poll_timeout
         )
 
-    docs = _read_otel_collector_documents(local_json)
+    docs = read_otel_collector_documents(local_json)
     names = _metric_names_from_docs(docs)
     timestamps = metric_timestamps_from_docs(docs)
     return names, docs, timestamps

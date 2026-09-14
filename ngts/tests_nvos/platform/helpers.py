@@ -10,6 +10,7 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceCon
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
+from ngts.tests_nvos.helpers.general_helpers import normalize_sensor_name
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.platform.Platform import Platform
@@ -73,14 +74,6 @@ def _post_port_config(show_ports_output: list[dict], ports: list[Port], ignore_f
 # test_platform_environment_temperature.py.
 
 
-def normalize_sensor_name(name: str) -> str:
-    """Lowercase and strip non-alphanumeric characters. Used to match CLI
-    sensor names (hyphenated, e.g. 'PMIC-3-ASIC1-DVDD-PL1-Out-2') against
-    health-issue keys (space-separated) and sysfs directory names
-    (plus-separated)."""
-    return re.sub(r'[^a-z0-9]', '', name.lower())
-
-
 def is_sensor_for_absent_psu(sensor: str, available_psu_list: Iterable[str]) -> bool:
     """True if `sensor` belongs to a PSU that is not currently installed."""
     match = re.search(r"PSU-(\d+)-.*", sensor)
@@ -91,10 +84,12 @@ def is_sensor_for_absent_psu(sensor: str, available_psu_list: Iterable[str]) -> 
 
 def find_sensor_in_health_issues(sensor_name: str, health_issues: dict) -> str | None:
     """Find a sensor in the health issues dict, accounting for CLI-vs-issue
-    name format differences. Returns the matching issue key, or None."""
+    name format differences. PSU sensors may be reported under the PSU itself
+    (e.g. 'PSU1' for 'PSU-1-12V-Out'). Returns the matching issue key, or None."""
     target = normalize_sensor_name(sensor_name)
     for key in health_issues:
-        if normalize_sensor_name(key) == target:
+        normalized_key = normalize_sensor_name(key)
+        if normalized_key == target or ('psu' in normalized_key and normalized_key in target):
             return key
     return None
 

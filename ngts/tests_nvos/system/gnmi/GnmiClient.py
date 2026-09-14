@@ -123,11 +123,20 @@ class GnmiClient:
 
     def gnmic_subscribe(self, prefix, path, mode: str, flat: bool = False, username='', password='',
                         skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
-                        cmd_time=None, keep_session_alive: bool = False, wait_till_done: bool = False) -> Tuple[
+                        cmd_time=None, keep_session_alive: bool = False, wait_till_done: bool = False, stream_mode: str = '', sample_interval: str = '') -> Tuple[
             str, str, int, subprocess.Popen]:
         allowed_modes = GnmiMode.ALL_MODES if not keep_session_alive else [GnmiMode.STREAM, GnmiMode.POLL]
         assert mode in allowed_modes, f'unsupported gnmi subscribe mode: "{mode}"'
-        mode = f"--mode {mode}" if mode != GnmiMode.STREAM else GnmiMode.STREAM
+        if mode == GnmiMode.STREAM:
+            if stream_mode == GnmiStreamMode.SAMPLE and sample_interval:
+                mode = f'--mode stream --stream-mode {stream_mode} --sample-interval {sample_interval} '
+            elif stream_mode == GnmiStreamMode.ON_CHANGE:
+                mode = f'--mode stream --stream-mode {stream_mode} --updates-only '
+            else:
+                mode = ''
+        else:
+            mode = f'--mode {mode}'
+
         flat_option = ' --format flat' if flat else ''
         subscribe_op = f"subscribe --prefix '{prefix}' --path '{path}' --target nvos {mode}" + flat_option
         return self._run_gnmic_op(subscribe_op, skip_cert_verify, cacert, debug_mode, cmd_time, username, password,
@@ -213,6 +222,32 @@ class GnmiClient:
                                      wait_till_done: bool = False) -> Tuple[str, str, subprocess.Popen]:
         out, err, duration_sec, sub_proc = self._run_gnmic_subscribe_system_event(event_id, username, password, skip_cert_verify, cacert,
                                                                                   debug_mode, cmd_time, keep_session_alive, wait_till_done)
+        return out, err, sub_proc
+
+    def gnmic_subscribe_system_alarms(self, mode: str, sample_interval: str = '', username: str = '', password: str = '',
+                                      skip_cert_verify: bool = False, cacert: str = '', debug_mode: bool = True,
+                                      cmd_time=None, keep_session_alive: bool = True, wait_till_done: bool = False,
+                                      stream_mode: str = '', flat=False
+                                      ) -> Tuple[str, str, subprocess.Popen]:
+        out, err, duration, sub_proc = self.gnmic_subscribe(
+            prefix='system/alarms', path='', mode=mode, flat=flat, username=username,
+            password=password, skip_cert_verify=skip_cert_verify, cacert=cacert, debug_mode=debug_mode,
+            cmd_time=cmd_time, keep_session_alive=keep_session_alive, wait_till_done=wait_till_done,
+            stream_mode=stream_mode, sample_interval=sample_interval
+        )
+        return out, err, sub_proc
+
+    def gnmic_subscribe_system_alarm(self, alarm_id: str, mode: str, username: str = '', password: str = '',
+                                     skip_cert_verify: bool = False, cacert: str = '', debug_mode: bool = True,
+                                     cmd_time=None, keep_session_alive: bool = True, wait_till_done: bool = False,
+                                     stream_mode: str = ''
+                                     ) -> Tuple[str, str, subprocess.Popen]:
+        path = f'alarm[id={alarm_id}]'
+        out, err, duration, sub_proc = self.gnmic_subscribe(
+            prefix='system/alarms', path=path, mode=mode, flat=True, username=username, password=password,
+            skip_cert_verify=skip_cert_verify, cacert=cacert, debug_mode=debug_mode, cmd_time=cmd_time,
+            keep_session_alive=keep_session_alive, wait_till_done=wait_till_done, stream_mode=stream_mode
+        )
         return out, err, sub_proc
 
     def gnmic_capabilities(self, username: str = '', password: str = '', skip_cert_verify: bool = False, cacert='',

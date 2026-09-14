@@ -388,6 +388,14 @@ class OtelCollectorConst:
     IB_ROUTER_STATS_SAMPLE_INTERVAL_SEC = 10
     PLATFORM_STATS_SAMPLE_INTERVAL_SEC = 60
 
+    # `alarms export sample-interval` the alarm suites configure, far below the
+    # 30s product default (``TelemetryConsts.Defaults.ALARMS_SAMPLE_INTERVAL``):
+    # an alarm test validates presence and absence around a single injected
+    # fault, so the interval is what its collection windows cost. Subject to the
+    # node's own CLI grammar, which is unverified for this node - see
+    # ``enable_otel_alarms_export``.
+    ALARMS_SAMPLE_INTERVAL_SEC = 5
+
     # Floor of 70s ensures a platform-stats sample (60s + warm-up) always fits in the wait.
     OTEL_COLLECTION_WARM_UP_SEC = 10
     OTEL_COLLECTION_MIN_WAIT_SEC = 70

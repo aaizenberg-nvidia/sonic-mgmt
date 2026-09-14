@@ -75,6 +75,28 @@ class HWSimulator:
             return HWSimulator.simulate_health_issue_change_fw_file(engine, 1, file, thermal_directory)
 
     @staticmethod
+    def simulate_fan_missing_fault(engine: LinuxSshEngine, thermal_directory: str, fan_id: int) -> str | None:
+        """Simulate fan missing fault. Returns symlink target for restoration, or None if fan_id is falsy."""
+        if not fan_id:
+            logger.info("No fan specified, skip")
+            return None
+        with allure.step(f"Simulate fan {fan_id} missing fault"):
+            logger.info(f"Simulate fan {fan_id} missing fault")
+            file = f"fan{fan_id}_status"
+            return HWSimulator.simulate_health_issue_change_fw_file(engine, 0, file, thermal_directory)
+
+    @staticmethod
+    def simulate_fix_fan_missing_fault(engine: LinuxSshEngine, thermal_directory: str, fan_id: int, symlink_target: str) -> str | None:
+        """Simulate fix fan missing fault. Restores the original symlink for the fan status file. Returns None if fan_id is falsy."""
+        if not fan_id:
+            logger.info("No fan specified, skip")
+            return None
+        with allure.step(f"Simulate fix fan {fan_id} missing fault"):
+            logger.info(f"Simulate fix fan {fan_id} missing fault")
+            file = f"fan{fan_id}_status"
+            return HWSimulator.restore_fw_file(engine, file, thermal_directory, symlink_target)
+
+    @staticmethod
     def clear_fan_fault(engine: LinuxSshEngine, thermal_directory: str, fan_id: int, symlink_target: str) -> None:
         """Restore fan fault file's original symlink."""
         if not fan_id:
@@ -119,6 +141,50 @@ class HWSimulator:
             logger.info(f"Simulate psu {psu_id} fault")
             file = f"psu{psu_id}_status"
             return HWSimulator.simulate_health_issue_change_fw_file(engine, 0, file, thermal_directory)
+
+    @staticmethod
+    def simulate_psu_no_power_fault(engine: LinuxSshEngine, thermal_directory: str, psu_id: str) -> str | None:
+        """Simulate PSU No Power fault. Returns symlink target for restoration, or None if psu_id is falsy."""
+        if not psu_id:
+            logger.info("No psu specified, skip")
+            return None
+        with allure.step(f"Simulate psu {psu_id} No Power fault"):
+            logger.info(f"Simulate psu {psu_id} No Power fault")
+            file = f"psu{psu_id}_pwr_status"
+            return HWSimulator.simulate_health_issue_change_fw_file(engine, 0, file, thermal_directory)
+
+    @staticmethod
+    def simulate_psu_power_failure_fault(engine: LinuxSshEngine, power_directory: str, psu_id: str) -> str | None:
+        """Simulate PSU Power failure fault. Returns symlink target for restoration, or None if psu_id is falsy."""
+        if not psu_id:
+            logger.info("No psu specified, skip")
+            return None
+        with allure.step(f"Simulate psu {psu_id} Power failure fault"):
+            logger.info(f"Simulate psu {psu_id} Power failure fault")
+            file = f"psu{psu_id}_power"
+            return HWSimulator.simulate_health_issue_change_fw_file(engine, 0, file, power_directory)
+
+    @staticmethod
+    def simulate_fix_psu_no_power_fault(engine: LinuxSshEngine, thermal_directory: str, psu_id: str, symlink_target: str) -> None:
+        """Restore PSU No Power file's original symlink."""
+        if not psu_id:
+            logger.info("No psu specified, skip")
+            return
+        with allure.step(f"Simulate fix psu {psu_id} No Power fault"):
+            logger.info(f"Simulate fix psu {psu_id} No Power fault")
+            file = f"psu{psu_id}_pwr_status"
+            HWSimulator.restore_fw_file(engine, file, thermal_directory, symlink_target)
+
+    @staticmethod
+    def simulate_fix_psu_power_failure_fault(engine: LinuxSshEngine, power_directory: str, psu_id: str, symlink_target: str) -> None:
+        """Restore PSU Power failure file's original symlink."""
+        if not psu_id:
+            logger.info("No psu specified, skip")
+            return
+        with allure.step(f"Simulate fix psu {psu_id} Power failure fault"):
+            logger.info(f"Simulate fix psu {psu_id} Power failure fault")
+            file = f"psu{psu_id}_power"
+            HWSimulator.restore_fw_file(engine, file, power_directory, symlink_target)
 
     @staticmethod
     def simulate_fix_psu_fault(engine: LinuxSshEngine, thermal_directory: str, psu_id: str, symlink_target: str) -> None:
@@ -313,3 +379,50 @@ class HWSimulator:
             engine.run_cmd(f"sudo systemctl restart {service}.service")
             time.sleep(10)
             System().health.wait_until_health_status_change_after_reboot(HealthConsts.OK)
+
+    @staticmethod
+    def simulate_cpu_hw_fault(engine: LinuxSshEngine, thermal_directory: str) -> str | None:
+        """Simulate CPU HW fault. Returns symlink target for restoration, or None"""
+        with allure.step(f"Simulate CPU HW fault"):
+            logger.info(f"Simulate CPU HW fault")
+            file = f"cpu_pack"
+            return HWSimulator.simulate_health_issue_change_fw_file(engine, 'invalid', file, thermal_directory)
+
+    @staticmethod
+    def simulate_fix_cpu_hw_fault(engine: LinuxSshEngine, thermal_directory: str, symlink_target: str) -> None:
+        """Restore CPU HW file's original symlink."""
+        with allure.step(f"Simulate fix CPU HW fault"):
+            logger.info(f"Simulate fix CPU HW fault")
+            file = f"cpu_pack"
+            HWSimulator.restore_fw_file(engine, file, thermal_directory, symlink_target)
+
+    @staticmethod
+    def simulate_cpu_pack_high_temp_fault(engine: LinuxSshEngine, thermal_directory: str) -> str | None:
+        """Simulate CPU pack high temperature fault. Returns symlink target for restoration.
+
+        Reads the CPU's actual max temperature and injects a value above it,
+        so the fault is detected regardless of CPU model.
+        """
+        with allure.step(f"Simulate CPU pack high temperature fault"):
+            logger.info(f"Simulate CPU pack high temperature fault")
+            max_temp_file = f"cpu_pack_max"
+            max_temp_path = f"{thermal_directory}/{max_temp_file}"
+            max_temp_str = engine.run_cmd(f'cat {max_temp_path}').strip()
+            try:
+                max_temp = int(max_temp_str)
+            except ValueError:
+                logger.warning(f"Could not read max temp from {max_temp_path}, using default 70000")
+                max_temp = 70000
+            fault_temp = max_temp + 10000
+            logger.info(f"CPU max temp: {max_temp}, injecting fault temp: {fault_temp}")
+            file = f"cpu_pack"
+            return HWSimulator.simulate_health_issue_change_fw_file(engine, fault_temp, file, thermal_directory)
+
+    @staticmethod
+    def simulate_fix_cpu_pack_high_temp_fault(engine: LinuxSshEngine, thermal_directory: str,
+                                              symlink_target: str) -> None:
+        """Restore CPU pack high temperature file's original symlink."""
+        with allure.step(f"Simulate fix CPU pack high temperature fault"):
+            logger.info(f"Simulate fix CPU pack high temperature fault")
+            file = f"cpu_pack"
+            HWSimulator.restore_fw_file(engine, file, thermal_directory, symlink_target)

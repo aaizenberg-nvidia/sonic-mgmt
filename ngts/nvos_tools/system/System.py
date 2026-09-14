@@ -104,6 +104,7 @@ class System(BaseComponent):
         self.nv_bridge = NvBridge(self)
         self.control_plane = ControlPlane(self)
         self.packages = Packages(self)
+        self.alarms = BaseComponent(self, path='/alarms')
 
     @staticmethod
     def get_expected_fields(device, resource):

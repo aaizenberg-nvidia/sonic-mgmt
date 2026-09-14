@@ -2,9 +2,17 @@ import logging
 import pytest
 import random
 import re
+from pathlib import Path
+
+from retry import retry
 
 from ngts.nvos_constants.constants_nvos import DatabaseConst, HealthConsts, PlatformConsts
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
+from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.helpers.alarms.system_alarm_helpers import get_all_alarms_once, validate_all_alarms, validate_all_alarms_once
+from ngts.tests_nvos.helpers.alarms.system_alarms_gnmi_helpers import gnmi_client_for_alarms, validate_gnmi_alarms
+from ngts.tests_nvos.helpers.alarms.system_alarms_otel_helpers import validate_otel_alarms
+from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.infra.Simulator import HWSimulator
 from ngts.nvos_tools.platform.Platform import Platform
@@ -12,8 +20,9 @@ from ngts.nvos_tools.system.System import System
 from ngts.ngts_types import EnginesT, DevicesT
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.constants import MINUTE
-
 from . import helpers as platform_helpers
+from ngts.nvos_constants.constants_nvos import DatabaseConst, HealthConsts, PlatformConsts, AlarmsConsts
+from ngts.tests_nvos.platform.helpers import validate_health_issues
 
 cumulus_owner = "hiept"
 
@@ -225,6 +234,14 @@ def check_voltage_in_range(sensor: str, sensor_output: dict[str, str]) -> str:
 
 # --- Voltage simulation helpers ---
 
+def _get_psu_voltage_sensor_input_path(sensor):
+    """Get the input path for a PSU sensor."""
+    match = re.search(r"PSU-(\d+)-.*", sensor)
+    psu_number = match.group(1)
+    sensor_dir = PlatformConsts.POWER_FILES_PATH
+    return f"{sensor_dir}/psu{psu_number}_volt_out2"
+
+
 def _pick_sensor(engine: EnginesT, devices: DevicesT) -> tuple[str, dict[str, str], str]:
     """Pick a random ok-state voltage sensor with max/min thresholds, including PSU sensors."""
     platform = Platform()
@@ -237,11 +254,39 @@ def _pick_sensor(engine: EnginesT, devices: DevicesT) -> tuple[str, dict[str, st
     assert eligible_sensors, "No voltage sensors with max/min/actual found for simulation"
     sensor = random.choice(eligible_sensors)
     sensor_data = voltage_output[sensor]
-    sensor_dir = HWSimulator.find_sensor_dir(engine, VOLTAGE_BASE_PATH, sensor)
-    sensor_input_path = f"{sensor_dir}/input"
+    if sensor.startswith('PSU-'):
+        sensor_input_path = _get_psu_voltage_sensor_input_path(sensor)
+    else:
+        sensor_dir = HWSimulator.find_sensor_dir(engine, VOLTAGE_BASE_PATH, sensor)
+        sensor_input_path = f"{sensor_dir}/input"
     logger.info(f"Selected sensor: {sensor}, path: {sensor_input_path}, "
                 f"actual: {sensor_data['actual']}, max: {sensor_data['max']}, min: {sensor_data['min']}")
     return sensor, sensor_data, sensor_input_path
+
+
+# @retry(AssertionError, tries=6, delay=10)
+# def _validate_voltage_health_issues(system, sensor_name: str, *, expected_present: bool):
+#     """Validate that a sensor appears (or not) in the health issues dict."""
+#     health_output = Tools.OutputParsingTool.parse_json_str_to_dictionary(
+#         system.health.show()).get_returned_value()
+#     health_issues = health_output.get(HealthConsts.ISSUES, {})
+#     target = normalize_sensor_name(sensor_name)
+#     matched_key = None
+#     for key in health_issues:
+#         if normalize_sensor_name(key) == target or ('psu' in normalize_sensor_name(key) and normalize_sensor_name(key) in target):
+#             matched_key = key
+#             break
+
+#     if expected_present:
+#         assert matched_key is not None, (
+#             f"Expected sensor '{sensor_name}' in health issues, "
+#             f"but got: {list(health_issues.keys())}"
+#         )
+#     else:
+#         assert matched_key is None, (
+#             f"Expected sensor '{sensor_name}' NOT in health issues, "
+#             f"but it is still present as '{matched_key}': {health_issues.get(matched_key)}"
+#         )
 
 
 # --- Voltage simulation test ---
@@ -259,27 +304,32 @@ FAULT_SCENARIOS = [
 @pytest.mark.platform
 @pytest.mark.disable_loganalyzer
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_simulate_voltage_faults(engines: EnginesT, devices: DevicesT):
+def test_simulate_voltage_faults(engines: EnginesT, devices: DevicesT, otel_alarms_collector: OtelCollector,
+                                 tmp_path: Path, random_api):
     """
     @summary: Inject various bad voltage values into a sensor and verify the system
               detects each fault and recovers after restore. Validates sensor state,
-              overall health status, and health issues presence.
+              overall health status, health issues presence and system alarms.
 
     Steps:
     1. Validate system health is OK
-    2. Pick a random voltage sensor with max/min thresholds
+    2. Pick a random voltage sensor with max/min thresholds, including PSU sensors
     3. For each fault scenario (high, low, negative, gibberish):
        a. Inject the bad value into the sensor
-       b. Validate sensor state is 'failed', health is 'Not OK', sensor in health issues
-       c. Restore original symlink
-       d. Validate sensor state is 'ok', health is 'OK', sensor not in health issues
+       b. Validate sensor state is 'failed', health is 'Not OK', sensor in health issues,
+          and a voltage-out-of-range alarm is raised (NVUE, gNMI and OTEL) for the sensor,
+          or for the generic voltage sensor origin on PMIC sensors
+       c. For gibberish, validate the invalid voltage value is logged
+       d. Restore original symlink
+       e. Validate sensor state is 'ok', health is 'OK', sensor not in health issues,
+          and no voltage-out-of-range or hw-fault alarm is present (NVUE, gNMI and OTEL)
     """
     system = System()
-
     voltage_show = Platform().environment.voltage.show
-
+    gnmiclient = gnmi_client_for_alarms(engines)
     with allure.step("Pick sensor and validate initial health"):
         sensor_name, sensor_data, sensor_input_path = _pick_sensor(engines.dut, devices)
+        alarm_origin = AlarmsConsts.VOLTAGE_SENSOR if 'PMIC' in sensor_name else sensor_name
         platform_helpers.validate_health(system, HealthConsts.OK)
 
     with allure.step("Simulate voltage faults"):
@@ -290,10 +340,12 @@ def test_simulate_voltage_faults(engines: EnginesT, devices: DevicesT):
                 with HWSimulator.simulate_sensor(engines.dut, sensor_input_path, fault_value, HEALTH_STABILIZE_DELAY):
                     platform_helpers.validate_sensor_state(voltage_show, sensor_name, 'failed')
                     platform_helpers.validate_health(system, HealthConsts.NOT_OK)
-                    platform_helpers.validate_health_issues(system, sensor_name, expected_present=True)
+                    validate_health_issues(system, sensor_name, expected_present=True)
+                    validate_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path, alarm_origin_name=alarm_origin, alarm_types=AlarmsConsts.VOLTAGE_OUT_OF_RANGE, expected_present=True)
                     if fault_name == 'gibberish':
                         platform_helpers.validate_invalid_voltage_value_logged(system, engines.dut)
 
                 platform_helpers.validate_sensor_state(voltage_show, sensor_name, 'ok')
                 platform_helpers.validate_health(system, HealthConsts.OK)
-                platform_helpers.validate_health_issues(system, sensor_name, expected_present=False)
+                validate_health_issues(system, sensor_name, expected_present=False)
+                validate_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path, alarm_origin_name=alarm_origin, alarm_types=[AlarmsConsts.VOLTAGE_OUT_OF_RANGE, AlarmsConsts.HW_FAULT], expected_present=False)

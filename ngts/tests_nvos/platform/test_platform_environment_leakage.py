@@ -5,8 +5,10 @@ import re
 
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
+from ngts.tests_nvos.helpers.alarms.system_alarm_helpers import get_all_alarms_once, validate_all_alarms, validate_all_alarms_once
+from ngts.tests_nvos.helpers.alarms.system_alarms_gnmi_helpers import gnmi_client_for_alarms
 from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_constants.constants_nvos import PlatformConsts, HealthConsts
+from ngts.nvos_constants.constants_nvos import AlarmsConsts, PlatformConsts, HealthConsts
 from retry import retry
 
 
@@ -17,18 +19,21 @@ NOT_OK = HealthConsts.NOT_OK
 
 
 @pytest.mark.platform
-def test_platform_environment_bmc_leakage(engines, nv_command, devices):
+def test_platform_environment_bmc_leakage(engines, nv_command, devices, otel_alarms_collector, tmp_path, random_api):
     """
     Validate BMC Leakage sensor feature.
         Test flow:
             1. Validate system health is OK by default
             2. Verify default values and fields for platform environment leakage command
             3. Simulate leakage on 1 sensor
-            4. Validate output, system health
+            4. Validate output, system health, and a leakage alarm is raised for the sensor
+               (NVUE, gNMI and OTEL)
             5. Return sensor to default value and validate
-            6. Simulate leakage on all sensors and validate
-            7. Reboot the system and check no leakages
+            6. Simulate leakage on all sensors, validate output and a leak-detected alarm is raised
+               for every sensor (NVUE, gNMI and OTEL)
+            7. Restore the sensors and check no leakages
     """
+    gnmiclient = gnmi_client_for_alarms(engines)
     try:
         with allure.step("Get leakage folder name"):
             leakage_folder_name = _get_leakage_folder_name(engines)
@@ -67,6 +72,9 @@ def test_platform_environment_bmc_leakage(engines, nv_command, devices):
                                               HealthConsts.LED_NOT_OK_STATUS).verify_result()
                 retry_validate_health_history(nv_command, random_selected_leakage)
 
+            with allure.step("Validate alarms"):
+                validate_all_alarms_once(nv_command.system, gnmiclient, otel_alarms_collector, tmp_path, alarm_origin_name=random_selected_leakage, alarm_types=AlarmsConsts.LEAK_DETECTED, expected_present=True)
+
             with allure.step("Return leakage status to default"):
                 _simulate_leakage(engines, random_selected_leakage, PlatformConsts.LEAK_STATUS_OK)
                 retry_validate_leakage_state(nv_command, random_selected_leakage,
@@ -78,6 +86,10 @@ def test_platform_environment_bmc_leakage(engines, nv_command, devices):
             with allure.step("Verify output of all sensors"):
                 retry_validate_all_leakages(nv_command, devices.dut.list_of_leakages,
                                             PlatformConsts.LEAKAGE_ALL_SENSOR_NOT_OK)
+            with allure.step("Validate alarms"):
+                system_output, gnmi_output, otel_output = get_all_alarms_once(system=nv_command.system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+                for leakage in devices.dut.list_of_leakages:
+                    validate_all_alarms(system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, alarm_origin_name=leakage, alarm_types=AlarmsConsts.LEAK_DETECTED, expected_present=True)
 
     finally:
         _link_back_sysfs_files(engines, devices.dut.list_of_leakages, leakage_folder_name)
