@@ -282,7 +282,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "204.815"
+        "show_techsupport": "237.638"
     },
     "SN6600_LD": {
         "add_vlan": "0.436",
@@ -301,6 +301,6 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "204.815"
+        "show_techsupport": "237.638"
     }
 }
