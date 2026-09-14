@@ -764,6 +764,9 @@ def test_ignore_health_issue(engines, devices, loganalyzer, reset_health_service
                          f"\\.*Fan removed warning: {psu_fan_config_name} was removed from the system, potential overheat hazard\\.*",
                          f"\\.*PSU absence warning: PSU {psu_id} is not present.\\.*",
                          f"\\.*Insufficient number of working fans warning\\.*",
+                         f"\\.*PSU {psu_id} is not present\\.*",
+                         f"\\.*PSU{psu_id}: is missing - Unpopulated PSU slot\\.*",
+                         f"\\.*Invalid fan speed data obtained from DB for psu\\/*"
                          ])
 
         with allure.step("Validate health status and report"):
