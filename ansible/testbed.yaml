@@ -5915,7 +5915,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -5929,7 +5929,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -5943,7 +5943,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -5957,7 +5957,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -5971,7 +5971,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -5985,7 +5985,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
@@ -6237,7 +6237,7 @@
   ptf_ip: 10.245.40.3/16
   ptf_ipv6:
   server: server_82
-  vm_base: VM4733
+  vm_base: VM8801
   dut:
     - mtvr-panther-02
   inv_name: lab
