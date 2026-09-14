@@ -118,6 +118,30 @@ def wait_for_acl_entry_count_stable(asichost, timeout=30, interval=3):
     return wait_until(timeout, interval, 0, _count_stable)
 
 
+def wait_for_acl_entry_count_stable(asichost, timeout=30, interval=3):
+    """
+    Wait until ASIC_DB ACL_ENTRY count stabilizes (two consecutive reads match).
+    This ensures orchagent has finished processing ACL deletions/additions.
+    """
+    cmd = "{} ASIC_DB KEYS \"*SAI_OBJECT_TYPE_ACL_ENTRY*\"".format(asichost.sonic_db_cli)
+    previous_count = None
+
+    def _count_stable():
+        nonlocal previous_count
+        keys = asichost.shell(cmd)["stdout"].split()
+        current_count = len(keys) if keys != [''] else 0
+
+        if previous_count is not None and current_count == previous_count:
+            logger.info(f"ACL entry count stabilized at {current_count}")
+            return True
+
+        logger.info(f"ACL entry count: {current_count} (previous: {previous_count})")
+        previous_count = current_count
+        return False
+
+    return wait_until(timeout, interval, 0, _count_stable)
+
+
 def apply_acl_config(duthost, asichost, test_name, collector, entry_num=1):
     """ Create acl rule defined in config file. Return ACL table key. """
     base_dir = os.path.dirname(os.path.realpath(__file__))
