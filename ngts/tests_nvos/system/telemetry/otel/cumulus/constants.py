@@ -13,6 +13,14 @@ class CumulusOtelConst:
     # Stats-group name for mgmt VRF insecure topology.
     TEST01_STATS_GROUP_ID = "sg_01"
 
+    # CLI control-plane trap/group counter name -> exported OTEL metric name (test04).
+    TRAPS_CONVERSION_CLI_TO_OTEL: Dict[str, str] = {
+        "ToCpuPacket": "nvswitch_control_plane_trap_rx_packets",
+        "ToCpuByte": "nvswitch_control_plane_trap_rx_bytes",
+        "Events": "nvswitch_control_plane_trap_rx_event_count",
+        "Drops": "nvswitch_control_plane_trap_rx_drop",
+    }
+
     STATS_GROUP_SUPPORTED_FAMILIES = (
         TelemetryConsts.INTERFACE_STATS,
         TelemetryConsts.PLATFORM_STATS,
@@ -43,6 +51,10 @@ class CumulusOtelConst:
         TelemetryConsts.PLATFORM_STATS,
     )
 
+    # Interval-map key for the software-stats systemd sample-interval (not an NVUE
+    # node name; the ``software-stats`` sample-interval lives under ``systemd``).
+    SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY = "software-stats-systemd"
+
     TEST01_ROOT_SAMPLE_INTERVALS: Dict[str, int] = {
         TelemetryConsts.INTERFACE_STATS: 3,
         TelemetryConsts.PLATFORM_STATS: 61,
@@ -50,7 +62,7 @@ class CumulusOtelConst:
         "buffer-stats": 60,
         "control-plane-stats": 2,
         "adaptive-routing-stats": 70,
-        "software-stats-systemd": 60,
+        SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY: 60,
     }
 
     # Sample intervals under ``stats-group sg_01`` (``mgmt VRF insecure topology``).
@@ -59,9 +71,10 @@ class CumulusOtelConst:
         "lldp": 60,
         "control-plane-stats": 60,
         "buffer-stats": 60,
+        "adaptive-routing-stats": 60,
         TelemetryConsts.INTERFACE_STATS: 3,
         TelemetryConsts.PLATFORM_STATS: 61,
-        "software-stats-systemd": 60,
+        SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY: 60,
     }
 
     TEST01_HISTOGRAM_BUFFER_SIZES: Dict[str, int] = {
@@ -90,6 +103,48 @@ class CumulusOtelConst:
         "switchd",
         "frr",
         "nvued",
+    )
+
+    # Built-in ``default`` systemd unit-profile services validated by SSIM
+    # ``test_nv_show_system_telemetry_software_stats_validation`` (Cumulus-only; the
+    # list is image/platform specific, so it is presence-checked, not set-compared).
+    TEST01_SYSTEMD_DEFAULT_UNIT_NAMES: Tuple[str, ...] = (
+        "asic-monitor.service",
+        "frr.service",
+        "hostapd.service",
+        "netq-agent.service",
+        "netqd.service",
+        "nginx.service",
+        "ntpsec.service",
+        "nv-telemetry.service",
+        "nvued.service",
+        "prometheus-node-exporter.service",
+        "prometheus-sdk-stats.service",
+        "ptp4l.service",
+        "snmpd.service",
+        "switchd.service",
+        "sx_sdk.service",
+        "wd_keepalive.service",
+    )
+
+    # software-stats subtree node / field names (NVUE command words and JSON keys).
+    SOFTWARE_STATS = "software-stats"
+    SYSTEMD = "systemd"
+    UNIT_PROFILE = "unit-profile"
+    UNIT = "unit"
+    PROCESS_LEVEL = "process-level"
+    ACTIVE_PROFILE = "active-profile"
+    # Built-in software-stats systemd unit-profile ids.
+    UNIT_PROFILE_CUSTOM = "custom"
+    UNIT_PROFILE_DEFAULT = "default"
+
+    # Sorted keys expected under ``software-stats systemd`` in the ``--applied`` show.
+    SOFTWARE_STATS_SYSTEMD_KEYS: Tuple[str, ...] = (
+        "active-profile",
+        "export",
+        "process-level",
+        "sample-interval",
+        "unit-profile",
     )
 
     TEST01_METRICS_GROUP_PREFIXES: Tuple[str, ...] = (
@@ -187,6 +242,9 @@ class CumulusOtelConst:
         "CL_517_ADDITIONAL",
         "CL_517_ADDITIONAL_PHY",
         "CL_517_LINK_DEBOUNCE_STATS",
+        "CL_518_PLATFORM_ASIC_RESOURCE_STATS",
+        "CL_518_PLATFORM_PARTITION_STATS",
+        "CL_518_PLATFORM_POWER_SUPPLY_STATS",
     )
     TEST01_VALIDATION_SKIP_BUCKETS: Tuple[str, ...] = (
         "PH3_ROUTING_STATS",
@@ -214,6 +272,8 @@ class CumulusOtelConst:
     )
 
     STATS_GROUP_PLATFORM_CLASS_FILE_SYSTEM = "file-system"
+    PLATFORM_CLASS_ASIC_RESOURCE = "asic-resource"
+    STATS_GROUP_PLATFORM_CLASS_ASIC_RESOURCE_SAMPLE_INTERVAL = 10
     STATS_GROUP_PLATFORM_CLASSES = (
         TelemetryConsts.PLATFORM_CLASS_CPU,
         TelemetryConsts.PLATFORM_CLASS_DISK,
@@ -221,6 +281,15 @@ class CumulusOtelConst:
         STATS_GROUP_PLATFORM_CLASS_FILE_SYSTEM,
         TelemetryConsts.PLATFORM_CLASS_PLATFORM_INFO,
         TelemetryConsts.PLATFORM_CLASS_ENVIRONMENT_SENSOR,
+        TelemetryConsts.PLATFORM_CLASS_TRANSCEIVER_INFO,
+    )
+    # test15b (CL 5.12–5.13): ``platform-info`` is not restored after class unset.
+    TEST15B_STATS_GROUP_PLATFORM_CLASSES: Tuple[str, ...] = (
+        TelemetryConsts.PLATFORM_CLASS_CPU,
+        TelemetryConsts.PLATFORM_CLASS_DISK,
+        TelemetryConsts.PLATFORM_CLASS_ENVIRONMENT_SENSOR,
+        STATS_GROUP_PLATFORM_CLASS_FILE_SYSTEM,
+        TelemetryConsts.PLATFORM_CLASS_MEMORY,
         TelemetryConsts.PLATFORM_CLASS_TRANSCEIVER_INFO,
     )
     # ``sg_01`` platform classes in ``mgmt VRF insecure topology`` (not disk/memory/file-system).
@@ -279,6 +348,8 @@ class CumulusOtelConst:
     )
 
     OTEL_HEALTH_POST_CLEANUP_SETTLE_SEC = 30
+    # Brief pause after coexistence module teardown before secured SCP / gNMI setup.
+    COEXISTENCE_MODULE_TRANSITION_SETTLE_SEC = 5
 
     OTEL_SYSTEMD_STOP_UNITS: Tuple[Tuple[str, Optional[str]], ...] = (
         ("prometheus-sdk-stats", None),
@@ -316,7 +387,7 @@ class CumulusOtelConst:
         "buffer-stats": 60,
         "control-plane-stats": 2,
         "adaptive-routing-stats": 70,
-        "software-stats-systemd": 60,
+        SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY: 60,
     }
 
     # Rib counters may still appear briefly when router export is disabled on lab DUTs.
@@ -368,6 +439,23 @@ class CumulusOtelConst:
         "platf_envir_gap": 70,
         "platf_disk_gap": 70,
         "buffer_gap": 15,
+    }
+    # NVOS split-pipeline / coexistence Interface-QoS: only interface + platform families
+    # (no histogram / buffer / control-plane / lldp). Shared by
+    # ``test_otel_split_pipelines`` and coexistence collectors.
+    NVOS_SPLIT_FAMILY_MAP: Tuple[Tuple[str, str], ...] = (
+        ("nvswitch_interface_if", "interface_stats_gap"),
+        ("nvswitch_platform_cpu", "platf_cpu_gap"),
+        ("nvswitch_platform_memory", "platf_mem_gap"),
+        ("nvswitch_platform_disk", "platf_disk_gap"),
+        ("nvswitch_platform_environment", "platf_envir_gap"),
+    )
+    NVOS_SPLIT_EXPECTED_GAPS: Dict[str, float] = {
+        "interface_stats_gap": 15.0,
+        "platf_cpu_gap": 70.0,
+        "platf_mem_gap": 70.0,
+        "platf_disk_gap": 70.0,
+        "platf_envir_gap": 70.0,
     }
 
     # System telemetry labels for ``Test_Otel_Mgmt_Vrf_Insecure_CLI_Coverage`` (SSIM topo).

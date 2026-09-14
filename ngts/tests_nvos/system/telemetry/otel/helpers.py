@@ -58,12 +58,132 @@ class OtelSuiteContext:
     """
 
     primary: OtelCollector
-    secondary: OtelCollector
     primary_ip: str
-    secondary_ip: str
+    secondary: Optional[OtelCollector] = None
+    secondary_ip: Optional[str] = None
     is_nvos: bool = False
     export_vrf: str = TelemetryConsts.Defaults.EXPORT_VRF
     telemetry_unit: Optional[str] = None
+
+    @property
+    def collector_ips(self) -> Tuple[str, ...]:
+        """OTLP destination IPs configured on the DUT for this suite.
+
+        Single-collector suites yield ``(primary_ip,)``; pass this instead of a
+        literal ``(primary_ip, secondary_ip)`` tuple so call sites never stage a
+        ``None`` destination on a setup with no second collector host.
+        """
+        if self.secondary_ip is None:
+            return (self.primary_ip,)
+        return (self.primary_ip, self.secondary_ip)
+
+
+@dataclass(frozen=True)
+class EnabledClasses:
+    """Per-family enabled telemetry classes for a single export scope.
+
+    ``families`` maps a telemetry family (``interface-stats`` etc.) to the set of
+    enabled class tokens. A class token is the base sentinel
+    :data:`OtelCollectorConst.TELEMETRY_BASE_CLASS` (the always-on non-phy /
+    non-categorized metrics), :data:`TelemetryConsts.PHY`, or a platform-stats
+    class name (``cpu``, ``transceiver-info``, …).
+    """
+
+    families: Dict[str, frozenset]
+
+
+@dataclass(frozen=True)
+class TelemetryEnablement:
+    """Test-declared model of what telemetry was enabled, per export scope.
+
+    * ``root`` — classes enabled at the telemetry root.
+    * ``stats_groups`` — classes enabled under each ``stats-group <id>``.
+    * ``destination_binding`` — OTLP destination IP -> bound ``stats-group`` id, or
+      ``None`` when the destination exports the root config.
+
+    The expected metric set for a destination is derived from
+    :meth:`effective_for_destination` (one stats-group per destination; a bound
+    stats-group overrides root, and an absent/empty binding falls back to root).
+    """
+
+    root: EnabledClasses
+    stats_groups: Dict[str, EnabledClasses]
+    destination_binding: Dict[str, Optional[str]]
+
+    def effective_for_destination(self, destination_ip: str) -> EnabledClasses:
+        stats_group_id = self.destination_binding.get(destination_ip)
+        if stats_group_id:
+            scope = self.stats_groups.get(stats_group_id)
+            if scope is not None and scope.families:
+                return scope
+        return self.root
+
+
+def _enabled_classes_for_root_families(families: Iterable[str]) -> EnabledClasses:
+    """Build :class:`EnabledClasses` for the NVOS root enable (see ``_enable_family_classes``)."""
+    base = OtelCollectorConst.TELEMETRY_BASE_CLASS
+    phy = TelemetryConsts.PHY
+    out: Dict[str, frozenset] = {}
+    for family in families:
+        if family in (TelemetryConsts.INTERFACE_STATS, TelemetryConsts.PEER_PORT_STATS):
+            out[family] = frozenset({base, phy})
+        elif family == TelemetryConsts.PLATFORM_STATS:
+            out[family] = frozenset(TelemetryConsts.PLATFORM_CLASSES)
+        elif family == TelemetryConsts.IB_ROUTER_STATS:
+            out[family] = frozenset({base})
+    return EnabledClasses(families=out)
+
+
+def _enabled_classes_for_nvos_stats_group() -> EnabledClasses:
+    """Classes enabled by ``_stage_nvos_test01_stats_group`` (interface + platform, phy on).
+
+    Platform sub-classes are default-on: enabling ``platform-stats`` exports every
+    platform sub-class regardless of which subset the stats-group explicitly turns
+    on. The test only enables a subset (``TEST01_STATS_GROUP_PLATFORM_CLASSES``) but
+    the DUT still exports the rest (disk/memory/health-info/…), so the expected set
+    must mirror the full default-on class set. A class is only excluded when it is
+    explicitly disabled (no test does so today).
+    """
+    base = OtelCollectorConst.TELEMETRY_BASE_CLASS
+    phy = TelemetryConsts.PHY
+    return EnabledClasses(
+        families={
+            TelemetryConsts.INTERFACE_STATS: frozenset({base, phy}),
+            TelemetryConsts.PLATFORM_STATS: frozenset(TelemetryConsts.PLATFORM_CLASSES),
+        }
+    )
+
+
+def build_nvos_enablement(
+    families: Iterable[str],
+    *,
+    collector_ips: Optional[Iterable[str]] = None,
+    stats_group_id: Optional[str] = None,
+    use_stats_group: bool = False,
+) -> TelemetryEnablement:
+    """Construct the test-declared :class:`TelemetryEnablement` for an NVOS config.
+
+    Mirrors what :func:`enable_nvos_telemetry_families` /
+    :func:`enable_nvos_families_export` apply on the DUT, so the strict-compare
+    expected set is derived from exactly what the test enabled.
+    """
+    enabled = set(families)
+    root = _enabled_classes_for_root_families(enabled)
+    ips = tuple(collector_ips or ())
+    stats_groups: Dict[str, EnabledClasses] = {}
+    if use_stats_group and ips:
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
+
+        sg_id = stats_group_id or CumulusOtelConst.TEST01_STATS_GROUP_ID
+        stats_groups[sg_id] = _enabled_classes_for_nvos_stats_group()
+        destination_binding: Dict[str, Optional[str]] = {ip: sg_id for ip in ips}
+    else:
+        destination_binding = {ip: None for ip in ips}
+    return TelemetryEnablement(
+        root=root,
+        stats_groups=stats_groups,
+        destination_binding=destination_binding,
+    )
 
 
 def is_nvos_dut(devices) -> bool:
@@ -76,6 +196,38 @@ def nvtelemetry_unit(is_nvos: bool, vrf: str) -> str:
     return "nv-telemetry.service" if is_nvos else f"nv-telemetry@{vrf}"
 
 
+def _cumulus_version_tuple(dut) -> Tuple[int, int]:
+    """(major, minor) Cumulus release from ``nv show system version``; ``(0, 0)`` on NVOS/unknown."""
+    try:
+        parsed = System().version.parse_show(dut_engine=dut)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("nv show system version parse failed (%s); assuming state schema", exc)
+        return (0, 0)
+    if not isinstance(parsed, dict):
+        return (0, 0)
+    release = parsed.get("product-release") or parsed.get("version") or ""
+    match = re.match(r"(\d+)\.(\d+)", str(release))
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
+def cumulus_telemetry_uses_enable_schema(dut) -> bool:
+    """True when the DUT toggles the telemetry master feature via ``enable on/off``.
+
+    Pre-5.15 Cumulus uses ``nv set system telemetry enable on|off``; 5.15+ switched to
+    ``nv set system telemetry state enabled|disabled`` (this is the only telemetry knob
+    that changed schema across 5.15 — every subtree ``export … state`` uses
+    ``state enabled/disabled`` on both, per SSIM ``OM_CHANGED_BEFORE_5_15``).
+
+    Applies only to Cumulus (``is_eth_dut``): NVOS always uses the ``state`` schema.
+    NVOS / DUTs with no parsed version also report ``(0, 0)`` and fall back to the
+    ``state`` schema.
+    """
+    version = _cumulus_version_tuple(dut)
+    if version == (0, 0):
+        return False
+    return version < (5, 15)
+
+
 def stage_telemetry_master_state(
     system: System,
     dut,
@@ -86,17 +238,21 @@ def stage_telemetry_master_state(
 
     Call before other ``nv set system telemetry …`` knobs in a multi-set block.
 
-    * Cumulus: ``nv set system telemetry state enabled``
     * NVOS: ``nv set system telemetry export otlp state enabled``
+    * Cumulus 5.15+: ``nv set system telemetry state enabled``
+    * Cumulus <5.15: ``nv set system telemetry enable on`` (pre-5.15 schema)
     """
     if is_nvos:
         system.telemetry.export.otlp.set(
             TelemetryConsts.STATE, _ENABLED, dut_engine=dut
         ).verify_result()
     else:
-        system.telemetry.set(
-            TelemetryConsts.STATE, _ENABLED, dut_engine=dut
-        ).verify_result()
+        key, value = (
+            (TelemetryConsts.ENABLE, TelemetryConsts.ENABLE_ON)
+            if cumulus_telemetry_uses_enable_schema(dut)
+            else (TelemetryConsts.STATE, _ENABLED)
+        )
+        system.telemetry.set(key, value, dut_engine=dut).verify_result()
 
 
 def apply_telemetry_configuration(
@@ -234,7 +390,7 @@ def _apply_otlp_grpc_secure_default_vrf(
 def configure_switch_otlp_grpc_dual_destination(
     dut,
     primary_ip: str,
-    secondary_ip: str,
+    secondary_ip: Optional[str] = None,
     port: int = OtelCollectorConst.OTLP_GRPC_PORT,
     interface_sample_interval_sec: int = OtelCollectorConst.INTERFACE_STATS_SAMPLE_INTERVAL_SEC,
     insecure: bool = True,
@@ -242,7 +398,10 @@ def configure_switch_otlp_grpc_dual_destination(
     *,
     is_nvos: bool = False,
 ) -> None:
-    """Enable OTLP, set the interface-stats sample interval, and add primary + secondary destinations.
+    """Enable OTLP, set the interface-stats sample interval, and add the OTLP destination(s).
+
+    Configures the primary destination and, when ``secondary_ip`` is given, a
+    secondary one too (``secondary_ip=None`` -> single-destination bring-up).
 
     ``export_vrf`` sets ``system telemetry export vrf`` (e.g. ``mgmt`` on Cumulus when collectors
     are reached via the management network). When omitted the DUT keeps its current export VRF
@@ -252,7 +411,8 @@ def configure_switch_otlp_grpc_dual_destination(
     grpc = system.telemetry.export.otlp.grpc
     iface = system.telemetry.interface_stats
 
-    step_label = f"Configure OTLP dual destinations {primary_ip}, {secondary_ip}:{port}"
+    destinations = f"{primary_ip}, {secondary_ip}:{port}" if secondary_ip else f"{primary_ip}:{port}"
+    step_label = f"Configure OTLP destination(s) {destinations}"
     if export_vrf:
         step_label += f", export vrf={export_vrf}"
     with allure.step(step_label):
@@ -264,9 +424,10 @@ def configure_switch_otlp_grpc_dual_destination(
             stage_telemetry_master_state(system, dut, is_nvos=False)
         _apply_otlp_grpc_base(system, dut, primary_ip, port, insecure=insecure)
 
-        grpc.destination.set_resource(secondary_ip).verify_result()
-        grpc.destination.resources_dict[secondary_ip].set(
-            TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
+        if secondary_ip:
+            grpc.destination.set_resource(secondary_ip).verify_result()
+            grpc.destination.resources_dict[secondary_ip].set(
+                TelemetryConsts.PORT, port, dut_engine=dut).verify_result()
 
         iface.export.set(TelemetryConsts.STATE, _ENABLED, dut_engine=dut).verify_result()
         _set_stats_sample_interval(system, dut, TelemetryConsts.INTERFACE_STATS, interface_sample_interval_sec)
@@ -405,7 +566,8 @@ def _stage_nvos_test01_stats_group(
             system, dut, collector_ips, stats_group_id
         )
         configure_stats_group_interface_platform(
-            system, dut, stats_group_id, sg_intervals
+            system, dut, stats_group_id, sg_intervals,
+            enable_phy_under_stats_group=True,
         )
 
 
@@ -420,7 +582,8 @@ def enable_nvos_telemetry_families(
     export_vrf: Optional[str] = None,
     collector_ips: Optional[Iterable[str]] = None,
     stats_group_id: Optional[str] = None,
-) -> None:
+    use_stats_group: bool = True,
+) -> TelemetryEnablement:
     """Enable OTLP + the given telemetry families on the DUT (others explicitly disabled).
 
     ``families`` is any subset of :data:`TelemetryConsts.ALL_STATS_SUBTREES` —
@@ -437,10 +600,12 @@ def enable_nvos_telemetry_families(
     ``export_vrf`` sets ``system telemetry export vrf`` (e.g. ``mgmt`` for legacy
     test_01 parity). When omitted the DUT keeps its current export VRF.
 
-    ``collector_ips`` binds ``stats-group sg_01`` on each OTLP gRPC destination and
-    stages the test01 stats-group export tree. Defaults to ``(collector_ip,)``.
-    Pass both primary and secondary IPs from :class:`OtelSuiteContext` for dual-dest
-    insecure suites.
+    ``collector_ips`` lists the OTLP gRPC destinations to configure (defaults to
+    ``(collector_ip,)``). Pass both primary and secondary IPs from
+    :class:`OtelSuiteContext` for dual-dest insecure suites. When ``use_stats_group``
+    is True (default) ``stats-group sg_01`` is also bound on each destination and the
+    test01 stats-group export tree is staged; set ``use_stats_group=False`` to export
+    via root telemetry only (no stats-group).
 
     Cumulus lab test01 uses :mod:`ngts.tests_nvos.system.telemetry.otel.cumulus.helpers`.
     """
@@ -483,13 +648,22 @@ def enable_nvos_telemetry_families(
             stats_group_id=None,
             family_universe=TelemetryConsts.ALL_STATS_SUBTREES,
         )
-        from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
+        sg_id_used: Optional[str] = None
+        if use_stats_group:
+            from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 
-        sg_id = stats_group_id or CumulusOtelConst.TEST01_STATS_GROUP_ID
-        _stage_nvos_test01_stats_group(
-            system, dut, otlp_dest_ips, stats_group_id=sg_id
-        )
+            sg_id_used = stats_group_id or CumulusOtelConst.TEST01_STATS_GROUP_ID
+            _stage_nvos_test01_stats_group(
+                system, dut, otlp_dest_ips, stats_group_id=sg_id_used
+            )
         apply_telemetry_configuration(system, dut, is_nvos=True)
+
+    return build_nvos_enablement(
+        enabled,
+        collector_ips=otlp_dest_ips,
+        stats_group_id=sg_id_used,
+        use_stats_group=use_stats_group,
+    )
 
 
 def enable_nvos_families_export(
@@ -499,7 +673,7 @@ def enable_nvos_families_export(
     sample_intervals: Optional[Dict[str, int]] = None,
     collector_ips: Optional[Iterable[str]] = None,
     stats_group_id: Optional[str] = None,
-) -> None:
+) -> TelemetryEnablement:
     """Enable export + per-class knobs for ``families`` on an already-configured OTLP base.
 
     Unlike :func:`enable_nvos_telemetry_families` this does NOT (re)apply the OTLP
@@ -527,17 +701,46 @@ def enable_nvos_families_export(
             stats_group_id=None,
             family_universe=TelemetryConsts.ALL_STATS_SUBTREES,
         )
+        sg_id_used: Optional[str] = None
         if collector_ips:
             from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 
-            sg_id = stats_group_id or CumulusOtelConst.TEST01_STATS_GROUP_ID
+            sg_id_used = stats_group_id or CumulusOtelConst.TEST01_STATS_GROUP_ID
             _stage_nvos_test01_stats_group(
-                system, dut, collector_ips, stats_group_id=sg_id
+                system, dut, collector_ips, stats_group_id=sg_id_used
             )
         apply_telemetry_configuration(system, dut, is_nvos=True)
 
+    return build_nvos_enablement(
+        enabled,
+        collector_ips=collector_ips,
+        stats_group_id=sg_id_used,
+        use_stats_group=bool(collector_ips),
+    )
+
 
 # --- Suite orchestration -----------------------------------------------------
+
+
+def _probe_dut_otlp_export(dut, *, export_vrf: str, is_nvos: bool, collector_ip: str, tag: str) -> str:
+    """Dump DUT telemetry/export health while waiting for collector artifacts."""
+    unit = shlex.quote(nvtelemetry_unit(is_nvos, export_vrf))
+    reach = "'echo >/dev/tcp/%s/%d'" % (collector_ip, OtelCollectorConst.OTLP_GRPC_PORT)
+    probes = {
+        'telemetry_export': 'nv show system telemetry export 2>&1',
+        'nvtelemetry': 'systemctl status %s --no-pager -n 25 2>&1' % (unit,),
+        'reach_default': 'timeout 3 bash -lc %s 2>&1 || true' % (reach,),
+        'reach_vrf': 'timeout 3 ip vrf exec %s bash -lc %s 2>&1 || true' % (export_vrf, reach),
+    }
+    lines = ['=== DUT_OTLP_PROBE [%s] vrf=%s unit=%s ===' % (tag, export_vrf, unit)]
+    with allure.step('Probe DUT OTLP export (%s)' % (tag,)):
+        for name, cmd in probes.items():
+            out = (dut.run_cmd(cmd, validate=False, print_output=False) or '').strip()[-1500:]
+            lines.append('--- %s ---\n%s' % (name, out))
+    report = '\n'.join(lines)
+    logger.info('DUT_OTLP_PROBE [%s]:\n%s', tag, report)
+    allure.attach('dut-otlp-probe-%s' % (tag,), report)
+    return report
 
 
 def setup_otel_suite(
@@ -548,6 +751,7 @@ def setup_otel_suite(
     install_if_missing: bool = True,
     export_vrf: Optional[str] = None,
     is_nvos: bool = False,
+    use_secondary: bool = False,
 ) -> OtelSuiteContext:
     """
     Bring the OTEL suite up end-to-end (idempotent; safe to re-run after a previous broken run).
@@ -555,29 +759,39 @@ def setup_otel_suite(
     Steps (each its own Allure step):
 
     1. Pre-clean DUT NVUE OTLP destinations + family knobs (best-effort).
-    2. Construct primary (engines.sonic_mgmt) + secondary (engines.ha) collector clients.
-    3. Truncate primary + secondary export JSON.
+    2. Construct primary (engines.sonic_mgmt) + (when ``use_secondary``) secondary
+       (engines.ha) collector clients.
+    3. Truncate the export JSON of every configured collector.
     4. Ensure primary collector running on sonic-mgmt (install_if_missing).
-    5. Ensure secondary collector running on HA host (install_if_missing).
-    6. Configure NVUE OTLP on the DUT with **both** destinations + insecure + interface-stats baseline.
+    5. When ``use_secondary``, ensure secondary collector running on HA host (install_if_missing).
+    6. Configure NVUE OTLP on the DUT with the destination(s) + insecure + interface-stats baseline.
        Optional ``export_vrf`` (e.g. ``mgmt``) for management-network collector reachability.
-    7. Verify both collectors receive non-empty artifacts within one collection window.
+    7. Verify every configured collector receives non-empty artifacts within one collection window.
 
-    Fails the suite if ``engines.sonic_mgmt`` or ``engines.ha`` is missing from the topology.
+    Single-collector by default: most setups have no ``ha`` player, and only tests
+    marked ``multiple_otlp_collectors`` read a second collector. Set
+    ``use_secondary=True`` for those (see the ``otel_suite_dual`` fixture); the suite
+    then skips when the topology has no ``ha`` player.
+
+    Fails the suite if ``engines.sonic_mgmt`` is missing.
 
     Caller must call :func:`teardown_otel_suite` (with the returned context) at module exit.
     """
     if not hasattr(engines, "sonic_mgmt"):
         pytest.fail("OTEL suite requires a 'sonic-mgmt' player in the topology (engines.sonic_mgmt missing).")
-    if not hasattr(engines, "ha"):
-        pytest.fail("OTEL suite requires an 'ha' player in the topology (engines.ha missing).")
+    if use_secondary and not hasattr(engines, "ha"):
+        pytest.skip("needs a second collector host ('ha' player) for two OTLP destinations")
 
     dut = engines.dut
 
     primary = OtelCollector.build_collector(engines, OtelCollectorLabel.PRIMARY)
-    secondary = OtelCollector.build_collector(engines, OtelCollectorLabel.SECONDARY)
     primary_ip = primary.ip
-    secondary_ip = secondary.ip
+    secondary = (
+        OtelCollector.build_collector(engines, OtelCollectorLabel.SECONDARY)
+        if use_secondary
+        else None
+    )
+    secondary_ip = secondary.ip if secondary else None
 
     from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
         cleanup_stale_nvue_censor_files,
@@ -588,17 +802,20 @@ def setup_otel_suite(
     with allure.step("Pre-clean NVUE OTLP state on DUT"):
         cleanup_switch_otlp_grpc(dut)
 
+    collectors = [primary] + ([secondary] if secondary else [])
+
     with allure.step("Truncate collector export artifacts"):
-        primary.truncate_artifact()
-        secondary.truncate_artifact()
+        for collector in collectors:
+            collector.truncate_artifact()
 
     with allure.step(f"Ensure primary collector running ({primary_ip})"):
         primary.ensure_running(install_if_missing=install_if_missing)
 
-    with allure.step(f"Ensure secondary collector running ({secondary_ip})"):
-        secondary.ensure_running(install_if_missing=install_if_missing)
+    if secondary:
+        with allure.step(f"Ensure secondary collector running ({secondary_ip})"):
+            secondary.ensure_running(install_if_missing=install_if_missing)
 
-    with allure.step("Configure NVUE OTLP dual destination on DUT"):
+    with allure.step("Configure NVUE OTLP destination(s) on DUT"):
         configure_switch_otlp_grpc_dual_destination(
             dut,
             primary_ip=primary_ip,
@@ -609,24 +826,29 @@ def setup_otel_suite(
             is_nvos=is_nvos,
         )
 
-    with allure.step("Verify both collectors receive non-empty artifacts"):
+    with allure.step("Verify collectors receive non-empty artifacts"):
         wait_sec = OtelCollectorConst.collection_window_sec(interface_sample_interval_sec)
         poll_timeout = OtelCollectorConst.artifact_poll_timeout_sec(
             interface_sample_interval_sec
         )
+        vrf = export_vrf or TelemetryConsts.Defaults.EXPORT_VRF
         with allure.step(f"Sleep {wait_sec}s for first OTLP batch"):
             time.sleep(wait_sec)
-        with allure.step(
-            f"Primary artifact non-empty (poll timeout={poll_timeout}s)"
-        ):
-            primary.wait_for_artifact(timeout_sec=poll_timeout)
-        with allure.step(
-            f"Secondary artifact non-empty (poll timeout={poll_timeout}s)"
-        ):
-            secondary.wait_for_artifact(timeout_sec=poll_timeout)
+        for collector in collectors:
+            with allure.step(
+                f"{collector.label.value} artifact non-empty (poll timeout={poll_timeout}s)"
+            ):
+                try:
+                    collector.wait_for_artifact(timeout_sec=poll_timeout)
+                except Exception:
+                    _probe_dut_otlp_export(
+                        dut, export_vrf=vrf, is_nvos=is_nvos, collector_ip=collector.ip,
+                        tag=collector.label.value,
+                    )
+                    raise
         with allure.step("Truncate artifacts before tests start"):
-            primary.truncate_artifact()
-            secondary.truncate_artifact()
+            for collector in collectors:
+                collector.truncate_artifact()
 
     return OtelSuiteContext(
         primary=primary,
@@ -650,6 +872,8 @@ def setup_otel_suite_secured(
     enable_routing: bool = True,
     enable_interface_histogram: bool = False,
     is_nvos: bool = False,
+    use_secondary: bool = False,
+    nvos_families: Optional[Iterable[str]] = None,
 ) -> OtelSuiteContext:
     """Bring up TLS OTLP suite (primary collector only; SSIM ``Otel*WithTLSConfig`` parity).
 
@@ -658,6 +882,11 @@ def setup_otel_suite_secured(
     on the DUT (SSIM ``copy_ca_cert``), configures the collector with a TLS gRPC receiver,
     and applies secured NVUE telemetry via
     :func:`ngts.tests_nvos.system.telemetry.otel.cumulus.helpers.apply_otel_secured_telemetry_config`.
+
+    ``nvos_families`` (NVOS only) selects which metric families are enabled to open the
+    TLS session; defaults to :data:`TelemetryConsts.ALL_STATS_SUBTREES`. Callers that only
+    need the session established (e.g. the syslog secured suite) can pass a trimmed,
+    universally-supported subset to avoid unmapped-metric subscription storms.
     """
     from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
         apply_otel_secured_telemetry_config,
@@ -674,27 +903,34 @@ def setup_otel_suite_secured(
 
     if not hasattr(engines, "sonic_mgmt"):
         pytest.fail("OTEL suite requires engines.sonic_mgmt.")
-    if not hasattr(engines, "ha"):
-        pytest.fail("OTEL suite requires engines.ha.")
+    if use_secondary and not hasattr(engines, "ha"):
+        pytest.skip("needs a second collector host ('ha' player) for two OTLP destinations")
 
     dut = engines.dut
     primary = OtelCollector.build_collector(engines, OtelCollectorLabel.PRIMARY)
-    secondary = OtelCollector.build_collector(engines, OtelCollectorLabel.SECONDARY)
+    secondary = (
+        OtelCollector.build_collector(engines, OtelCollectorLabel.SECONDARY)
+        if use_secondary
+        else None
+    )
     primary_ip = primary.ip
-    secondary_ip = secondary.ip
+    secondary_ip = secondary.ip if secondary else None
 
     from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
         cleanup_stale_nvue_censor_files,
+        settle_dut_ssh_after_module_transition,
     )
 
     cleanup_stale_nvue_censor_files(dut)
 
     with allure.step("Pre-clean NVUE OTLP state on DUT"):
         cleanup_switch_otlp_grpc(dut)
+        settle_dut_ssh_after_module_transition(dut)
 
     with allure.step("Truncate primary collector export artifact"):
         primary.truncate_artifact()
-        secondary.truncate_artifact()
+        if secondary:
+            secondary.truncate_artifact()
 
     material = generate_tls_certs_locally(san_ip=primary_ip)
     upload_server_certs_to_collector(primary, material)
@@ -715,7 +951,12 @@ def setup_otel_suite_secured(
         if is_nvos:
             # Match Cumulus secured test01: root families only (_enable_secured_root_telemetry
             # has no stats-group). Do not pass collector_ips here.
-            enable_nvos_families_export(dut, TelemetryConsts.ALL_STATS_SUBTREES)
+            families = (
+                tuple(nvos_families)
+                if nvos_families is not None
+                else TelemetryConsts.ALL_STATS_SUBTREES
+            )
+            enable_nvos_families_export(dut, families)
         else:
             apply_otel_secured_telemetry_config(
                 dut,
@@ -761,8 +1002,10 @@ def teardown_otel_suite(engines, suite: OtelSuiteContext) -> None:
             logger.error("OTEL teardown: NVUE cleanup raised: %s", exc)
             failures.append(f"NVUE cleanup: {exc}")
 
+    active_collectors = [c for c in (suite.primary, suite.secondary) if c is not None]
+
     with allure.step("Stop collector processes"):
-        for collector in (suite.primary, suite.secondary):
+        for collector in active_collectors:
             try:
                 collector.stop()
             except Exception as exc:  # noqa: BLE001
@@ -770,7 +1013,7 @@ def teardown_otel_suite(engines, suite: OtelSuiteContext) -> None:
                 failures.append(f"stop {collector.label.value}: {exc}")
 
     with allure.step("Truncate collector artifacts"):
-        for collector in (suite.primary, suite.secondary):
+        for collector in active_collectors:
             try:
                 collector.truncate_artifact()
             except Exception as exc:  # noqa: BLE001
@@ -932,11 +1175,9 @@ def _metric_name_matches_group_prefix(metric_name: str, group_prefix: str) -> bo
     """Return True when ``metric_name`` belongs to the NVUE telemetry family ``group_prefix``.
 
     metrics-classes / NVUE group names (``interface-stats``, ``platform-stats``, …) map to
-    OTLP ``nvswitch_*`` prefixes. ``peer-port`` matches both ``peer-port-stats`` and
-    ``peer-port-phy-stats`` YAML groups.
+    OTLP ``nvswitch_*`` prefixes; each family prefix also matches the metrics of its
+    ``-phy`` subgroup.
     """
-    if group_prefix == OtelCollectorConst._PEER_PORT_METRICS_GROUP_PREFIX:
-        return metric_name.startswith("nvswitch_peer_port_")
     if group_prefix == TelemetryConsts.INTERFACE_STATS:
         return metric_name.startswith("nvswitch_interface_")
     if group_prefix == TelemetryConsts.PLATFORM_STATS:
@@ -1153,6 +1394,40 @@ def assert_metric_names_strict(
             pytest.fail("\n".join(msg_lines))
 
 
+def assert_nvos_metric_names_for_enablement(
+    engines,
+    devices,
+    cur_dir: str,
+    *,
+    actual_metric_names: Iterable[str],
+    enablement: "TelemetryEnablement",
+    destination_ip: str,
+    is_ib_router: bool,
+    collector_label: str,
+) -> None:
+    """Strict metric-name equality from metrics-classes-full.yaml + declared enablement.
+
+    Shared by dual-platform collection and coexistence NVOS validators: callers
+    supply already-collected metric names (and a pre-built enablement).
+    """
+    expected = expected_metric_names_for_enablement(
+        engines,
+        cur_dir,
+        enablement,
+        destination_ip=destination_ip,
+        file_name="metrics-classes-full.yaml",
+        is_ib_router=is_ib_router,
+        devices=devices,
+    )
+    assert expected, "No expected metric names after NVOS enablement gating"
+    assert_metric_names_strict(
+        expected,
+        set(actual_metric_names),
+        collector_label=collector_label,
+        group_name_prefixes=OtelCollectorConst.METRICS_CLASSES_FULL_EXPORT_GROUP_PREFIXES,
+    )
+
+
 # =============================================================================
 # Expected-metrics derivation — fetch metrics-classes.yaml from the DUT and gate
 # the expected metric-name set by DUT capabilities. Only
@@ -1320,6 +1595,50 @@ def load_otlp_metric_names_from_metrics_classes_yaml(
     return names
 
 
+def _metrics_classes_group_names(yaml_path: str) -> Set[str]:
+    """Return the set of top-level group names present in ``metrics-classes.yaml``."""
+    with open(yaml_path, "r", encoding="utf-8") as handle:
+        doc = yaml.safe_load(handle) or {}
+    return {g for g in doc if isinstance(g, str) and g.strip()}
+
+
+def load_otlp_metric_names_for_groups(
+    yaml_path: str,
+    *,
+    exact_group_names: Optional[Set[str]] = None,
+    group_name_prefixes: Optional[Tuple[str, ...]] = None,
+) -> Tuple[Set[str], Set[str]]:
+    """Return (metric names, matched group names) for the requested groups.
+
+    A group matches when its name is in ``exact_group_names`` OR starts with one
+    of ``group_name_prefixes``. Returning the matched group names lets callers
+    detect requested groups that are absent from the YAML (forward-compat).
+    """
+    exact = set(exact_group_names or set())
+    prefixes = tuple(group_name_prefixes or ())
+    with allure.step(f"Parse expected metric names for groups from {os.path.basename(yaml_path)}"):
+        with open(yaml_path, "r", encoding="utf-8") as handle:
+            doc = yaml.safe_load(handle) or {}
+    names: Set[str] = set()
+    matched_groups: Set[str] = set()
+    for group_name, entries in doc.items():
+        if not isinstance(group_name, str) or not group_name.strip():
+            continue
+        if group_name not in exact and not any(
+            group_name.startswith(pfx) for pfx in prefixes
+        ):
+            continue
+        matched_groups.add(group_name)
+        if not isinstance(entries, list):
+            continue
+        for item in entries:
+            if isinstance(item, str):
+                parsed = _parse_metrics_classes_entry(item)
+                if parsed:
+                    names.add(parsed)
+    return names, matched_groups
+
+
 # --- Expected set derivation + capability gating -----------------------------
 
 
@@ -1371,6 +1690,111 @@ def expected_metric_names_from_dut(
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("OTEL: Allure attach of capability summary failed: %s", exc)
+    return expected_after_gating
+
+
+def _group_names_for_enabled_classes(effective: "EnabledClasses") -> Tuple[Set[str], Set[str]]:
+    """Resolve enabled (family, class) pairs to exact YAML group names.
+
+    Returns ``(group_names, unmapped_tokens)`` where ``unmapped_tokens`` collects
+    ``"family/class"`` pairs that have no entry in the class->group mapping (logged
+    by the caller for forward-compat).
+    """
+    group_names: Set[str] = set()
+    unmapped: Set[str] = set()
+    for family, classes in effective.families.items():
+        for cls in classes:
+            if family == TelemetryConsts.PLATFORM_STATS:
+                if cls == OtelCollectorConst.TELEMETRY_BASE_CLASS:
+                    # platform metrics are fully categorized; no base group.
+                    continue
+                group_names.add(
+                    OtelCollectorConst.METRICS_CLASSES_PLATFORM_GROUP_FMT.format(cls=cls)
+                )
+                continue
+            mapped = OtelCollectorConst.METRICS_CLASSES_GROUP_BY_FAMILY_CLASS.get(
+                (family, cls)
+            )
+            if mapped:
+                group_names.update(mapped)
+            else:
+                unmapped.add(f"{family}/{cls}")
+    return group_names, unmapped
+
+
+def expected_metric_names_for_enablement(
+    engines,
+    local_output_dir: str,
+    enablement: "TelemetryEnablement",
+    *,
+    destination_ip: str,
+    file_name: str = "metrics-classes.yaml",
+    yaml_path: Optional[str] = None,
+    is_ib_router: bool = False,
+    devices=None,
+) -> Set[str]:
+    """Expected OTLP metric names for ``destination_ip`` from the test-declared enablement.
+
+    Resolves the destination's effective enabled classes (a bound stats-group
+    overrides root; an absent/empty binding falls back to root), maps those
+    classes to exact ``metrics-classes.yaml`` group names, then applies the same
+    hardware capability gating as :func:`expected_metric_names_from_dut`.
+    """
+    if yaml_path is None:
+        yaml_path = fetch_metrics_classes_yaml_from_dut(
+            engines, local_output_dir, file_name=file_name
+        )
+
+    effective = enablement.effective_for_destination(destination_ip)
+    requested_groups, unmapped = _group_names_for_enabled_classes(effective)
+
+    expected_raw, matched_groups = load_otlp_metric_names_for_groups(
+        yaml_path, exact_group_names=requested_groups
+    )
+    missing_groups = requested_groups - matched_groups
+
+    capabilities = dut_capabilities(
+        is_ib_router=is_ib_router, devices=devices, dut=engines.dut
+    )
+    expected_after_gating, gating_summary = _apply_capability_gating(
+        expected_raw, capabilities
+    )
+
+    with allure.step(
+        f"Expected metric names for destination {destination_ip}: "
+        f"{len(expected_after_gating)} after gating "
+        f"(groups={len(matched_groups)}, raw={len(expected_raw)})"
+    ):
+        logger.info(
+            "OTEL expected-for-enablement (dest=%s): groups_requested=%d "
+            "groups_matched=%d names_raw=%d names_after_gating=%d",
+            destination_ip,
+            len(requested_groups),
+            len(matched_groups),
+            len(expected_raw),
+            len(expected_after_gating),
+        )
+        if missing_groups:
+            logger.warning(
+                "OTEL expected-for-enablement: requested groups absent from YAML: %s "
+                "(available groups: %s)",
+                sorted(missing_groups),
+                sorted(_metrics_classes_group_names(yaml_path)),
+            )
+        if unmapped:
+            logger.warning(
+                "OTEL expected-for-enablement: enabled classes with no group mapping: %s",
+                sorted(unmapped),
+            )
+        try:
+            allure.attach(
+                f"enablement expected groups (dest {destination_ip})",
+                "requested groups:\n  " + "\n  ".join(sorted(requested_groups) or ["(none)"]) +
+                "\n\nmatched groups:\n  " + "\n  ".join(sorted(matched_groups) or ["(none)"]) +
+                "\n\n" + gating_summary,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("OTEL: Allure attach of enablement summary failed: %s", exc)
     return expected_after_gating
 
 

@@ -50,6 +50,7 @@ def _enable_family_classes(
     stats_group_id: Optional[str] = None,
     platform_classes: Optional[Iterable[str]] = None,
     platform_class_intervals: Optional[Dict[str, int]] = None,
+    enable_phy_under_stats_group: bool = False,
 ) -> None:
     """Enable the class-level (per-subclass) metrics under a single telemetry family.
 
@@ -59,13 +60,20 @@ def _enable_family_classes(
     - ``ib-router-stats``: no class-level subtree (no-op).
 
     Under ``stats-group <id>``, Cumulus NVUE exposes only ``class debounce`` for
-    interface/peer-port stats (not ``phy``). Platform classes must match
+    interface/peer-port stats (not ``phy``), so by default the ``phy`` class is
+    skipped under a stats-group. NVOS NVUE does expose ``class phy`` under a
+    stats-group, so NVOS callers pass ``enable_phy_under_stats_group=True`` to
+    enable it. Platform classes must match
     :data:`CumulusOtelConst.STATS_GROUP_PLATFORM_CLASSES` (no health-info /
     asic-power; includes file-system).
     """
-    if stats_group_id and family in (
-        TelemetryConsts.INTERFACE_STATS,
-        TelemetryConsts.PEER_PORT_STATS,
+    if (
+        stats_group_id and
+        not enable_phy_under_stats_group and
+        family in (
+            TelemetryConsts.INTERFACE_STATS,
+            TelemetryConsts.PEER_PORT_STATS,
+        )
     ):
         logger.info(
             "Skipping class phy for %s under stats-group %s "
@@ -131,6 +139,7 @@ def _configure_stats_families(
     *,
     stats_group_id: Optional[str] = None,
     family_universe: Optional[Iterable[str]] = None,
+    enable_phy_under_stats_group: bool = False,
 ) -> None:
     """Enable/disable export + sample intervals (+ class knobs) at root or under a stats-group."""
     if family_universe is not None:
@@ -149,7 +158,13 @@ def _configure_stats_families(
             _set_stats_sample_interval(
                 system, dut, family, intervals[family], stats_group_id=stats_group_id
             )
-            _enable_family_classes(system, dut, family, stats_group_id=stats_group_id)
+            _enable_family_classes(
+                system,
+                dut,
+                family,
+                stats_group_id=stats_group_id,
+                enable_phy_under_stats_group=enable_phy_under_stats_group,
+            )
 
 
 def _telemetry_subtree(system: System, path: str) -> BaseComponent:
@@ -259,7 +274,8 @@ def _enable_secured_root_telemetry(
         )
         _enable_histogram_root(system, dut)
         _enable_software_stats_systemd_root(
-            system, dut, intervals["software-stats-systemd"]
+            system, dut,
+            intervals[CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY]
         )
         enabled_stats = {
             TelemetryConsts.INTERFACE_STATS,
@@ -510,6 +526,8 @@ def configure_stats_group_interface_platform(
     dut,
     stats_group_id: str,
     intervals: Dict[str, int],
+    *,
+    enable_phy_under_stats_group: bool = False,
 ) -> None:
     """Enable interface-stats + platform-stats under a stats-group.
 
@@ -518,6 +536,9 @@ def configure_stats_group_interface_platform(
     (lldp, buffer, control-plane, software-stats/systemd, …) via
     :func:`_configure_test01_stats_group`; NVOS has none of those under
     stats-group and must use this narrower tree instead.
+
+    ``enable_phy_under_stats_group`` enables the interface/peer-port ``class phy``
+    knob under the stats-group (NVOS-only; Cumulus NVUE is debounce-only there).
     """
     _telemetry_stats_parent(system, stats_group_id)
     _disable_stats_group_router_exports(system, dut, stats_group_id)
@@ -529,6 +550,7 @@ def configure_stats_group_interface_platform(
         intervals,
         stats_group_id=stats_group_id,
         family_universe=enabled,
+        enable_phy_under_stats_group=enable_phy_under_stats_group,
     )
     for family in enabled:
         if family == TelemetryConsts.PLATFORM_STATS:
@@ -541,7 +563,13 @@ def configure_stats_group_interface_platform(
                 platform_class_intervals=CumulusOtelConst.TEST01_STATS_GROUP_PLATFORM_CLASS_INTERVALS,
             )
         else:
-            _enable_family_classes(system, dut, family, stats_group_id=stats_group_id)
+            _enable_family_classes(
+                system,
+                dut,
+                family,
+                stats_group_id=stats_group_id,
+                enable_phy_under_stats_group=enable_phy_under_stats_group,
+            )
 
 
 def _configure_test01_stats_group(
@@ -558,7 +586,8 @@ def _configure_test01_stats_group(
             system, dut, stats_group_id, subtree, intervals[subtree]
         )
     _enable_stats_group_software_stats_systemd(
-        system, dut, stats_group_id, intervals["software-stats-systemd"]
+        system, dut, stats_group_id,
+        intervals[CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY]
     )
     enabled = {
         TelemetryConsts.INTERFACE_STATS,
@@ -613,7 +642,7 @@ def _enable_test01_root_telemetry(
         _enable_software_stats_systemd_root(
             system,
             dut,
-            intervals["software-stats-systemd"],
+            intervals[CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY],
             unit_names=systemd_unit_names,
         )
         enabled_stats = set(CumulusOtelConst.TEST01_ROOT_STATS_FAMILIES)
@@ -651,6 +680,21 @@ def _bind_stats_group_on_otlp_destinations(
             grpc.destination.resources_dict[collector_ip].set(
                 TelemetryConsts.STATS_GROUP, stats_group_id, dut_engine=dut
             ).verify_result()
+
+
+def _ensure_otlp_grpc_insecure(system: System, dut) -> None:
+    """Re-assert ``otlp grpc insecure enabled`` before enabling the telemetry master state.
+
+    The function-scoped ``clear_config`` fixture resets the DUT to the default YAML after
+    every test, dropping the ``insecure`` flag that the module-scoped ``otel_suite_mgmt``
+    set up. A later CLI-show apply then fails with ``No certificate found for
+    destination(s) ... set the insecure flag to enabled`` whenever the test is not the
+    first in the module. Mirrors :func:`apply_otel_mgmt_vrf_no_tls_telemetry_config`.
+    """
+    with allure.step("Re-assert OTLP gRPC insecure flag (pre master-state apply)"):
+        system.telemetry.export.otlp.grpc.set(
+            TelemetryConsts.INSECURE, _ENABLED, dut_engine=dut
+        ).verify_result()
 
 
 def _interface_label_pairs() -> List[Tuple[str, str]]:
@@ -835,6 +879,8 @@ def apply_transceiver_info_show_telemetry_config(
             platform_classes=CumulusOtelConst.ROOT_PLATFORM_CLASSES,
             platform_class_intervals=CumulusOtelConst.TEST01_ROOT_PLATFORM_CLASS_INTERVALS,
         )
+        if not is_nvos:
+            _ensure_otlp_grpc_insecure(system, dut)
         apply_telemetry_configuration(system, dut, is_nvos=is_nvos)
 
 
@@ -846,6 +892,23 @@ def dut_root_on_nvme_storage(dut) -> bool:
         print_output=False,
     ).strip()
     return "nvme" in root_fs.lower()
+
+
+def secured_exclude_metrics(dut, *, no_routing: bool = False) -> List[str]:
+    """Cumulus secured-collection metric exclusions (mgmt VRF TLS / coexistence smoke)."""
+    exclude = list(CumulusOtelConst.SECURED_EXCLUDE_METRICS)
+    if no_routing:
+        exclude.extend(CumulusOtelConst.SECURED_NO_ROUTING_EXCLUDE_METRICS)
+        exclude.extend(CumulusOtelConst.SECURED_MGMT_CP_TRAP_GROUP_EXCLUDE_METRICS)
+        exclude.extend(CumulusOtelConst.SECURED_MGMT_LAB_TOPOLOGY_EXCLUDE_METRICS)
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.metric_catalog import (
+            supported_metrics_parity as metrics_parity,
+        )
+
+        exclude.extend(metrics_parity.ALLOWED_EXTRAS)
+    if dut_root_on_nvme_storage(dut):
+        exclude.extend(CumulusOtelConst.TEST01_EXCLUDE_METRICS_NVME)
+    return exclude
 
 
 def test01_expected_metric_names_from_catalog(
@@ -1010,3 +1073,353 @@ def validate_transceiver_info_applied(
     )
     allure.attach(context, str(output))
     logger.info("%s: %s", context, output)
+
+
+def apply_simple_export_show_telemetry_config(
+    dut,
+    collector_ips: Iterable[str],
+    *,
+    subtree: str,
+    root_sample_interval: int,
+    stats_group_sample_interval: int,
+    stats_group_id: str = CumulusOtelConst.TEST01_STATS_GROUP_ID,
+    is_nvos: bool = False,
+) -> None:
+    """Root + stats-group simple-export knobs for SSIM ``otel_show`` show tests.
+
+    Used for the single-``export``/``sample-interval`` families (e.g. ``lldp``,
+    ``adaptive-routing-stats``). Expects OTLP dual-destination export from
+    :func:`setup_otel_suite`. Binds ``stats_group_id`` on each gRPC destination, then
+    enables ``<subtree> export state`` + ``<subtree> sample-interval`` at the telemetry
+    root (``root_sample_interval``) and under ``stats-group <id>``
+    (``stats_group_sample_interval``) so the ``--applied`` show output can be validated
+    (config -> show parity).
+    """
+    system = System()
+    with allure.step(
+        f"Configure {subtree} show telemetry (stats-group={stats_group_id})"
+    ):
+        _bind_stats_group_on_otlp_destinations(
+            system, dut, collector_ips, stats_group_id
+        )
+        _disable_stats_group_router_exports(system, dut, stats_group_id)
+        _enable_stats_group_simple_export(
+            system, dut, stats_group_id, subtree, stats_group_sample_interval
+        )
+        if not is_nvos:
+            stage_telemetry_master_state(system, dut, is_nvos=False)
+        _disable_router_telemetry_exports(system, dut)
+        _enable_simple_telemetry_export(
+            system, dut, subtree, root_sample_interval, required=True
+        )
+        if not is_nvos:
+            _ensure_otlp_grpc_insecure(system, dut)
+        apply_telemetry_configuration(system, dut, is_nvos=is_nvos)
+
+
+def show_system_telemetry_simple_export(
+    dut,
+    subtree: str,
+    *,
+    export_node: bool = False,
+    stats_group_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """``nv show system telemetry [stats-group <id>] <subtree>[ export] --applied``."""
+    system = System()
+    path = f"/{subtree}/export" if export_node else f"/{subtree}"
+    if stats_group_id:
+        node = _stats_group_subtree(system, stats_group_id, path)
+        ctx = f"stats-group {stats_group_id} {subtree}"
+    else:
+        node = _telemetry_subtree(system, path)
+        ctx = f"telemetry root {subtree}"
+    if export_node:
+        ctx += " export"
+    with allure.step(f"nv show {ctx} --applied"):
+        raw = node.show(rev=ConfState.APPLIED, dut_engine=dut)
+        return _parse_telemetry_show(raw)
+
+
+def validate_simple_export_applied(
+    output: Dict[str, Any],
+    *,
+    context: str,
+    expected_interval: Optional[int] = None,
+    export_node: bool = False,
+) -> None:
+    """Assert a simple-export subtree show matches SSIM ``otel_show`` expectations.
+
+    ``export_node`` validates the ``<subtree> export`` leaf (``state`` only); otherwise
+    the ``<subtree>`` node (``export.state`` + ``sample-interval``).
+    """
+    if export_node:
+        assert output.get("state") == _ENABLED, (
+            f"{context}: state expected enabled, got {output!r}"
+        )
+    else:
+        assert output.get("export", {}).get("state") == _ENABLED, (
+            f"{context}: export state expected enabled, got {output!r}"
+        )
+        assert output.get("sample-interval") == expected_interval, (
+            f"{context}: sample-interval expected {expected_interval}, got {output!r}"
+        )
+    allure.attach(context, str(output))
+    logger.info("%s: %s", context, output)
+
+
+def apply_software_stats_show_telemetry_config(
+    dut,
+    collector_ips: Iterable[str],
+    *,
+    stats_group_id: str = CumulusOtelConst.TEST01_STATS_GROUP_ID,
+    is_nvos: bool = False,
+) -> None:
+    """Root + stats-group ``software-stats/systemd`` knobs for SSIM ``software_stats`` show.
+
+    Expects OTLP dual-destination export from :func:`setup_otel_suite`. Binds
+    ``stats_group_id`` on each gRPC destination, then enables the ``custom`` systemd
+    unit profile (``process-level``/``export`` enabled, ``sample-interval`` 60) at the
+    telemetry root and under ``stats-group <id>`` so the ``--applied`` show output can
+    be validated (config → show parity).
+    """
+    root_intervals = {
+        **_DEFAULT_SAMPLE_INTERVALS,
+        **CumulusOtelConst.TEST01_ROOT_SAMPLE_INTERVALS,
+    }
+    sg_intervals = {
+        **_DEFAULT_SAMPLE_INTERVALS,
+        **CumulusOtelConst.TEST01_STATS_GROUP_SAMPLE_INTERVALS,
+    }
+    system = System()
+    with allure.step(
+        f"Configure software-stats show telemetry (stats-group={stats_group_id})"
+    ):
+        _bind_stats_group_on_otlp_destinations(
+            system, dut, collector_ips, stats_group_id
+        )
+        _enable_stats_group_software_stats_systemd(
+            system, dut, stats_group_id,
+            sg_intervals[CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY]
+        )
+        stage_telemetry_master_state(system, dut, is_nvos=is_nvos)
+        _enable_software_stats_systemd_root(
+            system, dut,
+            root_intervals[CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY]
+        )
+        if not is_nvos:
+            _ensure_otlp_grpc_insecure(system, dut)
+        apply_telemetry_configuration(system, dut, is_nvos=is_nvos)
+
+
+def show_system_telemetry_software_stats(dut) -> Dict[str, Any]:
+    """``nv show system telemetry software-stats --applied`` (telemetry root)."""
+    system = System()
+    with allure.step("nv show system telemetry software-stats --applied"):
+        software_stats = system.telemetry.software_stats.show(
+            rev=ConfState.APPLIED, dut_engine=dut
+        )
+        return _parse_software_stats_show(software_stats)
+
+
+def _parse_software_stats_show(show_output: str) -> Dict[str, Any]:
+    return OutputParsingTool.parse_json_str_to_dictionary(show_output).get_returned_value()
+
+
+def validate_software_stats_applied(
+    dut,
+    *,
+    stats_group_id: str = CumulusOtelConst.TEST01_STATS_GROUP_ID,
+    expected_units: Optional[Iterable[str]] = None,
+    expected_sample_interval: Optional[int] = None,
+) -> None:
+    """Assert applied ``software-stats`` show output matches the configured systemd profile.
+
+    Mirrors SSIM ``test_nv_show_system_telemetry_software_stats_validation``: validates
+    root ``software-stats`` (+ ``systemd``/``export``/``unit-profile`` subtrees) and the
+    same subtree under ``stats-group <id>``. The ``custom`` unit profile is checked
+    exactly against the configured units; the built-in ``default`` profile is only
+    checked for presence (its unit list is platform/build specific).
+    """
+    expected_units = sorted(expected_units or CumulusOtelConst.TEST01_SYSTEMD_UNIT_NAMES)
+    if expected_sample_interval is None:
+        expected_sample_interval = CumulusOtelConst.TEST01_ROOT_SAMPLE_INTERVALS[
+            CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_INTERVAL_KEY
+        ]
+    systemd_keys = list(CumulusOtelConst.SOFTWARE_STATS_SYSTEMD_KEYS)
+    expected_profiles = sorted(
+        [CumulusOtelConst.UNIT_PROFILE_CUSTOM, CumulusOtelConst.UNIT_PROFILE_DEFAULT]
+    )
+    system = System()
+
+    with allure.step("Validate root software-stats show output"):
+        software_stats = show_system_telemetry_software_stats(dut)
+        systemd = software_stats[CumulusOtelConst.SYSTEMD]
+        assert systemd[CumulusOtelConst.ACTIVE_PROFILE] == \
+            CumulusOtelConst.UNIT_PROFILE_CUSTOM, (
+            f"software-stats active-profile expected custom, "
+            f"got {systemd[CumulusOtelConst.ACTIVE_PROFILE]}"
+        )
+        assert systemd[TelemetryConsts.EXPORT][TelemetryConsts.STATE] == _ENABLED, (
+            f"software-stats systemd export state expected enabled, "
+            f"got {systemd[TelemetryConsts.EXPORT][TelemetryConsts.STATE]}"
+        )
+        assert systemd[CumulusOtelConst.PROCESS_LEVEL] == _ENABLED, (
+            f"software-stats process-level expected enabled, "
+            f"got {systemd[CumulusOtelConst.PROCESS_LEVEL]}"
+        )
+        assert systemd[TelemetryConsts.SAMPLE_INTERVAL] == expected_sample_interval, (
+            f"software-stats sample-interval expected {expected_sample_interval}, "
+            f"got {systemd[TelemetryConsts.SAMPLE_INTERVAL]}"
+        )
+        custom_units = (
+            systemd[CumulusOtelConst.UNIT_PROFILE]
+            [CumulusOtelConst.UNIT_PROFILE_CUSTOM][CumulusOtelConst.UNIT]
+        )
+        assert sorted(custom_units.keys()) == expected_units, (
+            f"software-stats custom unit-profile units expected {expected_units}, "
+            f"got {sorted(custom_units.keys())}"
+        )
+        logger.info("nv show system telemetry software-stats: %s", software_stats)
+        allure.attach(
+            "nv show system telemetry software-stats", str(software_stats)
+        )
+
+    with allure.step("Validate software-stats systemd show output"):
+        systemd_show = system.telemetry.software_stats.systemd.show(
+            rev=ConfState.APPLIED, dut_engine=dut
+        )
+        systemd = _parse_software_stats_show(systemd_show)
+        assert systemd[CumulusOtelConst.ACTIVE_PROFILE] == \
+            CumulusOtelConst.UNIT_PROFILE_CUSTOM, (
+            f"software-stats active-profile expected custom, "
+            f"got {systemd[CumulusOtelConst.ACTIVE_PROFILE]}"
+        )
+        logger.info("nv show system telemetry software-stats systemd: %s", systemd)
+        allure.attach(
+            "nv show system telemetry software-stats systemd", str(systemd)
+        )
+
+    with allure.step("Validate software-stats systemd export show output"):
+        export_show = system.telemetry.software_stats.systemd.export.show(
+            rev=ConfState.APPLIED, dut_engine=dut
+        )
+        export_out = _parse_software_stats_show(export_show)
+        assert export_out[TelemetryConsts.STATE] == _ENABLED, (
+            f"software-stats systemd export state expected enabled, "
+            f"got {export_out[TelemetryConsts.STATE]}"
+        )
+        logger.info(
+            "nv show system telemetry software-stats systemd export: %s", export_out
+        )
+        allure.attach(
+            "nv show system telemetry software-stats systemd export", str(export_out)
+        )
+
+    with allure.step("Validate software-stats systemd unit-profile show output"):
+        unit_profile_show = system.telemetry.software_stats.systemd.unit_profile.show(
+            rev=ConfState.APPLIED, dut_engine=dut
+        )
+        custom_out = _parse_software_stats_show(unit_profile_show)
+        assert sorted(custom_out.keys()) == expected_profiles, (
+            f"software-stats systemd unit-profile keys expected {expected_profiles}, "
+            f"got {custom_out.keys()}"
+        )
+        custom_units = custom_out[CumulusOtelConst.UNIT_PROFILE_CUSTOM]
+        assert sorted(custom_units[CumulusOtelConst.UNIT].keys()) == expected_units, (
+            f"software-stats systemd unit-profile custom unit expected "
+            f"{expected_units}, got {custom_units[CumulusOtelConst.UNIT]}"
+        )
+        logger.info(
+            "nv show system telemetry software-stats systemd unit-profile: %s",
+            custom_out,
+        )
+        allure.attach(
+            "nv show system telemetry software-stats systemd unit-profile",
+            str(custom_out),
+        )
+
+    with allure.step("Validate software-stats systemd unit-profile custom show output"):
+        custom_profile = system.telemetry.software_stats.systemd.unit_profile \
+            ._create_resource(CumulusOtelConst.UNIT_PROFILE_CUSTOM)
+        unit_profile = custom_profile.show(rev=ConfState.APPLIED, dut_engine=dut)
+        unit_profile_out = _parse_software_stats_show(unit_profile)
+        assert sorted(unit_profile_out.keys()) == ['unit'], (
+            f"software-stats systemd unit-profile keys expected ['unit'], "
+            f"got {sorted(unit_profile_out.keys())}"
+        )
+        logger.info(
+            "nv show system telemetry software-stats systemd unit-profile custom: %s",
+            unit_profile_out,
+        )
+        allure.attach(
+            "nv show system telemetry software-stats systemd unit-profile custom",
+            str(unit_profile_out),
+        )
+
+        unit_out = custom_profile.unit.show(rev=ConfState.APPLIED, dut_engine=dut)
+        unit_out = _parse_software_stats_show(unit_out)
+        assert sorted(unit_out) == expected_units, (
+            f"software-stats systemd unit-profile unit keys expected "
+            f"{expected_units}, got {sorted(unit_out.keys())}"
+        )
+        logger.info(
+            "nv show system telemetry software-stats systemd unit-profile "
+            "custom unit: %s",
+            unit_out,
+        )
+        allure.attach(
+            "nv show system telemetry software-stats systemd unit-profile custom unit",
+            str(unit_out),
+        )
+
+    with allure.step(
+        f"Validate stats-group {stats_group_id} software-stats show output"
+    ):
+        sg = system.telemetry.stats_group.resources_dict.get(stats_group_id)
+        if sg is None:
+            system.telemetry.stats_group.set_resource(stats_group_id).verify_result()
+            sg = system.telemetry.stats_group.resources_dict[stats_group_id]
+
+        sg_software_stats = sg.software_stats
+        sg_out = _parse_software_stats_show(
+            sg_software_stats.show(rev=ConfState.APPLIED, dut_engine=dut)
+        )
+        assert sorted(sg_out.keys()) == [CumulusOtelConst.SYSTEMD], (
+            f"stats-group {stats_group_id} software-stats systemd keys expected "
+            f"['systemd'], got {sorted(sg_out.keys())}"
+        )
+        logger.info(
+            "stats-group %s software-stats: %s", stats_group_id, sg_out
+        )
+        allure.attach(
+            f"stats-group {stats_group_id} software-stats", str(sg_out)
+        )
+
+        sg_out_systemd = _parse_software_stats_show(
+            sg_software_stats.systemd.show(rev=ConfState.APPLIED, dut_engine=dut)
+        )
+        assert sorted(sg_out_systemd.keys()) == sorted(systemd_keys), (
+            f"stats-group {stats_group_id} software-stats systemd keys expected "
+            f"{systemd_keys}, got {sorted(sg_out_systemd.keys())}"
+        )
+        allure.attach(
+            f"stats-group {stats_group_id} software-stats systemd",
+            str(sg_out_systemd),
+        )
+
+        sg_export_out = _parse_software_stats_show(
+            sg_software_stats.systemd.export.show(
+                rev=ConfState.APPLIED, dut_engine=dut
+            )
+        )
+        assert sg_export_out[TelemetryConsts.STATE] == _ENABLED, (
+            f"stats-group {stats_group_id} software-stats systemd export state "
+            f"expected enabled, got {sg_export_out[TelemetryConsts.STATE]}"
+        )
+        allure.attach(
+            f"stats-group {stats_group_id} software-stats systemd export",
+            str(sg_export_out),
+        )
+        logger.info(
+            "software-stats show validation passed (stats-group=%s)", stats_group_id
+        )

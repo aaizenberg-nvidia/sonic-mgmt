@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -13,6 +14,7 @@ import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
 from ngts.tests_nvos.system.telemetry.otel.cumulus.comparison_logging import log_otel_cli_comparison
+from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import CumulusLabInterfaces
 from ngts.tests_nvos.system.telemetry.otel.metrics_parser import (
     metric_timestamps_from_docs,
@@ -22,6 +24,17 @@ from ngts.tests_nvos.system.telemetry.otel.metrics_parser import (
 logger = logging.getLogger(__name__)
 
 AttributeKey = Union[Tuple[Any, ...], str]
+
+# Cumulus renamed env PSU OTEL series: ``..._psu_*`` → ``..._power_supply_*``.
+# Canonicalize to the legacy ``psu`` form so catalogs and dual-publish windows compare cleanly.
+_ENV_PSU_METRIC_PREFIX = "nvswitch_platform_environment_psu_"
+_ENV_POWER_SUPPLY_METRIC_PREFIX = "nvswitch_platform_environment_power_supply_"
+
+
+def _canonical_env_psu_metric_name(name: str) -> str:
+    if name.startswith(_ENV_POWER_SUPPLY_METRIC_PREFIX):
+        return _ENV_PSU_METRIC_PREFIX + name[len(_ENV_POWER_SUPPLY_METRIC_PREFIX):]
+    return name
 
 
 def _resolve_labeled_intf_attr_key(
@@ -120,21 +133,6 @@ class OtelDataValidations:
                         logger.debug("Skipping non-JSON line in %s: %s", file_path, exc)
         return self.parsed_objects
 
-    def parse_all_json(self, file_path):
-        """Parse all OTLP docs without hostname filtering.
-
-        SW #5082293: NVOS resources carry no host identity (only ``platform_type``), so
-        the hostname filter in :meth:`parse_disjoint_json` would drop every NVOS line.
-        Delegates to the root reader, which handles both line-delimited and concatenated
-        JSON. Remove this branch once NVOS emits a host identity like Cumulus.
-        """
-        from ngts.tests_nvos.system.telemetry.otel.helpers import (
-            _read_otel_collector_documents,
-        )
-
-        self.parsed_objects = _read_otel_collector_documents(os.path.expanduser(file_path))
-        return self.parsed_objects
-
     def prepare_attributes_key(self, attributes: List[Dict[str, Any]]) -> AttributeKey:
         return prepare_attributes_key(attributes)
 
@@ -169,10 +167,8 @@ class OtelDataValidations:
                     logger.error("Unknown data type in platform stats: %s", m["name"])
                     continue
                 for dp in m[mtype]["dataPoints"]:
-                    if "attributes" in dp:
-                        attribute_key = self.prepare_attributes_key(dp["attributes"])
-                    else:
-                        attribute_key = "No Attr"
+                    attrs = dp.get("attributes", [])
+                    attribute_key = self.prepare_attributes_key(attrs) if attrs else "No Attr"
                     self.metric_platform_stats_values[m["name"]][attribute_key].append(
                         _dp_number(dp)  # SW #5082293: asInt on NVOS, asDouble on Cumulus
                     )
@@ -200,7 +196,12 @@ class OtelDataValidations:
             elif "sum" in m:
                 mtype = "sum"
             elif "histogram" in m:
-                mtype = "histogram"
+                # SW #5082293: histograms (e.g. NVOS nvswitch_interface_phy_stats_rs_hist)
+                # are not scalar interface counters; they are collected by
+                # metricHistogramValues. Skipping here avoids int() on the
+                # bucketCounts/explicitBounds lists (NVOS omits count on idle datapoints).
+                # Cumulus interface-stats are gauge/sum only, so this path is NVOS-only.
+                continue
             else:
                 logger.error("Unknown data type in interface-stats: %s", m["name"])
                 continue
@@ -213,18 +214,6 @@ class OtelDataValidations:
                     # SW #5082293: NVOS uses asInt where Cumulus uses asDouble.
                     self.metric_intf_stats_values[m["name"]][attribute_key].append(
                         _dp_number(dp)
-                    )
-                elif "count" in dp:
-                    self.metric_intf_stats_values[m["name"]][attribute_key].append(
-                        int(dp["count"])
-                    )
-                elif "bucketCounts" in dp:
-                    self.metric_intf_stats_values[m["name"]][attribute_key].append(
-                        int(dp["bucketCounts"])
-                    )
-                elif "explicitBounds" in dp:
-                    self.metric_intf_stats_values[m["name"]][attribute_key].append(
-                        int(dp["explicitBounds"])
                     )
                 else:
                     pytest.fail(
@@ -330,9 +319,9 @@ class OtelDataValidations:
         if not metrics_data:
             pytest.fail("No metrics timestamps data collected.")
         collected = [name for name in metrics_data if name not in exclude_set]
-        if sorted(collected) != sorted(expected):
-            expected_set = set(expected)
-            collected_set = set(collected)
+        expected_set = {_canonical_env_psu_metric_name(met) for met in expected}
+        collected_set = {_canonical_env_psu_metric_name(name) for name in collected}
+        if collected_set != expected_set:
             extra = sorted(collected_set - expected_set)
             missing = sorted(expected_set - collected_set)
             pytest.fail(
@@ -341,7 +330,7 @@ class OtelDataValidations:
                 f"{len(missing)} missing metrics. Missing: {missing[:20]}"
                 f"{' ...' if len(missing) > 20 else ''}."
             )
-        logger.info("Secured metrics validation passed: %d metrics", len(collected))
+        logger.info("Secured metrics validation passed: %d metrics", len(collected_set))
 
     def validate_collected_metrics_attributes_count(
         self,
@@ -877,6 +866,179 @@ class OtelDataValidations:
                         f"otel_post={d_otel_post} cli_post={d_cli_post}"
                     )
 
+    def traps_data_validation(
+        self,
+        otel_data: Dict[str, Any],
+        cli_data_pre: Dict[str, Any],
+        cli_data_post: Dict[str, Any],
+    ) -> None:
+        """test04: per-trap control-plane counters (OTEL samples bounded by CLI pre/post).
+
+        The OTEL keys carry extra labels (``group_name``, ``trap_name``) beyond the
+        CLI-provided group / trap_id, so :meth:`_find_otel_key_by_group_and_trap`
+        resolves the matching series. Mismatches are logged (not failed): these
+        counters are volatile between the pre/post CLI reads, matching SSIM behaviour.
+        """
+        logger.info("Running cp_trap_stats data validation")
+        trap_pattern = re.compile(r"Trap\s+(\d+) \(Group (\d+)\)")
+        with allure.step("Validate control-plane trap counters"):
+            for trap_key in cli_data_pre.keys():
+                match = trap_pattern.match(trap_key)
+                if not match:
+                    continue
+                trap_id, group_id = match.groups()
+                trap_id, group_id = str(int(trap_id)), str(int(group_id))
+                control_plane_trap_pre = cli_data_pre[trap_key]
+                control_plane_trap_post = cli_data_post[trap_key]
+                for trap_counter in control_plane_trap_pre.keys():
+                    d_cli_pre = control_plane_trap_pre[trap_counter]
+                    d_cli_post = control_plane_trap_post[trap_counter]
+                    otel_metric_name = CumulusOtelConst.TRAPS_CONVERSION_CLI_TO_OTEL.get(trap_counter)
+                    if otel_metric_name is None or otel_metric_name not in otel_data:
+                        continue
+                    otel_metric_data = otel_data[otel_metric_name]
+                    otel_key = self._find_otel_key_by_group_and_trap(
+                        otel_metric_data, group_id, trap_id
+                    )
+                    if otel_key is None:
+                        logger.error(
+                            "No OTEL data found for trap %s (group=%s, trap_id=%s)",
+                            trap_key,
+                            group_id,
+                            trap_id,
+                        )
+                        continue
+                    d_otel = otel_metric_data[otel_key]
+                    d_otel_pre = d_otel[0]
+                    d_otel_post = d_otel[-1]
+                    if d_otel_pre < d_cli_pre or d_otel_post > d_cli_post:
+                        logger.error(
+                            "Data validation for cp_trap_stats %s failed for trap %s, "
+                            "otel: %s, cli: %s",
+                            trap_counter,
+                            trap_key,
+                            d_otel_post,
+                            d_cli_post,
+                        )
+
+    def trap_groups_data_validation(
+        self,
+        otel_data: Dict[str, Any],
+        cli_data_pre: Dict[str, Any],
+        cli_data_post: Dict[str, Any],
+    ) -> None:
+        """test04: per-trap-group control-plane counters (bytes / packets / violations).
+
+        Compares the "Group Counters" CLI section against the exported group metrics;
+        an OTEL series absent for a group is treated as 0. Mismatches are logged (not
+        failed), mirroring SSIM, since trap-group counters move between the CLI reads.
+        """
+        otel_cp_stats_bytes = otel_data.get(
+            "nvswitch_control_plane_trap_group_rx_bytes", {}
+        )
+        otel_cp_stats_pkts = otel_data.get(
+            "nvswitch_control_plane_trap_group_rx_packets", {}
+        )
+        otel_cp_stats_violated_pkts = otel_data.get(
+            "nvswitch_control_plane_trap_group_pkt_violations", {}
+        )
+
+        with allure.step("Validate control-plane trap-group counters"):
+            for group_key, group_data in cli_data_pre.items():
+                group_id = str(int(group_key.split()[1]))
+                to_cpu_bytes_pre = group_data["ToCpuByte"]
+                to_cpu_pkts_pre = group_data["ToCpuPacket"]
+                drops_pre = group_data["Drops"]
+                group_data_post = cli_data_post[group_key]
+                to_cpu_bytes_post = group_data_post["ToCpuByte"]
+                to_cpu_pkts_post = group_data_post["ToCpuPacket"]
+                drops_post = group_data_post["Drops"]
+
+                logger.info(
+                    "Group ID: %s, pre: to-cpu-bytes=%s to-cpu-pkts=%s violated-pkts=%s | "
+                    "post: to-cpu-bytes=%s to-cpu-pkts=%s violated-pkts=%s",
+                    group_id,
+                    to_cpu_bytes_pre,
+                    to_cpu_pkts_pre,
+                    drops_pre,
+                    to_cpu_bytes_post,
+                    to_cpu_pkts_post,
+                    drops_post,
+                )
+
+                otel_bytes_pre, otel_bytes_post = self._otel_group_bounds(
+                    otel_cp_stats_bytes, group_id
+                )
+                otel_pkts_pre, otel_pkts_post = self._otel_group_bounds(
+                    otel_cp_stats_pkts, group_id
+                )
+                otel_violated_pre, otel_violated_post = self._otel_group_bounds(
+                    otel_cp_stats_violated_pkts, group_id
+                )
+
+                comparisons = zip(
+                    [to_cpu_bytes_pre, to_cpu_pkts_pre, drops_pre],
+                    [to_cpu_bytes_post, to_cpu_pkts_post, drops_post],
+                    [otel_bytes_pre, otel_pkts_pre, otel_violated_pre],
+                    [otel_bytes_post, otel_pkts_post, otel_violated_post],
+                    ["bytes", "packets", "violated packets"],
+                )
+                for d_cli_pre, d_cli_post, d_otel_pre, d_otel_post, kind in comparisons:
+                    if d_otel_pre < d_cli_pre or d_otel_post > d_cli_post:
+                        logger.error(
+                            "%s mismatch: CLI reported %s %s but metrics endpoint "
+                            "reported %s %s for group %s",
+                            kind,
+                            d_cli_post,
+                            kind,
+                            d_otel_post,
+                            kind,
+                            group_id,
+                        )
+                logger.info(
+                    "Validated trap group %s bytes=%s packets=%s violated packets=%s",
+                    group_id,
+                    to_cpu_bytes_post,
+                    to_cpu_pkts_post,
+                    drops_post,
+                )
+
+    def _otel_group_bounds(
+        self, otel_metric_data: Dict[Any, Any], group_id: str
+    ) -> Tuple[int, int]:
+        """Return (pre, post) OTEL samples for ``group_id``; (0, 0) when absent."""
+        otel_key = self._find_otel_key_by_group(otel_metric_data, group_id)
+        if otel_key is None:
+            return 0, 0
+        series = otel_metric_data[otel_key]
+        return series[0], series[-1]
+
+    @staticmethod
+    def _find_otel_key_by_group_and_trap(
+        otel_metric_data: Dict[Any, Any], group_id: str, trap_id: str
+    ) -> Optional[Tuple[Any, ...]]:
+        """Find the OTEL attribute key matching both ``group_id`` and ``trap_id``.
+
+        OTEL keys are flat label tuples like
+        ``('group', '0', 'group_name', 'catch_all', 'trap_id', '321', 'trap_name', ...)``.
+        """
+        for key in otel_metric_data.keys():
+            key_dict = dict(zip(key[::2], key[1::2]))
+            if key_dict.get("group") == group_id and key_dict.get("trap_id") == trap_id:
+                return key
+        return None
+
+    @staticmethod
+    def _find_otel_key_by_group(
+        otel_metric_data: Dict[Any, Any], group_id: str
+    ) -> Optional[Tuple[Any, ...]]:
+        """Find the OTEL attribute key matching ``group_id`` (ignoring extra labels)."""
+        for key in otel_metric_data.keys():
+            key_dict = dict(zip(key[::2], key[1::2]))
+            if key_dict.get("group") == group_id:
+                return key
+        return None
+
     def plat_stats_data_validation(
         self,
         metrics_platstats: Dict[str, Any],
@@ -888,7 +1050,7 @@ class OtelDataValidations:
     ) -> None:
         """Compare OTEL platform environment metrics against CLI snapshots.
 
-        ``platform_profile`` selects platform behaviour. NVOS exports the same
+        ``platform_profile`` selects platform behavior. NVOS exports the same
         ``nvswitch_platform_environment_*`` metric names as Cumulus, so the
         comparison is shared. On ``nvos`` an exported sensor whose CLI snapshot is
         missing is collected and the test fails once at the end with the full list
@@ -943,6 +1105,14 @@ class OtelDataValidations:
                 missing_cli.add(f"psu {psu_id!r}")
                 return None
             raise KeyError(psu_id)
+
+        def _psu_metric_series(leaf: str) -> Tuple[str, Dict[AttributeKey, Any]]:
+            """Prefer renamed ``power_supply_<leaf>`` series, else legacy ``psu_<leaf>``."""
+            new_name = _ENV_POWER_SUPPLY_METRIC_PREFIX + leaf
+            old_name = _ENV_PSU_METRIC_PREFIX + leaf
+            if new_name in metrics_platstats and metrics_platstats[new_name]:
+                return new_name, metrics_platstats[new_name]
+            return old_name, metrics_platstats.get(old_name, {})
 
         with allure.step("Validate nvswitch_platform_environment_temp_state"):
             for sensor in metrics_platstats.get(
@@ -1051,16 +1221,17 @@ class OtelDataValidations:
                         )
 
         with allure.step("Validate nvswitch_platform_environment_psu_state"):
-            for sensor in metrics_platstats.get("nvswitch_platform_environment_psu_state", {}):
+            metric_name, series = _psu_metric_series("state")
+            for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
                     continue
-                d_otel = metrics_platstats["nvswitch_platform_environment_psu_state"][sensor][-1]
+                d_otel = series[sensor][-1]
                 d_cli = cli["state"]
                 otel_state = state_map[d_otel]
                 passed = otel_state == d_cli
                 log_otel_cli_comparison(
-                    "nvswitch_platform_environment_psu_state",
+                    metric_name,
                     otel_value=otel_state,
                     reference_value=d_cli,
                     attr_key=sensor,
@@ -1068,85 +1239,71 @@ class OtelDataValidations:
                 )
                 if not passed:
                     pytest.fail(
-                        f"Data validation for nvswitch_platform_environment_psu_state failed, "
+                        f"Data validation for {metric_name} failed, "
                         f"otel: {otel_state}, cli: {d_cli}"
                     )
 
         with allure.step("Validate nvswitch_platform_environment_psu_voltage"):
-            logger.info("Running nvswitch_platform_environment_psu_voltage data validation")
-            for sensor in metrics_platstats.get(
-                "nvswitch_platform_environment_psu_voltage", {}
-            ):
+            metric_name, series = _psu_metric_series("voltage")
+            logger.info("Running %s data validation", metric_name)
+            for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
                     continue
                 if cli["state"] == "ok":
-                    d_otel = _plat_numeric(
-                        metrics_platstats["nvswitch_platform_environment_psu_voltage"][sensor][-1]
-                    )
+                    d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["voltage"])
                     if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 35:
                         pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_psu_voltage failed, "
+                            f"Data validation for {metric_name} failed, "
                             f"otel: {d_otel}, cli: {d_cli}"
                         )
 
         with allure.step("Validate nvswitch_platform_environment_psu_power"):
-            logger.info("Running nvswitch_platform_environment_psu_power data validation")
-            for sensor in metrics_platstats.get("nvswitch_platform_environment_psu_power", {}):
+            metric_name, series = _psu_metric_series("power")
+            logger.info("Running %s data validation", metric_name)
+            for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
                     continue
                 if cli["state"] == "ok":
-                    d_otel = _plat_numeric(
-                        metrics_platstats["nvswitch_platform_environment_psu_power"][sensor][-1]
-                    )
+                    d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["power"])
                     if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 20:
                         pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_psu_power failed, "
+                            f"Data validation for {metric_name} failed, "
                             f"otel: {d_otel}, cli: {d_cli}"
                         )
 
         with allure.step("Validate nvswitch_platform_environment_psu_current"):
-            logger.info("Running nvswitch_platform_environment_psu_current data validation")
-            for sensor in metrics_platstats.get(
-                "nvswitch_platform_environment_psu_current", {}
-            ):
+            metric_name, series = _psu_metric_series("current")
+            logger.info("Running %s data validation", metric_name)
+            for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
                     continue
                 if cli["state"] == "ok":
-                    d_otel = _plat_numeric(
-                        metrics_platstats["nvswitch_platform_environment_psu_current"][sensor][
-                            -1
-                        ]
-                    )
+                    d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["current"])
                     if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 35:
                         pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_psu_current failed, "
+                            f"Data validation for {metric_name} failed, "
                             f"otel: {d_otel}, cli: {d_cli}"
                         )
 
         with allure.step("Validate nvswitch_platform_environment_psu_capacity"):
-            logger.info("Running nvswitch_platform_environment_psu_capacity data validation")
-            for sensor in metrics_platstats.get(
-                "nvswitch_platform_environment_psu_capacity", {}
-            ):
+            metric_name, series = _psu_metric_series("capacity")
+            logger.info("Running %s data validation", metric_name)
+            for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
                     continue
                 if cli["state"] == "ok":
-                    d_otel = _plat_numeric(
-                        metrics_platstats["nvswitch_platform_environment_psu_capacity"][sensor][
-                            -1
-                        ]
-                    )
+                    d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["capacity"])
                     if not _plat_rounded_equal(d_otel, d_cli):
                         pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_psu_capacity failed, "
+                            f"Data validation for {metric_name} failed, "
                             f"otel: {d_otel}, cli: {d_cli}"
                         )
 

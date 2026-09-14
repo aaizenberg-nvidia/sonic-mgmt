@@ -11,6 +11,7 @@ import pytest
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.system.telemetry.otel.dual_platform import (
+    run_control_plane_stats_data_validation,
     run_insecure_collection_and_validate,
     run_platform_stats_validation,
 )
@@ -30,6 +31,20 @@ def test01_otel_metrics_collection_mgmt_vrf_insecure(
     run_insecure_collection_and_validate(
         engines, devices, otel_suite_mgmt, is_ib_router, str(tmp_path)
     )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test04_otel_control_plane_stats_validation(
+    engines, devices, otel_suite_mgmt, otel_telemetry_cache, test_api, tmp_path
+):
+    """Validate OTLP control-plane counters vs ``sx_api`` CLI (SSIM test04).
+
+    Cumulus-only: the reference CLI (``sx_api_host_ifc_counters_get.py``) is an
+    sx_sdk tool with no NVOS equivalent.
+    """
+    TestToolkit.tested_api = test_api
+    run_control_plane_stats_data_validation(engines, devices, otel_suite_mgmt, str(tmp_path))
 
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])

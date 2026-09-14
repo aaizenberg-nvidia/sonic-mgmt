@@ -19,6 +19,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_telemetry import (
     collect_cli_mgmt_vrf_session_data,
     collect_cli_platform_only,
     get_cp_stat_sx_api_cli,
+    collect_control_plane_stats_only
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.comparison_logging import (
     log_cli_cache_summary,
@@ -46,6 +47,25 @@ OTEL_CACHE_PAYLOAD_KEYS = (
 OTEL_ARTIFACT_FILENAME = "test-otel-out.json"
 DATA_COLLECTION_SUBDIR = "data_collection"
 _SERVICE_SETTLE_SEC = 5
+
+
+def settle_dut_ssh_after_module_transition(
+    dut,
+    *,
+    settle_sec: int = CumulusOtelConst.COEXISTENCE_MODULE_TRANSITION_SETTLE_SEC,
+) -> None:
+    """Recover SSH/SCP after heavy NVUE teardown or coexistence module handoff."""
+    with allure.step('Settle DUT SSH channel (%ds)' % settle_sec):
+        engine = getattr(dut, 'engine', None)
+        if engine is not None:
+            clear = getattr(engine, 'clear_buffer', None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:
+                    pass
+        dut.run_cmd('true', validate=False, print_output=False)
+        time.sleep(settle_sec)
 
 
 def cleanup_stale_nvue_censor_files(dut) -> None:
@@ -260,12 +280,13 @@ def collect_and_cache_secured_otel_session(
     wait_sec: int,
     cleanup_session: bool = True,
     telemetry_unit: Optional[str] = None,
+    is_nvos: bool = False,
 ) -> Dict[str, Any]:
     """Collect secured OTLP export and populate telemetry cache (SSIM secured test01).
 
     ``telemetry_unit`` overrides the systemd unit used by the stop/copy/restart
     collection (NVOS passes ``nv-telemetry.service``); defaults to the Cumulus
-    per-VRF instance.
+    per-VRF instance. ``is_nvos`` skips Cumulus-only asic-monitor in cleanup.
     """
     otel_data_val = OtelDataValidations()
     hostname = get_dut_hostname(dut)
@@ -275,7 +296,9 @@ def collect_and_cache_secured_otel_session(
             cleanup_otlp_export_session,
         )
 
-        cleanup_otlp_export_session(dut, collector, vrf=vrf)
+        cleanup_otlp_export_session(
+            dut, collector, vrf=vrf, telemetry_unit=telemetry_unit, is_nvos=is_nvos
+        )
         from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
             assert_otlp_session_established,
         )
@@ -509,13 +532,13 @@ def collect_and_cache_mgmt_vrf_otel_session(
     collector: OtelCollector,
     cur_dir: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     apply_telemetry_config: bool = True,
     wait_sec: int = CumulusOtelConst.TEST01_COLLECTION_WAIT_SEC,
     vrf: str = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT,
     cli_platform_only: bool = False,
+    cli_control_plane_only: bool = False,
     attach_parse_debug: bool = False,
-    filter_hostname: bool = True,
     telemetry_unit: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Collect OTLP export + post-collection CLI and populate the telemetry cache.
@@ -551,7 +574,6 @@ def collect_and_cache_mgmt_vrf_otel_session(
         artifact_path=artifact_path,
         hostname=hostname,
         attach_debug=attach_parse_debug,
-        filter_hostname=filter_hostname,
     )
 
     collector_label = f"{vrf} VRF primary ({hostname})"
@@ -569,6 +591,8 @@ def collect_and_cache_mgmt_vrf_otel_session(
     with allure.step("Collect post-export CLI snapshots"):
         if cli_platform_only:
             cli_payload = collect_cli_platform_only(dut)
+        elif cli_control_plane_only:
+            cli_payload = collect_control_plane_stats_only(dut, cp_stats_pre=cp_stats_pre)
         else:
             cli_payload = collect_cli_mgmt_vrf_session_data(dut, cp_stats_pre=cp_stats_pre)
         telemetryCache.add_data("cli", cli_payload)
@@ -583,7 +607,7 @@ def ensure_mgmt_vrf_otel_cli_cache(
     otel_suite_mgmt,
     tmp_path: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     apply_telemetry_config: bool = True,
     cli_platform_only: bool = False,
 ) -> None:
@@ -608,10 +632,9 @@ def ensure_platform_stats_otel_cli_cache(
     otel_suite,
     tmp_path: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     vrf: str,
     apply_telemetry_config: bool = False,
-    filter_hostname: bool = True,
     telemetry_unit: Optional[str] = None,
     wait_sec: Optional[int] = None,
 ) -> None:
@@ -645,7 +668,6 @@ def ensure_platform_stats_otel_cli_cache(
         vrf=vrf,
         cli_platform_only=True,
         attach_parse_debug=True,
-        filter_hostname=filter_hostname,
         telemetry_unit=telemetry_unit,
     )
 
@@ -664,6 +686,82 @@ def validate_cached_platform_stats_against_cli(devices) -> None:
             cli_data.get("plat_env_fan"),
             platform_profile=platform_profile,
         )
+
+
+def ensure_control_plane_stats_otel_cli_cache(
+    engines,
+    otel_suite,
+    tmp_path: str,
+    *,
+    collector_ips: Tuple[str, ...],
+    vrf: str,
+    apply_telemetry_config: bool = False,
+    telemetry_unit: Optional[str] = None,
+    wait_sec: Optional[int] = None,
+) -> None:
+    """Populate control-plane-stats OTEL and CLI cache for the current DUT profile.
+
+    Mirrors :func:`ensure_platform_stats_otel_cli_cache` but keeps the full CLI
+    payload (``cli_platform_only=False``) so the ``sx_api`` control-plane pre/post
+    snapshots (cache key ``cp_stats``) are captured for test04 validation.
+    """
+    # Content-aware skip: a prior platform-only collection populates ``otel``/``cli``
+    # without ``cp_stats`` (it uses ``cli_platform_only=True``). Returning on mere
+    # presence would leave test04 validation with no cp_stats to check, so only skip
+    # re-collection when both cache entries actually carry ``cp_stats``.
+    cached_otel = telemetryCache.get_data_optional("otel") or {}
+    cached_cli = telemetryCache.get_data_optional("cli") or {}
+    if cached_otel.get("cp_stats") and cached_cli.get("cp_stats"):
+        return
+
+    if wait_sec is None:
+        if apply_telemetry_config:
+            wait_sec = CumulusOtelConst.TEST01_COLLECTION_WAIT_SEC
+        else:
+            wait_sec = OtelCollectorConst.collection_window_sec(
+                OtelCollectorConst.PLATFORM_STATS_SAMPLE_INTERVAL_SEC
+            )
+
+    collect_and_cache_mgmt_vrf_otel_session(
+        engines.dut,
+        otel_suite.primary,
+        tmp_path,
+        collector_ips=collector_ips,
+        apply_telemetry_config=apply_telemetry_config,
+        wait_sec=wait_sec,
+        vrf=vrf,
+        cli_platform_only=False,
+        cli_control_plane_only=True,
+        attach_parse_debug=True,
+        telemetry_unit=telemetry_unit,
+    )
+
+
+def validate_cached_control_plane_stats_against_cli(devices) -> None:
+    """Validate cached control-plane OTEL values against cached ``sx_api`` CLI data (test04).
+
+    Runs the global control-plane counters plus the per-trap and per-trap-group
+    validations. Trap/group series are matched by their ``group`` / ``trap_id``
+    labels regardless of the extra ``group_name`` / ``trap_name`` OTEL labels.
+    """
+    del devices
+    otel_cp_stats = telemetryCache.get_data("otel").get("cp_stats")
+    cli_cp_stats = telemetryCache.get_data("cli").get("cp_stats")
+    if not otel_cp_stats or not cli_cp_stats:
+        pytest.skip("No cp_stats in telemetry cache")
+
+    otel_data_val = OtelDataValidations()
+    with allure.step("Validate control-plane stats OTEL vs CLI (test04)"):
+        otel_data_val.cp_stats_data_validation(otel_cp_stats, cli_cp_stats)
+        cli_pre = cli_cp_stats.get("pre") or {}
+        cli_post = cli_cp_stats.get("post") or {}
+        trap_pre, trap_post = cli_pre.get("Trap Counters"), cli_post.get("Trap Counters")
+        if trap_pre and trap_post:
+            otel_data_val.traps_data_validation(otel_cp_stats, trap_pre, trap_post)
+        group_pre = cli_pre.get("Group Counters")
+        group_post = cli_post.get("Group Counters")
+        if group_pre and group_post:
+            otel_data_val.trap_groups_data_validation(otel_cp_stats, group_pre, group_post)
 
 
 def get_dut_hostname(dut) -> str:
@@ -686,15 +784,12 @@ def parse_telemetry_and_cache(
     include_time_gaps: bool = False,
     dut=None,
     attach_debug: bool = False,
-    filter_hostname: bool = True,
+    family_map: Optional[list] = None,
 ) -> Dict[str, Any]:
     with allure.step("Parse telemetry data and populate cache"):
         if attach_debug:
             attach_otel_artifact_debug(artifact_path, hostname)
-        if filter_hostname:
-            parsed_objects = otel_data_val.parse_disjoint_json(artifact_path, hostname)
-        else:
-            parsed_objects = otel_data_val.parse_all_json(artifact_path)
+        parsed_objects = otel_data_val.parse_disjoint_json(artifact_path, hostname)
         if not parsed_objects:
             if not attach_debug:
                 attach_otel_artifact_debug(artifact_path, hostname)
@@ -720,6 +815,7 @@ def parse_telemetry_and_cache(
                 artifact_path,
                 hostname,
                 os_info=os_info,
+                family_map=family_map,
             )
         assert set(otel_payload.keys()).issubset(set(OTEL_CACHE_PAYLOAD_KEYS) | {"time_gaps"})
         telemetryCache.add_data(cache_key, otel_payload)
@@ -731,7 +827,7 @@ def collect_and_cache_mgmt_vrf_insecure_validation_session(
     collector: OtelCollector,
     cur_dir: str,
     *,
-    collector_ips: tuple[str, str],
+    collector_ips: Tuple[str, ...],
     wait_sec: int = CumulusOtelConst.TEST01_COLLECTION_WAIT_SEC,
 ) -> Dict[str, Any]:
     """``Test_Otel_Mgmt_Vrf_Insecure`` pre_suite parity: OTLP + CLI for test02a–test03e.

@@ -46,7 +46,7 @@ def test01_otel_telemetry_health_mgmt_vrf_insecure(
     """
     TestToolkit.tested_api = test_api
     vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
-    collector_ips = (otel_suite_mgmt.primary_ip, otel_suite_mgmt.secondary_ip)
+    collector_ips = otel_suite_mgmt.collector_ips
 
     with allure.step("Apply mgmt VRF insecure telemetry and restart OTLP session"):
         apply_otel_mgmt_vrf_no_tls_telemetry_config(engines.dut, collector_ips=collector_ips)
@@ -77,7 +77,7 @@ def test02_restart_otlp_services_telemetry_health_mgmt_vrf_insecure(
     ``nv show system telemetry health``.
     """
     TestToolkit.tested_api = test_api
-    collector_ips = (otel_suite_mgmt.primary_ip, otel_suite_mgmt.secondary_ip)
+    collector_ips = otel_suite_mgmt.collector_ips
 
     with allure.step("Ensure mgmt VRF insecure telemetry is applied"):
         apply_otel_mgmt_vrf_no_tls_telemetry_config(engines.dut, collector_ips=collector_ips)

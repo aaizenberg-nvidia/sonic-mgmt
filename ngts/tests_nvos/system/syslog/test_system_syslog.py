@@ -1721,14 +1721,15 @@ def add_msg_to_ignore_loganalyzer_regex(loganalyzer, random_msg):
 
 def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=None, port=None, program=None, facility=None,
                        verify_msg_received=False,
-                       verify_msg_didnt_received=False):
+                       verify_msg_didnt_received=False, additional_flags=''):
     with allure.step("Send msg to server {}".format(server_name)):
         protocol_flag = f' --{protocol}' if protocol else ''  # must be tcp or udp
         severity = SyslogSeverityLevels.SEVERITY_LEVEL_DICT[priority] if priority else SyslogSeverityLevels.NOTICE
         priority_flag = f' --priority {facility}.{severity}' if facility else f' --priority {SyslogConsts.DAEMON}.{severity}'
         port_flag = f' --port {port}' if port else ''
         program_flag = f' --tag {program}' if program else ''
-        extra_flags = protocol_flag + priority_flag + port_flag + program_flag
+        # additional_flags: raw `logger` flags, carrying its own leading space.
+        extra_flags = protocol_flag + priority_flag + port_flag + program_flag + additional_flags
         logger_cmd = f'logger {extra_flags} "{msg}"'
         TestToolkit.engines.dut.run_cmd(logger_cmd)
         with sudo_scope_if(TestToolkit.devices.dut.is_eth()):

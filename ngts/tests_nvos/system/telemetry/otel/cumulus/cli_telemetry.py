@@ -19,6 +19,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
     get_plat_env_psu_stats_with_cli,
     get_plat_env_temp_stats_with_cli,
 )
+from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import is_front_panel_port
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +50,23 @@ def _interface_qos_node(iface: str, counter_path: str) -> BaseComponent:
 
 
 def list_swp_interfaces(dut) -> List[str]:
-    """Return sorted swp* interface names from ``nv show interface``."""
+    """Return sorted front-panel port names (Cumulus ``swp*`` / NVOS ``sw*p*``)."""
     try:
         parsed = Interface(None).parse_show(dut_engine=dut)
         intf_table = parsed.get("interface", parsed)
-        return sorted(name for name in intf_table if str(name).startswith("swp"))
+        names = sorted(name for name in intf_table if is_front_panel_port(name))
+        if names:
+            return names
     except Exception as exc:  # noqa: BLE001
-        logger.warning("nv show interface parse failed (%s); falling back to swp* grep", exc)
-        lines = dut.run_cmd(
-            "ls /sys/class/net | grep '^swp'",
-            validate=False,
-            print_output=False,
-        )
-        return sorted(line.strip() for line in lines.splitlines() if line.strip().startswith("swp"))
+        logger.warning("nv show interface parse failed (%s); falling back to sysfs grep", exc)
+    lines = dut.run_cmd(
+        "ls /sys/class/net | grep '^sw'",
+        validate=False,
+        print_output=False,
+    )
+    return sorted(
+        line.strip() for line in lines.splitlines() if is_front_panel_port(line.strip())
+    )
 
 
 def get_ingress_interface_stats_with_cli(dut, *, required: bool = False) -> Dict[str, Any]:
@@ -205,7 +210,7 @@ def get_cp_stat_sx_api_cli(dut) -> Dict[str, Any]:
     with allure.step("CLI: sx_api_host_ifc_counters_get"):
         try:
             host_ifc_ctrs = dut.run_cmd(
-                "sx_api_host_ifc_counters_get.py",
+                "sudo sx_api_host_ifc_counters_get.py",
                 validate=False,
                 print_output=False,
             )
@@ -317,3 +322,15 @@ def collect_cli_mgmt_vrf_session_data(
         payload["egress_stats"] = {}
     payload["hist_snap"] = get_histogram_snapshot(dut, required=require_hist_snap)
     return payload
+
+
+def collect_control_plane_stats_only(
+    dut,
+    *,
+    cp_stats_pre: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Collect control plane stats CLI (test04)."""
+    with allure.step("CLI: control-plane stats collection"):
+        cp_stats_pre = cp_stats_pre if cp_stats_pre is not None else get_cp_stat_sx_api_cli(dut)
+        cp_stats_post = get_cp_stat_sx_api_cli(dut)
+        return {"cp_stats": {"pre": cp_stats_pre, "post": cp_stats_post}}

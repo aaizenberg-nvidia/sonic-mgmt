@@ -951,3 +951,30 @@ CL_517_LINK_DEBOUNCE_STATS = [
     'nvswitch_interface_link_debounce_received_events',
     'nvswitch_interface_link_debounce_ignored_events',
 ]
+
+# CL 5.18+ platform ASIC resource telemetry (``platform-stats`` / ``platform-info``).
+CL_518_PLATFORM_ASIC_RESOURCE_STATS = [
+    'nvswitch_platform_asic_resource_free',
+    'nvswitch_platform_asic_resource_high_watermark',
+    'nvswitch_platform_asic_resource_high_watermark_timestamp',
+    'nvswitch_platform_asic_resource_max_limit',
+    'nvswitch_platform_asic_resource_used',
+]
+
+# CL 5.18+ platform boot/partition info (``nv_system_images`` / platform-info).
+CL_518_PLATFORM_PARTITION_STATS = [
+    'nvswitch_platform_current_boot_partition',
+    'nvswitch_platform_next_boot_partition',
+    'nvswitch_platform_partition_info',
+]
+
+# CL 5.18+ platform environment power-supply metrics (``power_supply_*`` naming).
+CL_518_PLATFORM_POWER_SUPPLY_STATS = [
+    'nvswitch_platform_environment_power_supply_capacity',
+    'nvswitch_platform_environment_power_supply_current',
+    'nvswitch_platform_environment_power_supply_input_current',
+    'nvswitch_platform_environment_power_supply_input_voltage',
+    'nvswitch_platform_environment_power_supply_power',
+    'nvswitch_platform_environment_power_supply_state',
+    'nvswitch_platform_environment_power_supply_voltage',
+]

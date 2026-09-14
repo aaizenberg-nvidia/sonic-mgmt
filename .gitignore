@@ -41,3 +41,8 @@ tests/priority/*.json
 ansible/group_vars/vm_host/creds.yml
 
 
+/venv/
+.docx-venv/
+.test-logs/
+.cache/
+umf_logs*

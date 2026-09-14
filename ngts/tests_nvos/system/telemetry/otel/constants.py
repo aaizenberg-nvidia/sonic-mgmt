@@ -22,6 +22,72 @@ class OtelCapability:
     SUPPORTS_NVLINK_PLATFORM_METRICS = "supports-nvlink-platform-metrics"
 
 
+class OtelCliTestConst:
+    """Test inputs for the NVOS OTEL CLI configuration tests (test plan Section 4).
+
+    Holds only values the tests *choose* (ids, non-default ports, staged sample
+    intervals). Product defaults asserted after ``unset`` come from
+    :class:`~ngts.nvos_constants.constants_nvos.TelemetryConsts.Defaults`.
+    """
+
+    # Sections 4.1 / 4.2 run once per OTLP transport.
+    ALL_TRANSPORTS: Tuple[str, ...] = (TelemetryConsts.GRPC, TelemetryConsts.HTTP)
+
+    # `encoding` exists only on the http transport (Section 4.1 steps 10-13).
+    TRANSPORT_WITH_ENCODING = TelemetryConsts.HTTP
+
+    # Per-transport factory default, so a parametrized test can assert the right one.
+    DEFAULT_INSECURE_BY_TRANSPORT: Dict[str, str] = {
+        TelemetryConsts.GRPC: TelemetryConsts.Defaults.GRPC_INSECURE,
+        TelemetryConsts.HTTP: TelemetryConsts.Defaults.HTTP_INSECURE,
+    }
+
+    # --- Section 4.2: destinations ------------------------------------------
+    # The destinations are configured and shown, never contacted, so any
+    # syntactically valid id of the right address family works.
+    DEST_TYPE_IPV4 = "ipv4"
+    DEST_TYPE_IPV6 = "ipv6"
+    DEST_TYPE_HOSTNAME = "hostname"
+    ALL_DEST_TYPES: Tuple[str, ...] = (DEST_TYPE_IPV4, DEST_TYPE_IPV6, DEST_TYPE_HOSTNAME)
+    DEST_ID_BY_TYPE: Dict[str, str] = {
+        DEST_TYPE_IPV4: "10.210.25.111",
+        DEST_TYPE_IPV6: "fc00::111",
+        DEST_TYPE_HOSTNAME: "otel-cli-collector",
+    }
+
+    # Non-default per-destination port (both transports default to 4317/4318).
+    NON_DEFAULT_DESTINATION_PORT = 15317
+
+    # --- Section 4.3: labels and metric classes -----------------------------
+    # Ids distinct from the Cumulus baseline labels so the two suites never
+    # collide on a shared setup. Descriptions must be single CLI tokens: the NVUE
+    # `set` wrapper interpolates the value into the command without quoting, so a
+    # value containing spaces is parsed as extra parameters and rejected.
+    SYSTEM_LABEL_ID = "nvos-plan-site"
+    SYSTEM_LABEL_DESCRIPTION = "nvos-plan-host"
+    INTERFACE_LABEL_ID = "nvos-plan-role"
+    INTERFACE_LABEL_DESCRIPTION = "nvos-plan-spine"
+
+    # Metric families Section 4.3 is parametrized over.
+    ALL_METRIC_CLASSES: Tuple[str, ...] = TelemetryConsts.ALL_STATS_SUBTREES
+
+    # Families exposing `class phy` (Section 4.3 steps 3 / 7 / 8). ib-router-stats
+    # has no `class` node; platform-stats has categories, which the plan excludes.
+    METRIC_CLASSES_WITH_PHY: Tuple[str, ...] = (
+        TelemetryConsts.INTERFACE_STATS,
+        TelemetryConsts.PEER_PORT_STATS,
+    )
+
+    # Staged sample interval. platform-stats enforces a 60s floor, so it gets its
+    # own value; the other families accept the shorter one.
+    STAGED_SAMPLE_INTERVAL_SEC = 30
+    STAGED_PLATFORM_SAMPLE_INTERVAL_SEC = 120
+
+    # --- Section 4.4: stats groups ------------------------------------------
+    STATS_GROUP_1 = "nvos-plan-sg-one"
+    STATS_GROUP_2 = "nvos-plan-sg-two"
+
+
 class OtelCollectorLabel(enum.Enum):
     """Identifies which of the two OTel collector instances in the suite this is.
 
@@ -147,6 +213,17 @@ class OtelCollectorConst:
     SECONDARY_FILE_EXPORT_MAX_MB = 600
     SECONDARY_FILE_EXPORT_MAX_BACKUPS = 1
 
+    # Per-label file-exporter rotation knobs, so a config built for a given collector always
+    # follows that collector's PRIMARY_*/SECONDARY_* values instead of hard-coding one label.
+    FILE_EXPORT_MAX_MB_BY_LABEL: Dict[OtelCollectorLabel, int] = {
+        OtelCollectorLabel.PRIMARY: PRIMARY_FILE_EXPORT_MAX_MB,
+        OtelCollectorLabel.SECONDARY: SECONDARY_FILE_EXPORT_MAX_MB,
+    }
+    FILE_EXPORT_MAX_BACKUPS_BY_LABEL: Dict[OtelCollectorLabel, int] = {
+        OtelCollectorLabel.PRIMARY: PRIMARY_FILE_EXPORT_MAX_BACKUPS,
+        OtelCollectorLabel.SECONDARY: SECONDARY_FILE_EXPORT_MAX_BACKUPS,
+    }
+
     PRIMARY_CONFIG_YAML = _otel_collector_config_yaml(
         OTLP_GRPC_PORT,
         PRIMARY_OUTPUT_JSON_PATH,
@@ -235,28 +312,37 @@ class OtelCollectorConst:
     AGENT_MAPPINGS_CANDIDATE_PATHS = (AGENT_MAPPINGS_PATH_ON_SWITCH,)
 
     # `metrics-classes.yaml` group-name prefixes used for ``startswith`` matching.
-    # For most NVUE subtrees the YAML group name *is* the NVUE name (or starts with
-    # it), so we can reuse ``TelemetryConsts.*`` directly:
-    #   - ``interface-stats`` covers ``interface-stats`` and ``interface-stats-phy``
-    #   - ``platform-stats``  covers all ``platform-stats-*`` subgroups
-    #     (cpu / disk / memory / health-info / asic-power / platform-info /
-    #     environment-sensor / transceiver-info)
-    #   - ``ib-router-stats`` covers ``ib-router-stats``
-    # The peer-port subtree is asymmetric: the YAML splits it into two sibling
-    # groups, ``peer-port-stats`` AND ``peer-port-phy-stats``. ``peer-port-phy-stats``
-    # does NOT start with ``peer-port-stats`` (it diverges at the 11th character),
-    # so we must use the shorter shared prefix ``peer-port`` to capture both groups.
-    # Using ``TelemetryConsts.PEER_PORT_STATS`` here would silently drop every
-    # ``nvswitch_peer_port_phy_*`` metric from the expected set.
-    _PEER_PORT_METRICS_GROUP_PREFIX = "peer-port"
-
+    # Every family name is also the prefix of its subgroups: ``interface-stats`` covers
+    # ``interface-stats-phy``, ``peer-port-stats`` covers ``peer-port-stats-phy``, and
+    # ``platform-stats`` covers all ``platform-stats-*`` subgroups (cpu / disk / memory /
+    # health-info / asic-power / platform-info / environment-sensor / transceiver-info).
     METRICS_CLASSES_PLATFORM_STATS_GROUP_PREFIXES = (TelemetryConsts.PLATFORM_STATS,)
     METRICS_CLASSES_FULL_EXPORT_GROUP_PREFIXES = (
         TelemetryConsts.INTERFACE_STATS,
-        _PEER_PORT_METRICS_GROUP_PREFIX,
+        TelemetryConsts.PEER_PORT_STATS,
         TelemetryConsts.PLATFORM_STATS,
         TelemetryConsts.IB_ROUTER_STATS,
     )
+
+    # --- Class-aware expected-set derivation (test-declared enablement model) ----
+    # Sentinel for the always-on "base" class of a family (the non-phy / non-
+    # categorized metrics emitted whenever that family's export is enabled).
+    TELEMETRY_BASE_CLASS = "__base__"
+
+    # Exact ``metrics-classes.yaml`` group name(s) per (family, class-token), where
+    # class-token is ``TELEMETRY_BASE_CLASS`` or ``TelemetryConsts.PHY``. Platform-stats
+    # classes are resolved dynamically via ``METRICS_CLASSES_PLATFORM_GROUP_FMT`` below.
+    METRICS_CLASSES_GROUP_BY_FAMILY_CLASS: Dict[Tuple[str, str], Tuple[str, ...]] = {
+        (TelemetryConsts.INTERFACE_STATS, TELEMETRY_BASE_CLASS): ("interface-stats",),
+        (TelemetryConsts.INTERFACE_STATS, TelemetryConsts.PHY): ("interface-stats-phy",),
+        (TelemetryConsts.PEER_PORT_STATS, TELEMETRY_BASE_CLASS): ("peer-port-stats",),
+        (TelemetryConsts.PEER_PORT_STATS, TelemetryConsts.PHY): ("peer-port-stats-phy",),
+        (TelemetryConsts.IB_ROUTER_STATS, TELEMETRY_BASE_CLASS): ("ib-router-stats",),
+    }
+
+    # platform-stats class category -> exact YAML group name (e.g. ``cpu`` ->
+    # ``platform-stats-cpu``).
+    METRICS_CLASSES_PLATFORM_GROUP_FMT = "platform-stats-{cls}"
 
     # When the capability is ABSENT on the DUT, expected names starting with any of the listed
     # prefixes are removed from the *expected* set before strict equality.

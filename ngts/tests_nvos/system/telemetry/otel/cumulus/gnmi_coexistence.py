@@ -9,19 +9,34 @@ import re
 import shlex
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
+from ngts.nvos_constants.constants_nvos import NvosConst
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.EngineAdapterTool import EngineAdapterTool
+from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
+from ngts.nvos_tools.platform.Platform import Platform
 from ngts.tests_nvos.system.grpc_tunnel.grpcTunnelServer import GrpcTunnelServer
 from ngts.tests_nvos.system.grpc_tunnel.helpers import GrpcTunnelServerSetup
 from ngts.tests_nvos.system.telemetry.otel.cumulus import cache as telemetryCache
+from ngts.tests_nvos.system.telemetry.otel.cumulus.catalog import detect_nvue_python_pkg_version
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import dut_root_on_nvme_storage
+from ngts.tests_nvos.system.telemetry.otel.cumulus.interface_xpaths import (
+    build_interface_top_level_xpaths,
+)
+from ngts.tests_nvos.system.telemetry.otel.cumulus.system_xpaths import (
+    build_system_top_level_xpaths,
+)
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
     discover_swp_interfaces_on_dut,
     resolve_cumulus_lab_interfaces_on_dut,
+)
+from ngts.tests_nvos.system.telemetry.otel.cumulus.qos_xpaths import (
+    filter_unsupported_qos_xpaths,
+    generate_qos_container_xpaths,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +44,14 @@ logger = logging.getLogger(__name__)
 # SSIM smoke dial-out ports (``Test_Telemetry_Coexistence_Smoke``).
 SMOKE_GNMI_PORT_LLDP = 57358
 SMOKE_GNMI_PORT_BGP = 57713
+# SSIM smoke ``test_07``/``test_08`` top-level subscription dial-out ports. These MUST stay distinct
+# from the Interface/QoS (57421) and Component/System (57431/57432) suite ports and use dedicated
+# tunnel names: the smoke fixture keeps its gNMI session alive for the whole module
+# (``defer_gnmi_teardown=True``), so a shared ``(tunnel_name, listen_port)`` would collide with
+# those later collections (collector bind conflict, DUT grpc-tunnel reconfiguration clash,
+# double-teardown, and shared ``/tmp/<tunnel>_gnmi_<model>_sample.json`` log path).
+SMOKE_GNMI_PORT_INTERFACE_TOP = 57441
+SMOKE_GNMI_PORT_SYSTEM_TOP = 57451
 
 SMOKE_BGP_ATTRS: Tuple[str, ...] = (
     'established_transitions', 'input_queue', 'messages_received', 'messages_sent', 'output_queue',
@@ -55,8 +78,57 @@ SYSTEM_GNMI_ATTRS: Tuple[str, ...] = ('cp_out_ipv4_pkts', 'cp_out_ipv6_pkts')
 
 COMPONENT_GNMI_ATTRS: Tuple[str, ...] = ('storage_read_bytes', 'storage_write_seconds')
 
+# SSIM Component/System ``test_09`` — OpenConfig CPU component state leaves
+# (``/components/component[name=CPU]/state/...``), collected by a dedicated
+# ``json_ietf`` component subscription like the SSIM CPU gNMI job.
+CPU_COMPONENT_NAME = 'CPU'
+CPU_COMPONENT_GNMI_MODEL = 'component-cpu'
+CPU_COMPONENT_GNMI_SERIES_KEY = 'gnmi-series-%s' % (CPU_COMPONENT_GNMI_MODEL,)
+CPU_COMPONENT_GNMI_ENCODING = 'json_ietf'
+CPU_COMPONENT_GNMI_LISTEN_PORT = 57433
+CPU_PLATFORM_HW_GNMI_ATTRS: Tuple[str, ...] = (
+    'cpu_serial_no',
+    'cpu_part_no',
+    'cpu_model_name',
+    'cpu_hardware_version',
+    'cpu_type',
+)
+
+# SSIM Component/System ``test_10`` — OpenConfig PSU component state leaves for one
+# randomly chosen present PSU (``/components/component[name=<psu>]/state/...``).
+PSU_COMPONENT_GNMI_MODEL = 'component-psu'
+PSU_COMPONENT_GNMI_SERIES_KEY = 'gnmi-series-%s' % (PSU_COMPONENT_GNMI_MODEL,)
+PSU_COMPONENT_GNMI_ENCODING = 'json_ietf'
+PSU_COMPONENT_GNMI_LISTEN_PORT = 57434
+PSU_PLATFORM_HW_GNMI_ATTRS: Tuple[str, ...] = (
+    'psu_serial_no',
+    'psu_part_no',
+    'psu_model_name',
+    'psu_hardware_version',
+    'psu_type',
+)
+# ``component[name=…]`` state leaf per PSU attr. The subscription omits the list key because the
+# DUT spells PSU components differently than NVUE inventory (``PSU 1`` vs ``PSU1``); the sample is
+# resolved back to the chosen PSU by :func:`latest_gnmi_component_state_leaf`.
+PSU_STATE_LEAF_BY_ATTR: Dict[str, str] = {
+    'psu_serial_no': 'serial-no',
+    'psu_part_no': 'part-no',
+    'psu_model_name': 'model-name',
+    'psu_hardware_version': 'hardware-version',
+    'psu_type': 'type',
+}
+# Chosen during ``build_component_system_gnmi_jobs`` so the CLI leg uses the same name.
+_SELECTED_PSU_COMPONENT_NAME: Optional[str] = None
+
 _GNMI_JSON_DECODER = json.JSONDecoder()
 _GNMIC_INSTALL_VERSION = '0.38.2'
+
+# NVOS starts the dial-out client as a docker container from ``nv config apply``, so the
+# client is not up when the apply returns.
+_GRPC_TUNNEL_CONTAINER_WAIT_SEC = 30
+_GRPC_TUNNEL_CONTAINER_POLL_SEC = 2
+# Characters of DUT command output kept in a failure message.
+_DUT_OUTPUT_EXCERPT_CHARS = 800
 
 
 @dataclass
@@ -72,6 +144,10 @@ class GnmiCollectionJob:
     attrs: Tuple[str, ...] = ()
     populate_kwargs: Dict[str, Any] = field(default_factory=dict)
     group_size: int = 1
+    encoding: str = 'json'
+    # Best-effort job: an empty sample log is logged and skipped instead of failing collection,
+    # so one unsupported component subtree cannot break the whole suite cache.
+    optional: bool = False
 
 
 @dataclass
@@ -79,6 +155,7 @@ class GnmiCoexistenceSession:
     setups: List[GrpcTunnelServerSetup] = field(default_factory=list)
     gnmic_bin: str = 'gnmic'
     mtls_configured: bool = False
+    is_nvos: bool = False
 
 
 def _address_family_key(afi_safi_name: str) -> str:
@@ -159,8 +236,29 @@ def _interface_xpath(attr: str, *, interface: str) -> Optional[str]:
         'in_multicast_pkts': f'/interfaces/interface[name={interface}]/state/counters/in-multicast-pkts',
         'in_octets': f'/interfaces/interface[name={interface}]/state/counters/in-octets',
         'in_errors': f'/interfaces/interface[name={interface}]/state/counters/in-errors',
+        'description': f'/interfaces/interface[name={interface}]/state/description',
     }
     return mapping.get(attr)
+
+
+def interface_top_level_xpath(interface: str) -> str:
+    """SSIM3 ``interface_xpath.top_level`` — the whole interface subtree.
+
+    ``test_07_interface_top_level_subscription`` subscribes to this single path and
+    expects every modeled interface leaf (see
+    :func:`...interface_xpaths.build_interface_top_level_xpaths`) to be streamed.
+    """
+    return f'/interfaces/interface[name={interface}]'
+
+
+def system_top_level_xpath() -> str:
+    """SSIM3 ``system_xpath.top_level`` — the whole ``/system`` subtree.
+
+    ``test_08_system_top_level_subscription`` subscribes to this single path and expects
+    every modeled system leaf (see
+    :func:`...system_xpaths.build_system_top_level_xpaths`) to be streamed.
+    """
+    return '/system'
 
 
 def _system_xpath(attr: str) -> Optional[str]:
@@ -175,6 +273,18 @@ def _component_xpath(attr: str, *, component_name: str) -> Optional[str]:
     mapping = {
         'storage_read_bytes': f'/components/component[name={component_name}]/storage/state/counters/read-bytes',
         'storage_write_seconds': f'/components/component[name={component_name}]/storage/state/counters/write-seconds',
+        # SSIM test_09 CPU platform hw info (relative to component state).
+        'cpu_serial_no': f'/components/component[name={component_name}]/state/serial-no',
+        'cpu_part_no': f'/components/component[name={component_name}]/state/part-no',
+        'cpu_model_name': f'/components/component[name={component_name}]/state/model-name',
+        'cpu_hardware_version': f'/components/component[name={component_name}]/state/hardware-version',
+        'cpu_type': f'/components/component[name={component_name}]/state/type',
+        # SSIM test_10 PSU platform hw info (relative to component state).
+        'psu_serial_no': f'/components/component[name={component_name}]/state/serial-no',
+        'psu_part_no': f'/components/component[name={component_name}]/state/part-no',
+        'psu_model_name': f'/components/component[name={component_name}]/state/model-name',
+        'psu_hardware_version': f'/components/component[name={component_name}]/state/hardware-version',
+        'psu_type': f'/components/component[name={component_name}]/state/type',
     }
     return mapping.get(attr)
 
@@ -209,6 +319,115 @@ def resolve_model_xpaths(model: str, attrs: Sequence[str], populate_kwargs: Dict
         if xp and xp not in paths:
             paths.append(xp)
     return paths
+
+
+def _normalize_xpath(xpath: Optional[str]) -> Optional[str]:
+    if not isinstance(xpath, str):
+        return xpath
+    return xpath.lstrip('/')
+
+
+def latest_gnmi_leaf_for_xpath(
+    series: Optional[Dict[str, Dict[str, Any]]], xpath: Optional[str]
+) -> Optional[Any]:
+    """Latest leaf value (string or number) for ``xpath`` from a ``gnmi-series-*`` cache."""
+    target = _normalize_xpath(xpath)
+    if not isinstance(series, dict) or not target:
+        return None
+    latest_ts = None
+    latest_value: Optional[Any] = None
+    for ts_key, bucket in series.items():
+        try:
+            ts = int(ts_key)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(bucket, dict):
+            continue
+        for xp, entry in bucket.items():
+            candidate = xp
+            if isinstance(entry, dict) and isinstance(entry.get('xpath'), str):
+                candidate = entry['xpath']
+            if _normalize_xpath(xp) != target and _normalize_xpath(candidate) != target:
+                continue
+            leaves = _entry_leaf_values(entry)
+            if not leaves:
+                continue
+            if latest_ts is None or ts >= latest_ts:
+                latest_ts = ts
+                latest_value = leaves[0]
+    return latest_value
+
+
+def normalize_component_name(name: Optional[str]) -> str:
+    """``PSU 1`` / ``psu1`` / ``PSU-1`` → ``PSU1`` for cross-source component name matching."""
+    return re.sub(r'[^A-Z0-9]', '', str(name or '').upper())
+
+
+def _xpath_component_name(xpath: Optional[str]) -> Optional[str]:
+    match = re.search(r'component\[name=([^\]]+)\]', str(xpath or ''))
+    return match.group(1) if match else None
+
+
+def gnmi_component_names_in_series(series: Optional[Dict[str, Dict[str, Any]]]) -> List[str]:
+    """Component names present in a ``gnmi-series-*`` cache (diagnostics)."""
+    names: List[str] = []
+    if not isinstance(series, dict):
+        return names
+    for bucket in series.values():
+        if not isinstance(bucket, dict):
+            continue
+        for xp, entry in bucket.items():
+            candidate = xp
+            if isinstance(entry, dict) and isinstance(entry.get('xpath'), str):
+                candidate = entry['xpath']
+            name = _xpath_component_name(candidate) or _xpath_component_name(xp)
+            if name and name not in names:
+                names.append(name)
+    return sorted(names)
+
+
+def latest_gnmi_component_state_leaf(
+    series: Optional[Dict[str, Dict[str, Any]]],
+    *,
+    component_name: str,
+    leaf: str,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Latest ``component[name~=component_name]/state/<leaf>`` value and the xpath it came from.
+
+    The component name is matched after normalization so a DUT spelling such as ``PSU 1`` matches
+    the NVUE inventory key ``PSU1``.
+    """
+    target_name = normalize_component_name(component_name)
+    suffix = '/state/%s' % (leaf,)
+    if not isinstance(series, dict) or not target_name or not leaf:
+        return None, None
+    latest_ts = None
+    latest_value: Optional[Any] = None
+    latest_xpath: Optional[str] = None
+    for ts_key, bucket in series.items():
+        try:
+            ts = int(ts_key)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(bucket, dict):
+            continue
+        for xp, entry in bucket.items():
+            candidate = xp
+            if isinstance(entry, dict) and isinstance(entry.get('xpath'), str):
+                candidate = entry['xpath']
+            if not str(candidate).endswith(suffix):
+                continue
+            name = _xpath_component_name(candidate)
+            if normalize_component_name(name) != target_name:
+                continue
+            leaves = _entry_leaf_values(entry)
+            if not leaves:
+                continue
+            if latest_ts is None or ts >= latest_ts:
+                latest_ts = ts
+                latest_value = leaves[0]
+                latest_xpath = candidate
+    return latest_value, latest_xpath
 
 
 def _parse_json_objects_from_gnmic_log(content: str) -> List[Dict[str, Any]]:
@@ -508,6 +727,726 @@ def validate_xpath_coverage_per_timestamp(
         )
 
 
+# --- SSIM3 interface_top_level_subscription (strict bulk) ------------------
+
+# SSIM3 ``collect_verify_bulk_subscription`` noise filter (``_NOISE_XPATH_SUBSTRINGS``):
+# received xpaths matching these are dropped before the strict unexpected check because they
+# are not stable across platforms/images or are gated behind disabled features.
+_INTERFACE_NOISE_XPATH_SUBSTRINGS: Tuple[str, ...] = (
+    'shared-buffer',
+    'headroom-buffer',
+    'integrated-circuit',
+    'hold-time/state/counters/',
+    'phy/link-down-information/state/',
+)
+
+# phy RS-FEC corrected-errors histogram bucket family (``rs-num-corr-err[upper-boundary=N]``).
+# The exact bucket set is DUT-specific and discovered from NVUE before subscribing.
+_INTERFACE_HISTOGRAM_XPATH_SUBSTRING: str = 'phy/histograms/state/rs-num-corr-err'
+
+
+def _strip_leading_slash(xpath: str) -> str:
+    return xpath[1:] if xpath.startswith('/') else xpath
+
+
+def _filter_noise_component_xpaths(received_keys, noise_substrings):
+    """SSIM3 ``_filter_noise_component_xpaths`` — drop platform-variant / feature-gated leaves.
+
+    Applied to ``received`` for every subscription type (SSIM3's ``_NOISE_XPATH_SUBSTRINGS`` is a
+    single shared tuple), so a noisy leaf counts toward neither the missing nor the unexpected check.
+    """
+    if not noise_substrings:
+        return set(received_keys)
+    return {xp for xp in received_keys if not any(n in xp for n in noise_substrings)}
+
+
+def _filter_transient_process_pids(unexpected_keys):
+    """SSIM3 ``_filter_transient_process_pids`` (verbatim) — system_top_level_subscription helper.
+
+    The ``/system`` stream carries volatile per-key subtrees the modeled enumeration cannot predict:
+    transient/restarted process PIDs and the not-yet-modeled systemd ``services`` subtree. Split the
+    unexpected set into ``(genuine, transient)`` so only genuine unexpected xpaths fail the test.
+    This is test-case-specific (system) and is injected by ``validate_system_top_level_subscription``;
+    the common validator stays model-agnostic.
+    """
+    transient = set()
+    genuine = set()
+    for key in unexpected_keys:
+        if 'system/processes/process[pid=' in key:
+            transient.add(key)
+        elif 'system/services/service[name=' in key:
+            transient.add(key)
+        else:
+            genuine.add(key)
+    return genuine, transient
+
+
+_PROCESS_PID_RE = re.compile(r'system/processes/process\[pid=(\d+)\]')
+
+# SSIM3 ``handle_dynamic_process_pids`` — services known to restart mid-subscription. A new PID
+# streamed for one of these is validated (its modeled leaves added to expected) rather than merely
+# tolerated.
+_DYNAMIC_SERVICES: Tuple[str, ...] = (
+    'prometheus-node-exporter.service',
+    'prometheus-sdk-stats.service',
+)
+
+
+def filter_old_process_pids(expected_keys, captured_pid_map, live_pids_fallback=None):
+    """SSIM3 ``filter_old_process_pids`` parity — drop expected leaves of stale (dead) process PIDs.
+
+    A discovered PID whose process exits/restarts before or during the subscription window streams
+    none of its modeled leaves; without reconciliation all 8 would false-fail coverage. SSIM3 keeps
+    only expected ``process[pid=X]`` leaves whose PID is in ``captured_subscription_pids`` — the
+    independent OS snapshot taken *during* the window. When no capture is available we fall back to
+    ``live_pids_fallback`` (PIDs actually seen in the stream) so the check degrades gracefully.
+    """
+    live_pids = {str(p) for p in _flatten_pid_map(captured_pid_map)} if captured_pid_map else set()
+    if not live_pids and live_pids_fallback:
+        live_pids = {str(p) for p in live_pids_fallback}
+
+    kept = set()
+    for xp in expected_keys:
+        match = _PROCESS_PID_RE.search(xp)
+        if match and live_pids and match.group(1) not in live_pids:
+            continue  # stale/dead PID — not alive during the window (SSIM3 filter_old_process_pids)
+        kept.add(xp)
+    return kept
+
+
+def handle_dynamic_process_pids(received_keys, expected_keys_base, captured_pid_map, current_pid_map):
+    """SSIM3 ``handle_dynamic_process_pids`` parity — add restarted dynamic-service PIDs to expected.
+
+    A service in ``_DYNAMIC_SERVICES`` (prometheus) can restart mid-window and stream a *new* PID.
+    SSIM3 validates that new PID (rather than merely tolerating it) by generating its modeled leaves
+    from an existing ``process[pid=N]`` pattern and adding them to the expected set — but only when
+    the new PID belongs to a dynamic service in the current or captured PID map.
+    """
+    new_pids = set()
+    for xp in received_keys:
+        match = _PROCESS_PID_RE.search(xp)
+        if not match:
+            continue
+        pid = match.group(1)
+        if not any(('[pid=%s]' % pid) in exp for exp in expected_keys_base):
+            new_pids.add(pid)
+    if not new_pids:
+        return expected_keys_base
+
+    def _pid_in_dynamic_service(pid_str, pid_map):
+        for service_name, pids in (pid_map or {}).items():
+            if service_name in _DYNAMIC_SERVICES and int(pid_str) in pids:
+                return True
+        return False
+
+    valid_new = {
+        pid for pid in new_pids
+        if _pid_in_dynamic_service(pid, current_pid_map) or _pid_in_dynamic_service(pid, captured_pid_map)
+    }
+    if not valid_new:
+        return expected_keys_base
+
+    patterns = {
+        _PROCESS_PID_RE.sub('system/processes/process[pid={}]', exp)
+        for exp in expected_keys_base if 'system/processes/process[pid=' in exp
+    }
+    updated = set(expected_keys_base)
+    for pid in valid_new:
+        for pattern in patterns:
+            updated.add(pattern.format(pid))
+    if updated != expected_keys_base:
+        logger.info(
+            'handle_dynamic_process_pids: added leaves for %d restarted dynamic-service PID(s): %s',
+            len(valid_new), sorted(valid_new),
+        )
+    return updated
+
+
+def _is_rate_xpath(xpath: str) -> bool:
+    """SSIM ``skip_rate_metrics_first_timestamp`` rate-leaf heuristic (rates need two samples)."""
+    return '/rates/state/' in xpath or xpath.endswith('-rate')
+
+
+def discover_phy_histogram_boundary(dut, interface: str) -> List[int]:
+    """SSIM3 ``get_phy_histogram_boundary`` parity via NVUE CLI (best-effort, [] on failure).
+
+    Reads the RS-FEC corrected-errors histogram bucket ``upper-boundary`` values so the
+    ``rs-num-corr-err[upper-boundary=N]`` xpaths match exactly what the DUT streams.
+    """
+    try:
+        out = dut.run_cmd(
+            'nv show interface %s link phy health histogram -o json 2>&1' % (interface,),
+            validate=False,
+            print_output=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort discovery, mirror SSIM3
+        logger.warning('phy histogram read failed for %s: %s', interface, exc)
+        return []
+    if not out or 'error:' in out.lower():
+        return []
+    start = out.find('{')
+    end = out.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return []
+    try:
+        data = json.loads(out[start:end + 1])
+    except (ValueError, json.JSONDecodeError):
+        return []
+
+    buckets = data.get('rs-fec-corrected-errors') if isinstance(data, dict) else None
+    if not isinstance(buckets, dict):
+        buckets = data if isinstance(data, dict) else {}
+
+    boundaries: List[int] = []
+    for bucket_key, bucket in buckets.items():
+        # SSIM3 reads each bucket's ``upper-boundary`` field; on platforms that do not
+        # expose that field the bucket is keyed by its boundary index (the same value the
+        # gNMI stream uses in ``rs-num-corr-err[upper-boundary=N]``), so fall back to the key.
+        value: Any = None
+        if isinstance(bucket, dict):
+            value = bucket.get('upper-boundary', bucket.get('upper_boundary'))
+        if value is None:
+            value = bucket_key
+        try:
+            boundaries.append(int(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(boundaries))
+
+
+def build_smoke_interface_expected_xpaths(
+    dut,
+    interface: str,
+    *,
+    lane: int = 5,
+    auto_neg: bool = True,
+    link_debounce: bool = False,
+) -> Tuple[List[str], str]:
+    """Full SSIM3 interface_xpath set + top_level for ``interface`` (ngts-adapted inputs)."""
+    nvue_version = detect_nvue_python_pkg_version(dut)
+    histogram_boundary = discover_phy_histogram_boundary(dut, interface)
+    all_xpaths, top_level = build_interface_top_level_xpaths(
+        interface,
+        nvue_pkg_version=nvue_version,
+        lane=lane,
+        auto_neg=auto_neg,
+        histogram_boundary=histogram_boundary,
+        link_debounce=link_debounce,
+    )
+    logger.info(
+        'SSIM3 interface top-level expected xpaths: %d (nvue=%s, histogram_buckets=%d)',
+        len(all_xpaths), nvue_version, len(histogram_boundary),
+    )
+    return all_xpaths, top_level
+
+
+# --- SSIM3 system_top_level_subscription dynamic discovery -----------------
+
+_SYSTEM_CONTEXT_CACHE_KEY = 'gnmi-system-context'
+# SSIM3 ``capture_pids_during_subscription`` snapshot ({service: [pids]}) taken *during* the gNMI
+# collection window — the independent OS truth for ``filter_old_process_pids``/dynamic-PID handling.
+_SYSTEM_CAPTURED_PIDS_CACHE_KEY = 'gnmi-system-captured-pids'
+
+
+def discover_system_cpu_cores(dut) -> int:
+    """SSIM ``numCores = int(uut.device.sudo('nproc'))`` parity (>=1 on failure)."""
+    out = dut.run_cmd('nproc', validate=False, print_output=False)
+    match = re.search(r'\d+', out or '')
+    return int(match.group(0)) if match else 1
+
+
+_LEGACY_MOUNT_POINTS: List[str] = ['/', '/var', '/run', '/run/lock', '/tmp', '/dev', '/dev/shm']
+_MODERN_MOUNT_POINTS: List[str] = ['/', '/var', '/run', '/run/lock', '/tmp', '/var/tmp/nv-gnmi/gnoi_staging']
+
+
+def _first_json_object(out: str) -> Optional[dict]:
+    """Best-effort parse of the first JSON object embedded in NVUE ``-o json`` output."""
+    if not out:
+        return None
+    start = out.find('{')
+    end = out.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(out[start:end + 1])
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def discover_system_mount_points(dut) -> List[str]:
+    """SSIM3 ``get_return_mount_point_info`` parity — a FIXED, image-release-keyed mount set.
+
+    The gNMI ``/system/mount-points`` set is NOT the live ``df`` output: SSIM3 returns a hardcoded
+    list selected by the running partition's release — the legacy set for < 5.15, the modern set
+    for >= 5.15. The current partition's release is read from ``nv show system image``.
+    """
+    out = dut.run_cmd('nv show system image -o json 2>&1', validate=False, print_output=False)
+    data = _first_json_object(out)
+    if not data:
+        return _LEGACY_MOUNT_POINTS
+
+    current = data.get('current')
+    if current is None:
+        return _LEGACY_MOUNT_POINTS
+    partition = data.get('partition%s' % (current,))
+    if not isinstance(partition, dict):
+        return _LEGACY_MOUNT_POINTS
+    release = partition.get('release')
+    if not isinstance(release, str):
+        return _LEGACY_MOUNT_POINTS
+
+    parts = release.split('.')
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return _LEGACY_MOUNT_POINTS
+    return _MODERN_MOUNT_POINTS if (int(parts[0]), int(parts[1])) >= (5, 15) else _LEGACY_MOUNT_POINTS
+
+
+def get_system_process_pid_map(dut) -> Dict[str, List[int]]:
+    """SSIM3 ``get_system_process_pid`` parity — ``{service_name: [pids]}`` for active services.
+
+    Mirrors SSIM3: (1) list the systemd units in the default telemetry unit-profile
+    (``nv show system telemetry software-stats systemd unit-profile default``); (2) for each active
+    unit read its cgroup ``cgroup.procs`` and collect every PID. Returns the service->PIDs mapping
+    (needed by :func:`handle_dynamic_process_pids` to test membership of dynamic services).
+    """
+    profile_out = dut.run_cmd(
+        'nv show system telemetry software-stats systemd unit-profile default -o json 2>&1',
+        validate=False,
+        print_output=False,
+    )
+    data = _first_json_object(profile_out)
+    units = list((data.get('unit') or {}).keys()) if isinstance(data, dict) else []
+    if not units:
+        logger.warning('No systemd units found in default telemetry unit-profile; no process PIDs.')
+        return {}
+
+    # Batch the per-unit cgroup lookups into one shell round-trip (SSIM3 loops per unit): for each
+    # active unit emit a ``UNIT:<name>`` marker then its cgroup.procs, so we can rebuild the map.
+    unit_args = ' '.join(shlex.quote(u) for u in units)
+    script = (
+        'for u in %s; do '
+        'systemctl is-active --quiet "$u" || continue; '
+        'cg=$(systemctl show -p ControlGroup --value "$u" 2>/dev/null); '
+        '[ -n "$cg" ] || continue; '
+        'echo "UNIT:$u"; '
+        'cat "/sys/fs/cgroup${cg}/cgroup.procs" 2>/dev/null; '
+        'done'
+    ) % (unit_args,)
+    procs_out = dut.run_cmd("sudo bash -c %s" % shlex.quote(script), validate=False, print_output=False)
+
+    result: Dict[str, List[int]] = {}
+    current_unit: Optional[str] = None
+    for line in (procs_out or '').splitlines():
+        token = line.strip()
+        if token.startswith('UNIT:'):
+            current_unit = token[len('UNIT:'):]
+            continue
+        if current_unit and token.isdigit():
+            value = int(token)
+            if value > 0:
+                result.setdefault(current_unit, []).append(value)
+    return result
+
+
+def _flatten_pid_map(pid_map: Dict[str, List[int]]) -> List[int]:
+    pids: set = set()
+    for values in (pid_map or {}).values():
+        for value in values:
+            if isinstance(value, int) and value > 0:
+                pids.add(value)
+    return sorted(pids)
+
+
+def discover_system_process_pids(dut) -> List[int]:
+    """Flat, de-duplicated active-service PID list for the expected-xpath builder.
+
+    SSIM3's ``system_top_level_subscription`` flattens ``get_system_process_pid``'s service->PIDs
+    mapping into ``all_pids``; this returns that flattened list.
+    """
+    return _flatten_pid_map(get_system_process_pid_map(dut))
+
+
+def discover_system_top_level_context(dut) -> Dict[str, Any]:
+    """Discover the dynamic keys (cores/mount points/pids/nvue) for the system expected set."""
+    context = {
+        'num_cores': discover_system_cpu_cores(dut),
+        'mount_points': discover_system_mount_points(dut),
+        'pids': discover_system_process_pids(dut),
+        'nvue_version': detect_nvue_python_pkg_version(dut),
+    }
+    logger.info(
+        'SSIM3 system top-level context: cores=%s mount_points=%d pids=%d nvue=%s',
+        context['num_cores'], len(context['mount_points']), len(context['pids']),
+        context['nvue_version'],
+    )
+    return context
+
+
+def build_smoke_system_expected_xpaths(dut) -> Tuple[List[str], str]:
+    """Full SSIM3 system_xpath set + top_level for ``/system`` (ngts-adapted discovery).
+
+    Reuses the context discovered at collection time (cached under ``gnmi-system-context`` by
+    :func:`build_smoke_gnmi_jobs`) so the expected set is consistent with the subscription
+    window; falls back to live discovery when the cache is absent.
+    """
+    context: Optional[Dict[str, Any]] = None
+    try:
+        cached = telemetryCache.get_data(_SYSTEM_CONTEXT_CACHE_KEY)
+    except KeyError:
+        cached = None
+    if isinstance(cached, dict):
+        context = cached
+    if context is None:
+        context = discover_system_top_level_context(dut)
+
+    all_xpaths, top_level = build_system_top_level_xpaths(
+        context.get('num_cores', 1),
+        context.get('mount_points', ['/']),
+        context.get('pids', []),
+        nvue_pkg_version=context.get('nvue_version'),
+    )
+    logger.info(
+        'SSIM3 system top-level expected xpaths: %d (nvue=%s, cores=%s, mounts=%d, pids=%d)',
+        len(all_xpaths), context.get('nvue_version'), context.get('num_cores'),
+        len(context.get('mount_points', [])), len(context.get('pids', [])),
+    )
+    return all_xpaths, top_level
+
+
+def validate_top_level_subscription(
+    *,
+    expected_xpaths: Sequence[str],
+    series_key: str,
+    model_label: str = 'top-level',
+    noise_substrings: Tuple[str, ...] = _INTERFACE_NOISE_XPATH_SUBSTRINGS,
+    skip_rate_metrics_first_timestamp: bool = False,
+    unexpected_filter: Optional[Callable[[set], set]] = None,
+    missing_filter: Optional[Callable[[set, set], set]] = None,
+    expected_augmenter: Optional[Callable[[set, set], set]] = None,
+) -> None:
+    """SSIM3 ``collect_verify_bulk_subscription`` per-timestamp verification — common to all tests.
+
+    Model-agnostic port of SSIM3's bulk verifier: it knows nothing about interface/system/etc.
+    Callers pass the already-resolved ``expected_xpaths`` and the cached ``gnmi-series-{model}``
+    (parsed to ``{timestamp: {xpath: entry}}``). Every test case runs the same two checks:
+
+    * ``_filter_noise_component_xpaths`` — ``noise_substrings`` are dropped from ``received`` up
+      front, so a noisy leaf counts toward neither check (SSIM3 uses one shared tuple for all);
+    * ``Check 1`` (coverage): an expected xpath is a *missing* failure only when absent from
+      **every** update (intersection of per-update missing sets);
+    * ``Check 2`` (strict): any received xpath not in the expected set is an unexpected failure;
+    * ``skip_rate_metrics_first_timestamp``: rate leaves (which need two samples) are not counted
+      missing on the first update.
+
+    Test-case-specific tolerances are injected, not hard-coded here:
+
+    * ``unexpected_filter`` — SSIM3's ``is_system_subscription`` hook. Given the per-update
+      unexpected set it returns the subset that should still fail (e.g. ``/system`` peels transient
+      process/service xpaths via :func:`_filter_transient_process_pids`). ``None`` = strict.
+    * ``missing_filter`` — SSIM3's ``filter_old_process_pids`` hook. Given
+      ``(persistent_missing, received_union)`` it returns the subset that should still fail, letting
+      a caller reconcile the expected set against what actually streamed (e.g. ``/system`` drops
+      stale/dead process PIDs that exited during the window). ``None`` = fail on all missing.
+    * ``expected_augmenter`` — SSIM3's ``handle_dynamic_process_pids`` hook. Given
+      ``(expected_norm, received)`` for one update it returns the expected set to validate against
+      for that update, letting a caller add keys that only appear at runtime (e.g. ``/system`` adds
+      leaves for a restarted dynamic-service PID so they are *required*, not merely tolerated).
+    """
+    assert expected_xpaths, 'No expected %s xpaths resolved (SSIM3 xpath set empty)' % (model_label,)
+    expected_norm = {_strip_leading_slash(xp) for xp in expected_xpaths}
+    noise = tuple(_strip_leading_slash(n) for n in noise_substrings)
+
+    rate_expected = (
+        {xp for xp in expected_norm if _is_rate_xpath(xp)}
+        if skip_rate_metrics_first_timestamp else set()
+    )
+
+    with allure.step('Load %s from telemetry cache' % (series_key,)):
+        try:
+            series = telemetryCache.get_data(series_key)
+        except KeyError:
+            series = None
+        assert isinstance(series, dict) and series, 'Missing or empty %s in telemetry cache' % (series_key,)
+        allure.attach(
+            'timestamps=%d expected_xpaths=%d' % (len(series), len(expected_norm)),
+            '%s_top_level_summary' % (model_label,),
+        )
+
+    series_items = sorted(series.items(), key=lambda kv: str(kv[0]))
+    persistent_missing: Optional[set] = None
+    unexpected_failures: Dict[str, List[str]] = {}
+    received_union: set = set()
+
+    with allure.step(
+        'Per-timestamp validation (%d timestamps, %d expected xpaths)'
+        % (len(series_items), len(expected_norm))
+    ):
+        for idx, (ts, entries) in enumerate(series_items):
+            received = set()
+            for key, val in (entries or {}).items():
+                if isinstance(key, str):
+                    received.add(_strip_leading_slash(key))
+                if isinstance(val, dict) and val.get('xpath'):
+                    received.add(_strip_leading_slash(val['xpath']))
+            received = _filter_noise_component_xpaths(received, noise)
+            received_union |= received
+
+            # SSIM3 handle_dynamic_process_pids: per-update expected set may gain runtime-only keys
+            # (e.g. a restarted dynamic-service PID) so they are required rather than just tolerated.
+            expected_ts = expected_norm
+            if expected_augmenter is not None:
+                expected_ts = expected_augmenter(expected_norm, received)
+
+            # Check 1: coverage — fail only for xpaths missing from EVERY update.
+            missing = expected_ts - received
+            if skip_rate_metrics_first_timestamp and idx == 0:
+                rate_ts = rate_expected if expected_augmenter is None else {
+                    xp for xp in expected_ts if _is_rate_xpath(xp)
+                }
+                missing = missing - rate_ts
+            persistent_missing = missing if persistent_missing is None else (persistent_missing & missing)
+
+            # Check 2: strict — every received xpath must be expected, minus caller tolerances.
+            unexpected = received - expected_ts
+            if unexpected_filter is not None:
+                unexpected = unexpected_filter(unexpected)
+            if unexpected:
+                unexpected_failures[str(ts)] = sorted(unexpected)
+
+        # SSIM3 filter_old_process_pids: reconcile persistently-missing xpaths against what actually
+        # streamed (drops stale keys whose parent exited mid-window) before failing coverage.
+        if persistent_missing and missing_filter is not None:
+            persistent_missing = missing_filter(persistent_missing, received_union)
+
+        if unexpected_failures:
+            allure.attach(str(unexpected_failures), '%s_unexpected_xpaths' % (model_label,))
+            pytest.fail(
+                '%s top-level subscription received UNEXPECTED xpaths in %d timestamp(s): %s'
+                % (model_label.capitalize(), len(unexpected_failures), unexpected_failures)
+            )
+
+        if persistent_missing:
+            allure.attach('\n'.join(sorted(persistent_missing)), '%s_missing_from_all_updates' % (model_label,))
+            pytest.fail(
+                '%s top-level subscription MISSING %d expected xpath(s) from ALL %d update(s): %s'
+                % (model_label.capitalize(), len(persistent_missing), len(series_items), sorted(persistent_missing))
+            )
+        allure.attach(
+            'all %d expected xpaths covered across %d timestamps (0 persistently missing, 0 unexpected)'
+            % (len(expected_norm), len(series_items)),
+            '%s_top_level_ok' % (model_label,),
+        )
+
+
+def validate_interface_top_level_subscription(
+    *,
+    expected_xpaths: Sequence[str],
+    series_key: str = 'gnmi-series-interface',
+    skip_rate_metrics_first_timestamp: bool = False,
+) -> None:
+    """SSIM3 interface ``collect_verify_bulk_subscription`` (thin wrapper of the common core).
+
+    Interface streams a stable, fully modeled xpath set, so the strict unexpected check runs with
+    no tolerance (``unexpected_filter=None``). The one interface-specific concern lives here, not
+    in the common core: SSIM3 derives the exact phy-histogram bucket set from the DUT before
+    subscribing; when ngts cannot enumerate those buckets (no ``rs-num-corr-err`` xpath in the
+    expected set) the streamed buckets are added to the received-noise filter instead of failing
+    as unexpected.
+    """
+    noise_substrings = _INTERFACE_NOISE_XPATH_SUBSTRINGS
+    if not any(_INTERFACE_HISTOGRAM_XPATH_SUBSTRING in _strip_leading_slash(xp) for xp in expected_xpaths):
+        logger.warning(
+            'No histogram buckets in expected interface set; treating streamed %s buckets as noise '
+            '(NVUE histogram boundary not discoverable).',
+            _INTERFACE_HISTOGRAM_XPATH_SUBSTRING,
+        )
+        noise_substrings = noise_substrings + (_INTERFACE_HISTOGRAM_XPATH_SUBSTRING,)
+
+    validate_top_level_subscription(
+        expected_xpaths=expected_xpaths,
+        series_key=series_key,
+        model_label='interface',
+        noise_substrings=noise_substrings,
+        skip_rate_metrics_first_timestamp=skip_rate_metrics_first_timestamp,
+    )
+
+
+def validate_system_top_level_subscription(
+    *,
+    expected_xpaths: Sequence[str],
+    dut=None,
+    series_key: str = 'gnmi-series-system',
+    skip_rate_metrics_first_timestamp: bool = True,
+) -> None:
+    """SSIM3 system ``collect_verify_bulk_subscription`` (thin wrapper of the common core).
+
+    SSIM3 ``system_top_level_subscription`` calls the shared bulk verifier with
+    ``skip_rate_metrics_first_timestamp=True`` and keeps the strict unexpected check ON. All three
+    system-specific ``is_system_subscription`` behaviors live here (the common core stays generic):
+
+    * ``_filter_transient_process_pids`` (unexpected side) — peels transient/restarted process PIDs
+      and the not-yet-modeled systemd ``services`` subtree from the unexpected set;
+    * ``filter_old_process_pids`` (missing side) — drops persistently-missing leaves of PIDs that
+      were not alive during the window, judged against the ``capture_pids_during_subscription``
+      snapshot cached at collection time (independent OS truth), or the received stream as fallback;
+    * ``handle_dynamic_process_pids`` (expected side) — adds leaves for a restarted dynamic-service
+      PID so they are validated, not merely tolerated.
+
+    ``dut`` (when supplied) is queried for the *current* ``{service_name: [pid, ...]}`` map via
+    :func:`get_system_process_pid_map` and passed to ``handle_dynamic_process_pids`` as
+    ``current_pid_map``. This is SSIM3 parity for its "query current PIDs" step: it lets a
+    dynamic-service (prometheus) restart that spawns a new PID *after* the during-window capture
+    snapshot still be recognized and validated, rather than silently tolerated.
+    """
+    captured_pid_map: Dict[str, List[int]] = {}
+    try:
+        cached_pids = telemetryCache.get_data(_SYSTEM_CAPTURED_PIDS_CACHE_KEY)
+    except KeyError:
+        cached_pids = None
+    if isinstance(cached_pids, dict):
+        captured_pid_map = cached_pids
+
+    def _system_unexpected_filter(unexpected: set) -> set:
+        genuine, transient = _filter_transient_process_pids(unexpected)
+        if transient:
+            logger.info(
+                'Ignoring %d unexpected system xpath(s) from transient processes/services: %s',
+                len(transient), sorted(transient),
+            )
+        return genuine
+
+    def _system_missing_filter(persistent_missing: set, received_union: set) -> set:
+        received_pids = set()
+        for xp in received_union:
+            match = _PROCESS_PID_RE.search(xp)
+            if match:
+                received_pids.add(match.group(1))
+        still_failing = filter_old_process_pids(
+            persistent_missing, captured_pid_map, live_pids_fallback=received_pids
+        )
+        dropped = persistent_missing - still_failing
+        if dropped:
+            logger.info(
+                'Ignoring %d missing system xpath(s) from stale/dead process PIDs '
+                '(not alive during window, SSIM3 filter_old_process_pids): %s',
+                len(dropped), sorted(dropped),
+            )
+        return still_failing
+
+    current_pid_map_cache: Dict[str, List[int]] = {}
+    current_pid_map_queried = {'done': False}
+
+    def _system_expected_augmenter(expected_norm: set, received: set) -> set:
+        # Query the current (validation-time) PID map lazily and once: only needed when the stream
+        # carried a not-yet-expected PID, and a single DUT round-trip suffices for all augmenter runs.
+        if dut is not None and not current_pid_map_queried['done']:
+            current_pid_map_queried['done'] = True
+            try:
+                fetched = get_system_process_pid_map(dut)
+                if isinstance(fetched, dict):
+                    current_pid_map_cache.update(fetched)
+            except Exception as exc:  # discovery is best-effort; fall back to the captured snapshot
+                logger.warning(
+                    'Could not query current system PID map for dynamic-PID validation (%s); '
+                    'relying on the during-window capture snapshot only.', exc,
+                )
+        return handle_dynamic_process_pids(
+            received, expected_norm, captured_pid_map, current_pid_map_cache
+        )
+
+    validate_top_level_subscription(
+        expected_xpaths=expected_xpaths,
+        series_key=series_key,
+        model_label='system',
+        noise_substrings=_INTERFACE_NOISE_XPATH_SUBSTRINGS,
+        skip_rate_metrics_first_timestamp=skip_rate_metrics_first_timestamp,
+        unexpected_filter=_system_unexpected_filter,
+        missing_filter=_system_missing_filter,
+        expected_augmenter=_system_expected_augmenter,
+    )
+
+
+def discover_asic_model(dut) -> Optional[str]:
+    """Return the DUT ASIC model reported by NVUE."""
+    out = Platform().show(dut_engine=dut)
+    try:
+        payload = json.loads(out)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    asic_model = payload.get('asic-model')
+    return str(asic_model) if asic_model else None
+
+
+def validate_qos_prefix_subscription(
+    prefixes: Sequence[str],
+    *,
+    series_key: str = 'gnmi-series-qos-prefix',
+    asic_model: Optional[str] = None,
+) -> None:
+    """Verify that every subscribed QoS prefix returned itself or descendants.
+
+    Unlike top-level leaf validation, this only checks prefix coverage.
+    Buffer-occupancy and other descendant leaves count as coverage.
+    """
+    try:
+        series = telemetryCache.get_data(series_key)
+    except KeyError:
+        series = None
+    assert isinstance(series, dict) and series, (
+        'Missing or empty %s in telemetry cache' % (series_key,)
+    )
+
+    expected = filter_unsupported_qos_xpaths(
+        (
+            _strip_leading_slash(str(p)).rstrip('/')
+            for p in prefixes
+            if p
+        ),
+        asic_model=asic_model,
+    )
+    observed = set()
+    for entries in series.values():
+        if not isinstance(entries, dict):
+            continue
+        for xpath, entry in entries.items():
+            observed.add(_strip_leading_slash(str(xpath)).rstrip('/'))
+            if isinstance(entry, dict) and entry.get('xpath'):
+                observed.add(_strip_leading_slash(str(entry['xpath'])).rstrip('/'))
+    observed = set(
+        filter_unsupported_qos_xpaths(observed, asic_model=asic_model)
+    )
+
+    def _xpath_under_prefix(xpath: str, prefix: str) -> bool:
+        """True if *xpath* is the prefix node or a descendant (incl. list keys).
+
+        gNMI often returns keyed list instances, e.g. subscribe
+        ``.../headroom-buffer`` yields
+        ``.../headroom-buffer[buffer-type=primary]/state/...``.
+        """
+        if xpath == prefix:
+            return True
+        if xpath.startswith(prefix + '/') or xpath.startswith(prefix + '['):
+            return True
+        return False
+
+    missing = [
+        prefix
+        for prefix in expected
+        if not any(_xpath_under_prefix(xpath, prefix) for xpath in observed)
+    ]
+    allure.attach(
+        '\n'.join(sorted(observed)),
+        'qos_prefix_subscription_observed_xpaths',
+    )
+    assert not missing, (
+        'QoS prefix subscription returned no updates for %s; observed=%s'
+        % (missing, sorted(observed))
+    )
+
+
 def discover_bgp_neighbor_address(dut, *, vrf: str = 'default') -> Optional[str]:
     """Return first BGP neighbor address from NVUE show (mlx lab)."""
     out = dut.run_cmd(
@@ -602,6 +1541,57 @@ def discover_storage_component_name(dut) -> str:
     return 'sda'
 
 
+def list_psu_component_names(dut) -> List[str]:
+    """Present PSU inventory keys (``PSU1``, ``PSU2``, …) from NVUE platform data."""
+    names: List[str] = []
+    seen = set()
+    for cmd in (
+        'nv show platform inventory -o json 2>&1',
+        'nv show system platform component -o json 2>&1',
+    ):
+        out = dut.run_cmd(cmd, validate=False, print_output=False)
+        if not out or 'error' in out[:200].lower():
+            continue
+        try:
+            payload = json.loads(out)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for key, entry in payload.items():
+            name = str(key).strip()
+            if not name.upper().startswith('PSU') or name in seen:
+                continue
+            if isinstance(entry, dict):
+                state = str(entry.get('state') or '').strip().lower()
+                if state in ('absent', 'bad', 'empty', 'not present'):
+                    continue
+            seen.add(name)
+            names.append(name)
+        if names:
+            break
+    return names
+
+
+def discover_psu_component_name(dut) -> Optional[str]:
+    """Pick one present PSU at random for SSIM test_10 (None when the DUT has none)."""
+    global _SELECTED_PSU_COMPONENT_NAME
+    names = list_psu_component_names(dut)
+    if not names:
+        _SELECTED_PSU_COMPONENT_NAME = None
+        logger.warning('No present PSU inventory components found on DUT')
+        return None
+    chosen = RandomizationTool.select_random_value(names).get_returned_value()
+    _SELECTED_PSU_COMPONENT_NAME = chosen
+    logger.info('Selected PSU component for platform hw info: %s (from %s)', chosen, names)
+    return chosen
+
+
+def get_selected_psu_component_name() -> Optional[str]:
+    """PSU name chosen by ``discover_psu_component_name`` / ``build_component_system_gnmi_jobs``."""
+    return _SELECTED_PSU_COMPONENT_NAME
+
+
 def ensure_gnmic_installed_on_collector(server) -> str:
     """Install ``gnmic`` on ``engines.sonic_mgmt`` when missing (grpc-tunnel dial-out)."""
     with allure.step('Ensure gnmic is installed on sonic-mgmt collector'):
@@ -694,7 +1684,12 @@ def _wait_for_collector_gnmic_listener(
     return False
 
 
-def _assert_collector_gnmic_listener(collector: GrpcTunnelServer, *, timeout_sec: int = 20) -> None:
+def _assert_collector_gnmic_listener(
+    collector: GrpcTunnelServer,
+    *,
+    timeout_sec: int = 20,
+    startup_log: str = '',
+) -> None:
     listen_port = GrpcTunnelServer.listen_port(collector.tunnel_address)
     if _wait_for_collector_gnmic_listener(collector, timeout_sec=timeout_sec):
         return
@@ -708,8 +1703,13 @@ def _assert_collector_gnmic_listener(collector: GrpcTunnelServer, *, timeout_sec
         timeout=30,
     )
     pytest.fail(
-        'gnmic tunnel-server not listening on :%d after %ds; port owners: %s'
-        % (listen_port, timeout_sec, (owners or '').strip()[:500])
+        'gnmic tunnel-server not listening on :%d after %ds; port owners: %s; gnmic output: %s'
+        % (
+            listen_port,
+            timeout_sec,
+            (owners or '').strip()[:500],
+            (startup_log or '<empty>').strip()[-500:],
+        )
     )
 
 
@@ -801,6 +1801,7 @@ def _configure_dut_grpc_tunnel(
     listen_port: int,
     *,
     use_mtls: bool = True,
+    is_nvos: bool = False,
 ) -> None:
     """NVUE grpc-tunnel server; mTLS uses SSIM ``configure_grpc_tunnel_vx`` field parity."""
     if use_mtls:
@@ -825,19 +1826,59 @@ def _configure_dut_grpc_tunnel(
                 op_param_value=str(listen_port),
                 apply=True,
             )
+    if is_nvos:
+        # NVOS runs the dial-out client as a ``nv-grpctunnel-<name>`` docker container started
+        # by ``nv config apply`` -- there is no ``nv-grpctunneld@`` systemd unit or per-server
+        # ``.cfg`` file (that is the Cumulus/SSIM model), so wait on the container instead.
+        _wait_dut_grpc_tunnel_container_running(dut, tunnel_name)
+        return
     _assert_dut_grpc_tunnel_cfg_present(dut, tunnel_name)
+    _pause_dut_grpc_tunnel_client(dut, tunnel_name)
 
 
-def _unset_dut_grpc_tunnel(dut, tunnel_name: str) -> None:
+def _pause_dut_grpc_tunnel_client(dut, tunnel_name: str) -> None:
+    """Stop the DUT dial-out client until gnmic tunnel-server is listening (SSIM ordering)."""
     unit = _dut_grpc_tunnel_unit(tunnel_name)
-    try:
-        dut.run_cmd('sudo systemctl stop %s' % (unit,), validate=False)
-    except Exception:
-        pass
+    dut.run_cmd('sudo systemctl stop %s' % (unit,), validate=False)
+
+
+def _wait_dut_grpc_tunnel_container_running(
+    dut,
+    tunnel_name: str,
+    *,
+    timeout_sec: int = _GRPC_TUNNEL_CONTAINER_WAIT_SEC,
+) -> None:
+    """NVOS: ``nv config apply`` starts the ``nv-grpctunnel-<name>`` container asynchronously."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if _is_dut_grpc_tunnel_client_running(dut, tunnel_name):
+            return
+        time.sleep(_GRPC_TUNNEL_CONTAINER_POLL_SEC)
+    docker_name = _dut_grpc_tunnel_docker_name(tunnel_name)
+    listing = dut.run_cmd(
+        "docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null || true",
+        validate=False,
+    )
+    pytest.fail(
+        'gRPC tunnel client container %s not running %ds after NVUE apply. '
+        'docker ps -a: %s'
+        % (docker_name, timeout_sec, (listing or '').strip()[:_DUT_OUTPUT_EXCERPT_CHARS])
+    )
+
+
+def _unset_dut_grpc_tunnel(dut, tunnel_name: str, *, is_nvos: bool = False) -> None:
+    if not is_nvos:
+        unit = _dut_grpc_tunnel_unit(tunnel_name)
+        try:
+            dut.run_cmd('sudo systemctl stop %s' % (unit,), validate=False)
+        except Exception:
+            pass
     try:
         from ngts.nvos_tools.system.System import System
 
-        System().grpc_tunnel.server.tunnel_name[tunnel_name].unset(apply=True)
+        System().grpc_tunnel.server.tunnel_name[tunnel_name].unset(
+            apply=True, ask_for_confirmation=True, dut_engine=dut
+        )
     except Exception as exc:
         logger.warning('grpc-tunnel unset %s: %s', tunnel_name, exc)
 
@@ -881,13 +1922,25 @@ def _start_dut_grpc_tunnel(dut, tunnel_name: str) -> None:
     )
 
 
-def _restart_dut_grpc_tunnel(dut, tunnel_name: str) -> None:
+def _restart_dut_grpc_tunnel(dut, tunnel_name: str, *, is_nvos: bool = False) -> None:
     """Force an immediate dial-out attempt after gnmic is listening (SSIM ``restart_grpctunnel``)."""
+    if is_nvos:
+        # NVOS: bounce the dial-out container to retry immediately (no systemd template unit).
+        docker_name = _dut_grpc_tunnel_docker_name(tunnel_name)
+        for restart_cmd in (
+            'sudo docker restart %s' % (docker_name,),
+            'docker restart %s' % (docker_name,),
+        ):
+            out = dut.run_cmd('%s 2>/dev/null || true' % (restart_cmd,), validate=False) or ''
+            if docker_name in _dut_shell_lines(out):
+                break
+        time.sleep(_GRPC_TUNNEL_CONTAINER_POLL_SEC)
+        _wait_dut_grpc_tunnel_container_running(dut, tunnel_name)
+        return
     unit = _dut_grpc_tunnel_unit(tunnel_name)
-    if _systemctl_is_active(dut, unit) in ('active', 'activating'):
-        dut.run_cmd('sudo systemctl restart %s' % (unit,), validate=False)
-    else:
-        _start_dut_grpc_tunnel(dut, tunnel_name)
+    dut.run_cmd('sudo systemctl stop %s' % (unit,), validate=False)
+    time.sleep(2)
+    _start_dut_grpc_tunnel(dut, tunnel_name)
 
 
 def _grpc_tunnel_connection_status(dut, tunnel_name: str) -> Dict[str, str]:
@@ -926,6 +1979,8 @@ def _assert_grpc_tunnel_connected(
     *,
     listen_port: int,
     timeout_sec: int = 90,
+    sonic_mgmt=None,
+    gnmic_log_paths: Optional[Sequence[str]] = None,
 ) -> None:
     """Hard-fail when DUT grpc-tunnel client never registers with gnmic."""
     if _wait_for_grpc_tunnel_connection(dut, tunnel_name, timeout_sec=timeout_sec):
@@ -933,19 +1988,41 @@ def _assert_grpc_tunnel_connected(
         return
     conn = _grpc_tunnel_connection_status(dut, tunnel_name)
     unit = _dut_grpc_tunnel_unit(tunnel_name)
+    docker_name = _dut_grpc_tunnel_docker_name(tunnel_name)
     journal = dut.run_cmd(
         'sudo journalctl -u %s -n 30 --no-pager 2>/dev/null || true' % (unit,),
         validate=False,
     )
+    docker_logs = dut.run_cmd(
+        'sudo docker logs --tail 40 %s 2>&1 || true' % (docker_name,),
+        validate=False,
+    )
+    gnmi_server = dut.run_cmd(
+        'nv show system gnmi-server -o json 2>/dev/null || true',
+        validate=False,
+    )
+    gnmic_tails = []
+    if sonic_mgmt is not None and gnmic_log_paths:
+        for log_path in gnmic_log_paths:
+            tail = EngineAdapterTool.run_cmd(
+                sonic_mgmt,
+                'tail -c 2500 %s 2>/dev/null || true' % (shlex.quote(log_path),),
+                timeout=60,
+            )
+            if (tail or '').strip():
+                gnmic_tails.append('%s: %s' % (log_path, (tail or '').strip()[-2000:]))
     pytest.fail(
         'gRPC tunnel %s did not reach register/tunnel=yes within %ds (collector :%d). '
-        'last status=%s journal tail: %s'
+        'last status=%s gnmi-server: %s journal tail: %s docker logs: %s gnmic logs: %s'
         % (
             tunnel_name,
             timeout_sec,
             listen_port,
             conn,
+            (gnmi_server or '').strip()[-600:],
             (journal or '').strip()[-1200:],
+            (docker_logs or '').strip()[-800:],
+            ' | '.join(gnmic_tails)[:2500] if gnmic_tails else '(no gnmic sample log yet)',
         )
     )
 
@@ -977,13 +2054,14 @@ def setup_gnmi_coexistence_session(
     jobs: Sequence[GnmiCollectionJob],
     *,
     use_mtls: bool = True,
+    is_nvos: bool = False,
 ) -> GnmiCoexistenceSession:
     """Create NVUE grpc-tunnel servers and gnmic collectors for each job."""
     from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
         GNMI_DIALOUT_TARGET_WAIT,
     )
 
-    session = GnmiCoexistenceSession()
+    session = GnmiCoexistenceSession(is_nvos=is_nvos)
     session.gnmic_bin = ensure_gnmic_installed_on_collector(sonic_mgmt)
     gnmi_user, gnmi_pass = _resolve_dut_gnmi_basic_credentials(dut)
     mtls_material = None
@@ -1001,6 +2079,7 @@ def setup_gnmi_coexistence_session(
                     job.tunnel_name,
                     job.listen_port,
                     use_mtls=use_mtls,
+                    is_nvos=is_nvos,
                 )
                 configured_tunnels.add(job.tunnel_name)
             if use_mtls and mtls_material is not None:
@@ -1029,6 +2108,7 @@ def setup_gnmi_coexistence_session(
                     gnmi_tls_ca_file=mtls_material.remote_dut_ca_crt,
                     gnmi_tls_cert_file=mtls_material.remote_gnmic_client_crt,
                     gnmi_tls_key_file=mtls_material.remote_gnmic_client_key,
+                    grpc_auth=True,
                 )
                 collector.write_config()
             else:
@@ -1062,7 +2142,7 @@ def teardown_gnmi_coexistence_session(dut, session: GnmiCoexistenceSession) -> N
                 setup.collector.delete()
             except Exception:
                 pass
-            _unset_dut_grpc_tunnel(dut, setup.tunnel_name)
+            _unset_dut_grpc_tunnel(dut, setup.tunnel_name, is_nvos=session.is_nvos)
         session.setups.clear()
         if session.mtls_configured:
             from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
@@ -1085,18 +2165,20 @@ def _start_gnmic_sample_subscription(
     sample_interval: str,
     duration_sec: int,
     gnmic_bin: str = 'gnmic',
+    encoding: str = 'json',
 ) -> str:
     out_path = _remote_gnmi_log_path(collector.tunnel_name, model)
     _kill_stale_collector_gnmic(collector)
     paths_cli = ' '.join('--path %s' % (shlex.quote(p),) for p in paths)
     mtls_suffix = collector.gnmi_mtls_cli_suffix()
     inner = (
-        '%s%s -d subscribe --mode stream --stream-mode sample -i %s --encoding json %s '
+        '%s%s -d subscribe --mode stream --stream-mode sample -i %s --encoding %s %s '
         '> %s 2>&1'
     ) % (
         _collector_gnmic_base(collector, gnmic_bin),
         mtls_suffix,
         shlex.quote(sample_interval),
+        shlex.quote(encoding),
         paths_cli,
         shlex.quote(out_path),
     )
@@ -1104,8 +2186,18 @@ def _start_gnmic_sample_subscription(
         'OUT=%s; rm -f "$OUT"; nohup timeout --foreground %d bash -c %s >/dev/null 2>&1 &'
     ) % (shlex.quote(out_path), int(duration_sec), shlex.quote(inner))
     assert collector.server is not None
-    EngineAdapterTool.run_cmd(collector.server, start_cmd, timeout=60)
-    _assert_collector_gnmic_listener(collector, timeout_sec=25)
+    startup_log = ''
+    for attempt in (1, 2):
+        EngineAdapterTool.run_cmd(collector.server, start_cmd, timeout=60)
+        if _wait_for_collector_gnmic_listener(collector, timeout_sec=25):
+            return out_path
+        startup_log = _read_remote_file(collector.server, out_path)
+        logger.warning(
+            'gnmic tunnel-server for %s/%s did not bind on attempt %d; gnmic output: %s',
+            collector.tunnel_name, model, attempt, (startup_log or '<empty>').strip()[-500:],
+        )
+        _kill_stale_collector_gnmic(collector)
+    _assert_collector_gnmic_listener(collector, timeout_sec=25, startup_log=startup_log)
     return out_path
 
 
@@ -1131,6 +2223,11 @@ def _wait_for_remote_file(server, path: str, *, min_bytes: int = 64, timeout_sec
         except ValueError:
             pass
         time.sleep(2)
+
+
+def _gnmi_log_has_unsupported_yang_paths(log_content: str) -> bool:
+    """True when gnmic connected but the DUT YANG tree lacks the subscribed paths."""
+    return 'does not exist in yang models' in (log_content or '').lower()
 
 
 def _populate_gnmi_cache_from_session(
@@ -1171,11 +2268,34 @@ def _populate_gnmi_cache_from_session(
                 )
             if 'unauthenticated' in lowered or 'authentication failed' in lowered:
                 pytest.fail(
-                    'gnmic gnmi-server Basic auth failed for %s (%s); use DUT NVUE credentials '
-                    '(SSIM cumulus/NvidiaR0cks! parity, not admin/admin). tail: %s'
+                    'gnmic gnmi-server auth failed for %s (%s); SSIM dial-out uses grpc_auth=True '
+                    '(mTLS + YAML username/password, no --auth-scheme Basic). tail: %s'
                     % (job.model, log_path, log_content.strip()[-800:])
                 )
+            if _gnmi_log_has_unsupported_yang_paths(log_content):
+                logger.warning(
+                    'gNMI %s: subscribed paths are absent from DUT YANG (%s); '
+                    'skipping cache (mlx-lab / build parity)',
+                    job.model,
+                    log_path,
+                )
+                continue
         if not series:
+            if _gnmi_log_has_unsupported_yang_paths(log_content):
+                logger.warning(
+                    'gNMI %s: no samples and YANG paths unsupported on DUT (%s)',
+                    job.model,
+                    log_path,
+                )
+                continue
+            if job.optional:
+                logger.warning(
+                    'gNMI %s (optional): no samples on this DUT (%s); tail=%s',
+                    job.model,
+                    log_path,
+                    (log_content or '').strip()[-500:],
+                )
+                continue
             pytest.fail(
                 'gNMI %s produced no timestamps (%s); check grpc-tunnel register/tunnel and gnmic logs'
                 % (job.model, log_path)
@@ -1185,7 +2305,8 @@ def _populate_gnmi_cache_from_session(
             job.model,
             series,
             sample_interval=job.sample_interval,
-            tolerance=0.25,
+            tolerance=0.1,
+            timeout_sec=job.duration_sec,
         )
         logger.info('gNMI %s: %d timestamps from %s', job.model, len(series), log_path)
     try:
@@ -1198,6 +2319,29 @@ def _populate_gnmi_cache_from_session(
     telemetryCache.add_data('gnmi_timing', existing)
 
 
+def _capture_system_pids_during_window(dut, jobs: Sequence[GnmiCollectionJob]) -> None:
+    """SSIM3 ``capture_pids_during_subscription`` — snapshot active-service PIDs *during* streaming.
+
+    Runs only when a ``/system`` job is present. Taking the ``get_system_process_pid`` snapshot once
+    the subscriptions are live (not at discovery time) is what lets ``filter_old_process_pids`` tell
+    a genuinely-missing leaf (PID alive during the window) from a stale one (PID already gone),
+    independently of the received stream. Best-effort: failures leave the cache empty and the
+    validator falls back to the received stream.
+    """
+    if not any(job.model == 'system' for job in jobs):
+        return
+    try:
+        captured = get_system_process_pid_map(dut)
+        telemetryCache.add_data(_SYSTEM_CAPTURED_PIDS_CACHE_KEY, captured)
+        logger.info(
+            'Captured PIDs during subscription for %d active service(s): %s',
+            len(captured), {svc: pids for svc, pids in captured.items()},
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort parity with SSIM3 (logs + continues)
+        logger.warning('capture_pids_during_subscription failed: %s', exc)
+        telemetryCache.add_data(_SYSTEM_CAPTURED_PIDS_CACHE_KEY, {})
+
+
 def run_gnmi_with_parallel_work(
     dut,
     sonic_mgmt,
@@ -1206,17 +2350,23 @@ def run_gnmi_with_parallel_work(
     *,
     startup_grace_sec: int = 20,
     defer_teardown: bool = True,
+    use_mtls: bool = True,
+    is_nvos: bool = False,
 ) -> Optional[GnmiCoexistenceSession]:
     """Start gnmic subscriptions, run ``work()`` (e.g. OTLP collect), then parse gNMI cache.
 
     When ``defer_teardown`` is True the grpc-tunnel + gnmic session stays up until the caller
     invokes :func:`teardown_gnmi_coexistence_session` (SSIM ``post_suite_hook`` parity).
+
+    ``use_mtls=False`` selects plain addr+port dial-out (NVOS coexistence / grpc_tunnel basic).
     """
     if not jobs:
         work()
         return None
 
-    session = setup_gnmi_coexistence_session(dut, sonic_mgmt, jobs)
+    session = setup_gnmi_coexistence_session(
+        dut, sonic_mgmt, jobs, use_mtls=use_mtls, is_nvos=is_nvos
+    )
     out_paths: Dict[str, str] = {}
     succeeded = False
     try:
@@ -1231,21 +2381,32 @@ def run_gnmi_with_parallel_work(
                     sample_interval=job.sample_interval,
                     duration_sec=gnmi_run_sec,
                     gnmic_bin=session.gnmic_bin,
+                    encoding=job.encoding,
                 )
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
+            GNMI_DIALOUT_RETRY_INTERVAL,
+        )
+
+        # DUT docker dial-out can take retry_interval + container boot before register/tunnel yes.
+        tunnel_connect_timeout = max(120, GNMI_DIALOUT_RETRY_INTERVAL * 3 + startup_grace_sec)
         restarted_tunnels = set()
         with allure.step('Restart DUT grpc-tunnel clients after gnmic is listening'):
             for job in jobs:
                 if job.tunnel_name in restarted_tunnels:
                     continue
                 restarted_tunnels.add(job.tunnel_name)
-                _restart_dut_grpc_tunnel(dut, job.tunnel_name)
+                _restart_dut_grpc_tunnel(dut, job.tunnel_name, is_nvos=is_nvos)
+                time.sleep(2)
             for job in jobs:
                 _assert_grpc_tunnel_connected(
                     dut,
                     job.tunnel_name,
                     listen_port=job.listen_port,
-                    timeout_sec=90,
+                    timeout_sec=tunnel_connect_timeout,
+                    sonic_mgmt=sonic_mgmt,
+                    gnmic_log_paths=[out_paths.get(job.model)] if job.model in out_paths else None,
                 )
+        _capture_system_pids_during_window(dut, jobs)
         work()
         time.sleep(min(startup_grace_sec, 10))
         with allure.step('Parse gnmic logs into telemetry cache'):
@@ -1287,6 +2448,7 @@ def run_gnmi_coexistence_collection(
                     sample_interval=job.sample_interval,
                     duration_sec=gnmi_run_sec,
                     gnmic_bin=session.gnmic_bin,
+                    encoding=job.encoding,
                 )
             if parallel_wait_sec is None:
                 time.sleep(gnmi_run_sec)
@@ -1306,39 +2468,112 @@ def run_gnmi_coexistence_collection(
     return None
 
 
+def _validate_sample_stream_timing_intervals(
+    intervals: Sequence[float],
+    *,
+    sample_interval: float,
+    tolerance: float,
+    timeout_sec: int = 0,
+    update_count_tolerance: int = 4,
+    count_validation: bool = True,
+) -> None:
+    """SSIM ``validate_stream_subscription_timing`` sample-mode rules (second-precision series)."""
+    if sample_interval <= 0:
+        raise AssertionError('Invalid sample_interval: %s' % (sample_interval,))
+    if len(intervals) < 1:
+        raise AssertionError('Insufficient subscription updates for stream timing validation')
+
+    excessive_intervals = 0
+    for i, interval in enumerate(intervals):
+        if i > 0 and interval > (2 * sample_interval):
+            raise AssertionError(
+                'Interval %.2fs is more than twice the sample interval %ss'
+                % (interval, sample_interval)
+            )
+        if interval > sample_interval:
+            if abs(interval - (sample_interval + 1)) <= tolerance:
+                continue
+            if abs(interval - sample_interval) > tolerance:
+                excessive_intervals += 1
+                if excessive_intervals > 3:
+                    raise AssertionError(
+                        'Too many intervals (%d) exceed configured sample interval %ss '
+                        'by more than tolerance ±%.2fs'
+                        % (excessive_intervals, sample_interval, tolerance)
+                    )
+
+    if count_validation and timeout_sec > 0:
+        expected_updates = int(timeout_sec // sample_interval)
+        actual_updates = len(intervals) + 1
+        if abs(actual_updates - expected_updates) > update_count_tolerance:
+            raise AssertionError(
+                'Number of sample updates (%d) differs from expected count (%d) '
+                'by more than allowed tolerance (%d)'
+                % (actual_updates, expected_updates, update_count_tolerance)
+            )
+
+
 def _timing_summary_from_series(
     model: str,
     series: Dict[str, Dict[str, Dict[str, Any]]],
     *,
     sample_interval: str,
     tolerance: float,
+    timeout_sec: int = 0,
 ) -> Dict[str, Any]:
+    """Build ``gnmi_timing[model]`` using SSIM ``compute_gnmi_time_gap_analysis`` semantics."""
     s_sec = _parse_interval_to_seconds(sample_interval) or 0.0
     result: Dict[str, Any] = {
         'model': model,
-        'expected': {'sample_interval': s_sec, 'tolerance': tolerance},
+        'expected': {
+            'sample_interval': s_sec,
+            'tolerance': tolerance,
+            'timeout': timeout_sec,
+            'count_validation': False,
+        },
         'result': 'fail',
     }
     if not series:
         result['error'] = 'empty series'
         return result
-    ts_keys = sorted(int(k) for k in series if str(k).isdigit())
+    ts_keys = sorted(set(int(k) for k in series if str(k).isdigit()))
     if len(ts_keys) < 2:
         result['error'] = 'too few timestamps (%d)' % (len(ts_keys),)
         return result
-    min_gap = s_sec * (1 - tolerance) if tolerance < 1 else s_sec - tolerance
-    max_gap = s_sec * (1 + tolerance) if tolerance < 1 else s_sec + tolerance
-    violations = []
-    for prev_ts, cur_ts in zip(ts_keys[:-1], ts_keys[1:]):
-        gap = float(cur_ts - prev_ts)
-        if gap < min_gap or gap > max_gap:
-            violations.append({'prev_ts': prev_ts, 'cur_ts': cur_ts, 'gap_s': gap})
-    if violations:
-        result['violations'] = violations
-        result['error'] = '%d interval violations' % (len(violations),)
-    else:
+
+    intervals = [float(ts_keys[i + 1] - ts_keys[i]) for i in range(len(ts_keys) - 1)]
+    try:
+        _validate_sample_stream_timing_intervals(
+            intervals,
+            sample_interval=s_sec,
+            tolerance=tolerance,
+            timeout_sec=timeout_sec,
+            update_count_tolerance=4,
+            count_validation=False,
+        )
         result['result'] = 'pass'
+    except AssertionError as exc:
+        result['error'] = str(exc)
     return result
+
+
+def assert_gnmi_timing_pass(
+    model: str,
+    *,
+    cache_key: str = 'gnmi_timing',
+    context: str = '',
+) -> None:
+    """SSIM ``test_03_gnmi_interface_sample_interval_adherence`` parity."""
+    try:
+        timing = telemetryCache.get_data(cache_key)
+    except KeyError:
+        timing = None
+    model_result = timing.get(model) if isinstance(timing, dict) else None
+    label = '%s%s' % (model, (' (%s)' % context if context else ''))
+    assert model_result is not None, 'Missing GNMI timing analysis for %s in telemetry cache' % (label,)
+    assert model_result.get('result') == 'pass', (
+        '%s sampling interval adherence failed: %s' % (model, model_result)
+    )
 
 
 def build_smoke_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectionJob]:
@@ -1386,17 +2621,59 @@ def build_smoke_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectio
                     group_size=1,
                 )
             )
+
+    # SSIM3 ``test_07_interface_top_level_subscription``: a single top-level subscription
+    # to ``/interfaces/interface[name=<iface>]``. Expected-leaf coverage (full SSIM3
+    # interface_xpath set) is validated strictly per timestamp from ``gnmi-series-interface``.
+    iface = getattr(lab, 'test_iface', None)
+    if iface:
+        jobs.append(
+            GnmiCollectionJob(
+                model='interface',
+                tunnel_name='coexistence_smoke_interface_top',
+                listen_port=SMOKE_GNMI_PORT_INTERFACE_TOP,
+                paths=[interface_top_level_xpath(iface)],
+                sample_interval='15s',
+                duration_sec=duration_sec,
+                attrs=(),
+                populate_kwargs={'interface': iface},
+                group_size=1,
+            )
+        )
+
+    # SSIM3 ``test_08_system_top_level_subscription``: a single top-level subscription to
+    # ``/system``. The dynamic key set (CPU cores / mount points / active-service PIDs / nvue
+    # version) is discovered here and cached so the expected-leaf enumeration in
+    # ``build_smoke_system_expected_xpaths`` stays consistent with the subscription window.
+    # Full SSIM3 system_xpath coverage is validated strictly per timestamp from
+    # ``gnmi-series-system``.
+    system_context = discover_system_top_level_context(dut)
+    telemetryCache.add_data(_SYSTEM_CONTEXT_CACHE_KEY, system_context)
+    jobs.append(
+        GnmiCollectionJob(
+            model='system',
+            tunnel_name='coexistence_smoke_system_top',
+            listen_port=SMOKE_GNMI_PORT_SYSTEM_TOP,
+            paths=[system_top_level_xpath()],
+            sample_interval='15s',
+            duration_sec=duration_sec,
+            attrs=(),
+            populate_kwargs={},
+            group_size=1,
+        )
+    )
     return jobs
 
 
-def build_interface_qos_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectionJob]:
+def build_interface_qos_gnmi_jobs(
+    dut, *, duration_sec: int = 120, is_nvos: bool
+) -> List[GnmiCollectionJob]:
     lab = resolve_cumulus_lab_interfaces_on_dut(dut)
     iface_kwargs = {'interface': lab.test_iface}
     paths = resolve_model_xpaths('interface', INTERFACE_QOS_GNMI_ATTRS, iface_kwargs)
-    if not paths:
-        return []
-    return [
-        GnmiCollectionJob(
+    jobs: List[GnmiCollectionJob] = []
+    if paths:
+        jobs.append(GnmiCollectionJob(
             model='interface',
             tunnel_name='coexistence_interface',
             listen_port=57421,
@@ -1406,8 +2683,228 @@ def build_interface_qos_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiC
             attrs=INTERFACE_QOS_GNMI_ATTRS,
             populate_kwargs=iface_kwargs,
             group_size=2,
+        ))
+
+    # NVOS declares the ``/qos`` prefixes in the UMF ``configured-prefixes.yaml`` but has no
+    # external->internal mapping behind them, so the subscription is accepted and then streams
+    # nothing. That silent acceptance never trips ``_gnmi_log_has_unsupported_yang_paths``, so an
+    # NVOS run would hard-fail on an empty sample log instead of skipping.
+    qos_prefixes = [] if is_nvos else generate_qos_container_xpaths(lab.test_iface)
+    if qos_prefixes:
+        jobs.append(GnmiCollectionJob(
+            model='qos-prefix',
+            tunnel_name='coexistence_qos_prefix',
+            listen_port=57422,
+            paths=qos_prefixes,
+            sample_interval='15s',
+            duration_sec=duration_sec,
+        ))
+    return jobs
+
+
+ON_CHANGE_INTERFACE_ATTRS: Tuple[str, ...] = ('description',)
+ON_CHANGE_INTERFACE_LISTEN_PORT = 57425
+ON_CHANGE_INTERFACE_TUNNEL = 'coexistence_interface_onchange'
+ON_CHANGE_INTERFACE_DURATION_SEC = 90
+ON_CHANGE_INTERFACE_POST_CHANGE_WAIT_SEC = 15
+
+
+def _remote_gnmi_on_change_log_path(tunnel_name: str, model: str) -> str:
+    return '/tmp/%s_gnmi_%s_onchange.json' % (tunnel_name, model)
+
+
+def _start_gnmic_on_change_subscription(
+    collector: GrpcTunnelServer,
+    *,
+    model: str,
+    paths: Sequence[str],
+    duration_sec: int,
+    gnmic_bin: str = 'gnmic',
+) -> str:
+    """Start gnmic ``stream-mode on-change`` subscription; return remote log path."""
+    out_path = _remote_gnmi_on_change_log_path(collector.tunnel_name, model)
+    _kill_stale_collector_gnmic(collector)
+    paths_cli = ' '.join('--path %s' % (shlex.quote(p),) for p in paths)
+    mtls_suffix = collector.gnmi_mtls_cli_suffix()
+    inner = (
+        '%s%s -d subscribe --mode stream --stream-mode on-change --encoding json %s '
+        '> %s 2>&1'
+    ) % (
+        _collector_gnmic_base(collector, gnmic_bin),
+        mtls_suffix,
+        paths_cli,
+        shlex.quote(out_path),
+    )
+    start_cmd = (
+        'OUT=%s; rm -f "$OUT"; nohup timeout --foreground %d bash -c %s >/dev/null 2>&1 &'
+    ) % (shlex.quote(out_path), int(duration_sec), shlex.quote(inner))
+    assert collector.server is not None
+    EngineAdapterTool.run_cmd(collector.server, start_cmd, timeout=60)
+    _assert_collector_gnmic_listener(collector, timeout_sec=25)
+    return out_path
+
+
+def _set_interface_description(dut, interface: str, description: str) -> None:
+    with allure.step('Set interface %s description=%r' % (interface, description)):
+        Port(name=interface).interface.set(
+            NvosConst.DESCRIPTION,
+            description,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
+
+
+def _clear_interface_description(dut, interface: str) -> None:
+    with allure.step('Clear interface %s description' % (interface,)):
+        Port(name=interface).interface.unset(
+            op_param=NvosConst.DESCRIPTION,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
+
+
+def _entry_leaf_values(entry: Any) -> List[Any]:
+    """Flatten leaf values of a parsed gNMI entry.
+
+    :func:`_extract_updates` merges the gnmic ``values`` dict alongside ``xpath``
+    (there is no single ``value`` key), so collect every non-``xpath`` leaf.
+    """
+    values: List[Any] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if key == 'xpath':
+                    continue
+                _walk(val)
+        elif isinstance(node, (list, tuple, set)):
+            for item in node:
+                _walk(item)
+        elif node is not None:
+            values.append(node)
+
+    _walk(entry)
+    return values
+
+
+def _extract_on_change_values(series: Dict[str, Any], *, xpath_substr: str) -> List[Any]:
+    """Collect update values whose xpath contains *xpath_substr*."""
+    values: List[Any] = []
+    needle = xpath_substr.lstrip('/')
+    for _ts, entries in (series or {}).items():
+        if not isinstance(entries, dict):
+            continue
+        for key, entry in entries.items():
+            xpath = key if isinstance(key, str) else ''
+            if isinstance(entry, dict):
+                xpath = str(entry.get('xpath') or xpath)
+            if needle not in xpath.lstrip('/'):
+                continue
+            values.extend(_entry_leaf_values(entry))
+    return values
+
+
+def run_and_validate_interface_on_change_subscription(
+    dut,
+    sonic_mgmt,
+    *,
+    interface: str,
+    duration_sec: int = ON_CHANGE_INTERFACE_DURATION_SEC,
+    is_nvos: bool = False,
+) -> None:
+    """SSIM ``test_13_on_change_subscription_interface`` — dial-out on-change for description."""
+    iface_kwargs = {'interface': interface}
+    paths = resolve_model_xpaths('interface', ON_CHANGE_INTERFACE_ATTRS, iface_kwargs)
+    assert paths, 'No on-change interface xpaths resolved for %r' % (interface,)
+
+    job = GnmiCollectionJob(
+        model='interface-onchange',
+        tunnel_name=ON_CHANGE_INTERFACE_TUNNEL,
+        listen_port=ON_CHANGE_INTERFACE_LISTEN_PORT,
+        paths=paths,
+        sample_interval='0s',
+        duration_sec=duration_sec,
+        attrs=ON_CHANGE_INTERFACE_ATTRS,
+        populate_kwargs=iface_kwargs,
+        group_size=1,
+    )
+    new_description = 'coex-onchange-%d' % (int(time.time()),)
+    use_mtls = not is_nvos
+    session = setup_gnmi_coexistence_session(
+        dut, sonic_mgmt, [job], use_mtls=use_mtls, is_nvos=is_nvos
+    )
+    out_path = ''
+    try:
+        with allure.step('Start gNMI on-change subscription for interface description'):
+            out_path = _start_gnmic_on_change_subscription(
+                session.setups[0].collector,
+                model=job.model,
+                paths=job.paths,
+                duration_sec=duration_sec,
+                gnmic_bin=session.gnmic_bin,
+            )
+        from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
+            GNMI_DIALOUT_RETRY_INTERVAL,
         )
-    ]
+
+        tunnel_connect_timeout = max(120, GNMI_DIALOUT_RETRY_INTERVAL * 3 + 20)
+        with allure.step('Restart DUT grpc-tunnel client for on-change subscription'):
+            _restart_dut_grpc_tunnel(dut, job.tunnel_name, is_nvos=is_nvos)
+            time.sleep(2)
+            _assert_grpc_tunnel_connected(
+                dut,
+                job.tunnel_name,
+                listen_port=job.listen_port,
+                timeout_sec=tunnel_connect_timeout,
+                sonic_mgmt=sonic_mgmt,
+                gnmic_log_paths=[out_path],
+            )
+
+        # Allow sync response before triggering the change.
+        time.sleep(5)
+        _set_interface_description(dut, interface, new_description)
+        time.sleep(ON_CHANGE_INTERFACE_POST_CHANGE_WAIT_SEC)
+
+        with allure.step('Parse on-change gnmic log into gnmi_on_change cache'):
+            _wait_for_remote_file(sonic_mgmt, out_path, timeout_sec=45)
+            log_content = _read_remote_file(sonic_mgmt, out_path)
+            if _gnmi_log_has_unsupported_yang_paths(log_content):
+                pytest.skip(
+                    'Interface description on-change path unsupported on DUT YANG (%s)'
+                    % (out_path,)
+                )
+            series = parse_gnmic_log_to_series(log_content)
+            if not series:
+                pytest.fail(
+                    'gNMI on-change produced no timestamps (%s); tail=%s'
+                    % (out_path, (log_content or '')[-800:])
+                )
+            telemetryCache.add_data('gnmi_on_change-series-interface', series)
+            allure.attach(
+                'timestamps=%d description=%r' % (len(series), new_description),
+                'on_change_interface_summary',
+            )
+
+        with allure.step('Validate on-change updates include the new interface description'):
+            values = _extract_on_change_values(series, xpath_substr='description')
+            allure.attach(str(values), 'on_change_description_values')
+            assert values, (
+                'No on-change updates for interface description; series timestamps=%s'
+                % (sorted(series.keys()),)
+            )
+            normalized = {str(v).strip().strip('"') for v in values if v is not None}
+            assert new_description in normalized, (
+                'Expected description %r in on-change updates; got %r'
+                % (new_description, sorted(normalized))
+            )
+    finally:
+        try:
+            _clear_interface_description(dut, interface)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning('Failed to clear interface description: %s', exc)
+        teardown_gnmi_coexistence_session(dut, session)
 
 
 def build_component_system_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectionJob]:
@@ -1415,6 +2912,15 @@ def build_component_system_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[Gn
     component_kwargs = {'component_name': component_name}
     system_paths = resolve_model_xpaths('system', SYSTEM_GNMI_ATTRS, {})
     component_paths = resolve_model_xpaths('component', COMPONENT_GNMI_ATTRS, component_kwargs)
+    cpu_kwargs = {'component_name': CPU_COMPONENT_NAME}
+    cpu_paths = resolve_model_xpaths('component', CPU_PLATFORM_HW_GNMI_ATTRS, cpu_kwargs)
+    psu_name = discover_psu_component_name(dut)
+    psu_kwargs = {'component_name': psu_name} if psu_name else {}
+    psu_paths = (
+        ['/components/component/state/%s' % (leaf,) for leaf in PSU_STATE_LEAF_BY_ATTR.values()]
+        if psu_name
+        else []
+    )
     jobs: List[GnmiCollectionJob] = []
     if system_paths:
         jobs.append(
@@ -1442,6 +2948,37 @@ def build_component_system_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[Gn
                 attrs=COMPONENT_GNMI_ATTRS,
                 populate_kwargs=component_kwargs,
                 group_size=2,
+            )
+        )
+    if cpu_paths:
+        jobs.append(
+            GnmiCollectionJob(
+                model=CPU_COMPONENT_GNMI_MODEL,
+                tunnel_name='coexistence_component_cpu',
+                listen_port=CPU_COMPONENT_GNMI_LISTEN_PORT,
+                paths=cpu_paths,
+                sample_interval='5s',
+                duration_sec=duration_sec,
+                attrs=CPU_PLATFORM_HW_GNMI_ATTRS,
+                populate_kwargs=cpu_kwargs,
+                group_size=1,
+                encoding=CPU_COMPONENT_GNMI_ENCODING,
+            )
+        )
+    if psu_paths:
+        jobs.append(
+            GnmiCollectionJob(
+                model=PSU_COMPONENT_GNMI_MODEL,
+                tunnel_name='coexistence_component_psu',
+                listen_port=PSU_COMPONENT_GNMI_LISTEN_PORT,
+                paths=psu_paths,
+                sample_interval='5s',
+                duration_sec=duration_sec,
+                attrs=PSU_PLATFORM_HW_GNMI_ATTRS,
+                populate_kwargs=psu_kwargs,
+                group_size=1,
+                encoding=PSU_COMPONENT_GNMI_ENCODING,
+                optional=True,
             )
         )
     return jobs

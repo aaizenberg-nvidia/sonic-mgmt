@@ -18,7 +18,16 @@ _INTERFACE_TRIPLETS: Tuple[Tuple[str, str, str], ...] = (
     ("swp1", "swp2", "swp3"),  # flat front-panel naming (e.g. SN5600 lab)
 )
 
-_SWP_NAME_RE = re.compile(r"^swp\S+", re.MULTILINE)
+# Front-panel data ports across platforms:
+#   Cumulus: ``swp1``, ``swp1s0``, ``swp61s0``
+#   NVOS:    ``swA1p1``, ``sw44p1``
+_FRONT_PANEL_RE = re.compile(r"^(?:swp\d|sw[A-Za-z]*\d+p\d)")
+_SWP_NAME_RE = re.compile(r"^(?:swp\d|sw[A-Za-z]*\d+p\d)\S*", re.MULTILINE)
+
+
+def is_front_panel_port(name: str) -> bool:
+    """True for Cumulus ``swp*`` and NVOS ``sw<plane><id>p<port>`` ports."""
+    return bool(_FRONT_PANEL_RE.match(str(name)))
 
 
 @dataclass(frozen=True)
@@ -51,7 +60,7 @@ def dut_interface_exists(dut, iface: str) -> bool:
 
 
 def discover_swp_interfaces_on_dut(dut) -> Tuple[str, ...]:
-    """Return sorted front-panel ``swp*`` names from ``nv show interface``."""
+    """Return sorted front-panel port names (Cumulus ``swp*`` / NVOS ``sw*p*``)."""
     out = dut.run_cmd(
         "nv show interface -o json 2>&1",
         validate=False,
@@ -61,7 +70,7 @@ def discover_swp_interfaces_on_dut(dut) -> Tuple[str, ...]:
         try:
             payload = json.loads(out)
             if isinstance(payload, dict):
-                names = [k for k in payload if k.startswith("swp")]
+                names = [k for k in payload if is_front_panel_port(k)]
                 if names:
                     return tuple(sorted(names, key=_swp_sort_key))
         except json.JSONDecodeError:

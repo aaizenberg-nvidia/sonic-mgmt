@@ -21,6 +21,10 @@ from ngts.tests_nvos.system.gnmi.constants import CERTIFICATE
 from ngts.tests_nvos.system.grpc_tunnel.constants import GrpcTunnelConstants
 from ngts.tests_nvos.system.telemetry.otel.cumulus.tls import (
     TlsCertMaterial,
+    _assert_nvue_ca_active_on_dut,
+    _delete_dut_ca_certificate_if_present,
+    _import_ca_certificate_on_dut,
+    _log_staged_ca_validity_on_dut,
     _run_cert_script,
     _upload_local_file_to_dut,
     install_ca_on_dut,
@@ -35,7 +39,8 @@ GNMI_DIALOUT_CLIENT_CERT = 'dut_client'
 GNMI_DIALOUT_GNMIC_CLIENT_CERT = 'gnmic_client'
 GNMI_DIALOUT_SERVER_CERT = 'gnmi'
 GNMI_DIALOUT_REMOTE_CERT_DIR = '/tmp/ngts_gnmi_dialout_mtls'
-GNMI_DIALOUT_TARGET_WAIT = '45s'
+# Match GrpcTunnelServer.DEFAULT_TARGET_WAIT; 45s is too short for DUT docker dial-out startup.
+GNMI_DIALOUT_TARGET_WAIT = '300s'
 GNMI_DIALOUT_RETRY_INTERVAL = 45
 GNMI_DIALOUT_TARGET_NAME = ':9339'
 
@@ -43,10 +48,18 @@ _CERT_IMPORT_RETRIES = 3
 _CERT_IMPORT_RETRY_DELAY_SEC = 2
 _COEXISTENCE_TUNNEL_NAMES = (
     'coexistence_interface',
+    'coexistence_qos_prefix',
+    'coexistence_interface_onchange',
     'coexistence_system',
     'coexistence_component',
+    'coexistence_component_cpu',
+    'coexistence_component_psu',
     'coexistence_lldp',
     'coexistence_bgp',
+    # Dedicated smoke top-level tunnels (kept distinct so the module-scoped smoke session that
+    # defers teardown does not collide with the Interface/QoS and Component/System collections).
+    'coexistence_smoke_interface_top',
+    'coexistence_smoke_system_top',
 )
 
 
@@ -372,7 +385,7 @@ def _release_stale_gnmi_dialout_security(dut) -> None:
         except Exception as exc:
             logger.debug('gnmi-server mtls unset: %s', exc)
         try:
-            system.gnmi_server.unset(apply=True)
+            system.gnmi_server.unset(apply=True, ask_for_confirmation=True)
         except Exception:
             dut.run_cmd('nv unset system gnmi-server -y', validate=False)
             dut.run_cmd('nv config apply -y', validate=False)
@@ -401,15 +414,45 @@ def _release_stale_gnmi_dialout_security(dut) -> None:
             time.sleep(_CERT_IMPORT_RETRY_DELAY_SEC)
 
 
-def install_gnmi_dialout_certs_on_dut(
-    dut,
-    material: GnmiDialoutMtlsMaterial,
-    *,
-    dut_ip: str,
-) -> None:
-    """Exchange CAs and import DUT client + gNMI server certs (SSIM ``copy_certs_between_client_dut`` parity)."""
-    with allure.step('Install gNMI dial-out mTLS certificates on DUT'):
-        _release_stale_gnmi_dialout_security(dut)
+def _install_gnmic_ca_on_dut(dut, material: GnmiDialoutMtlsMaterial) -> None:
+    """Import ``gnmic_ca`` on the DUT (SSIM ``copy_certs_between_client_dut`` direct-import parity).
+
+    SSIM imports the collector-generated ``gnmic_ca.crt`` as-is. mlx-lab clock skew may reject a
+    runner-generated CA whose ``notBefore`` is still in the future on the switch; fall back to
+    :func:`install_ca_on_dut` re-sign on the DUT only when direct import fails.
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        cleanup_stale_nvue_censor_files,
+    )
+
+    staged = '/tmp/ngts_gnmic_ca.crt'
+    with allure.step("Import CA certificate %r on DUT (SSIM direct import)" % (GNMI_DIALOUT_CA_NAME,)):
+        cleanup_stale_nvue_censor_files(dut)
+        _delete_dut_ca_certificate_if_present(dut, GNMI_DIALOUT_CA_NAME)
+        dut.run_cmd('sudo rm -f %s' % (shlex.quote(staged),), validate=False)
+        _upload_local_file_to_dut(dut, material.local_gnmic_ca_crt, staged)
+        _log_staged_ca_validity_on_dut(dut, staged)
+        import_out = _import_ca_certificate_on_dut(dut, GNMI_DIALOUT_CA_NAME, staged)
+        if (
+            'Succeeded in importing' in import_out and
+            GNMI_DIALOUT_CA_NAME in import_out and
+            'are expired' not in import_out.lower()
+        ):
+            _assert_nvue_ca_active_on_dut(dut, GNMI_DIALOUT_CA_NAME)
+            return
+        if 'Succeeded in importing' in import_out:
+            logger.warning(
+                'Direct gnmic_ca import reported NVUE expiry warning; '
+                're-signing on DUT (mlx clock-skew fix). nv_out=%r',
+                import_out.strip()[:300],
+            )
+            _delete_dut_ca_certificate_if_present(dut, GNMI_DIALOUT_CA_NAME)
+        else:
+            logger.warning(
+                'Direct gnmic_ca import failed (%r); falling back to DUT re-sign (mlx clock-skew fix)',
+                import_out.strip()[:200],
+            )
+    with allure.step("Re-sign and import CA certificate %r on DUT (mlx clock-skew fix)" % (GNMI_DIALOUT_CA_NAME,)):
         install_ca_on_dut(
             dut,
             TlsCertMaterial(
@@ -424,6 +467,23 @@ def install_gnmi_dialout_certs_on_dut(
             ),
             ca_name=GNMI_DIALOUT_CA_NAME,
         )
+
+
+def install_gnmi_dialout_certs_on_dut(
+    dut,
+    material: GnmiDialoutMtlsMaterial,
+    *,
+    dut_ip: str,
+) -> None:
+    """Exchange CAs and import DUT client + gNMI server certs (SSIM ``copy_certs_between_client_dut`` parity)."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        cleanup_stale_nvue_censor_files,
+    )
+
+    with allure.step('Install gNMI dial-out mTLS certificates on DUT'):
+        cleanup_stale_nvue_censor_files(dut)
+        _release_stale_gnmi_dialout_security(dut)
+        _install_gnmic_ca_on_dut(dut, material)
         _import_dut_entity_certificate(
             dut,
             GNMI_DIALOUT_CLIENT_CERT,
@@ -442,6 +502,7 @@ def install_gnmi_dialout_certs_on_dut(
             san_ip=dut_ip,
             client_cert=False,
         )
+        cleanup_stale_nvue_censor_files(dut)
 
 
 def configure_dut_gnmi_server_mtls(dut, *, dut_ip: str) -> None:
@@ -451,7 +512,8 @@ def configure_dut_gnmi_server_mtls(dut, *, dut_ip: str) -> None:
         system.gnmi_server.set(GnmiConsts.GNMI_STATE_FIELD, GnmiConsts.GNMI_STATE_ENABLED, apply=False)
         system.gnmi_server.set('listening-address', dut_ip, apply=False)
         system.gnmi_server.set(CERTIFICATE, GNMI_DIALOUT_SERVER_CERT, apply=False)
-        system.gnmi_server.mtls.set(CA_CERTIFICATE, GNMI_DIALOUT_CA_NAME, apply=True).verify_result()
+        system.gnmi_server.mtls.set(CA_CERTIFICATE, GNMI_DIALOUT_CA_NAME, apply=True, ask_for_confirmation=True,
+                                    dut_engine=dut,).verify_result()
         logger.info('gnmi-server enabled with certificate=%s mtls ca=%s', GNMI_DIALOUT_SERVER_CERT, GNMI_DIALOUT_CA_NAME)
 
 
@@ -474,7 +536,8 @@ def configure_dut_grpc_tunnel_mtls(
         tunnel.set(op_param_name=GrpcTunnelConstants.CA_CERTIFICATE, op_param_value=GNMI_DIALOUT_CA_NAME)
         tunnel.set(op_param_name=GrpcTunnelConstants.CERTIFICATE, op_param_value=GNMI_DIALOUT_CLIENT_CERT)
         tunnel.set(op_param_name=GrpcTunnelConstants.RETRY_INTERVAL, op_param_value=str(retry_interval))
-        tunnel.set(op_param_name=GrpcTunnelConstants.STATE, op_param_value=GnmiConsts.GNMI_STATE_ENABLED, apply=True)
+        tunnel.set(op_param_name=GrpcTunnelConstants.STATE, op_param_value=GnmiConsts.GNMI_STATE_ENABLED, apply=True, ask_for_confirmation=True,
+                   dut_engine=dut,).verify_result()
 
 
 def resolve_dut_ip(dut) -> str:
