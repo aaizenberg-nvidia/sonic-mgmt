@@ -18,16 +18,17 @@ from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import NvosConst, ConfState
 from ngts.nvos_constants.constants_nvos import PlatformConsts
 from ngts.nvos_tools.system.Firmware import PlatformComponent
+from ngts.ngts_types import EnginesT, DevicesT, TopologyT
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.IpTool import IpTool
-from ngts.ngts_types import EnginesT, DevicesT
 from ngts.nvos_tools.system.Asic import Asic
 
 logger = logging.getLogger(__name__)
 ResultsMetadataT = dict['ResultMetadata', Any | dict[str, Any]]
+RecipeT = dict[str, dict[str, Any] | str]
 
 
 class ResultMetadata(enum.IntEnum):
@@ -180,25 +181,27 @@ def _get_expected_fw_versions(firmware: list[str], recipe: dict[str, Any], singl
     return expected_fw_versions
 
 
-def _verify_fw_versions(
-    firmware: list[str],
-    recipe: dict[str, Any],
+def verify_fw_versions(
+    devices: DevicesT,
+    sys_pkg: SystemPackage,
+    provisioning: str,
     current_fw_versions: dict[str, str | None],
-    single_pkg: bool = False,
 ) -> Result:
     """
-    Verify the firmware versions.
+    Verify active firmware versions against a system package recipe.
 
     Args:
-        firmware: list of firmware components to update.
-        recipe: Recipe dictionary containing the firmware versions.
+        devices: Devices object containing the firmware component list.
+        sys_pkg: System package containing the recipe.
+        provisioning: Provisioning mode used to select the recipe.
         current_fw_versions: Current firmware versions.
-        single_pkg: If True, get expected versions from recipe['single_package']['latest'].
 
     Returns:
         Result: Result of the firmware version verification.
     """
-    expected_fw_versions = _get_expected_fw_versions(firmware, recipe, single_pkg=single_pkg)
+    recipe = _load_recipe(sys_pkg, provisioning)
+    single_pkg = devices.dut.single_fw_pkg_supported and bool(_get_single_platform_fw_recipe(recipe))
+    expected_fw_versions = _get_expected_fw_versions(devices.dut.constants.firmware, recipe, single_pkg=single_pkg)
     errors = {k: f'cur:{v} != exp:{expected_fw_versions[k]}' for k, v in current_fw_versions.items() if k in expected_fw_versions and v != expected_fw_versions[k]}
     return Result(ok=not errors, operation="FW versions", error_message="FW versions are not as expected: %s" % errors)
 
@@ -208,7 +211,7 @@ def _platform_fw_versions_changed(before: dict[str, str | None], after: dict[str
     return any(before.get(component) != after.get(component) for component in before.keys() | after.keys())
 
 
-def _update_cpld(recipe: dict[str, dict[str, Any] | str], scp_path: str, current_fw_versions: dict[str, Any], devices=None) -> list[Result]:
+def _update_cpld(recipe: RecipeT, scp_path: str, current_fw_versions: dict[str, Any], devices: DevicesT | None = None) -> list[Result]:
     """
     Update the CPLD FW.
 
@@ -277,7 +280,13 @@ def _is_encrypted_fpga() -> bool:
         return fpga_ver not in non_encrypted_fpga_ips
 
 
-def _fetch_n_update_fw(firmware: list[str], recipe: dict[str, dict[str, Any] | str], scp_path: str, current_fw_versions: dict[str, str], devices=None) -> list[Result]:
+def _fetch_n_update_fw(
+    firmware: list[str],
+    recipe: RecipeT,
+    scp_path: str,
+    current_fw_versions: dict[str, str],
+    devices: DevicesT | None = None,
+) -> list[Result]:
     '''
     Fetch and update the firmware of the given components.
 
@@ -419,7 +428,7 @@ def _load_recipe(sys_pkg: SystemPackage, provisioning: str) -> dict[str, Any]:
             return json.load(reader)[provisioning]
 
 
-def _update_nvos(engines: EnginesT, topology_obj, nvos: Path) -> Result:
+def _update_nvos(engines: EnginesT, topology_obj: TopologyT, nvos: Path) -> Result:
     '''
     Update the NVOS of the given engine.
 
@@ -476,7 +485,14 @@ def _update_nvos(engines: EnginesT, topology_obj, nvos: Path) -> Result:
         return Result(ok=sys_image.current == nvos.name.replace('-amd64', '').replace('.bin', ''), operation="NVOS", duration_error=duration_error)
 
 
-def update_system_fw(devices: DevicesT, engines: EnginesT, sys_pkg: SystemPackage, topology_obj, provisioning: str) -> ResultsMetadataT:
+def update_system_fw(
+    devices: DevicesT,
+    engines: EnginesT,
+    sys_pkg: SystemPackage,
+    topology_obj: TopologyT,
+    provisioning: str,
+    update_nvos: bool = True,
+) -> ResultsMetadataT:
     '''
     Update the firmware of the given system package.
 
@@ -485,6 +501,7 @@ def update_system_fw(devices: DevicesT, engines: EnginesT, sys_pkg: SystemPackag
         engines: Engines object containing the engine to update.
         sys_pkg: System package containing the recipe and NVOS.
         provisioning: Provisioning to update to.
+        update_nvos: Whether to install NVOS after staging the platform firmware.
 
     Returns:
         dict[Metadata, Any]: Metadata of the FW update.
@@ -513,6 +530,10 @@ def update_system_fw(devices: DevicesT, engines: EnginesT, sys_pkg: SystemPackag
 
         assert all(results), "Failed to update components firmware: %s" % " | ".join(map(str, filter(lambda res: not res, results)))
 
+    if not update_nvos:
+        logger.info("Platform firmware staged; NVOS update is deferred to the rollback")
+        return metadata
+
     with allure.step(f"Update NVOS to {sys_pkg.nvos.name!r}"):
         assert (nvos_result := _update_nvos(engines, topology_obj, sys_pkg.nvos)), f"Failed to update NVOS to {sys_pkg.nvos.name}"
         logger.debug(f'[***] {nvos_result=}')
@@ -529,8 +550,7 @@ def update_system_fw(devices: DevicesT, engines: EnginesT, sys_pkg: SystemPackag
         logger.debug(f'[***] {metadata=}')
 
     with allure.step("Verify FW versions"):
-        single_pkg = bool(single_platform_fw_recipe)
-        assert (r := _verify_fw_versions(devices.dut.constants.firmware, recipe, new_fw_versions, single_pkg=single_pkg)), r.error_message
+        assert (r := verify_fw_versions(devices, sys_pkg, provisioning, new_fw_versions)), r.error_message
 
     return metadata
 
@@ -586,6 +606,19 @@ def load_config(engines: EnginesT, config_file: Path | str) -> dict[ResultMetada
     return result
 
 
+def validate_rollback_images(current_build: str, other_build: str) -> SystemImage:
+    """Validate the current and rollback image partitions without changing the system."""
+    sys_image = get_system_image()
+    assert sys_image.other, "There is no second partition"
+
+    expected_current = current_build.replace('-amd64', '').replace('.bin', '')
+    expected_other = other_build.replace('-amd64', '').replace('.bin', '')
+    bad_cur_img_msg = f"Current build ID {sys_image.current} is not the same as the current partition {current_build}"
+    assert sys_image.current == expected_current, bad_cur_img_msg
+    assert sys_image.other == expected_other, f"Other build ID {sys_image.other} is not the same as the rollback partition {other_build}"
+    return sys_image
+
+
 def rollback(current_build: str | None = None, other_build: str | None = None, boot_next_partition_id: str | None = None) -> str | None:
     """
     Rollback to the previous image partition.
@@ -604,12 +637,8 @@ def rollback(current_build: str | None = None, other_build: str | None = None, b
 
     system, current_partition_id = System(), None
     if not boot_next_partition_id:
-        sys_image = get_system_image()
-
-        assert sys_image.other, "There is no second partition"
-        assert sys_image.current == current_build.replace('-amd64', '').replace('.bin', ''), f"Current build ID {sys_image.current} is not the same as the current partition {current_build}"
-        assert sys_image.other == other_build.replace('-amd64', '').replace('.bin', ''), f"Other build ID {sys_image.other} is not the same as the current partition {other_build}"
-
+        assert current_build is not None and other_build is not None
+        sys_image = validate_rollback_images(current_build, other_build)
         boot_next_partition_id = sys_image.other_partition
         current_partition_id = sys_image.current_partition
 
@@ -692,12 +721,13 @@ def get_system_image() -> SystemImage:
 
     current_partition = ImageConsts.PARTITION1_IMG if result[ImageConsts.CURRENT_IMG] == result[ImageConsts.PARTITION1_IMG] else ImageConsts.PARTITION2_IMG
     other_partition = ImageConsts.PARTITION1_IMG if result[ImageConsts.CURRENT_IMG] != result[ImageConsts.PARTITION1_IMG] else ImageConsts.PARTITION2_IMG
-    return SystemImage(
+    logger.debug("system_image is %r" % (system_image := SystemImage(
         current=result[ImageConsts.CURRENT_IMG],
         current_partition=current_partition,
         other=result[other_partition],
         other_partition=other_partition,
-    )
+    )))
+    return system_image
 
 
 def get_platform_fw_versions(platform: Platform | None = None) -> dict[str, str | None]:
