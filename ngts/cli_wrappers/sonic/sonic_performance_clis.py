@@ -781,7 +781,7 @@ class SonicPerformanceCli(PerformanceCommon):
             self.execute_cmd(f"sudo /usr/sbin/logrotate -f /etc/logrotate.d/{daemon}  > /dev/null 2>&1")
 
     def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
-        ports_file = "ports.json"
+        ports_file = PerfConsts.PORTS_JSON_FILENAME
         full_path = os.path.join(PerfConsts.CONFIG_FILES_DIR, ports_file)
         connected_ports = selected_connected_ports if selected_connected_ports else self.connected_ports
         ports_connectivity_dict = {
@@ -790,6 +790,11 @@ class SonicPerformanceCli(PerformanceCommon):
             "speed": conf_args["speed"]}
         with open(full_path, 'w') as f:
             json.dump(ports_connectivity_dict, f)
+        # No pre-delete here: docker cp overwrites a same-named file in the destination
+        # directory, and deleting first (before the host->container copy pipeline below)
+        # would risk leaving the syncd container with no /ports.json at all if any step of
+        # that copy fails. The "class skips this publish step" staleness case is already
+        # covered by clear_stale_ports_json() at the start of apply_configuration_file.
         copy_files_to_syncd(self.engine, [ports_file], PerfConsts.CONFIG_FILES_DIR)
 
     def configure_ports_shaper(self, shaper_value):

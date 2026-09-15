@@ -513,6 +513,25 @@ class PerformanceCommon:
         self.execute_cmd(f"sudo rm -f {dst_dut_dir}/tg_ports.json")
         self._write_json_to_remote(get_ports_output, player_ports, dst_dut_dir, "tg_ports.json")
 
+    def clear_stale_ports_json(self, rm_cmd=f"sudo rm -f {PerfConsts.PORTS_JSON_PATH}"):
+        """Delete any leftover /ports.json before this class applies its own configuration.
+
+        The SDK-side SDK tests read /ports.json (or the syncd-container copy on SONiC) if it
+        already exists rather than re-discovering ports. add_ports_connectivity_to_dut only
+        deletes-then-writes the file at the end of apply_configuration_file, which is too late
+        for this class's own config-apply/SDK test: it can still read the *previous* class's
+        file (e.g. a different lane/split topology) and fail with ENTRY_NOT_FOUND for ports that
+        don't exist here. Call this before applying this class's configuration so its own SDK
+        test (re)discovers ports for this topology instead of trusting stale data.
+
+        Args:
+            rm_cmd: Command that deletes /ports.json on this player. Defaults to the bare
+                host-filesystem path used by DVS and Cumulus; SONiC passes the syncd-container
+                equivalent since its copy of the file lives inside that container.
+        """
+        logging.info(f"[{self.dut_alias}] Clearing stale /ports.json before applying configuration")
+        self.execute_cmd(rm_cmd)
+
     def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
         """Publish the runner's port classification to /ports.json on the switch.
 
@@ -543,10 +562,13 @@ class PerformanceCommon:
         logging.info(f"[{self.dut_alias}] Publishing port connectivity to /ports.json: "
                      f"{len(ports_connectivity_dict['connected_ports'])} connected, "
                      f"{len(ports_connectivity_dict['unconnected_ports'])} unconnected")
+        # Delete first so a class that skips this publish step (e.g. an exception during a
+        # sibling player's config apply) never leaves the previous class's /ports.json behind.
+        self.execute_cmd(f"sudo rm -f {PerfConsts.PORTS_JSON_PATH}")
         # Staged through /tmp because the SDK tests read /ports.json from the root filesystem,
         # which the switch login user cannot write to directly.
-        self._write_json_to_remote(local_path, ports_connectivity_dict, "/tmp", "ports.json")
-        self.execute_cmd("sudo mv /tmp/ports.json /ports.json")
+        self._write_json_to_remote(local_path, ports_connectivity_dict, "/tmp", PerfConsts.PORTS_JSON_FILENAME)
+        self.execute_cmd(f"sudo mv /tmp/{PerfConsts.PORTS_JSON_FILENAME} {PerfConsts.PORTS_JSON_PATH}")
 
     def get_port_mapping_df(self):
         sdk_port_to_local_port_mapping = {}

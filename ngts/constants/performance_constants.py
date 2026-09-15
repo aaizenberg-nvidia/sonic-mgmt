@@ -160,6 +160,8 @@ class PerfConsts:
     # Paths and Directories
 
     DVS_RUN_TEST_PATH = "/root/sys_sdk/sx_sdk_py_tests/tests/run_tests.py"
+    PORTS_JSON_FILENAME = "ports.json"
+    PORTS_JSON_PATH = f"/{PORTS_JSON_FILENAME}"
     DEFAULT_PERF_TEMPLATES_DIR = "performance_config_templates"
     CONFIG_FILES_DIR = os.path.join(BugHandlerConst.NGTS_PATH, 'tests/performance/config_files')
     REQUIRMENTS_DIR = os.path.join(BugHandlerConst.NGTS_PATH, 'performance_tests/')

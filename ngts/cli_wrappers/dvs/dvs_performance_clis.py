@@ -65,6 +65,8 @@ class DvsPerformance(PerformanceCommon):
         if is_redmine_issue_active([4644033])[0]:
             self.clear_syslog()
 
+        self.clear_stale_ports_json()
+
         self.base_ports, self.ports_lanes = self.get_base_ports()
         self.right_left_ports_dict = self.get_right_left_ports_dict()
         self.connected_ports, self.unconnected_ports = self.get_player_ports()

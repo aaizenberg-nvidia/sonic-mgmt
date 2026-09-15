@@ -332,6 +332,14 @@ class NvuePerformanceCli(PerformanceCommon):
     def apply_configuration_file(self, scenario, conf_args, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR, dst_dir=Cl_Consts.CL_HOME_DIR):
         self._perf_conf_args = conf_args or {}
         self._perf_scenario = scenario
+        self.clear_stale_ports_json()
+        # Invalidate the name->SDK-port-ID cache before applying a new breakout: a port name
+        # (e.g. "swp26s1") cached under a previous split configuration can silently resolve to a
+        # now-nonexistent SDK port once the breakout changes (e.g. 2x-lanes split -> 4x-lanes
+        # unsplit), which later makes TrafficValidator query a dead port ID via /tmp/conf.json
+        # and fail with PARAM_EXCEEDS_RANGE. Forcing a fresh lookup keeps get_sdk_ports() honest.
+        self.ports_mapping = {}
+        self.sdk_ports_mapping = {}
         src_file = self.get_configuration_file(scenario, conf_args, template_suite)
         logging.info(f"Applying configuration file on {self.dut_alias}")
         self.engine.copy_file(source_file=src_file, file_system=dst_dir,
