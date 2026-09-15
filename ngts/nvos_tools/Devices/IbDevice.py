@@ -1108,7 +1108,7 @@ class BlackMambaSwitch(IbSwitch):
             "Install BIOS": 550,
             'install cpld': 1000,
             'install ssd': 20,
-            self.generate_tech_support: 105,
+            self.generate_tech_support: 165,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 14.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
             'ISSU CPU max downtime': 135,
@@ -1392,7 +1392,7 @@ class TaipanSwitch(IbSwitch):
             "Install BIOS": 550,
             'install cpld': 1000,
             'install ssd': 20,
-            self.generate_tech_support: 105,
+            self.generate_tech_support: 165,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 14.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
             'ISSU CPU max downtime': 135,
@@ -1622,7 +1622,7 @@ class CrocodileSwitch(IbSwitch):
             "Install BIOS": 500,
             'install cpld': 720,
             'install ssd': 20,
-            self.generate_tech_support: 75,
+            self.generate_tech_support: 180,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 13.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 9 * MINUTE,
             'ISSU CPU max downtime': 120,
@@ -2015,8 +2015,8 @@ class JulietSwitch(NvLinkSwitch):
             "Install BIOS": 600,
             'install cpld': 720,
             'install ssd': 20,
-            self.generate_tech_support: 120,
-            'julietscaleout generate_tech_support': 132,
+            self.generate_tech_support: 180,
+            'julietscaleout generate_tech_support': 192,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED,
         })
         self.num_of_plane_ports = 1
@@ -2957,8 +2957,8 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
         self.leakage_sensors_count = 2
         self.list_of_leakages = [f"LEAKAGE-{i}" for i in range(1, self.leakage_sensors_count + 1)]
         self.expected_operation_durations.update({
-            self.generate_tech_support: 165,
-            'julietscaleout generate_tech_support': 165,
+            self.generate_tech_support: 225,
+            'julietscaleout generate_tech_support': 225,
             'reboot with new user FW': 450 if is_bug_active(4854038) else 390,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
         })
