@@ -1,0 +1,29 @@
+{
+  "Ethernet0:512:4": {
+    "vendor_name": "PINEWAVE",
+    "vendor_pn": "T-RH8ENH-NMT",
+    "cmis_revision": "5.3"
+  },
+  "Ethernet504,Ethernet508": {
+    "vendor_name": "NVIDIA",
+    "vendor_pn": "980-9IAU9-00XM0H",
+    "cmis_revision": "5.3"
+  },
+  "Ethernet0:512:8": {
+    "transceiver_configuration": "DR-800-OSFP-OSFP_2X_800G-0x1-0x1"
+  },
+  "Ethernet4:512:8": {
+    "transceiver_configuration": "DR-800-OSFP-OSFP_2X_800G-0x10-0x10"
+  },
+  "Ethernet512,Ethernet513": {
+    "vendor_name": "NVIDIA",
+    "vendor_pn": "MMS1X00-NS400",
+    "cmis_revision": "4.0"
+  },
+  "Ethernet512": {
+    "transceiver_configuration": "DR-100-QSFP-QSFP_2X_100G-0x1-0x1"
+  },
+  "Ethernet513": {
+    "transceiver_configuration": "DR-100-QSFP-QSFP_2X_100G-0x2-0x2"
+  }
+}
