@@ -1,6 +1,8 @@
+import concurrent.futures
 import logging
 import os
 import re
+import traceback
 import shutil
 import time
 import copy
@@ -45,7 +47,7 @@ class NvosInstallationSteps:
             InstallStepsTimer.initialize_timer()
 
     @staticmethod
-    def post_installation_steps(topology_obj, workspace_path, setup_info, serial_log_analyzer,
+    def post_installation_steps(topology_obj, workspace_path, setup_info, serial_log_analyzers,
                                 root_dir, base_version='', target_version='', verify_secure_boot: bool = True):
         """
         Post-installation steps for NVOS NOS
@@ -66,52 +68,82 @@ class NvosInstallationSteps:
                 logger.warning("Failed to replace minigraph_facts.py in ansible path. Community tests will fail.")
 
         with allure.step('Initialize engine and device objects'):
-            cli_obj: NvueGeneralCli = setup_info['duts'][0]['cli_obj']
-            dut_device = cli_obj.device
-            dut_engine = cli_obj.engine
-            TestToolkit.is_eth_dut(dut_device)  # initialize this field in TestToolkit global object
+            # all duts in a setup share the same switch type, so the primary dut sets this global for all of them
+            TestToolkit.is_eth_dut(setup_info['duts'][0]['cli_obj'].device)
 
-            with allure.step("Test output of nv show platform firmware"):
-                platform = Platform()
-                firmware_items = dut_device.constants.firmware
-                validate_firmware_keys(platform, firmware_items, dut_engine)
-                validate_firmware_components(platform, firmware_items, dut_engine, check_gnmi=False)
+        duts = setup_info['duts']
+        with allure.step(f'Post installation steps on {len(duts)} dut(s)'):
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                tasks = [(dut['dut_name'],
+                          executor.submit(NvosInstallationSteps.post_installation_steps_single_dut, dut, topology_obj,
+                                          serial_log_analyzers, root_dir, base_version, target_version,
+                                          verify_secure_boot))
+                         for dut in duts]
+            failures = []
+            for dut_name, task in tasks:
+                try:
+                    task.result()
+                    logger.info(f'Post installation steps finished successfully on {dut_name}')
+                except Exception as err:
+                    logger.exception(f'Post installation steps failed on {dut_name}')
+                    failures.append(f'{dut_name}: {traceback.format_exc()}')
+            assert not failures, 'Post installation steps failed on: ' + ' ; '.join(failures)
+
+        with allure.step('show intervals of installation flow steps'):
+            allure.attach('install flow intervals', InstallStepsTimer.analyze_saved_timestamps())
+
+        try:
+            with allure.step('Set timezone using timedatectl command'):
+                logger.info("Configuring same time zone for dut and local engine to {}"
+                            .format(LinuxConsts.JERUSALEM_TIMEZONE))
+                os.popen('sudo timedatectl set-timezone {}'.format(LinuxConsts.JERUSALEM_TIMEZONE))
+        except BaseException:
+            logger.warning('Failed to configure timezone')
+
+        logger.info('========== NVOS - Post installation steps Done ==========')
+
+    @staticmethod
+    def post_installation_steps_single_dut(dut, topology_obj, serial_log_analyzers, root_dir, base_version,
+                                           target_version, verify_secure_boot):
+        """
+        Run the per-dut part of the post installation flow: firmware validation, secure boot verification,
+        the upgrade to the target version and the base configuration for the tests.
+        Called once per dut, in parallel, from post_installation_steps.
+        """
+        cli_obj: NvueGeneralCli = dut['cli_obj']
+        dut_device = cli_obj.device
+        dut_engine = cli_obj.engine
+        dut_name = dut['dut_name']
+
+        with allure.step(f"Test output of nv show platform firmware on {dut_name}"):
+            platform = Platform()
+            firmware_items = dut_device.constants.firmware
+            validate_firmware_keys(platform, firmware_items, dut_engine)
+            validate_firmware_components(platform, firmware_items, dut_engine, check_gnmi=False)
 
         if dut_device.has_bmc:
-            with allure.step('reset password of bmc root user'):
+            with allure.step(f'reset password of bmc root user on {dut_name}'):
                 CurlTool(PlatformConsts.BMC_INTERNAL_IP, BmcUsers.admin.username, TpmTool(dut_engine).get_bmc_admin_password_from_tpm()).change_root_password(dut_engine=dut_engine)
 
         if verify_secure_boot:
-            with allure.step('Verify Secure-Boot is enabled'):
+            with allure.step(f'Verify Secure-Boot is enabled on {dut_name}'):
                 assert SecureBootTool.is_secure_boot_enabled(dut_engine), "Secure-Boot is expected to be enabled, but it's disabled!"
 
         if base_version:
-            with allure.step('========== NVOS - Upgrade With Saved Configuration Flow =========='):
+            with allure.step(f'========== NVOS - Upgrade With Saved Configuration Flow on {dut_name} =========='):
                 # if deploy_and_upgrade was invoked also with base_version, meaning that base_version is the version that
                 #   was installed, and now we want to test the scenario where we set pre-defined configuration,
                 #   apply & save it, and upgrade to the given target_version, which is the one that will be used for testing
-                with serial_log_analyzer.stage(SerialLoggerConst.UPGRADE_STAGE):
+                with serial_log_analyzers[dut_engine.ip].stage(SerialLoggerConst.UPGRADE_STAGE):
                     NvosInstallationSteps.upgrade_with_saved_config_flow(topology_obj, dut_engine, dut_device,
                                                                          root_dir, base_version, target_version)
         else:
             logger.info('NVOS: Argument "base-version" was not given. therefore not running the upgrade with saved '
                         'configuration scenario')
 
-        with allure.step('show intervals of installation flow steps'):
-            allure.attach('install flow intervals', InstallStepsTimer.analyze_saved_timestamps())
-
-        with allure.step('Set base configuration for tests after the install phase'):
+        with allure.step(f'Set base configuration for tests after the install phase on {dut_name}'):
             dut_device.clear_config(dut_engine=dut_engine, default_yml_path=None, root_dir=root_dir,
                                     version=target_version)
-            try:
-                with allure.step('Set timezone using timedatectl command'):
-                    logger.info("Configuring same time zone for dut and local engine to {}"
-                                .format(LinuxConsts.JERUSALEM_TIMEZONE))
-                    os.popen('sudo timedatectl set-timezone {}'.format(LinuxConsts.JERUSALEM_TIMEZONE))
-            except BaseException as ex:
-                logger.warning('Failed to configure timezone')
-
-        logger.info('========== NVOS - Post installation steps Done ==========')
 
     @staticmethod
     def upgrade_with_saved_config_flow(topology_obj, dut_engine, dut_device, root_dir, base_version='',
@@ -220,13 +252,12 @@ class NvosInstallationSteps:
         image_scp_url = f'scp://{scp_host_creds}{target_version_path}'
         system.image.action_fetch(image_scp_url, base_url='', engine=dut_engine, device=dut_device, timeout=600)
         # use new default password for recovery after upgrade
-        recovery_engine = LinuxSshEngine(dut_engine.ip, dut_engine.username,
-                                         dut_device.get_default_password_by_version(target_version_path))
         InstallStepsTimer.add_timestamp(InstallSteps.UPGRADE_CMD)
-        system.image.files.file_name[bin_filename].action_file_install_with_reboot(engine=dut_engine, device=dut_device,
-                                                                                   recovery_engine=recovery_engine,
-                                                                                   topology_obj=topology_obj,
-                                                                                   param_value=param_value, track_boot_intervals=True)
+        with LinuxSshEngine(dut_engine.ip, dut_engine.username,
+                            dut_device.get_default_password_by_version(target_version_path)) as recovery_engine:
+            system.image.files.file_name[bin_filename].action_file_install_with_reboot(
+                engine=dut_engine, device=dut_device, recovery_engine=recovery_engine,
+                topology_obj=topology_obj, param_value=param_value, track_boot_intervals=True)
 
     @staticmethod
     def fetch_apply_save_config(config_filename, config_file_path, dut_engine, scp_host_creds, system, dut_device=None,

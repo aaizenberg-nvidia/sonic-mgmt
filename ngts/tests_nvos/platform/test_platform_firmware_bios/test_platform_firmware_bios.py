@@ -13,12 +13,13 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.bios
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 def test_bios_auto_update_disabled(devices, engines, topology_obj, test_api, original_version, test_name):
     """
@@ -55,6 +56,7 @@ def test_bios_auto_update_disabled(devices, engines, topology_obj, test_api, ori
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.bios
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 def test_bios_auto_update_enabled(devices, engines, topology_obj, test_api, original_version, test_name):
     """

@@ -404,7 +404,7 @@ class IbSwitch(BaseSwitch):
     def _init_services(self):
         super()._init_services()
         self.available_services.extend((
-            'docker.service', 'database.service', 'hw-management.service', 'hw-management-tc.service', 'config-setup.service', 'ntpsec.service', 'hostname-config.service', 'ntp-config.service',
+            'docker.service', 'database.service', 'hw-management.service', 'hw-management-tc.service', 'config-setup.service', 'chrony.service', 'hostname-config.service',
             'rsyslog-config.service', 'procdockerstatsd.service',
             'configmgrd.service', 'countermgrd.service', 'portsyncmgrd.service'
         ))

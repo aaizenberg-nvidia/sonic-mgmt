@@ -151,6 +151,8 @@ class TpmTool:
 
     def _get_sed_password(self, tpm_bank_context: str, device: BaseDevice):
         with allure.step('get sed password from tpm'):
+            # "| awk 1" forces a trailing newline: run_cmd returns empty output for
+            # commands whose output is not newline-terminated (merges into prompt line)
             if self._require_tpm_pass(device):
                 hex_pass = self.tpm_pass.encode().hex()
                 return self.engine.run_cmd(

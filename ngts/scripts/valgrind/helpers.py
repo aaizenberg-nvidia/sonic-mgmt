@@ -21,6 +21,18 @@ _PARSE_SYSTEMD_EXEC_START = re.compile(r'([^\s=]+)=(.*?)(?= ?; [^\s=]+=|$)')
 _VALGRIND_CONF_FILE = Path(__file__).parent / 'valgrind.conf'
 assert _VALGRIND_CONF_FILE.exists(), 'valgrind.conf not found'
 VALGRIND_DIR = '/var/log/valgrind'
+# The image pins apt to a Debian snapshot older than the packages the rootfs ships, so the
+# snapshot's -dbg packages can never satisfy their exact-version dependency on a runtime
+# package. Add a live mirror for the duration of the install, then drop it again.
+_DBG_MIRROR_LIST = '/etc/apt/sources.list.d/valgrind-dbg.list'
+_DBG_MIRROR_LINES = (
+    'deb [arch=amd64] http://debian-archive.trafficmanager.net/debian trixie main',
+    'deb [arch=amd64] http://debian-archive.trafficmanager.net/debian trixie-updates main',
+)
+
+
+class ServiceNotApplicableError(Exception):
+    """Raised when a requested service is not currently applicable to a Valgrind run."""
 
 
 class ServiceNotApplicableError(Exception):
@@ -42,12 +54,16 @@ class ValgrindPkg:
             if self._general_cli.which('valgrind'):
                 self._log.info('Valgrind package is already installed, skipping...')
             else:
-                self._general_cli.apt_update()
-                # due to a Debian dependency bug, libc6 must be downgraded to install valgrind
-                self._general_cli.apt_install('libc6=2.36-9+deb12u9', '-y --allow-downgrades')
-                self._general_cli.apt_install('valgrind', '-y')
-                self.get_process_path('valgrind')  # sanity check
-                self._general_cli.apt_install('python3.11-dbg', '-y')
+                self._engine.run_cmd(f'rm -f {_DBG_MIRROR_LIST}')
+                for line in _DBG_MIRROR_LINES:
+                    self._engine.run_cmd(f"echo '{line}' | sudo tee -a {_DBG_MIRROR_LIST}")
+                try:
+                    self._general_cli.apt_update()
+                    self._general_cli.apt_install('valgrind', '-y')
+                    self.get_process_path('valgrind')  # sanity check
+                    self._general_cli.apt_install('python3-dbg', '-y')
+                finally:
+                    self._engine.run_cmd(f'rm -f {_DBG_MIRROR_LIST}')
 
     def get_process_path(self, process: str) -> str:
         """

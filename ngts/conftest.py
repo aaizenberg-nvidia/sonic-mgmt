@@ -27,9 +27,9 @@ from ngts.cli_wrappers.linux.linux_cli import LinuxCli, LinuxCliStub
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli, SonicCliStub
 from ngts.cli_wrappers.sonic.sonic_general_clis import SonicGeneralCliDefault
-from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType, SonicConst
+from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType, SonicConst, \
+    PlayersAliases
 from ngts.constants.constants import REGRESSION_TYPE_ENV_VAR, RegressionType
-from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType
 from ngts.constants.constants import SerialLoggerConst
 from ngts.constants.constants import CLI_TYPE_CACHE_PATH
 from ngts.helpers.general_helper import get_all_setups, get_dut_cli_objs_from_topo_obj
@@ -655,7 +655,8 @@ def update_topology_with_cli_class(topology, request=None, is_performance=False)
             # and its cli is already set at attach time.
             continue
         cli_type = player_info['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
-        if player_key == 'dut' or player_key == PerfConsts.LEFT_TG_ALIAS or player_key == PerfConsts.RIGHT_TG_ALIAS:
+        if player_key == 'dut' or player_key in PlayersAliases.multi_duts_list or \
+                player_key == PerfConsts.LEFT_TG_ALIAS or player_key == PerfConsts.RIGHT_TG_ALIAS:
             if cli_type in NvosCliTypes.NvueCliTypes:
                 update_nvos_topology(topology, player_key, player_info, request)
                 nvos_setup = True

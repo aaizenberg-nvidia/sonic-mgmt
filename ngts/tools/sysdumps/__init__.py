@@ -1,40 +1,40 @@
-import json
-import logging
-import math
-import os
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import shlex
-import time
-
+from collections import defaultdict
+import logging
 import allure
 from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
-from ngts.scripts.collect_simx_logs_on_not_success import collect_hypervisor_logs
 from ngts.scripts.sonic_deploy.community_only_methods import is_dualtor_topo
 import pytest
 import yaml
+import shlex
+import json
+import math
+import time
+import os
 
 from ngts.conftest import update_topology_with_cli_class
-from ngts.constants.constants import PytestConst
-from ngts.helpers.general_helper import get_dut_cli_objs_from_topo_obj, is_bmc_testbed
-from ngts.scripts.store_techsupport_on_not_success import dump_simx_data
-from ngts.tools.allure_report.allure_report_attacher import collect_stored_cmds_then_attach_to_allure_report, \
-    clean_stored_cmds_with_fixture_scope_list
+from ngts.constants.constants import PytestConst, PlayersAliases
+from ngts.tools.allure_report.allure_report_attacher import collect_stored_cmds_then_attach_to_allure_report
 from ngts.tools.test_utils.nvos_general_utils import get_switch_type
 from ngts.nvos_constants.constants_nvos import TopologyConsts
-from ngts.tools.infra import get_dumps_folder, get_platform_info
-from ngts.tools.topology_tools.topology_by_setup import get_topology_by_setup_name_and_aliases, get_dpu_player_key
+from ngts.tools.infra import get_platform_info
+from ngts.tools.allure_report import allure_report_attacher
+from ngts.scripts import collect_simx_logs_on_not_success
+from ngts.scripts import store_techsupport_on_not_success
+from ngts.tools.topology_tools import topology_by_setup
+from ngts.helpers import general_helper
+from ngts.tools import infra
 
 DUAL_TOR_SIMULATOR_LOG_PREFIXE_REGEX_LIST = ['mux_simulator_*', 'nic_simulator_*']
 DUAL_TOR_SIMULATOR_LOG_FOLDER = '/tmp/'
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 test_suites_dumps = defaultdict(int)
 
 
 def get_topology_obj(item):
-    topology = get_topology_by_setup_name_and_aliases(item.config.option.setup_name, slow_cli=False)
+    topology = topology_by_setup.get_topology_by_setup_name_and_aliases(item.config.option.setup_name, slow_cli=False)
     update_topology_with_cli_class(topology, item._request)
     return topology
 
@@ -210,13 +210,24 @@ def collect_neighbor_logs(item, dumps_folder, duration):
 
 def generate_and_copy_dump(item, dumps_folder, topology_obj, duration):
     switch_type = get_switch_type(topology_obj)
-    dut_engine = topology_obj.players['dut']['engine']
     collect_stored_cmds_then_attach_to_allure_report(topology_obj)
-    generate_dump_method[switch_type](topology_obj, dut_engine, dumps_folder, duration, item)
+    if switch_type == TopologyConsts.NVOS:
+        dut_aliases = ['dut']
+        if topology_obj.players.get('dut-b'):
+            dut_aliases.append('dut-b')
+        for alias in PlayersAliases.multi_duts_list:
+            if topology_obj.players.get(alias):
+                dut_aliases.append(alias)
+        for alias in dut_aliases:
+            dut_engine = topology_obj.players[alias]['engine']
+            generate_dump_method[switch_type](topology_obj, dut_engine, dumps_folder, duration, item, alias)
+    else:
+        dut_engine = topology_obj.players['dut']['engine']
+        generate_dump_method[switch_type](topology_obj, dut_engine, dumps_folder, duration, item)
     testbed = item.config.option.testbed
     # BMC testbeds run on the BMC host directly; their topology has no 'hypervisor' player
     # and PTF/dualtor log collection does not apply.
-    if switch_type == TopologyConsts.SONIC and not is_bmc_testbed(testbed):
+    if switch_type == TopologyConsts.SONIC and not general_helper.is_bmc_testbed(testbed):
         hypervisor_engine = topology_obj.players['hypervisor']['engine']
         if 'ptf-any' not in testbed:
             collect_ptf_logs(
@@ -237,7 +248,7 @@ def is_performance_setup(item):
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
     """
     Techsupport creator. Will be executed at the end of test call in case of failure.
     """
@@ -250,7 +261,7 @@ def pytest_runtest_makereport(item, call):
         logger.debug(f"Entering sysdump creation for {item.name}")
         os.environ.pop(item.name, None)
         session_id = item.config.option.session_id
-        if session_id is None and item.config.option.store_dump_on_fail != True:
+        if session_id is None and item.config.option.store_dump_on_fail is not True:
             logger.info('### `session_id` and `store_dump_on_fail` flags were not provided, '
                         'sysdump will not be created ###')
             return
@@ -268,7 +279,7 @@ def pytest_runtest_makereport(item, call):
                 else:
                     duration = get_test_duration(item)
                 if (dumps_folder := item.funcargs.get('dumps_folder')) is None:
-                    dumps_folder = get_dumps_folder(item.config.option.setup_name, session_id, topology_obj)
+                    dumps_folder = infra.get_dumps_folder(item.config.option.setup_name, session_id, topology_obj)
                 existing_dump_file = next(
                     (dump_file for dump_file in os.listdir(dumps_folder) if test_name in dump_file), None)
                 if existing_dump_file and session_id:
@@ -276,24 +287,28 @@ def pytest_runtest_makereport(item, call):
                     with allure.step(f'The test case has failed, dump already exists at log folder {dump_path}'):
                         pass
                 elif test_suites_dumps.get(suite_name, 0) > 2:
-                    logger.info('### The number of sysdumps for this test suite is more than 3, '
-                                'sysdump will not be created ###')
+                    logger.info('### The number of sysdumps for this test suite is more than 3, sysdump will not be created ###')
                 else:
-                    test_suites_dumps[suite_name] += 1
                     with allure.step('The test case has failed, generating a sysdump'):
-                        generate_and_copy_dump(item, dumps_folder, topology_obj, duration)
+                        # The NVOS run-policy plugin publishes the effective value.
+                        # Other runs fall back to the CLI option.
+                        if getattr(item.config, "_no_techsupport_on_fail", False) or item.config.getoption("--no-techsupport-on-fail", False):
+                            logger.warning("Skipping sysdump generation on test failure")
+                        else:
+                            test_suites_dumps[suite_name] += 1
+                            generate_and_copy_dump(item, dumps_folder, topology_obj, duration)
             except BaseException as err:
                 error_message = f'Failed to generate/store techsupport dump.\nGot error: {err}'
                 logger.error(error_message)
         topology_obj = item.funcargs.get('topology_obj')
         if topology_obj:
-            clean_stored_cmds_with_fixture_scope_list(topology_obj)
+            allure_report_attacher.clean_stored_cmds_with_fixture_scope_list(topology_obj)
         os.environ[PytestConst.GET_DUMP_AT_TEST_FALIURE] = "True"
     else:
         logger.debug(f"Skipping sysdump creation for {item.name}")
 
 
-def generate_and_copy_nvos_dump(topology_obj, dut_engine, dumps_folder, duration, item):
+def generate_and_copy_nvos_dump(topology_obj, dut_engine, dumps_folder, duration, item, dut_alias='dut'):
     logging.info("disconnect dut engine")
     dut_engine.disconnect()
     try:
@@ -303,9 +318,12 @@ def generate_and_copy_nvos_dump(topology_obj, dut_engine, dumps_folder, duration
             output = dut_engine.run_cmd('nv show system tech-support files -o json', validate=True)
             tech_support_file_on_switch = json.loads(output)["latest"]["path"]
 
-        dest_tech_support_file = dumps_folder + '/sysdump_' + item.name.replace('/', '_') + '.tar.gz'
+        dest_tech_support_file = dumps_folder + f'/sysdump_{dut_alias}_' + item.name.replace('/', '_') + '.tar.gz'
         copy_dump_file(dut_engine, tech_support_file_on_switch, dest_tech_support_file)
-        store_dest_file_path(dest_tech_support_file, item.name.replace('/', '_'))
+        # MARS consumer looks up by bare test name (test_case_full_name.split('::')[-1]), so only
+        # register the primary DUT's path - secondary DUTs are still collected to disk.
+        if dut_alias == 'dut':
+            store_dest_file_path(dest_tech_support_file, item.name.replace('/', '_'))
     finally:
         # generation/copy can fail partway through (e.g. DUT SSH session limit); without this,
         # the freshly-created connection above is left dangling, still occupying a login slot.
@@ -396,7 +414,7 @@ def get_duts_and_dpus_to_dump(topology_obj, item):
         dict: The dictionary of the DPUs to with the DPU device info structure
     """
     duts_and_dpus_to_dump = dict()
-    for dut_alias, cli_obj in get_dut_cli_objs_from_topo_obj(topology_obj).items():
+    for dut_alias, cli_obj in general_helper.get_dut_cli_objs_from_topo_obj(topology_obj).items():
         try:
             # Add the DUT itself to the dumps
             duts_and_dpus_to_dump[dut_alias] = topology_obj.players[dut_alias]['engine']
@@ -414,7 +432,7 @@ def get_duts_and_dpus_to_dump(topology_obj, item):
             # for the main dut, the dpus are named as dpu0, dpu1, dpu2, dpu3
             # for the other duts, the dpus are prefixed with the dut alias
             # as dut-b-dpu0, dut-b-dpu1, dut-b-dpu2, dut-b-dpu3
-            dut_player_key = get_dpu_player_key(dut_alias, device_alias)
+            dut_player_key = topology_by_setup.get_dpu_player_key(dut_alias, device_alias)
 
             dpu_info = topology_obj.players.get(dut_player_key)
             if not dpu_info:
@@ -479,7 +497,7 @@ def get_dpus_from_duthosts(topology_obj, duthosts_value):
             continue
         try:
             dut_hostname = dut_info['attributes'].noga_query_data['attributes']['Common']['Name']
-        except Exception as err:
+        except Exception:
             logger.warning(f"Unable to obtain the DUT hostname for {dut_alias} from nog attributes")
             continue
 
@@ -495,7 +513,7 @@ def generate_and_copy_sonic_dump(topology_obj, dut_engine, dumps_folder, duratio
     item_clean_name = item.name.replace('/', '_').replace('[', '_').replace(']', '_')
     with allure.step('Generate Techsupport of last {} seconds'.format(duration)):
         logger.debug(f"item.location: {item.location}, item.name: {item.name}, item.originalname: {item.originalname}")
-        if is_bmc_testbed(item.config.option.testbed):
+        if general_helper.is_bmc_testbed(item.config.option.testbed):
             # Test runs against the BMC; the switch DUT engine from noga points to the switch IP
             # which is not the right target. Use the BMC engine attached by conftest._attach_bmc_player.
             bmc_engine = topology_obj.players.get('bmc', {}).get('engine')
@@ -542,9 +560,9 @@ def generate_and_copy_sonic_dump(topology_obj, dut_engine, dumps_folder, duratio
             logger.error('Exception while collecting AIR simulation logs via Loki proxy: %s', err)
     elif '_simx' in platform.lower():
         with allure.step('Dump SIMX VM logs'):
-            dump_simx_data(topology_obj, dumps_folder, name_prefix=item_clean_name)
+            store_techsupport_on_not_success.dump_simx_data(topology_obj, dumps_folder, name_prefix=item_clean_name)
         with allure.step('Collect hypervisor logs'):
-            collect_hypervisor_logs(topology_obj, dumps_folder, name_prefix=item_clean_name)
+            collect_simx_logs_on_not_success.collect_hypervisor_logs(topology_obj, dumps_folder, name_prefix=item_clean_name)
     logger.debug(f"Storing the DUT sysdump {dut_dump_file}")
     store_dest_file_path(dut_dump_file, item_clean_name)
 

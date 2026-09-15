@@ -179,6 +179,7 @@ FACTORY_RESET_TYPE_TO_CHECKER_FUNCTIONS: dict[str, dict[str, Generator[None, Non
 }
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.security
 @pytest.mark.reset_factory

@@ -8,9 +8,9 @@ tests_nvos/interfaces/lldp/test_lldp.py::test_lldp_disable_dhcp:
 
 tests_nvos/system/test_system_log.py::test_log_idle:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after DHCP renew/disable)'
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5180780 (mgmt port left permanently down after DHCP renew races with ifplugd)'
     conditions:
-    - https://redmine.mellanox.com/issues/5100996
+    - https://redmine.mellanox.com/issues/5180780
 
 tests_nvos/interfaces/test_response_mgmt_ip_inband.py::test_configure_feature_state:
   skip:

@@ -56,7 +56,7 @@ from ngts.tests_nvos.multi_asic.fatal_dump_rotation_helpers import (
     verify_tech_support_after_fatal_cycles,
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 fatal_event_timestamps = []
 
 SETTINGS = {"clear_time": 2}
@@ -409,6 +409,7 @@ def assert_fatal_logs(engines, request):
             '\n'.join(x for x in missing_timestamps))
 
 
+@pytest.mark.dut_reboot
 def test_post_fatal_recovery(engines):
     """
     Teardown called from .db file to make sure switch is not in fatal mode when the tests finish.
@@ -443,6 +444,7 @@ def test_post_fatal_recovery(engines):
 
 @pytest.mark.checklist
 @pytest.mark.fatal_mode
+@pytest.mark.dut_reboot
 def test_fatal_flow_until_soft_reset(engines, devices, random_api, random_asic, events_count_setting):
     """
     Test that health-events trigger fatal mode properly, and that the system leaves fatal mode when everything is fine.
@@ -510,6 +512,7 @@ def test_fatal_flow_until_soft_reset(engines, devices, random_api, random_asic, 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.checklist
 @pytest.mark.fatal_mode
+@pytest.mark.dut_reboot
 def test_fatal_flow_until_reboot(engines, devices, random_api, random_asic, test_name, events_count_setting):
     """
     Test repetitive health-events cause "soft reset" and then reboot. After everything is fine, leave fatal mode.
@@ -539,6 +542,7 @@ def test_fatal_flow_until_reboot(engines, devices, random_api, random_asic, test
 @pytest.mark.timeout(12 * MINUTE, func_only=True)
 @pytest.mark.checklist
 @pytest.mark.fatal_mode
+@pytest.mark.dut_reboot
 def test_single_asic_fatal_while_tech_support_generating(engines, random_asic, test_name, events_count_setting):
     """
     Single-ASIC fatal during tech-support: SAI ``sx_api_dbg_health_event_simulate`` (cause 5) on one ASIC.
@@ -565,6 +569,7 @@ def test_single_asic_fatal_while_tech_support_generating(engines, random_asic, t
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 @pytest.mark.checklist
 @pytest.mark.fatal_mode
+@pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer
 def test_all_asic_fatal_while_tech_support_generating(engines, test_name, events_count_setting):
     """
@@ -648,6 +653,7 @@ def test_repeated_fatal_fw_dumps_rotation_and_cleanup(
 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.fatal_mode
 def test_fatal_flow_until_close_ports(engines, devices, random_api, random_asic, events_count_setting):
     """
@@ -684,6 +690,7 @@ def test_fatal_flow_until_close_ports(engines, devices, random_api, random_asic,
 
 
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.fatal_mode
 def _test_negative_flow_time_window(engines, devices, random_asic):
     """
@@ -703,6 +710,7 @@ def _test_negative_flow_time_window(engines, devices, random_asic):
 
 
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.fatal_mode
 def test_negative_fatal_flow_with_warnings(engines, devices, random_api, random_asic):
     """Test that fatal-mode is not triggered by health events with irrelevant event_ids."""
@@ -713,6 +721,7 @@ def test_negative_fatal_flow_with_warnings(engines, devices, random_api, random_
 
 # todo: ask Ayal Lior for specs
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.fatal_mode
 def _test_health_events_for_different_asics(engines, devices):
     """Test that fatal-mode is not triggered if the health events happen for different ASICs."""
@@ -727,6 +736,7 @@ def _test_health_events_for_different_asics(engines, devices):
 
 # todo: skipped https://redmine.mellanox.com/issues/3866364
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.fatal_mode
 def _test_disable_fatal_mode_reboot(engines, devices, random_asic):
     """Test that the "reboot-state" setting is working properly."""
@@ -750,6 +760,7 @@ def _test_disable_fatal_mode_reboot(engines, devices, random_asic):
 @pytest.mark.parametrize('add_one_hour', [True, False])
 @pytest.mark.checklist
 @pytest.mark.fatal_mode
+@pytest.mark.dut_reboot
 def _test_daylight_saving_time(engines, devices, random_asic, add_one_hour):
     """
     Test that moving the clock does not disturb the timekeeping of the fatal-mode feature.

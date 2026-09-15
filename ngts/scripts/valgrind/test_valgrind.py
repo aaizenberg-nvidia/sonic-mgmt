@@ -7,16 +7,11 @@ from pathlib import Path
 import logging
 import pytest
 import os
-from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
-from ngts.cli_wrappers.sonic.sonic_general_clis import SonicGeneralCli
-from ngts.helpers import system_helpers
-from ngts.nvos_tools.infra import ExceptionTool
-from ngts.tools.test_utils import allure_utils as allure
-# from ngts.tools.infra import get_dumps_folder  # TODO: enable when VAL in MARS session level is ready
-from ngts.ngts_types import EnginesT  # , TopologyT  # TODO: enable when VAL in MARS session level is ready
-from ngts.helpers import system_helpers
 
-# from ngts.common.plugins.valgrind import analyzer as vg_analyzer  # TODO: enable when VAL in MARS session level is ready
+from ngts.tools.test_utils import allure_utils as allure
+from ngts.helpers import system_helpers
+from ngts.ngts_types import EnginesT  # , TopologyT  # TODO: enable when VAL in MARS session level is ready
+
 from . import helpers as vg_helpers
 
 logger = logging.getLogger(__name__)
@@ -47,7 +42,7 @@ def test_start_valgrind(engines: EnginesT, valgrind_services: list[str], valgrin
 
 @pytest.mark.disable_valgrind
 @pytest.mark.disable_loganalyzer
-def test_stop_valgrind(request: pytest.FixtureRequest, engines: EnginesT, valgrind_services, valgrind_dockers):
+def test_stop_valgrind(request: pytest.FixtureRequest, engines: EnginesT, valgrind_services: list[str], valgrind_dockers: list[str]):
     """
     Restores the services in SERVICE_LIST to non-valgrind operation and restarts them.
     Also attaches all valgrind output files to the allure report, under Valgrind Results step.

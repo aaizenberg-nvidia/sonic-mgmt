@@ -7,6 +7,7 @@ import pytest
 from devts.infra.tools.general_constants.constants import DefaultTestServerCred, DefaultConnectionValues
 from ngts.scripts.sonic_deploy.community_only_methods import is_dualtor_topo
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
+from ngts.constants.constants import PlayersAliases
 from ngts.nvos_tools.system.System import System
 from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from .collect_simx_logs_on_not_success import dump_simx_data, dump_simx_syslog_data
@@ -137,6 +138,10 @@ def test_store_techsupport_on_not_success(topology_obj, duration, dumps_folder, 
     if topology_obj.players.get('dut-b'):
         dut_cli_object_list.append(topology_obj.players['dut-b']['cli'])
         dut_engine_list.append(topology_obj.players['dut-b']['engine'])
+    for alias in PlayersAliases.multi_duts_list:
+        if topology_obj.players.get(alias):
+            dut_cli_object_list.append(topology_obj.players[alias]['cli'])
+            dut_engine_list.append(topology_obj.players[alias]['engine'])
 
     for i in range(len(dut_cli_object_list)):
         with allure.step('Generating a sysdump'):

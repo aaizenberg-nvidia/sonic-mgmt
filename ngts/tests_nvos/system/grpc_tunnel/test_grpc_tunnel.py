@@ -62,8 +62,11 @@ def test_grpc_tunnel_bad_cli_values(engines, topology_obj):
             expected_address_errors = (
                 f"Error: '{invalid_address}' is not a 'idn-hostname'. Hostname could not be encoded. "
                 f"Character '@' at position 7 is not allowed.",
-                f"Error: '{invalid_address}' is not a 'ipv6'. illegal IP address string passed to inet_pton",
                 f"Error: '{invalid_address}' is not a 'ipv4'. IPv4 address is a.b.c.d where all numbers are between 0 and 255.",
+            )
+            expected_ipv6_errors = (
+                f"Error: '{invalid_address}' is not a 'ipv6'. illegal IP address string passed to inet_pton",
+                f"Error: '{invalid_address}' is not a 'ipv6'. At least 3 parts expected in '{invalid_address}'",
             )
             output = system.grpc_tunnel.server.tunnel_name['testing'].set(
                 op_param_name=GrpcTunnelConstants.ADDRESS, op_param_value=invalid_address
@@ -72,6 +75,11 @@ def test_grpc_tunnel_bad_cli_values(engines, topology_obj):
             assert not missing, (
                 f'Missing expected error line(s) for invalid address {invalid_address!r}:\n' +
                 '\n'.join(missing) +
+                f'\n--- output ---\n{output}'
+            )
+            assert any(e in output for e in expected_ipv6_errors), (
+                f'Missing ipv6 error for {invalid_address!r}, expected one of:\n' +
+                '\n'.join(expected_ipv6_errors) +
                 f'\n--- output ---\n{output}'
             )
 
@@ -107,13 +115,13 @@ def test_grpc_tunnel_bad_cli_values(engines, topology_obj):
                 system.grpc_tunnel.server.tunnel_name['testing'].set(
                     op_param_name=GrpcTunnelConstants.ADDRESS, op_param_value='10.1.1.1', apply=True
                 ).verify_result(should_succeed=False, expected_value="Address and port must be set for configured servers")
-                logging.info(f"Detaching any unapplied config")
+                logging.info("Detaching any unapplied config")
                 NvueGeneralCli.detach_config(engines.dut)
                 system.grpc_tunnel.server.tunnel_name['testing'].set(
                     op_param_name=GrpcTunnelConstants.PORT, op_param_value='1234', apply=True
                 ).verify_result(should_succeed=False, expected_value="Address and port must be set for configured servers")
         finally:
-            logging.info(f"Detaching any unapplied config")
+            logging.info("Detaching any unapplied config")
             NvueGeneralCli.detach_config(engines.dut)
 
 
@@ -233,7 +241,7 @@ def test_grpc_tunnel_stress_flow(engines, topology_obj):
                 apply=True,
             ).get_returned_value(should_succeed=False)
             assert error_message in output, f"Error message is not as expected: {error_message}"
-            logging.info(f"Detaching any unapplied config")
+            logging.info("Detaching any unapplied config")
             NvueGeneralCli.detach_config(engines.dut)
         # Prepare every collector; start subscribe only on a subset (pass indices=None for all).
         subscribe_indices = [0, 1]

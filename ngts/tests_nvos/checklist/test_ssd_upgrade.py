@@ -19,6 +19,7 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import gnmi_client_for_dut
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.ssd
 def test_ssd_upgrade(engines, devices):
     """

@@ -4,7 +4,8 @@ import logging
 
 from pytest_ansible.errors import AnsibleConnectionFailure
 from tests.common.errors import RunAnsibleModuleFail
-from ngts.tools.infra import update_sys_path_by_community_plugins_path, patch_ansible_shell_action_module
+from ngts.tools.infra import update_sys_path_by_community_plugins_path, patch_ansible_shell_action_module, \
+    reset_ansible_ssh_control_masters
 from ngts.constants.constants import NvosCliTypes, PlayersAliases, CliType
 from ngts.constants.performance_constants import PerfConsts
 from ngts.nvos_constants.constants_nvos import NvosConst
@@ -75,6 +76,14 @@ def duthosts(ansible_adhoc, topology_obj, request):
     :param request: request pytest builtin
     :return: list of ansible engines
     """
+    # This is the session's first ansible call. A previous job/session on the same
+    # executor may have left a persistent ssh ControlMaster (ansible.cfg:
+    # ControlMaster=auto, ControlPersist=7200s) whose remote sshd session is now dead
+    # (e.g. the DUT rebooted/was reimaged since). Reusing it fails as
+    # "RunAnsibleModuleFail: ... MODULE FAILURE: No start of json char found" for every
+    # test in the session. Drop any leftover masters before the first connection.
+    reset_ansible_ssh_control_masters()
+
     ansible_engines_list = []
     duthosts = _filter_duthosts_for_loganalyzer(PlayersAliases.duts_list, request)
     for dut in duthosts:
@@ -94,6 +103,14 @@ def duthosts(ansible_adhoc, topology_obj, request):
                     if isinstance(err, AnsibleConnectionFailure) and dut_info['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE'] in \
                             NvosCliTypes.NvueCliTypes:
                         logger.info(f'Ignore when NVOS dut is down')
+                        continue
+                    elif isinstance(err, KeyError) and dut in PlayersAliases.multi_duts_list and dut_hostname in err.args:
+                        # A multi-dut setup can hold switches that were never added to the ansible inventory,
+                        # since until dut2..dut9 were supported only the primary dut was ever looked up there.
+                        # Skip them instead of failing the session - the cost is no syslog analysis on that switch.
+                        logger.warning(f'"{dut_hostname}" ({dut}) is missing from the ansible inventory, so it is '
+                                       f'excluded from loganalyzer. To analyze its syslog as well, add a host entry '
+                                       f'for "{dut_hostname}" to sonic-mgmt/ansible/inventory')
                         continue
                     elif (isinstance(err, AnsibleConnectionFailure) or isinstance(err, KeyError)) and 'dpu' in dut_hostname:
                         logger.info(f'Ignore the DPUs on smart switch setup if the ansible host is not available')

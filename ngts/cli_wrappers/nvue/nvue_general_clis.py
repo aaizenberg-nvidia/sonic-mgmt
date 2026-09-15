@@ -830,7 +830,7 @@ class NvueGeneralCli(SonicGeneralCliDefault):
         from ngts.scripts.sonic_deploy.nvos_only_methods import NvosInstallationSteps
         NvosInstallationSteps.post_installation_steps(
             context.topology_obj, context.workspace_path, context.setup_info,
-            context.serial_log_analyzers[self.engine.ip],
+            context.serial_log_analyzers,
             context.request.config.rootdir, context.base_version,
             context.target_version, context.verify_secure_boot
         )

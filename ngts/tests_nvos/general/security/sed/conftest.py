@@ -35,7 +35,6 @@ def sed_default_password(tpm_tool, devices: DevicesT):
                 f"{SecurityConsts.SED_MAX_PASSWORD_LENGTH} chars with no whitespace"
         ):
             allure.attach("raw_tpm_sed_password", repr(sed_password))
-
     try:
         if not password_valid:
             pytest.fail(

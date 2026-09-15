@@ -178,6 +178,7 @@ def test_generate_quote_overrides_file(engines):
             content: {dummy_quote_content}'''
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.security
 @pytest.mark.tpm
 def test_tpm_reboot_cases(engines, devices, save_local_timezone):

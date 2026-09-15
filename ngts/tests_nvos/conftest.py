@@ -74,7 +74,7 @@ from ngts.nvos_tools.infra.AirTool import get_internal_ip_for_oob_server
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
@@ -84,18 +84,15 @@ EXPECTED_KERNEL_PATTERNS = [
 
 pytest_plugins = [
     "ngts.common.plugins.valgrind.plugin",
+    'ngts.common.plugins.nvos_run_policy',
 ]
 
 
-def pytest_configure(config):
-    """
-    Load Vault secrets early in pytest initialization for local (non-MARS) runs.
-    This hook runs before session start and any fixtures.
+def pytest_configure(config: pytest.Config):
+    """Load Vault secrets for local NVOS test runs.
 
-    For MARS runs, secrets are already provided via environment variables.
-    For local runs, we fetch secrets from Vault.
-
-    This only runs when NVOS tests are being executed.
+    MARS supplies secrets through the environment, so Vault loading is skipped
+    for MARS-managed pytest processes.
     """
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
@@ -415,7 +412,7 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                         serial_log_content = file.read()
                 with allure.step('attach content to allure'):
                     allure.attach('Serial Console log during test', serial_log_content)
-            except Exception as e:
+            except Exception:
                 err = f'failed to attach serial output from {serial_log_file_path} : {ExceptionTool.format_traceback()}'
                 logging.warning(err)
                 allure.attach('Attachment Failure', err)
@@ -633,7 +630,7 @@ Top 3 Slowest Commands:
                 for i, (cmd, time_taken, status) in enumerate(stats["slowest_commands"][:3], 1):
                     text_summary += f"{i}. {cmd[:60]}{'...' if len(cmd) > 60 else ''} - {time_taken:.3f}s ({status})\n"
 
-                text_summary += f"\nAll Commands (in execution order):\n"
+                text_summary += "\nAll Commands (in execution order):\n"
                 for i, (cmd, response_time, status) in enumerate(commands, 1):
                     text_summary += f"{i:3d}. [{response_time:6.3f}s] {cmd} ({status})\n"
 

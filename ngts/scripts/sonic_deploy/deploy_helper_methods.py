@@ -618,8 +618,9 @@ class DeployMultiNosHelper:
         noga_cli_type = DeployMultiNosHelper._get_expected_noga_cli_type(dut_ip)
         current_os, engine = DeployConnectionHelper.get_current_os_engine(dut_ip, noga_cli_type)
         if engine:
-            DeployMultiNosHelper.validate_sudo_config(engine, current_os)
-            GeneralCliCommon(engine).uninstall_os_flow(current_os, target_cli_type, chip_type)
+            with engine:
+                DeployMultiNosHelper.validate_sudo_config(engine, current_os)
+                GeneralCliCommon(engine).uninstall_os_flow(current_os, target_cli_type, chip_type)
 
     @staticmethod
     def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False,

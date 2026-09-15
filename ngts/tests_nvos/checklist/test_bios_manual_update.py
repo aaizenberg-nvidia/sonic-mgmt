@@ -30,6 +30,7 @@ def restore_bios(topology_obj):
 
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.bios
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 @pytest.mark.parametrize("platform_component_with_clear", ["bios"], indirect=True)
 def test_bios_manual_update(engines, devices, topology_obj, test_api, platform_component_with_clear, test_name, nv_command, show_platform_initial_state):

@@ -39,10 +39,11 @@ try:
 except ModuleNotFoundError:
     from infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.disable_loganalyzer
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_kernel_crash(engines, devices, topology_obj, random_api):
     """

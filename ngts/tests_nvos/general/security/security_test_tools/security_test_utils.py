@@ -249,6 +249,41 @@ def wait_for_accounting_logs_drained(accounting_server_mngrs: list[AaaServerMana
             logger.info(f'Accounting logs still arriving on {[mngr.ip for mngr in leftover]}; clearing again')
 
 
+def wait_for_accounting_logs_drained(accounting_server_mngrs: list[AaaServerManager], grep: list[str],
+                                     timeout_sec: float = ACCOUNTING_DRAIN_TIMEOUT_SEC,
+                                     settle_sec: float = ACCOUNTING_DRAIN_SETTLE_SEC) -> bool:
+    """
+    @summary: Drain leftover accounting records (matching ``grep``) before taking a per-medium baseline.
+
+        TACACS session-teardown records from the *previous* auth medium can be written with a delay.
+        A fixed sleep before clearing the logs cannot guarantee they all landed, so a late record can
+        arrive *after* clear+baseline and get wrongly counted against the next medium (e.g. OpenAPI,
+        which must produce no logs). Instead of a fixed sleep, repeatedly clear the logs and verify
+        nothing matching ``grep`` reappears within ``settle_sec``. Once the (per-user) logs stay empty
+        for a full settle interval, the previous burst has drained and the baseline is trustworthy.
+
+    @param accounting_server_mngrs: server managers whose accounting logs are drained
+    @param grep: grep terms identifying the relevant records (e.g. [switch_hostname, client_username])
+    @param timeout_sec: bounded upper limit to wait for the drain to complete (best-effort on timeout)
+    @param settle_sec: interval the matching logs must stay empty after a clear to be considered drained
+    @return: True if drained within the timeout, False if the timeout was reached (best-effort)
+    """
+    with allure.step(f'Drain leftover accounting logs (grep: {grep}, timeout: {timeout_sec}s)'):
+        deadline = time.time() + timeout_sec
+        while True:
+            clear_accounting_logs_on_servers(accounting_server_mngrs)
+            time.sleep(settle_sec)  # give any in-flight records from the previous medium time to land
+            leftover = [mngr for mngr in accounting_server_mngrs
+                        if mngr.tail_accounting_logs(grep=grep).logs]
+            if not leftover:
+                return True
+            if time.time() >= deadline:
+                logger.warning(f'Accounting logs did not drain within {timeout_sec}s; '
+                               f'still seeing records on servers: {[mngr.ip for mngr in leftover]}')
+                return False
+            logger.info(f'Accounting logs still arriving on {[mngr.ip for mngr in leftover]}; clearing again')
+
+
 def check_accounting(after_time: str, switch_hostname: str, client_username: str,
                      accounting_server_mngrs: list[AaaServerManager], expect_accounting_logs: list[bool]):
     with allure.step('Verify accounting logs on given servers'):

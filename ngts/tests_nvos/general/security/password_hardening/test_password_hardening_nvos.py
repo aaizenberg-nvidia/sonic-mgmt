@@ -819,6 +819,7 @@ def test_password_hardening_max_password_len(disable_password_hardening):
             case_flow(test_flow)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.reboot
 @pytest.mark.system
 @pytest.mark.security

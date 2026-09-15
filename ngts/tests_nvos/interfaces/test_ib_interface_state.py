@@ -142,6 +142,7 @@ def test_ib_interface_state_unset(engines, random_api):
                                                       expected_value=NvosConsts.LINK_STATE_UP).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 @pytest.mark.ib_interfaces
 def test_ib_interface_state_up_once(engines, devices, random_api):

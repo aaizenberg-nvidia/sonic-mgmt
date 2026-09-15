@@ -404,6 +404,7 @@ def _verify_nv_bridge_output(nv_bridge, state=None, health=None, health_reason=N
     if health_reason:
         ValidationTool.verify_field_value_in_output(output_dictionary, SystemConsts.NV_BRIDGE_HEALTH_REASON, health_reason).verify_result()
     if connections:
+        assert output_dictionary['connections'], 'No nv-bridge connection established'
         if active and client_address and client_id and server_address:
             assert active in output_dictionary['connections']['1'][SystemConsts.NV_BRIDGE_CLIENT_ACTIVE], f'Connection is not {active}'
             assert client_address in output_dictionary['connections']['1'][SystemConsts.NV_BRIDGE_CLIENT_ADDRESS], f'Client-address {client_address} not in output'
