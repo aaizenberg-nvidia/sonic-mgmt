@@ -309,20 +309,25 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
 
 
 def generate_and_copy_nvos_dump(topology_obj, dut_engine, dumps_folder, duration, item, dut_alias='dut'):
-    with allure.step("Generating NVOS tech-support"):
-        logging.info("disconnect dut engine")
-        dut_engine.disconnect()
-        logging.info("Generating tech-support")
-        dut_engine.run_cmd('nv action generate system tech-support', validate=True)
-        output = dut_engine.run_cmd('nv show system tech-support files -o json', validate=True)
-        tech_support_file_on_switch = json.loads(output)["latest"]["path"]
+    logging.info("disconnect dut engine")
+    dut_engine.disconnect()
+    try:
+        with allure.step("Generating NVOS tech-support"):
+            logging.info("Generating tech-support")
+            dut_engine.run_cmd('nv action generate system tech-support', validate=True)
+            output = dut_engine.run_cmd('nv show system tech-support files -o json', validate=True)
+            tech_support_file_on_switch = json.loads(output)["latest"]["path"]
 
-    dest_tech_support_file = dumps_folder + f'/sysdump_{dut_alias}_' + item.name.replace('/', '_') + '.tar.gz'
-    copy_dump_file(dut_engine, tech_support_file_on_switch, dest_tech_support_file)
-    # MARS consumer looks up by bare test name (test_case_full_name.split('::')[-1]), so only
-    # register the primary DUT's path - secondary DUTs are still collected to disk.
-    if dut_alias == 'dut':
-        store_dest_file_path(dest_tech_support_file, item.name.replace('/', '_'))
+        dest_tech_support_file = dumps_folder + f'/sysdump_{dut_alias}_' + item.name.replace('/', '_') + '.tar.gz'
+        copy_dump_file(dut_engine, tech_support_file_on_switch, dest_tech_support_file)
+        # MARS consumer looks up by bare test name (test_case_full_name.split('::')[-1]), so only
+        # register the primary DUT's path - secondary DUTs are still collected to disk.
+        if dut_alias == 'dut':
+            store_dest_file_path(dest_tech_support_file, item.name.replace('/', '_'))
+    finally:
+        # generation/copy can fail partway through (e.g. DUT SSH session limit); without this,
+        # the freshly-created connection above is left dangling, still occupying a login slot.
+        dut_engine.disconnect()
 
 
 def generate_and_copy_cumulus_dump(topology_obj, dut_engine, dumps_folder, duration, item):
