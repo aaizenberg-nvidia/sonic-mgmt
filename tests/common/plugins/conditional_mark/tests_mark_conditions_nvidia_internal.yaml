@@ -590,6 +590,12 @@ container_hardening/test_container_hardening.py::test_container_privileged.*what
     conditions:
     - https://redmine.mellanox.com/issues/4400983
 
+dash/canonical/test_dash_privatelink.py::test_privatelink_basic_transform:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5273040"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5273040 and is_smartswitch==True"
+
 dash/test_dash_vnet.py::test_outbound_vnet_direct:
   skip:
     reason: "Testcase ignored due to platform nvda_bf and RM issue: https://redmine.mellanox.com/issues/3634592"
@@ -790,6 +796,12 @@ gnmi/test_gnoi_os.py:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4958590"
     conditions:
     - "https://redmine.mellanox.com/issues/4958590"
+
+smart_switch/test_check_dpu_fw_version.py::test_check_dpu_fw_version:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5273040"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5273040 and is_smartswitch==True"
 
 iface_loopback_action/test_iface_loopback_action_wjh.py:
   skip:
