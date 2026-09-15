@@ -183,6 +183,10 @@ class TestSRv6Leaf(TestSRv6Base):
     def test_leaf_srv6_trimming_many_to_few(self, request, traffic_type, workload, M):
         condition, skip_message = get_srv6_tests_skip_condition(self.cli_object, self.chip_type)
         skip_performance_test_conditionally(condition, skip_message)
+        skip_performance_test_conditionally(
+            self.chip_type == "SPC4" and isinstance(self.cli_object, NvueCli),
+            f"This test is not supported on SPC4 Cumulus - SPC4 trimming capacity "
+            f"limitation at this scale, Redmine issue 5241120")
         test_name = get_perf_test_name(request)
         num_of_ports = MRCConsts.UPSTREAM_DOWNSTREAM_NUM_OF_PORTS_BY_CHIP_TYPE[self.chip_type]
         egress_ports, ingress_ports, port_group_df = self.cli_object.performance.get_leaf_many_to_few_port_group_df(M, num_of_ports)
