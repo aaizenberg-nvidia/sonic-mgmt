@@ -295,6 +295,7 @@ class InfraConst:
     SELECTED_DPUS = 'selected_dpus'
 
     LOOPBOX_LABEL = 'loopbox'
+    SHARED_FANOUT_LABEL = 'shared_fanout'
 
 
 class LinuxConsts:

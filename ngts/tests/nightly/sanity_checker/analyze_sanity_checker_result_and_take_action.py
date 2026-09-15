@@ -14,6 +14,7 @@ SANITY_CHECKER_TEST_ACTION_MAP = {
     "test_cpld_version_check": "raise warning msg in allure report and disable bug handler",
     "test_device_asic_check": "stop",
     "test_cable_connection_between_dut_and_fanout_check": "stop",
+    "test_shared_fanout_software_control_check": "stop",
     "test_cable_connection_for_canonical_check": "stop",
     "test_bgp_session_status_check": "stop",
     "test_more_then_2_fan_status_wrong_check": "stop",

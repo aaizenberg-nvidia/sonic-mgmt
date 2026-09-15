@@ -14,8 +14,11 @@ from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_ch
 from ngts.constants.constants import MarsConstants
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers.secure_boot_helper import SonicSecureBootHelper
+from ngts.helpers.shared_fanout_helper import (
+    is_shared_fanout, software_control_enabled, software_control_warning,
+)
 from ngts.tests.conftest import get_dut_loopbacks
-from ngts.constants.constants import FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE, CliType
+from ngts.constants.constants import FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE
 from ngts.tests.nightly.sanity_checker.analyze_sanity_checker_result_and_take_action import write_failed_sanity_checker_cases_to_file
 from ngts.tools.sysdumps import copy_dump_file
 from tests.common.helpers.firmware_helper import (
@@ -33,7 +36,6 @@ logger = logging.getLogger()
 
 POSSIBLE_CPLD_LIST = ['CPLD1', 'CPLD2', 'CPLD3', 'CPLD4']
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-FANOUTS_TO_SKIP = ["r-moose-06"]
 
 BIOS_RESTORE_SKIP_HOSTS = {
     'r-bobcat-01',  # BIOS restore fails on this host, remove when the setup is fixed.
@@ -110,24 +112,14 @@ def enable_and_disable_fanout_lldp(request, engines, topology_obj, interfaces):
     :param topology_obj: topology object fixture
     """
 
-    def get_hostname(topology_obj, engine):
-        """Get hostname depending on CLI type."""
-        fanout_cli_type = topology_obj.players['fanout']['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
-        if fanout_cli_type == CliType.SONIC:
-            return engine.run_cmd("hostname").strip()
-        elif fanout_cli_type == CliType.MLNX_OS:
-            show_hosts_output = engine.run_cmd("show hosts")
-            hostname_match = re.search(r"Hostname\s*:\s*(\S+)", show_hosts_output)
-            return hostname_match.group(1) if hostname_match else ""
-        return
-
-    def should_skip_fanout(topology_obj, engine):
+    def should_skip_fanout(topology_obj, player_alias):
         """Check if fanout should be skipped (shared resource)"""
-        hostname = get_hostname(topology_obj, engine)
-        if hostname in FANOUTS_TO_SKIP:
-            logger.info(f"Skipping LLDP enable/disable on shared fanout {hostname}")
-            return True
-        return False
+        player = topology_obj.players.get(player_alias)
+        if not is_shared_fanout(player):
+            return False
+        hostname = player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
+        logger.info(f"Skipping LLDP enable/disable on shared fanout {hostname}")
+        return True
 
     def enable_lldp(engine):
         logger.info(f"enable lldp on {engine.ip}")
@@ -145,13 +137,13 @@ def enable_and_disable_fanout_lldp(request, engines, topology_obj, interfaces):
             engine.run_cmd("docker container stop lldp")
             engine.run_cmd("docker container rm lldp")
 
-    fanout_skipped = should_skip_fanout(topology_obj, engines.fanout)
+    fanout_skipped = should_skip_fanout(topology_obj, "fanout")
     fanout_b_skipped = False
 
     if not fanout_skipped:
         enable_lldp(engines.fanout)
     if 'fanout_b' in engines:
-        fanout_b_skipped = should_skip_fanout(topology_obj, engines.fanout_b)
+        fanout_b_skipped = should_skip_fanout(topology_obj, "fanout-b")
         if not fanout_b_skipped:
             enable_lldp(engines.fanout_b)
 
@@ -393,6 +385,16 @@ def test_device_asic_check(engines, platform_params):
     assert pci_device_name, "device asic is not up"
 
 
+@pytest.mark.sanity_checker_community
+def test_shared_fanout_software_control_check(topology_obj):
+    hostnames = []
+    for alias in ("fanout", "fanout-b"):
+        player = topology_obj.players.get(alias)
+        if is_shared_fanout(player) and software_control_enabled(player):
+            hostnames.append(player["attributes"].noga_query_data["attributes"]["Common"]["Name"])
+    assert not hostnames, "\n".join(software_control_warning(hostname) for hostname in hostnames)
+
+
 @pytest.mark.flaky(reruns=2, reruns_delay=10)
 @pytest.mark.sanity_checker_community
 def test_cable_connection_between_dut_and_fanout_check(engines, topology_obj, request, enable_and_disable_fanout_lldp):
@@ -405,14 +407,14 @@ def test_cable_connection_between_dut_and_fanout_check(engines, topology_obj, re
 
     with allure.step("Check cable connection between dut a and fanout a"):
         logger.info("Check cable connection between dut a and fanout a")
-        check_one_dut_to_fanout_cable_connection(cli_object_a, dut_a)
+        check_one_dut_to_fanout_cable_connection(cli_object_a, dut_a, topology_obj)
 
     if "dual" in request.config.getoption("--setup_name"):
         cli_object_a = topology_obj.players['dut-b']['cli']
         dut_b = engines.dut_b
         with allure.step("Check cable connection between dut b and fanout b"):
             logger.info("Check cable connection between dut b and fanout b")
-            check_one_dut_to_fanout_cable_connection(cli_object_a, dut_b)
+            check_one_dut_to_fanout_cable_connection(cli_object_a, dut_b, topology_obj)
 
 
 @pytest.mark.flaky(reruns=30, reruns_delay=4)
@@ -609,7 +611,7 @@ def get_setup_dir_name(dut_name):
     return f"{dut_name}_setup"
 
 
-def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine):
+def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine, topology_obj):
     dut_name = dut_engine.run_cmd("hostname")
     hwsku = cli_object.chassis.get_platform_hwsku()
     setup_dir_name = get_setup_dir_name(dut_name)
@@ -621,11 +623,15 @@ def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine):
     interface_status_dict = cli_object.interface.parse_interfaces_status()
     logger.info(f"interface_status_dict:\n {interface_status_dict}")
 
+    shared_fanouts = [player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
+                      for player in (topology_obj.players.get("fanout"), topology_obj.players.get("fanout-b"))
+                      if is_shared_fanout(player)]
+
     map_dut_oper_up_interface_and_fanout_interface = {}
     for one_dut_fanout_link in dut_fanout_link_data:
         if one_dut_fanout_link["StartDevice"] != dut_name:
             continue
-        if one_dut_fanout_link.get("EndDevice") in FANOUTS_TO_SKIP:
+        if one_dut_fanout_link.get("EndDevice") in shared_fanouts:
             logger.info(f"Skipping port {one_dut_fanout_link['StartPort']} connected to {one_dut_fanout_link['EndDevice']}")
             continue
         dut_port = one_dut_fanout_link["StartPort"]

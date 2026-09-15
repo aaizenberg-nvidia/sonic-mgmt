@@ -13,7 +13,12 @@ from pathlib import Path
 from ngts.helpers import json_file_helper
 from ngts.helpers.system_helpers import set_timezone as system_set_timezone
 from ngts.scripts.sonic_deploy.image_preparetion_methods import is_url, get_sonic_branch
-from ngts.constants.constants import MarsConstants, SonicDeployConstants, SonicConst, SimxCommunityConsts, InfraConst
+from ngts.constants.constants import (
+    InfraConst, MarsConstants, SimxCommunityConsts, SonicConst, SonicDeployConstants,
+)
+from ngts.helpers.shared_fanout_helper import (
+    is_shared_fanout, software_control_enabled, software_control_warning,
+)
 from ngts.scripts.sonic_deploy.community_only_methods import deploy_minigpraph, \
     reboot_validation, execute_script, is_dualtor_topo, is_dualtor_aa_topo, generate_minigraph, \
     config_y_cable_simulator, add_host_for_y_cable_simulator
@@ -558,6 +563,34 @@ class SonicInstallationSteps:
         dut_engine.run_cmd(f"docker exec syncd python3 /usr/bin/{script_name} --ports {ports_arg}", validate=True)
 
     @staticmethod
+    def warn_if_shared_fanout_has_im_enabled(topology_obj):
+        hostnames = []
+        for alias in ("fanout", "fanout-b"):
+            player = topology_obj.players.get(alias)
+            if not is_shared_fanout(player):
+                continue
+            hostname = player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
+            try:
+                enabled = software_control_enabled(player)
+            except Exception as err:
+                logger.warning(f"Could not read software-control state on shared fanout {hostname}: {err}")
+                continue
+            if enabled:
+                hostnames.append(hostname)
+        if not hostnames:
+            return
+
+        with allure.step("Check software control on shared fanouts"):
+            for hostname in hostnames:
+                message = software_control_warning(hostname)
+                logger.warning(message)
+                allure.attach(
+                    message,
+                    name=f"WARNING: Software control enabled on {hostname}",
+                    attachment_type=allure.attachment_type.TEXT,
+                )
+
+    @staticmethod
     def post_installation_steps(topology_obj, sonic_topo, recover_by_reboot, setup_name, platform_params,
                                 apply_base_config, target_version, is_shutdown_bgp, reboot_after_install,
                                 deploy_only_target, fw_pkg_path, reboot, additional_apps, setup_info, dut_alias,
@@ -678,6 +711,9 @@ class SonicInstallationSteps:
                     general_cli_obj.save_configuration()
             logger.info("Validating Post Install DUT configuration")
             sync_docker_time_to_israel(topology_obj)
+
+        if target_version and not deploy_only_target and is_community(sonic_topo) and not is_air:
+            SonicInstallationSteps.warn_if_shared_fanout_has_im_enabled(topology_obj)
 
         for dut in setup_info['duts']:
             SonicInstallationSteps.upgrade_switch(topology_obj=topology_obj, dut_name=dut['dut_name'],
