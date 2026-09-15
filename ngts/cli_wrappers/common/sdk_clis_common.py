@@ -6,6 +6,7 @@ import re
 from ngts.constants.constants import InfraConst, Sonic_Cache, CliType
 from ngts.constants.performance_constants import PerfConsts
 from ngts.helpers.system_helpers import copy_files_to_syncd
+from ngts.helpers.gerrit_helper import get_latest_patchset_ref
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 logger = logging.getLogger()
@@ -391,33 +392,7 @@ class SdkCliCommon():
             RuntimeError: If ``git ls-remote`` fails.
             TestIssue: If the change has no patch sets on the remote.
         """
-        sanitized_url = re.sub(r'://[^@]+@', '://***:***@', repo_url)
-        change_prefix = f"{int(change_number) % 100:02d}"
-        ref_pattern = f"refs/changes/{change_prefix}/{change_number}/*"
-        cmd = ["git", "ls-remote", repo_url, ref_pattern]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            sanitized_stderr = re.sub(r'://[^@]+@', '://***:***@', e.stderr or '')
-            sanitized_stdout = re.sub(r'://[^@]+@', '://***:***@', e.stdout or '')
-            raise RuntimeError(
-                f'git ls-remote failed for change {change_number} at {sanitized_url} with exit code '
-                f'{e.returncode}. stderr: {sanitized_stderr.strip()}. stdout: {sanitized_stdout.strip()}'
-            ) from None
-        patchset_ref_pattern = re.compile(rf"^refs/changes/{change_prefix}/{change_number}/(\d+)$")
-        patchsets = {}
-        for line in result.stdout.splitlines():
-            parts = line.split()
-            if len(parts) == 2:
-                match = patchset_ref_pattern.match(parts[1])
-                if match:
-                    patchsets[int(match.group(1))] = parts[1]
-        if not patchsets:
-            raise TestIssue(f"No patch sets found for Gerrit change {change_number} at {sanitized_url}")
-        latest_patchset = max(patchsets)
-        latest_ref = patchsets[latest_patchset]
-        logger.info(f"Resolved Gerrit change {change_number} to latest patchset {latest_patchset}: {latest_ref}")
-        return latest_ref
+        return get_latest_patchset_ref(repo_url, change_number)
 
     def get_perf_sys_sdk_with_clone_from_change(self, change_number, command_prefix):
         """

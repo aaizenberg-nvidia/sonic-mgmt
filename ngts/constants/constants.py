@@ -2050,3 +2050,8 @@ class TxSquelchConsts:
         TX_SQUELCH_MODE_DISABLE: "disabled",
         TX_SQUELCH_MODE_AUTO: "enabled"
     }
+
+
+class SonicMgmtChangeConstants:
+    BRANCH_PREFIX = "branch_"
+    TAG_PREFIX = "tag_"

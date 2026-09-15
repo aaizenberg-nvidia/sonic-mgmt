@@ -24,12 +24,13 @@ from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 from ngts.constants.constants import (
     PlayersAliases, SonicDeployConstants, BmcDeployConstants, MarsConstants,
-    SerialLoggerConst, CliType, SSHConsts,
+    SerialLoggerConst, CliType, SSHConsts, SonicMgmtChangeConstants, Sonic_Cache,
 )
 from ngts.constants.performance_constants import PerfConsts, Cl_Consts
 from ngts.scripts.sonic_deploy.image_preparetion_methods import get_real_paths, prepare_images
 from ngts.tools.align_components.nogaq import CACHE_FILE_NAME as NOGA_CACHE_FILE
 from ngts.helpers.general_helper import extract_host_details_from_topo_obj, get_cli_obj
+from ngts.helpers.gerrit_helper import get_latest_patchset_ref
 from ngts.scripts.sonic_deploy.sonic_only_methods import is_community, SonicInstallationSteps
 from ngts.scripts.sonic_deploy.community_only_methods import get_deploy_minigraph_cmd, execute_script
 from ngts.nvos_tools.Devices.IbDevice import BlackMambaSwitch, CrocodileSwitch
@@ -44,6 +45,87 @@ from ngts.common.util import download_file_to_dut, save_specified_installed_dpus
 from ngts.tools.infra import get_dumps_folder
 
 logger = logging.getLogger()
+
+
+def checkout_sonic_mgmt_change(sonic_mgmt_change):
+    """Check out the requested tag, branch, or Gerrit change in the local sonic-mgmt
+    working copy.
+
+    Runs against the repo containing this file, i.e. the checkout that is itself
+    executing pytest. Does not affect Python modules already imported by this
+    process; it affects files read from disk at runtime and any subprocess spawned
+    after the checkout completes.
+
+    Args:
+        sonic_mgmt_change (str): ``'branch_<name>'`` for a branch, ``'tag_<name>'`` for
+            a tag, or a numeric Gerrit change number to check out that change's latest
+            patchset (e.g. an unmerged CR).
+
+    Raises:
+        ValueError: if ``sonic_mgmt_change`` starts with neither prefix and is not all
+            digits.
+        subprocess.CalledProcessError: if the fetch or checkout fails (e.g. the ref
+            does not exist on origin).
+    """
+    # Git refuses to operate on a checkout whose owning UID isn't in the local user
+    # database ("dubious ownership"), which is common on shared/NFS-mounted MARS player
+    # hosts and ephemeral containers. Scoping "-c safe.directory=..." to each invocation
+    # grants trust for that single git process only - nothing is written to any host's
+    # persistent git config, so this self-heals on every machine that runs this step
+    # instead of requiring a one-off manual fix per host/container.
+    git_rev_parse_command = ["git", "-c", "safe.directory=*", "rev-parse", "--show-toplevel"]
+    logger.info("About to execute command: %s", git_rev_parse_command)
+    repo_root = subprocess.run(
+        git_rev_parse_command,
+        cwd=os.path.dirname(__file__), check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    safe_directory_arg = f"safe.directory={repo_root}"
+
+    # Fetch over HTTPS using the SONiC verification service account instead of the local
+    # "origin" remote, which is configured over SSH and depends on a personal SSH private
+    # key + known_hosts entry being present on whatever host/container happens to run this
+    # step. GERRIT_API_KEY/SVC_SONIC_VER_BOT are loaded into every MARS session by the
+    # existing "Fetch and load secrets" pre-session step, so they're already present here
+    # without any per-host provisioning (same credential
+    # sonic-tool/mars/scripts/checkout_scripts_on_host.py already uses to clone this repo).
+    # The credential is supplied via a git credential helper that reads it from the
+    # environment at git's own (internal, shell-based) invocation time, so the plaintext
+    # token is never embedded in the repo URL, in any command list, or in a local variable
+    # that pytest's --showlocals could print into a MARS log on failure.
+    repo_url = f"https://git-nbu-sw.nvidia.com/r/a/{Sonic_Cache.PROJECT_NAME}"
+    credential_helper = '!f() { echo username="$SVC_SONIC_VER_BOT"; echo password="$GERRIT_API_KEY"; }; f'
+    credential_helper_arg = f"credential.https://git-nbu-sw.nvidia.com.helper={credential_helper}"
+
+    if sonic_mgmt_change.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX):
+        ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.BRANCH_PREFIX):]
+        refspec = f"refs/heads/{ref}:refs/remotes/origin/{ref}"
+    elif sonic_mgmt_change.startswith(SonicMgmtChangeConstants.TAG_PREFIX):
+        ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.TAG_PREFIX):]
+        refspec = f"refs/tags/{ref}:refs/tags/{ref}"
+    elif sonic_mgmt_change.isdigit():
+        change_ref = get_latest_patchset_ref(
+            repo_url, sonic_mgmt_change, cwd=repo_root, extra_git_config=[credential_helper_arg],
+        )
+        ref = "FETCH_HEAD"
+        refspec = change_ref
+    else:
+        raise ValueError(
+            f"Invalid sonic_mgmt_change={sonic_mgmt_change!r}. Must start with "
+            f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}' or '{SonicMgmtChangeConstants.TAG_PREFIX}', "
+            f"or be a numeric Gerrit change number."
+        )
+
+    logger.info(f"Checking out sonic-mgmt {sonic_mgmt_change!r} in {repo_root}")
+
+    git_fetch_command = [
+        "git", "-c", safe_directory_arg, "-c", credential_helper_arg, "fetch", repo_url, refspec,
+    ]
+    logger.info("About to execute command: %s", git_fetch_command)
+    subprocess.run(git_fetch_command, cwd=repo_root, check=True)
+
+    git_checkout_command = ["git", "-c", safe_directory_arg, "checkout", ref]
+    logger.info("About to execute command: %s", git_checkout_command)
+    subprocess.run(git_checkout_command, cwd=repo_root, check=True)
 
 
 class DeploymentContext:
