@@ -583,6 +583,7 @@ class ValidatorRunIdentity:
         hostname (str): The player's hostname, i.e, "mtvr-moose-02"
         setup_name (str, optional): The Noga setup name, from the mongo db template file
         mars_session_id (str, optional): MARS session id, from the mongo db template file
+        os_version (str, optional): The DUT's OS version (SONiC/Cumulus/DVS), from the mongo db template file
     """
     test_name: str
     scenario: str
@@ -590,6 +591,7 @@ class ValidatorRunIdentity:
     hostname: str
     setup_name: str = None
     mars_session_id: str = None
+    os_version: str = None
 
     def to_json(self):
         """
@@ -636,6 +638,7 @@ def add_run_identity_to_validator_json(json_path, test_name, scenario, player_al
         hostname=hostname,
         setup_name=dut_system_information.get(MongoDbConsts.SETUP_NAME),
         mars_session_id=dut_system_information.get(MongoDbConsts.MARS_SESSION_ID),
+        os_version=dut_system_information.get(MongoDbConsts.OS_VERSION),
     )
     run_identity_json = run_identity.to_json()
     validator_json.setdefault(ValidationConsts.METADATA, {}).update(run_identity_json)

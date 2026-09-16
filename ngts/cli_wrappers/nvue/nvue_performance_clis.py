@@ -1451,11 +1451,11 @@ class NvuePerformanceCli(PerformanceCommon):
             if match:
                 dut_system_information[key] = match.group(1)
 
-        os_regex = r"IMAGE_DESCRIPTION=\"(Cumulus Linux [\d|.]+)\""
+        os_regex = r"IMAGE_BUILD_SERIAL_ID=(\S+)"
         os_output = self.execute_cmd("cat /etc/image-release")
         match = re.search(os_regex, os_output)
         if match:
-            dut_system_information["osVersion"] = match.group(1)
+            dut_system_information["osVersion"] = f"Cumulus Linux {match.group(1)}"
 
         self.modify_board_host_internal_name(output, regex_dict, dut_system_information)
         return dut_system_information

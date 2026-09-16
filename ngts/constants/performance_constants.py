@@ -776,6 +776,7 @@ class MongoDbConsts:
     DUT_SYSTEM_INFORMATION = "dutSystemInformation"
     MARS_SESSION_ID = "marsSessionId"
     SETUP_NAME = "setupName"
+    OS_VERSION = "osVersion"
     TEST_WORKLOAD = "testWorkload"
     TEST_TRAFFIC_TYPE = "testTrafficType"
     INGRESS_PORT_SEQUENCE = "ingressPortSequence"

@@ -19,6 +19,7 @@ from ngts.helpers.performance.Performance_log_print import print_players_logs, r
 from ngts.constants.constants import FatalStateConsts, PytestConst
 from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
 from ngts.helpers.performance.burst_config import BurstConfig
+from ngts.tools.allure_report import allure_set_environment
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
@@ -249,8 +250,11 @@ def os_ports_name_mapping_df(request, players, basic_setup_configuration):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def create_mongo_db_template_file(players, session_id, setup_name):
-    create_performance_db_template(players, session_id, setup_name)
+def create_mongo_db_template_file(players, session_id, setup_name, pytestconfig):
+    template = create_performance_db_template(players, session_id, setup_name)
+    os_version = template.get(MongoDbConsts.DUT_SYSTEM_INFORMATION, {}).get(MongoDbConsts.OS_VERSION)
+    if os_version:
+        allure_set_environment(pytestconfig, "os_version", os_version)
 
 
 @pytest.fixture(scope='session', autouse=True)
