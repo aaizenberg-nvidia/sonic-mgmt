@@ -1498,7 +1498,7 @@ dhcp_relay/test_dhcpv6_relay.py::test_dhcp_relay_after_link_flap:
   xfail:
     reason: "NDP table cleared after link recovery causes DHCPv6 relay verification to fail"
     conditions:
-      - "https://github.com/sonic-net/sonic-mgmt/issues/27805 and 'sn2700' in platform"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27805"
 
 dhcp_relay/test_dhcpv6_relay.py::test_dhcp_relay_default:
   skip:
@@ -1516,7 +1516,7 @@ dhcp_relay/test_dhcpv6_relay.py::test_dhcp_relay_start_with_uplinks_down:
   xfail:
     reason: "NDP table cleared after link recovery causes DHCPv6 relay verification to fail"
     conditions:
-      - "https://github.com/sonic-net/sonic-mgmt/issues/27805 and 'sn2700' in platform"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27805"
 
 dhcp_relay/test_dhcpv6_relay.py::test_dhcpv6_relay_counter:
   skip:
