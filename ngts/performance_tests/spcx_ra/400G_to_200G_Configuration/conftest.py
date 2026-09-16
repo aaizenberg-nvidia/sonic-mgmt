@@ -12,7 +12,7 @@ import copy
 import os
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration_guarded, restore_session_basic_configuration,
-    save_session_base_configuration)
+    save_session_base_configuration, get_ar_congestion_thresholds)
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.performance_tests.spcx_ra.conftest import resolve_ar_algorithm
@@ -68,11 +68,7 @@ def conf_args(chip_type):
     This function alters all of the jinja template files.
     """
     conf_args = {"auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
-                 "congestion_thresh_med": (PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                           else PerfConsts.MED_AR_THRESHOLD),
-                 "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                          else PerfConsts.HIGH_AR_THRESHOLD),
+                 **get_ar_congestion_thresholds(chip_type),
                  PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
                  "is_ipv6": False,
                  "is_ipv4": True,

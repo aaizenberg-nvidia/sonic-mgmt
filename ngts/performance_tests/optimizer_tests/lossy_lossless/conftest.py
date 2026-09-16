@@ -17,7 +17,8 @@ from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration,
-                                                                dynamic_configuration_helper)
+                                                                dynamic_configuration_helper,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts
 from ngts.constants.nv_optimizer_constant import NvOptimizerEnvVariables
 import os
@@ -53,7 +54,7 @@ def conf_args(players):
     This function alters all of the jinja template files.
     """
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "auto_buffer_mode": "False",
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "is_ipv6": False,

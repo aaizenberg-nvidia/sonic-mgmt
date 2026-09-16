@@ -12,7 +12,8 @@ import allure
 import copy
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration, skip_test_on_unsupported_os)
+                                                                apply_test_configuration, skip_test_on_unsupported_os,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 logger = logging.getLogger()
@@ -33,7 +34,7 @@ def skip_test_conditionally(players):
 @pytest.fixture(scope='function', autouse=True)
 def conf_args(chip_type, bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
     conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+                 **get_ar_congestion_thresholds(chip_type),
                  "two_sided_ar": False,
                  "is_ipv6": False,
                  "split_right": 2,

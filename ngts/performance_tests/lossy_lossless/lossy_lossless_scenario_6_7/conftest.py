@@ -17,7 +17,8 @@ from ngts.constants.performance_constants import (
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration,
     restore_basic_configuration,
-    save_base_configuration
+    save_base_configuration,
+    get_ar_congestion_thresholds
 )
 from ngts.helpers.performance.traffic_helpers import (
     create_json_traffic_file_with_stream_list,
@@ -112,7 +113,7 @@ def get_conf_args(scenario_name, players, all_ports_after_split):
     chip_type = get_chip_type(players['dut']['attributes'].noga_query_data['attributes'])
 
     conf_args = {
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+        **get_ar_congestion_thresholds(chip_type),
         "fboss_enabled": True,
         "auto_buffer_mode": "False",
         "packet_size": PerfConsts.PACKET_SIZE_LIST[0],

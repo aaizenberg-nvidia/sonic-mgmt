@@ -16,7 +16,8 @@ from ngts.constants.constants import BugHandlerConst, CliType
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration,
-                                                                skip_test_on_unsupported_os)
+                                                                skip_test_on_unsupported_os,
+                                                                get_ar_congestion_thresholds)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.performance_tests.conftest import get_all_players_ports
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts, MultiNosSharedData
@@ -250,7 +251,7 @@ def conf_args(players, chip_type, test_id, shaper_value, ar_enabled, split_host_
     num_right_dips = adjust_num_dips_for_chip(num_right_dips, chip_type)
 
     conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+                 **get_ar_congestion_thresholds(chip_type),
                  "two_sided_ar": False,
                  "ar_enabled": ar_enabled,
                  "split_right": split_host_ports,

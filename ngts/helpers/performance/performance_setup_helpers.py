@@ -864,6 +864,24 @@ def skip_test_on_unsupported_chip_type(current_chip_type, unsupported_chip_type)
         pytest.skip(f"This test is not supported in {unsupported_chip_type}")
 
 
+def get_ar_congestion_thresholds(chip_type):
+    """Return the AR congestion_thresh_lo/med/hi conf_args for the given chip type.
+
+    Args:
+        chip_type (str): Chip type as returned by get_chip_type (e.g. "SPC6").
+
+    Returns:
+        dict: congestion_thresh_lo/med/hi values, satisfying the SDK's
+            required lo <= med <= hi ordering for sx_api_ar_congestion_threshold_set.
+    """
+    is_spc6 = chip_type == "SPC6"
+    return {
+        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.LOW_AR_THRESHOLD,
+        "congestion_thresh_med": PerfConsts.MED_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.MED_AR_THRESHOLD,
+        "congestion_thresh_hi": PerfConsts.HIGH_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.HIGH_AR_THRESHOLD,
+    }
+
+
 def skip_performance_test_conditionally(condition, skip_message):
     if condition:
         pytest.skip(skip_message)
