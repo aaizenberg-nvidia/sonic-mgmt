@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> NVOS </group>
+      <name> NVOS - USB Front Panel </name>
+      <info> </info>
+      <owner> Nadav V. </owner>
+    </Test>
+    <Case>
+      <tags> security </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <name> NVOS - USB Front Panel </name>
+    <info> Front-panel USB disable/enable (FR #4294636). The port is controlled through UEFI/BIOS, so every state change costs a reboot - hence the raised pytest timeout. Unsupported platforms are skipped at runtime by the test itself, detected from the CLI. </info>
+    <cmd>
+      <params>
+          <static_args>  --setup_name [[conf:extra_info.setup_name]]  --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_platform_usb_front_panel.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 2400   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+</CASEDEF>

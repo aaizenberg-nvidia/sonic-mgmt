@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from ngts.nvos_constants.constants_nvos import ApiType, OutputFormat, ActionConsts, SystemConsts
+from ngts.nvos_constants.constants_nvos import ApiType, OutputFormat, ActionConsts, PeerPortConsts, SystemConsts
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -52,6 +52,21 @@ def enable_cluster_and_stop_apps(setup_name, devices):
         cluster.apps.app_name[app].action_stop_cluster_app().verify_result()
 
 
+@pytest.fixture(scope='function')
+def restart_nmx_t_lite():
+    """
+    Uninstalling nmx-telemetry also removes NMX-T Lite, which is shipped inside that package.
+    NVOS never restarts the container itself, so without this it keeps getting errors on its sockets.
+    """
+    yield
+    fae = Fae()
+    with allure.step('restart nmx-t-lite by toggling fae peer-port state'):
+        fae.system.peer_port.set(op_param_name=PeerPortConsts.STATE,
+                                 op_param_value=PeerPortConsts.STATE_DISABLED, apply=True).verify_result()
+        fae.system.peer_port.set(op_param_name=PeerPortConsts.STATE,
+                                 op_param_value=PeerPortConsts.STATE_ENABLED, apply=True).verify_result()
+
+
 @pytest.fixture()
 def install_apps_if_needed(devices):
     cluster = Cluster()
@@ -75,7 +90,7 @@ def install_apps_if_needed(devices):
 @pytest.mark.nmx
 @pytest.mark.timeout(8 * MINUTE, func_only=True)
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
-def test_nmx_package_good_flow(devices, engines, test_api, install_apps_if_needed):
+def test_nmx_package_good_flow(devices, engines, test_api, install_apps_if_needed, restart_nmx_t_lite):
     """
     Test the good flow of NMX package management.
 

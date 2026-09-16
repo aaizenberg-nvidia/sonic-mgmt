@@ -257,7 +257,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
 
             # sx_core module validation only applies to switches that have the sx_core kernel module.
             # IB (XDR) switches (Crocodile, Mamba, Taipan) have sx_core; NVLink switches (Juliet, Rosalind) do not.
-            if devices.dut.has_sx_core:
+            if devices.dut.has_sx_core_modules:
                 with allure.independent_step('validate sx_core modules in dump'):
                     validate_sx_core_modules_in_dump_nvos(engines.dut, tech_support_dir)
 
@@ -277,6 +277,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
             if getattr(devices.dut, 'requires_nv_bridge_config', False):
                 with allure.independent_step('validate nv-bridge logs and status are bundled in tech-support'):
                     validate_nv_bridge_logs_in_dump(engines.dut, tech_support_dir)
+
     finally:
         if devices.dut.has_nmx and not skynet:
             Cluster().unset(apply=True)

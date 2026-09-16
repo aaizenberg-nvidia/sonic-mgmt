@@ -98,6 +98,9 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_certificates.cases </cases>
     </test>
     <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_cert_expiry_alert.cases </cases>
+    </test>
+    <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_api.cases </cases>
     </test>
 	<test>
@@ -139,5 +142,9 @@
 	</test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_centralized_flows.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_usb_front_panel.cases </cases>
+        <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>
 	</test>
 </DBDEF>

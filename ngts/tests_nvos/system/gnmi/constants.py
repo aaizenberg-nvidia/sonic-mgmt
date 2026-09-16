@@ -171,7 +171,7 @@ GNMI_PAM_BAD_PLAIN_LAUNCH_JOIN_SLACK_SEC = 90
 GNMI_PAM_BAD_PLAIN_THREAD_MIN_BEFORE_GOOD = 10
 # Timeout waiting for that readiness gate in ``_plain_bad_gnmi_background_start_and_wait_ready``.
 GNMI_PAM_BAD_PLAIN_READY_WAIT_SEC = 30.0
-# ``_gnmic_capabilities_mtls_spiffe_success`` (DDoS/slot tests): independent of
+# ``_gnmic_capabilities_mtls_spiffe_success`` (DDoS/PAM-saturation tests): independent of
 # ``RECONNECT_CAPABILITIES_*`` so tuning post-restart reconnect does not retime these probes.
 GNMI_PAM_SPIFFE_CAPABILITIES_MAX_WAIT_SEC = 15
 GNMI_PAM_SPIFFE_CAPABILITIES_RETRY_INTERVAL_SEC = 2
@@ -232,16 +232,26 @@ class GnmicErr:
     PATH_NOT_IN_YANG = 'does not exist in Yang Models'
     # Some gNMI agents enforce a minimum SAMPLE interval and reject the subscription outright.
     SAMPLE_INTERVAL_TOO_LOW = 'sample interval is set too low'
+    # gRPC UNAVAILABLE: the server accepted the connection and then dropped it without serving the RPC.
+    # Under authentication load the gNMI server does this at the handshake, before any gNMI-level reply.
+    SERVER_UNAVAILABLE = 'code = Unavailable'
 
     # Transient back-pressure errors the server returns while overloaded (e.g. Envoy rate limiting or
     # requests timing out under load). Safe to retry since the server recovers once load drops, so
     # reachability/recovery checks tolerate and retry them. Add new overload markers here.
     OVERLOAD_ERRS = [LOCAL_RATE_LIMITED, DEADLINE_EXCEEDED]
 
+    # How a client learns the server is too busy to authenticate it: the server names the cause, or it drops
+    # the connection at the handshake (``SERVER_UNAVAILABLE``, which is what the gNMI server was observed to
+    # do under failing-auth load), or it stops answering and the request hits its deadline.
+    # ``LOCAL_RATE_LIMITED`` is deliberately excluded - that is the request-per-minute limiter, which a test
+    # can trip by itself regardless of any other load.
+    SERVER_TOO_BUSY_ERRS = [AUTH_SERVICE_UNAVAILABLE, SERVER_UNAVAILABLE, DEADLINE_EXCEEDED]
+
     ALL_ERRS = [GNMIC_NOT_INSTALLED, AUTH_FAIL, UNAUTHENTICATED, HANDSHAKE_FAIL,
                 AUTH_SERVICE_UNAVAILABLE, REQUEST_FAILED, NO_SUBSCRIBER_SLOT_AVAILABLE, RCV_ERROR,
                 RPC_ERROR, UNIMPLEMENTED, PATH_NOT_IN_YANG, CERT_VERIFY_FAIL,
-                SAMPLE_INTERVAL_TOO_LOW] + OVERLOAD_ERRS
+                SAMPLE_INTERVAL_TOO_LOW, SERVER_UNAVAILABLE] + OVERLOAD_ERRS
 
 
 class GrpcMsg:

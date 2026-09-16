@@ -34,12 +34,15 @@ from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, ClusterSimulation
 from ngts.tests_nvos.interfaces.nvl_port.helpers import toggle_port_state
 from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    _parse_link_health_state,
     _read_link_health_state,
     _read_peer_port_link_health_state,
     find_active_peer_switch_pair_for_attention,
     is_link_health_feature_available,
     is_link_health_supported,
+    skip_if_peer_port_link_health_unavailable,
     trigger_link_health_attention_first,
+    verify_healthy_link_health_block,
     verify_link_health_after_link_down,
     verify_link_health_state_valid,
     verify_peer_link_health_independent_of_switch_attention,
@@ -88,16 +91,31 @@ def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_con
         peer_port_list_output = OutputParsingTool.parse_json_str_to_dictionary(peer_port.show()).verify_result()
         assert peer_port_list_output, "peer-port list is empty"
 
-    with allure.step(f"Get list of peer ports"):
-        peer_ports = peer_port.get_list_of_ports()
-        list_of_ports = [port.peer_port_name for port in peer_ports]
-        logger.info(f"List of Peer Ports: {list_of_ports}")
+    verify_link_health = is_link_health_supported(devices) and is_link_health_feature_available(engines.dut)
+
+    with allure.step(f"Validate 'nv show peer-port --view=detail' for all Peer Ports"):
+        detail_output = OutputParsingTool.parse_json_str_to_dictionary(
+            peer_port.show(op_param='--view=detail')).verify_result()
+        helper_validate_peer_port_detail_output(detail_output, peer_port_list_output,
+                                                verify_link_health=verify_link_health)
+
+    if test_api == ApiType.OPENAPI:
+        # Querying each port separately hits the ACL rule hit_count limit and is blocked as a DoS,
+        # so drill into a single port only - the detail view above already covered all of them.
+        peer_ports = [peer_port.get_random_peer_port()]
+    else:
+        with allure.step(f"Get list of peer ports"):
+            peer_ports = peer_port.get_list_of_ports()
+
+    if verify_link_health:
+        skip_if_peer_port_link_health_unavailable(engines.dut)
 
     with allure.step(f"Validate show commands for all Peer Ports"):
+        logger.info(f"List of Peer Ports: {[port.peer_port_name for port in peer_ports]}")
         for port in peer_ports:
             with allure.step(f"Validate show commands for Peer Port {port.peer_port_name}"):
                 helper_validate_peer_port_show(port)
-                if is_link_health_supported(devices) and is_link_health_feature_available(engines.dut):
+                if verify_link_health:
                     verify_peer_port_link_health_show(port)
 
 
@@ -508,6 +526,41 @@ def helper_validate_peer_port_show(peer_port_interface):
                      f" {peer_port_interface.peer_port_name}"):
         OutputParsingTool.parse_json_str_to_dictionary(peer_port_interface.peer_port.link.phy.health.histogram.show()).\
             verify_result()
+
+
+def helper_validate_peer_port_detail_output(detail_output, expected_ports, verify_link_health=False):
+    """
+    Same coverage as helper_validate_peer_port_show, but the detail view already holds the data of
+    every drill-in command, so each port is verified against the dict instead of being queried again.
+    """
+    assert set(detail_output) == set(expected_ports), \
+        f"Detail view returned ports {sorted(detail_output)}, expected {sorted(expected_ports)}"
+
+    for port_name, port_data in detail_output.items():
+        with allure.step(f"Validate detail output for Peer Port {port_name}"):
+            helper_verify_peer_port_hostname(port_data, port_name)
+
+            assert port_data.get(PeerPortConsts.ASSOCIATED_SWITCH_PORT), \
+                f"Peer Port {port_name}: '{PeerPortConsts.ASSOCIATED_SWITCH_PORT}' is missing or empty"
+
+            for block_path in PeerPortConsts.DETAIL_VIEW_BLOCKS:
+                block_name = ' '.join(block_path)
+                with allure.step(f"Validate '{block_name}' block for Peer Port {port_name}"):
+                    block = port_data
+                    for key in block_path:
+                        assert isinstance(block, dict) and key in block, \
+                            f"Peer Port {port_name}: block '{block_name}' is missing from detail output"
+                        block = block[key]
+                    assert block, \
+                        f"Peer Port {port_name}: block '{block_name}' is empty in detail output"
+
+            if verify_link_health:
+                with allure.step(f"Verify peer-port link health for {port_name}"):
+                    health_output = port_data[PeerPortConsts.LINK][PeerPortConsts.HEALTH]
+                    state = _parse_link_health_state(health_output)
+                    verify_link_health_state_valid(state, port_name)
+                    if state == LinkHealthConsts.STATE_HEALTHY:
+                        verify_healthy_link_health_block(health_output, port_name)
 
 
 def helper_verify_peer_port_hostname(port_output, port_name="", expected_hostname=None):

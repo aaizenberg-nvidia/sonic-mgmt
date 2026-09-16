@@ -247,7 +247,7 @@ class BaseDevice(ABC):
         return self.switch_type == NvosConst.IB_SWITCH_TYPE
 
     @property
-    def has_sx_core(self):
+    def has_sx_core_modules(self):
         return self.is_ib()
 
     def get_lldp_port_name_from_dump(self, lldp_dict):

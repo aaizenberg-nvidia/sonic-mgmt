@@ -33,14 +33,14 @@ def cluster_and_sdn(setup_name, devices, standalone_system):
 @pytest.fixture(scope="module")
 def expected_tray_count(tray_topology_config):
     """
-    Expected len(nv show sdn trays) == switch_nodes from lab config.
+    Expected len(nv show sdn trays) == switch_nodes + compute_nodes from lab config.
 
-    Since 0.8 NMX-C filters compute trays out of the trays view entirely (compute-tray
-    admin state is not released to customers), so only switch trays are listed —
-    observed on rtf2: compute trays 1/2 hidden, switch tray 3 shown, while the
-    partition view still shows all GPUs (computes remain discovered and on-fabric).
+    Since the 6623822 fix (0.8 >= 25.03.0722) the trays view lists ALL trays again:
+    switch trays with a real maintenance-state, compute trays with 'N/A' (compute-tray
+    admin state is not released to customers — update/restore stay rejected). Observed
+    on rtf2 (25.03.0723): trays 1/2 (computes) 'N/A', tray 3 (switch) 'up'.
     """
-    return tray_topology_config['switch_nodes']
+    return tray_topology_config['switch_nodes'] + tray_topology_config['compute_nodes']
 
 
 @pytest.fixture(scope="module")

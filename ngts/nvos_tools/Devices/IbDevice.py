@@ -2957,11 +2957,16 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
         self.leakage_sensors_count = 2
         self.list_of_leakages = [f"LEAKAGE-{i}" for i in range(1, self.leakage_sensors_count + 1)]
         self.expected_operation_durations.update({
-            self.generate_tech_support: 225,
+            self.generate_tech_support: 240,
             'julietscaleout generate_tech_support': 225,
             'reboot with new user FW': 450 if is_bug_active(4854038) else 390,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+
+            # The synchronous "nv action install" portion (before reboot/recovery).
+            # Custom for Rosalind to allow for the longer install time. Based on long install times.
+            OperationTimeConsts.IMAGE_INSTALL_OPERATION_ROW: 180,
         })
+
         if is_bug_active(4694678):
             power_cycle_increase_timeout = 60
             # Make sure all operations that depend on power cycle have a longer timeout because of the bug 4694678.
@@ -3325,9 +3330,14 @@ class RosalindSwitch(RosalindSurrogateSwitch):
         self.psu_fan_list = []
         self.transceiver_list = []
 
+        # Rosalind tech-support timing is tracked under its own operation label, not Juliet's.
+        # Must be set before the durations update below, which keys off this attribute.
+        self.generate_tech_support = 'rosalind generate_tech_support'
+
         self.expected_operation_durations.update({
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 10 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
+            self.generate_tech_support: 220,
         })
 
         self.nvl_access_ports_list = [
@@ -3797,6 +3807,14 @@ class RosalindRTF(RosalindSwitch):
 
     def __init__(self):
         super().__init__(asic_amount=4)
+
+    def _init_constants(self):
+        super()._init_constants()
+        # 200G is not configurable on RTF, so no core-clock may offer it.
+        self.fae_supported_core_clocks = {
+            core_clock: [speed for speed in speeds if speed != IbInterfaceConsts.XDR_SLOW_SPEED]
+            for core_clock, speeds in self.fae_supported_core_clocks.items()
+        }
 
     def get_configurable_nvl_speeds(self):
         # DUT still advertises 200G in supported_nvl_speeds, but configuring it on RTF

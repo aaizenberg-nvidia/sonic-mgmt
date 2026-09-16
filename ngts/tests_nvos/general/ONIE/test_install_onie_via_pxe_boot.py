@@ -26,6 +26,7 @@ logger = logging.getLogger()
 
 
 @pytest.mark.no_cli_coverage_run
+@pytest.mark.skip_clear_config
 def test_install_onie_via_pxe_boot(topology_obj, engines, devices):
     """
     @summary: Verify that the device can install ONIE via PXE boot menu.
@@ -72,4 +73,5 @@ def test_install_onie_via_pxe_boot(topology_obj, engines, devices):
     except Exception as err:
         logger.info("ONIE install via PXE failed on error and will now remote reboot machine:\n{}".format(err))
         nvue_cli_obj.remote_reboot_nvue(topology_obj)
+        engines.dut.disconnect()
         raise AssertionError(err)
