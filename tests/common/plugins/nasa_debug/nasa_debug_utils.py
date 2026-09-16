@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Parametrization for the NASA CLI helper commands
 NASA_DEBUG_ENTITY_CONTENT = namedtuple("NASA_DEBUG_ENTITY_CONTENT", ["title", "nasa_helper_key", "config_key"])
 NASA_DEBUG_DUMP_DIR = "/var/log/bluefield/sdk-dumps"
-NASA_CT_DUMP_SENTINEL = "/var/run/sonic-platform-nvidia-bluefield/techsupport-sdk-ct-dump.enabled"
+NASA_CT_DUMP_SENTINEL = "/var/run/sonic-platform-nvidia-bluefield/sdk-techsupport-ct-dump.enabled"
 NASA_CT_DUMP_FILES = [
     "stats.log.gz",
     "stats_query.log.gz",
