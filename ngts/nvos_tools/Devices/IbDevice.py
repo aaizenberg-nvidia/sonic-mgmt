@@ -3490,7 +3490,8 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             "hardware-version": None,
             "model": ExpectedString(
                 regex="699-23809-0600-EB1|920-9K42W-00L6-GS0|920-9K42W-00L6-EB2|920-9K24W-00L6-ES1|"
-                      "920-9K42W-00L6-TS1|920-9K42W-00L6-TS2|920-9K42W-1313-TS3|920-9K42W-1313-TS4|920-9K42W-1313-TS5"),
+                      "920-9K42W-00L6-TS1|920-9K42W-00L6-TS2|920-9K42W-1313-TS3|920-9K42W-1313-TS4|"
+                      "920-9K42W-1313-TS5|920-9K42W-1313-EB6"),
         })  # TBD -- This is for OPN, need to replace with the real one once arrive.
 
 
