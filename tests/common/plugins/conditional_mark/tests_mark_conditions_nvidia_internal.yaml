@@ -657,10 +657,10 @@ dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_non_default_vrf:
     - "https://redmine.mellanox.com/issues/5240149"
 
 dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_different_non_default_vrf:
-  skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5041721"
+  xfail:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5240149"
     conditions:
-    - "https://redmine.mellanox.com/issues/5041721"
+    - "https://redmine.mellanox.com/issues/5240149"
 
 dhcp_relay/test_dhcpv4_relay.py:
   xfail:
