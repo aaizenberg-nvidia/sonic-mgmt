@@ -1288,6 +1288,7 @@ class PlatformConsts:
     REMOVED = 'Removed'
     INSERTED = 'Inserted'
     TRANSCEIVER_CABLE_TYPE = 'cable-type'
+    TRANSCEIVER_VENDOR_PN = 'vendor-pn'
     TRANSCEIVER_CABLE_OPTICAL_MODULE = 'Optical module'
     TRANSCEIVER_CABLE_COPPER_CABLE = 'Copper cable'
     TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED = 'supported-cable-ib-speed'

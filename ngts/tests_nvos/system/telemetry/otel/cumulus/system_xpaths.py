@@ -1,10 +1,10 @@
-"""System gNMI xpath builder — reproduces the SSIM3 expected xpath set for
+"""System gNMI XPath builder — reproduces the SSIM3 expected XPath set for
 ``system_top_level_subscription``.
 
 Source parity: cl-cafe ``cafe/components/telemetry.py`` (``SystemXPaths*`` hierarchy)
 and cl-tests ``system_top_level_subscription`` (attribute categorization + bulk enumeration).
 
-Only the xpath strings and ``top_level`` are consumed by the top-level subscription test, so
+Only the XPath strings and ``top_level`` are consumed by the top-level subscription test, so
 this port keeps just those. SSIM3's value-comparison metadata (show command / show key /
 otel key / stress_test flags) is intentionally dropped.
 
@@ -17,7 +17,7 @@ dynamic key:
 * ``process_*`` -> one populate per active-service PID (``pid``)
 * everything else (general) -> a single populate with no dynamic key
 
-:func:`build_system_top_level_xpaths` reproduces exactly this expansion.
+``build_system_top_level_xpaths`` reproduces exactly this expansion.
 """
 
 from __future__ import annotations

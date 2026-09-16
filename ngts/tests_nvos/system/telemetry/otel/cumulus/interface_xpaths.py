@@ -1,10 +1,10 @@
-"""Interface gNMI xpath builder — reproduces the SSIM3 expected xpath set for
+"""Interface gNMI XPath builder — reproduces the SSIM3 expected XPath set for
 ``interface_top_level_subscription``.
 
 Source parity: cl-cafe ``cafe/components/telemetry.py`` (``InterfaceXPaths*`` hierarchy)
 and cl-tests ``test_files/gnmi/lib/utils.py`` (enumeration + histogram helper).
 
-Only the xpath strings, ``top_level`` and (histogram-derived) ``additional_xpaths`` are
+Only the XPath strings, ``top_level`` and (histogram-derived) ``additional_xpaths`` are
 consumed by the top-level subscription test, so this port keeps just those fields. SSIM3's
 value-comparison metadata (show command / key mapping) is intentionally dropped.
 """

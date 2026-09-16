@@ -20,9 +20,12 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
     collect_otel_all_stats_to_cache,
     gnmi_coexistence_cache_ready,
     skip_unless_gnmi_coexistence,
+    validate_chassis_platform_hw_info,
     validate_coexistence_otel_metrics,
     validate_coexistence_otel_time_gaps,
     validate_cpu_platform_hw_info,
+    validate_component_storage_coexistence,
+    validate_component_system_otel_time_gaps,
     validate_interface_broadcast_pkts_otel_cli,
     validate_interface_multicast_pkts_otel_cli,
     validate_interface_no_buffer_uc_dropped_pkts_otel_cli,
@@ -33,6 +36,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
     validate_interface_wred_dropped_pkts_otel_cli,
     validate_interface_in_errors_otel_cli,
     validate_psu_platform_hw_info,
+    validate_system_out_packets_coexistence,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
     COMPONENT_GNMI_ATTRS,
@@ -40,18 +44,23 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
     SMOKE_LLDP_ATTRS,
     SYSTEM_GNMI_ATTRS,
     assert_gnmi_timing_pass,
+    build_smoke_component_expected_xpaths,
     build_smoke_interface_expected_xpaths,
     build_smoke_system_expected_xpaths,
     discover_asic_model,
     discover_lldp_neighbor_context,
     discover_storage_component_name,
     run_and_validate_interface_on_change_subscription,
+    validate_component_top_level_subscription,
     validate_gnmi_sample_interval_per_timestamp,
     validate_interface_top_level_subscription,
     validate_qos_prefix_subscription,
     validate_system_top_level_subscription,
     validate_top_level_subscription,
     validate_xpath_coverage_per_timestamp,
+)
+from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+    require_cumulus_at_least,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
     discover_swp_interfaces_on_dut,
@@ -72,7 +81,6 @@ pytestmark = [
 
 
 # --- Test_Telemetry_Coexistence_Smoke (OtelMgmtVrfWithTLSConfig / mgmt secured) ---
-
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test_smoke_01_validate_otel_metrics_collection(
@@ -132,11 +140,11 @@ def test_smoke_03_validate_otel_time_gaps(
 def test_smoke_04_gnmi_lldp_xpath_coverage_per_timestamp_strict(
     engines, coexistence_smoke_cache, test_api
 ):
-    """SSIM smoke test_04 — strict LLDP xpath coverage per timestamp."""
+    """SSIM smoke test_04 — strict LLDP XPath coverage per timestamp."""
     TestToolkit.tested_api = test_api
     skip_unless_gnmi_coexistence(
         "gnmi-series-lldp",
-        context="smoke strict LLDP xpath coverage",
+        context="smoke strict LLDP XPath coverage",
     )
     lab = resolve_cumulus_lab_interfaces_on_dut(engines.dut)
     lldp_ctx = discover_lldp_neighbor_context(engines.dut, preferred_iface=lab.test_iface)
@@ -172,7 +180,7 @@ def test_smoke_07_interface_top_level_subscription(
         expected_xpaths, _top_level = build_smoke_interface_expected_xpaths(
             engines.dut, lab.test_iface
         )
-    with allure.step("Validate interface top-level subscription per-timestamp xpath coverage"):
+    with allure.step("Validate interface top-level subscription per-timestamp XPath coverage"):
         validate_interface_top_level_subscription(
             expected_xpaths=expected_xpaths,
             series_key="gnmi-series-interface",
@@ -199,7 +207,7 @@ def test_smoke_08_system_top_level_subscription(
     )
     with allure.step("Build SSIM3 system_xpath expected set from discovered context"):
         expected_xpaths, _top_level = build_smoke_system_expected_xpaths(engines.dut)
-    with allure.step("Validate system top-level subscription per-timestamp xpath coverage"):
+    with allure.step("Validate system top-level subscription per-timestamp XPath coverage"):
         validate_system_top_level_subscription(
             expected_xpaths=expected_xpaths,
             dut=engines.dut,
@@ -208,6 +216,34 @@ def test_smoke_08_system_top_level_subscription(
 
 
 @pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_smoke_09_components_top_level_subscription(
+    engines, coexistence_smoke_cache, test_api
+):
+    """SSIM3 ``Test_Telemetry_Coexistence_Smoke::test_09_components_top_level_subscription``.
+
+    SSIM3 subscribes to the single components top-level path (``/components``) and strictly
+    verifies, per timestamp, that every modeled component leaf (full ``components_xpath`` set —
+    PSU / FAN / TEMP / TRANSCEIVER / ASIC / CHASSIS / STORAGE / CPU / LEAKAGE, expanded per
+    discovered component) is streamed and that no unexpected leaf appears (noise-filtered,
+    integrated-circuit dropped). This test reproduces that against the smoke
+    ``gnmi-series-component`` collected from the same subscription.
+    """
+    TestToolkit.tested_api = test_api
+    skip_unless_gnmi_coexistence(
+        "gnmi-series-component",
+        context="smoke components top-level subscription",
+    )
+    with allure.step("Build SSIM3 components_xpath expected set from discovered components"):
+        expected_xpaths, _top_level = build_smoke_component_expected_xpaths(engines.dut)
+    with allure.step("Validate components top-level subscription per-timestamp XPath coverage"):
+        validate_component_top_level_subscription(
+            expected_xpaths=expected_xpaths,
+            dut=engines.dut,
+            series_key="gnmi-series-component",
+        )
+
+
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test_12_qos_prefix_level_subscription(
     engines, coexistence_interface_qos_cache, test_api
@@ -284,6 +320,8 @@ def test_14_collect_otel_data_persistence_time_gaps(
     # Reuse the module persistence cache (collected by test_13 when both run).
     coexistence_otel_persistence_cache.ensure_collected()
     validate_otel_persistence_time_gaps()
+
+
 # --- Test_Telemetry_Interface_QoS_Validation_Coexistence (split pipeline mgmt) ---
 
 
@@ -291,18 +329,18 @@ def test_14_collect_otel_data_persistence_time_gaps(
 def test_interface_qos_01_gnmi_interface_xpath_coverage_per_timestamp(
     engines, coexistence_interface_qos_cache, test_api
 ):
-    """SSIM Interface/QoS test_01 — gNMI interface xpath coverage."""
+    """SSIM Interface/QoS test_01 — gNMI interface XPath coverage."""
     TestToolkit.tested_api = test_api
     coexistence_interface_qos_cache.ensure_collected()
     with allure.step('Verify gNMI interface cache is populated'):
         skip_unless_gnmi_coexistence(
             "gnmi-series-interface",
-            context="Interface/QoS xpath coverage",
+            context="Interface/QoS XPath coverage",
         )
     with allure.step('Resolve lab interface for xpath population'):
         lab = resolve_cumulus_lab_interfaces_on_dut(engines.dut)
         allure.attach(lab.test_iface, 'test_iface')
-    with allure.step('Validate interface xpath coverage per timestamp (group_size=2)'):
+    with allure.step('Validate interface XPath coverage per timestamp (group_size=2)'):
         validate_xpath_coverage_per_timestamp(
             model="interface",
             attrs=INTERFACE_QOS_GNMI_ATTRS,
@@ -549,11 +587,11 @@ def test_interface_qos_14_collect_otel_all_stats_to_cache(
 def test_component_system_01_gnmi_system_xpath_coverage_per_timestamp(
     engines, coexistence_component_system_cache, test_api
 ):
-    """SSIM Component/System test_01 — gNMI system xpath coverage."""
+    """SSIM Component/System test_01 — gNMI system XPath coverage."""
     TestToolkit.tested_api = test_api
     skip_unless_gnmi_coexistence(
         "gnmi-series-system",
-        context="Component/System system xpath coverage",
+        context="Component/System system XPath coverage",
     )
     validate_xpath_coverage_per_timestamp(
         model="system",
@@ -569,11 +607,11 @@ def test_component_system_01_gnmi_system_xpath_coverage_per_timestamp(
 def test_component_system_02_gnmi_component_xpath_coverage_per_timestamp(
     engines, coexistence_component_system_cache, test_api
 ):
-    """SSIM Component/System test_02 — gNMI component xpath coverage."""
+    """SSIM Component/System test_02 — gNMI component XPath coverage."""
     TestToolkit.tested_api = test_api
     skip_unless_gnmi_coexistence(
         "gnmi-series-component",
-        context="Component/System component xpath coverage",
+        context="Component/System component XPath coverage",
     )
     component_name = discover_storage_component_name(engines.dut)
     validate_xpath_coverage_per_timestamp(
@@ -664,3 +702,74 @@ def test_10_validate_telemetry_platform_hw_info_psu(
     require_cumulus_at_least(engines.dut, "5.17.0")
     with allure.step("Validate PSU platform hw info (gNMI + OTEL vs CLI)"):
         validate_psu_platform_hw_info()
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_component_system_04_gnmi_sample_interval_adherence(
+    engines, coexistence_component_system_cache, test_api
+):
+    """SSIM Component/System test_04 — gNMI per-timestamp sample interval (system + component)."""
+    TestToolkit.tested_api = test_api
+    with allure.step("Determine gNMI series available for sample-interval check"):
+        models = []
+        if gnmi_coexistence_cache_ready("gnmi-series-system"):
+            models.append("system")
+        if gnmi_coexistence_cache_ready("gnmi-series-component"):
+            models.append("component")
+        if not models:
+            pytest.skip("No system/component gNMI series collected on this lab")
+    with allure.step("Validate gNMI per-timestamp sample interval (system + component)"):
+        validate_gnmi_sample_interval_per_timestamp(
+            models=tuple(models),
+            sample_interval=5,
+            tolerance=0.10,
+            cache_key="gnmi_interval_validation_component_system",
+        )
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_component_system_05_otel_time_gap_analysis(
+    engines, coexistence_component_system_cache, test_api
+):
+    """SSIM Component/System test_05 — OTEL control-plane / disk metric time-gap analysis."""
+    TestToolkit.tested_api = test_api
+    with allure.step("Validate component/system OTEL metric time-gap analysis"):
+        validate_component_system_otel_time_gaps()
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_component_system_06_system_out_packets_validation(
+    engines, coexistence_component_system_cache, test_api
+):
+    """SSIM Component/System test_06 — system control-plane out-packets (OTEL vs CLI).
+
+    These counters are Linux netstat IP InDelivers, exported over OTEL as
+    ``node_netstat_Ip_InDelivers`` / ``node_netstat_Ip6_InDelivers`` and read via
+    ``nstat``. No gNMI/NVUE control-plane-traffic path exists on Cumulus, so only the
+    OTEL-vs-CLI leg is validated. node_netstat export requires Cumulus >= 5.17.
+    """
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.17.0")
+    with allure.step("Validate system out-packet counters (OTEL vs CLI)"):
+        validate_system_out_packets_coexistence(engines.dut)
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_component_system_07_component_storage_bytes_time_validation(
+    engines, coexistence_component_system_cache, test_api
+):
+    """SSIM Component/System test_07 — storage read-bytes / write-seconds (gNMI present + CLI cross-check)."""
+    TestToolkit.tested_api = test_api
+    with allure.step("Validate component storage counters (gNMI present + CLI cross-check)"):
+        validate_component_storage_coexistence(engines.dut)
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_component_system_08_validate_telemetry_platform_hw_info_chassis(
+    engines, coexistence_component_system_cache, test_api
+):
+    """SSIM Component/System test_08 — CHASSIS ``nvswitch_platform_info_hw_details`` OTEL vs CLI."""
+    TestToolkit.tested_api = test_api
+    require_cumulus_at_least(engines.dut, "5.17.0")
+    with allure.step("Validate CHASSIS platform hw info (OTEL vs CLI)"):
+        validate_chassis_platform_hw_info(engines.dut)

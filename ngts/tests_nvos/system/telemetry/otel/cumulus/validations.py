@@ -8,7 +8,7 @@ import os
 import re
 from collections import defaultdict
 from statistics import mean
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pytest
 
@@ -108,6 +108,51 @@ def _dp_number(dp: Dict[str, Any]) -> int:
     if "asInt" in dp:
         return int(dp["asInt"])
     raise KeyError("datapoint has neither asDouble nor asInt")
+
+
+def _dp_gauge_sum_value(dp: Dict[str, Any], *, cast: Callable[[Any], Any] = int) -> Optional[Any]:
+    """Scalar from a gauge/sum datapoint.
+
+    OTLP NumberDataPoint often carries both ``flags`` (a bitfield, not the counter) and
+    ``asDouble``/``asInt``. Prefer the numeric fields; use ``flags`` only when no number
+    is present.
+    """
+    if "asDouble" in dp or "asInt" in dp:
+        return cast(_dp_number(dp))
+    if "flags" in dp:
+        return cast(dp["flags"])
+    return None
+
+
+def _metric_gauge_sum_values(
+    parsed_objects: List[Dict[str, Any]],
+    *,
+    name_ok: Callable[[str], bool],
+    attr_key: Callable[[List[Dict[str, Any]]], AttributeKey],
+    stats_label: str,
+    cast: Callable[[Any], Any] = int,
+) -> Dict[str, Dict[AttributeKey, List[Any]]]:
+    """Collect gauge/sum series filtered by metric name (control-plane / netstat)."""
+    dest: Dict[str, Dict[AttributeKey, List[Any]]] = defaultdict(lambda: defaultdict(list))
+    for m in _iter_metrics(parsed_objects):
+        if not name_ok(m["name"]):
+            continue
+        if "gauge" in m:
+            mtype = "gauge"
+        elif "sum" in m:
+            mtype = "sum"
+        else:
+            logger.error("Unknown data type in %s: %s", stats_label, m["name"])
+            continue
+        for dp in m[mtype]["dataPoints"]:
+            val = _dp_gauge_sum_value(dp, cast=cast)
+            if val is None:
+                logger.error("Datapoint has no value: %s", dp)
+                continue
+            attrs = dp.get("attributes") or []
+            attribute_key = attr_key(attrs) if attrs else "No Attr"
+            dest[m["name"]][attribute_key].append(val)
+    return dest
 
 
 class OtelDataValidations:
@@ -230,35 +275,30 @@ class OtelDataValidations:
                     k2 = tuple of attributes such as interface name, priority-group, traffic-class etc.
                     v2 = list of values that are not zero [v1, v2.. ]
         """
-        self.metric_control_plane_stats_values = defaultdict(lambda: defaultdict(list))
-        # SW #5082293: iterate all resourceMetrics/scopeMetrics (NVOS batches several per line).
-        for m in _iter_metrics(parsed_objects):
-            if "nvswitch_control" in m["name"]:
-                if "gauge" in m:
-                    mtype = "gauge"
-                elif "sum" in m:
-                    mtype = "sum"
-                else:
-                    logger.error("Unknown data type in control-plane stats: %s", m["name"])
-                    continue
-                for dp in m[mtype]["dataPoints"]:
-                    if "flags" in dp:
-                        val = dp["flags"]
-                    elif "asDouble" in dp:
-                        val = dp["asDouble"]
-                    elif "asInt" in dp:
-                        val = dp["asInt"]  # SW #5082293: NVOS uses asInt
-                    else:
-                        logger.error("Datapoint has no value: %s", dp)
-                        continue
-                    if "attributes" in dp:
-                        attribute_key = self.prepare_attributes_key(dp["attributes"])
-                    else:
-                        attribute_key = "No Attr"
-                    self.metric_control_plane_stats_values[m["name"]][attribute_key].append(
-                        int(val)
-                    )
+        self.metric_control_plane_stats_values = _metric_gauge_sum_values(
+            parsed_objects,
+            name_ok=lambda name: "nvswitch_control" in name,
+            attr_key=self.prepare_attributes_key,
+            stats_label="control-plane stats",
+        )
         return self.metric_control_plane_stats_values
+
+    def metricNetstatStatsValues(self, parsed_objects):
+        """node_exporter netstat counters (``node_netstat_*``).
+
+        return type: {metric_name: {attribute_key: [v1, v2, ...]}} — mirrors
+        ``metricControlPlaneStatsValues``. Used for system control-plane traffic
+        OTEL-vs-CLI validation (e.g. ``node_netstat_Ip_InDelivers``), since these
+        Linux kernel counters are exported over OTEL but have no gNMI/NVUE path
+        on Cumulus.
+        """
+        self.metric_netstat_stats_values = _metric_gauge_sum_values(
+            parsed_objects,
+            name_ok=lambda name: name.startswith("node_netstat"),
+            attr_key=self.prepare_attributes_key,
+            stats_label="netstat stats",
+        )
+        return self.metric_netstat_stats_values
 
     def metricHistogramValues(self, parsed_objects):
         """

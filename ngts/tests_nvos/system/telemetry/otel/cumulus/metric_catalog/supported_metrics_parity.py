@@ -815,6 +815,8 @@ CL_516_QOS_BUFFER_METRICS = [
     'nvswitch_shared_buffer_pool_desc_time_since_clear'
 ]
 
+# CL 5.17+ platform hw-details only. Partition and power-supply metrics are CL 5.18+
+# (``CL_518_PLATFORM_PARTITION_STATS`` / ``CL_518_PLATFORM_POWER_SUPPLY_STATS``).
 CL_517_ADDITIONAL_PLATFORM_STATS = [
     'nvswitch_platform_info_hw_details',
 ]

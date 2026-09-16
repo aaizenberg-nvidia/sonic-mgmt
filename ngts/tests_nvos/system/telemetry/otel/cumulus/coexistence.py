@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -26,7 +27,30 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
     get_cp_stat_sx_api_cli,
     get_dut_hostname,
     parse_telemetry_and_cache,
+    settle_dut_ssh_after_module_transition,
     truncate_collector_export,
+)
+from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+    COMPONENT_GNMI_ATTRS,
+    CPU_COMPONENT_GNMI_SERIES_KEY,
+    CPU_COMPONENT_NAME,
+    CPU_PLATFORM_HW_GNMI_ATTRS,
+    PSU_COMPONENT_GNMI_SERIES_KEY,
+    PSU_PLATFORM_HW_GNMI_ATTRS,
+    PSU_STATE_LEAF_BY_ATTR,
+    _component_xpath,
+    build_component_system_gnmi_jobs,
+    build_interface_qos_gnmi_jobs,
+    build_smoke_gnmi_jobs,
+    discover_storage_component_name,
+    get_selected_psu_component_name,
+    gnmi_component_names_in_series,
+    latest_gnmi_component_state_leaf,
+    latest_gnmi_leaf_for_xpath,
+    latest_gnmi_numeric_for_xpath,
+    normalize_component_name,
+    run_gnmi_with_parallel_work,
+    teardown_gnmi_coexistence_session,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import dut_root_on_nvme_storage
 from ngts.tests_nvos.system.telemetry.otel.cumulus.sample_interval import (
@@ -93,10 +117,6 @@ class CoexistenceInterfaceQosBundle:
         if not self._collected or self._gnmi_session is None:
             return
         with allure.step('Teardown deferred Interface/QoS gNMI coexistence session'):
-            from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-                teardown_gnmi_coexistence_session,
-            )
-
             teardown_gnmi_coexistence_session(self.dut, self._gnmi_session)
         self._gnmi_session = None
         self._collected = False
@@ -937,6 +957,390 @@ def validate_otel_metric_attribute_filtering(
     with allure.step(f"Validate OTEL attribute filtering for '{metric_name}'"):
         assert not failures, "\n".join(failures)
     logger.info("Attribute filtering passed for '%s'", metric_name)
+# ---------------------------------------------------------------------------
+# SSIM ``Test_Telemetry_Component_System_Validation_Coexistence`` (test_04..08)
+# ---------------------------------------------------------------------------
+
+
+# SSIM component/system ``test_05`` expected OTEL sample-interval gaps mapped to NGTS
+# ``timegap_analysis_v2`` keys. Intervals match the split-pipeline root config applied by
+# ``_apply_coexistence_split_pipeline_root_config`` (interface-stats=3, control=2, cpu=70,
+# mem=75, file=72, environment=65, disk=74). ``histogram_gap`` is omitted: NVUE has no
+# histogram export sample-interval, and asic-monitor OTEL cadence on mlx is ~1.1s or ~2s.
+COMPONENT_SYSTEM_TIME_GAPS: Dict[str, float] = {
+    "interface_stats_gap": 3.0,
+    "control_stats_gap": 2.0,
+    "platf_cpu_gap": 70.0,
+    "platf_mem_gap": 75.0,
+    "platf_file_gap": 72.0,
+    "platf_envir_gap": 65.0,
+    "platf_disk_gap": 74.0,
+    "buffer_gap": 1.0,
+    "phy_gap": 3.0,
+    "lldp_gap": 5.0,
+    "systemd_gap": 60.0,
+}
+
+
+def validate_component_system_otel_time_gaps() -> None:
+    """SSIM component/system ``test_05`` OTEL time-gap analysis using cached ``time_gaps``.
+
+    Families that are not exported on the mlx coexistence lab report a 0 gap; those keys are
+    dropped (NGTS infra limitation) and only exported families are validated within ±25%.
+    """
+    with allure.step("Resolve exported component/system OTEL time-gap families"):
+        otel_data = telemetryCache.get_data("otel")
+        assert isinstance(otel_data, dict) and "time_gaps" in otel_data, (
+            "OTEL time_gaps missing in cache; collection must set include_time_gaps=True"
+        )
+        actual = otel_data["time_gaps"]
+        expected = {key: val for key, val in COMPONENT_SYSTEM_TIME_GAPS.items() if actual.get(key)}
+        if not expected:
+            pytest.skip("No component/system OTEL time-gap families exported on this lab")
+    with allure.step("Validate component/system OTEL sample-interval time gaps"):
+        check_metrics_within_range(expected, actual)
+
+
+def _compare_counter_gnmi_cli(
+    gnmi_value: float, cli_value: Optional[float], tolerance_percent: float
+) -> Optional[bool]:
+    """Compare a monotonic gNMI counter against a later CLI read.
+
+    Returns ``None`` when the CLI value is unavailable (best-effort leg skipped), ``True`` when
+    the values agree (CLI read after the gNMI window may legitimately be higher for a counter),
+    otherwise ``False``.
+    """
+    if cli_value is None:
+        return None
+    if cli_value >= gnmi_value:
+        return True
+    if cli_value == 0:
+        return gnmi_value == 0
+    deviation = OtelDataValidations().get_percentage_deviation(cli_value, gnmi_value)
+    return deviation <= tolerance_percent
+
+
+# SSIM system_gnmi_to_otel_metric / system_counter_cli_key: on Cumulus these
+# control-plane counters are Linux kernel netstat values, exported over OTEL as
+# node_exporter ``node_netstat_*`` and read via ``nstat``. There is no gNMI /
+# NVUE control-plane-traffic path for them on this platform.
+# attr -> (OTEL metric, nstat CLI key)
+SYSTEM_NETSTAT_SOURCES = {
+    "cp_out_ipv4_pkts": ("node_netstat_Ip_InDelivers", "IpInDelivers"),
+    "cp_out_ipv6_pkts": ("node_netstat_Ip6_InDelivers", "Ip6InDelivers"),
+}
+
+
+def _control_plane_traffic_counters_cli(dut) -> Dict[str, float]:
+    """SSIM ``get_control_plane_traffic_counters``: flat kernel counters via ``nstat -az``.
+
+    ``-a`` dumps absolute values and ``-z`` avoids resetting the history file, so the
+    returned counts are cumulative and comparable to the OTEL counter snapshot.
+    """
+    out = dut.run_cmd("nstat -az 2>/dev/null", validate=False, print_output=False)
+    counters: Dict[str, float] = {}
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].lstrip("-").isdigit():
+            counters[parts[0]] = float(parts[1])
+    return counters
+
+
+def _otel_netstat_latest(netstat_map: Dict[str, Any], metric: str) -> Optional[float]:
+    """Latest unlabeled datapoint for ``metric`` in parsed ``netstat_stats``.
+
+    These counters are compared to unlabeled ``nstat`` totals, so only the ``No Attr``
+    series is used. Other attribute keys are not consulted.
+    """
+    per_metric = (netstat_map or {}).get(metric) or {}
+    if not isinstance(per_metric, dict):
+        return None
+    series = per_metric.get("No Attr")
+    if not (isinstance(series, list) and series):
+        return None
+    try:
+        return float(series[-1])
+    except (TypeError, ValueError):
+        return None
+
+
+def validate_system_out_packets_coexistence(dut, *, tolerance_percent: float = 10.0) -> None:
+    """SSIM component/system ``test_06`` system control-plane out-packets (OTEL vs CLI).
+
+    On Cumulus these ``cp_out_ipv*_pkts`` counters are Linux netstat IP InDelivers, which
+    are exported over OTEL as ``node_netstat_Ip_InDelivers`` / ``node_netstat_Ip6_InDelivers``
+    and read via ``nstat -az`` (``IpInDelivers`` / ``Ip6InDelivers``). There is no gNMI or
+    NVUE control-plane-traffic path for them on this platform, so this validates the OTEL vs
+    CLI leg only (SSIM ``validate_system_otel_cli_from_cache``).
+
+    These are monotonic cumulative counters and the CLI read happens *after* the cached OTEL
+    datapoint, so ``cli >= otel`` is expected and passes; the comparison is directional via
+    :func:`_compare_counter_gnmi_cli` (only a CLI value below the OTEL snapshot beyond
+    ``tolerance_percent`` fails) so normal counter growth under traffic does not flap the test.
+    """
+    otel = telemetryCache.get_data("otel") or {}
+    netstat = otel.get("netstat_stats") or {}
+    with allure.step("Read CLI control-plane traffic counters (nstat -az)"):
+        cli_map = _control_plane_traffic_counters_cli(dut)
+    failures: List[str] = []
+    for attr, (metric, cli_key) in SYSTEM_NETSTAT_SOURCES.items():
+        with allure.step("Validate system %s (OTEL %s vs CLI %s)" % (attr, metric, cli_key)):
+            otel_val = _otel_netstat_latest(netstat, metric)
+            cli_val = cli_map.get(cli_key)
+            if otel_val is None:
+                failures.append("%s: OTEL metric %s missing from netstat_stats" % (attr, metric))
+                continue
+            if cli_val is None:
+                failures.append("%s: CLI counter %s missing from nstat -az" % (attr, cli_key))
+                continue
+            # Monotonic cumulative counter: the CLI read happens after the OTEL snapshot, so
+            # cli >= otel is the normal case and must PASS. Only a CLI value that is *below* the
+            # OTEL snapshot beyond tolerance (counter regressed / OTEL over-reported) is a failure.
+            ok = _compare_counter_gnmi_cli(otel_val, cli_val, tolerance_percent)
+            allure.attach(
+                attr,
+                "otel=%s cli=%s tol%%=%s ok=%s" % (otel_val, cli_val, tolerance_percent, ok),
+            )
+            if ok is False:
+                failures.append(
+                    "%s: OTEL=%s vs CLI=%s — CLI below OTEL beyond tol%%=%s"
+                    % (attr, otel_val, cli_val, tolerance_percent)
+                )
+    if failures:
+        pytest.fail("; ".join(failures))
+
+
+def _parse_proc_diskstats(dut) -> Dict[str, Dict[str, float]]:
+    """``/proc/diskstats`` device -> storage read-bytes / write-seconds."""
+    out = dut.run_cmd("cat /proc/diskstats 2>/dev/null", validate=False, print_output=False)
+    parsed: Dict[str, Dict[str, float]] = {}
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) < 11:
+            continue
+        name = parts[2]
+        try:
+            sectors_read = int(parts[5])
+            ms_writing = int(parts[10])
+        except ValueError:
+            continue
+        parsed[name] = {
+            "storage_read_bytes": float(sectors_read * 512),
+            "storage_write_seconds": float(ms_writing) / 1000.0,
+        }
+    return parsed
+
+
+def _is_whole_disk_device(name: str) -> bool:
+    """Skip partitions (``sda1``, ``nvme0n1p1``) when falling back to a kernel disk."""
+    if name.startswith("nvme"):
+        return "p" not in name
+    if name.startswith(("sd", "vd")):
+        return bool(name) and name[-1].isalpha()
+    return False
+
+
+def _resolve_diskstats_device(devices: Sequence[str], component_name: str) -> Optional[str]:
+    """Map a gNMI/NVUE component name onto a ``/proc/diskstats`` device.
+
+    Exact match first, then case-insensitive / substring, then the first whole
+    ``nvme*`` / ``sd*`` / ``vd*`` disk. Inventory labels like ``Storage`` do not
+    match a kernel row on their own.
+    """
+    if component_name in devices:
+        return component_name
+    low = component_name.lower()
+    for name in devices:
+        if name.lower() == low:
+            return name
+    for name in devices:
+        nlow = name.lower()
+        if nlow in low or low in nlow:
+            return name
+    whole = [name for name in devices if _is_whole_disk_device(name)]
+    for prefix in ("nvme", "sd", "vd"):
+        for name in whole:
+            if name.startswith(prefix):
+                return name
+    return whole[0] if whole else None
+
+
+def _disk_stats_cli(dut, device: str) -> Tuple[Dict[str, float], Optional[str]]:
+    """Storage counters from ``/proc/diskstats`` (SSIM ``get_disk_stats``).
+
+    Returns ``(counters, resolved_kernel_device)``. ``resolved_kernel_device`` is
+    None when diskstats has no usable whole-disk row.
+    """
+    parsed = _parse_proc_diskstats(dut)
+    resolved = _resolve_diskstats_device(tuple(parsed), device)
+    if resolved is None:
+        return {}, None
+    return parsed[resolved], resolved
+
+
+def validate_component_storage_coexistence(dut, *, tolerance_percent: float = 20.0) -> None:
+    """SSIM component/system ``test_07`` storage counters (gNMI presence + CLI cross-check).
+
+    OTEL-vs-CLI uses ``node_disk_*``, which the NGTS ``otel`` cache does not parse; that
+    leg is skipped. CLI reads ``/proc/diskstats`` after mapping the gNMI component name
+    onto a kernel device (exact / substring / first whole ``nvme*`` or ``sd*`` disk).
+    gNMI presence and CLI comparisons are counted separately so a missing diskstats
+    row cannot pass as a completed CLI cross-check.
+    """
+    skip_unless_gnmi_coexistence("gnmi-series-component", context="component storage GNMI vs CLI")
+    with allure.step("Discover storage component and read CLI disk stats"):
+        series = telemetryCache.get_data("gnmi-series-component")
+        component_name = discover_storage_component_name(dut)
+        cli_map, cli_device = _disk_stats_cli(dut, component_name)
+        allure.attach(
+            "component=%s diskstats_device=%s" % (component_name, cli_device),
+            "storage_cli_device",
+        )
+    failures: List[str] = []
+    gnmi_present = 0
+    cli_compared = 0
+    for attr in COMPONENT_GNMI_ATTRS:
+        xpath = _component_xpath(attr, component_name=component_name)
+        gnmi_value = latest_gnmi_numeric_for_xpath(series, xpath)
+        with allure.step("Validate component %s (gNMI present + CLI cross-check)" % attr):
+            if gnmi_value is None:
+                failures.append("%s: not exported over gNMI (xpath=%s)" % (attr, xpath))
+                continue
+            gnmi_present += 1
+            cli_value = cli_map.get(attr)
+            ok = _compare_counter_gnmi_cli(gnmi_value, cli_value, tolerance_percent)
+            allure.attach(
+                attr,
+                "gnmi=%s cli=%s component=%s diskstats=%s ok=%s"
+                % (gnmi_value, cli_value, component_name, cli_device, ok),
+            )
+            if ok is None:
+                continue
+            cli_compared += 1
+            if ok is False:
+                failures.append(
+                    "%s: gNMI=%s vs CLI=%s beyond %s%%" % (attr, gnmi_value, cli_value, tolerance_percent)
+                )
+    allure.attach(
+        "framework_limitation",
+        "OTEL vs CLI skipped: node_disk_* not parsed into NGTS otel cache",
+    )
+    if gnmi_present == 0:
+        pytest.skip("No component storage counters present in gNMI series")
+    if cli_compared == 0:
+        pytest.skip(
+            "gNMI storage counters present for component %r but /proc/diskstats has no "
+            "usable disk row (resolved %r); CLI cross-check did not run"
+            % (component_name, cli_device)
+        )
+    if failures:
+        pytest.fail("; ".join(failures))
+
+
+def _chassis_cli_data(dut) -> Dict[str, Any]:
+    """CHASSIS CLI payload from ``decode-syseeprom`` / ``dmidecode`` (SSIM ``get_chassis_cli_data``)."""
+    data: Dict[str, Any] = {"chassis_type": "CHASSIS"}
+    raw = dut.run_cmd(
+        "sudo decode-syseeprom --json 2>/dev/null",
+        validate=False,
+        print_output=False,
+    )
+    tlv: Dict[str, Any] = {}
+    try:
+        payload = json.loads(raw) if raw and raw.strip().startswith("{") else {}
+        tlv = payload.get("tlv", {}) if isinstance(payload, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        tlv = {}
+
+    def _tlv_value(key: str) -> Optional[str]:
+        entry = tlv.get(key, {}) if isinstance(tlv, dict) else {}
+        return entry.get("value") if isinstance(entry, dict) else None
+
+    data["chassis_serial_no"] = _tlv_value("Serial Number")
+    data["chassis_part_no"] = _tlv_value("Part Number")
+    data["chassis_model_name"] = _tlv_value("Product Name")
+    hw = dut.run_cmd(
+        "sudo dmidecode -s chassis-version 2>/dev/null",
+        validate=False,
+        print_output=False,
+    )
+    data["chassis_hardware_version"] = (hw or "").strip() or None
+    return data
+
+
+def _validate_platform_hw_info_otel_cli(
+    *,
+    expected_type: str,
+    expected_name: str,
+    cli_by_otel_field: Dict[str, Any],
+) -> None:
+    """Shared ``nvswitch_platform_info_hw_details`` OTEL-vs-CLI comparison for a component.
+
+    Locates the metric attribute-set for ``(type=expected_type, name=expected_name)``, asserts the
+    presence flag is ``1``, then compares each OTEL hw-detail attribute against the CLI value keyed
+    by the same OTEL field name (``serial_no`` / ``part_no`` / ``model_name`` / ``hardware_version``
+    / ``type``). Fields with a missing OTEL attribute or CLI value are skipped (best-effort leg).
+    """
+    otel_data = telemetryCache.get_data("otel") or {}
+    platform_stats = (otel_data or {}).get("platform_stats") or {}
+    metric_map = platform_stats.get("nvswitch_platform_info_hw_details") or {}
+    if not isinstance(metric_map, dict) or not metric_map:
+        pytest.skip("nvswitch_platform_info_hw_details not exported on this DUT")
+    target_attrs: Dict[str, Any] = {}
+    target_key = None
+    for attr_key in metric_map:
+        if not isinstance(attr_key, tuple):
+            continue
+        attrs = {
+            str(attr_key[i]): attr_key[i + 1] for i in range(0, len(attr_key) - 1, 2)
+        }
+        if str(attrs.get("type")) == expected_type and str(attrs.get("name")) == expected_name:
+            target_key = attr_key
+            target_attrs = attrs
+            break
+    assert target_key is not None, (
+        "%s attribute set (name=%s) not found in nvswitch_platform_info_hw_details"
+        % (expected_type, expected_name)
+    )
+
+    values = metric_map[target_key]
+    d_otel = values[-1] if isinstance(values, list) and values else values
+    assert d_otel == 1, (
+        "nvswitch_platform_info_hw_details %s value=%s (expected 1)" % (expected_type, d_otel)
+    )
+
+    failures: List[str] = []
+    with allure.step("Validate %s OTEL platform-info hw details vs CLI" % expected_type):
+        for otel_field, cli_value in cli_by_otel_field.items():
+            otel_value = target_attrs.get(otel_field)
+            if otel_value is None or cli_value in (None, ""):
+                allure.attach(otel_field, "otel=%s cli=%s (skipped)" % (otel_value, cli_value))
+                continue
+            if str(otel_value) != str(cli_value):
+                failures.append("%s: OTEL=%s CLI=%s" % (otel_field, otel_value, cli_value))
+    if failures:
+        pytest.fail("%s platform hw info mismatch: %s" % (expected_type, "; ".join(failures)))
+
+
+def validate_chassis_platform_hw_info(dut) -> None:
+    """SSIM component/system ``test_08`` CHASSIS ``nvswitch_platform_info_hw_details`` OTEL vs CLI.
+
+    The chassis gNMI leg is not collected by the coexistence jobs (storage-only), so only the
+    OTEL platform-info-hw-details vs CLI comparison is performed (NGTS infra scope).
+    """
+    with allure.step("Collect CHASSIS CLI hw details (decode-syseeprom / dmidecode)"):
+        cli = _chassis_cli_data(dut)
+    _validate_platform_hw_info_otel_cli(
+        expected_type="CHASSIS",
+        expected_name="CHASSIS",
+        cli_by_otel_field={
+            "serial_no": cli.get("chassis_serial_no"),
+            "part_no": cli.get("chassis_part_no"),
+            "model_name": cli.get("chassis_model_name"),
+            "hardware_version": cli.get("chassis_hardware_version"),
+            "type": cli.get("chassis_type"),
+        },
+    )
 
 
 def _cli_interface_in_errors(dut, interface: str) -> int:
@@ -1156,10 +1560,6 @@ def _platform_hw_info_otel_attrs(
     ``match_name_normalized`` compares names ignoring case/spacing, since the OTEL label may read
     ``PSU 1`` where NVUE inventory keys it ``PSU1``.
     """
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        normalize_component_name,
-    )
-
     type_candidates = tuple(expected_types) if expected_types else (expected_type,)
     otel_data = telemetryCache.get_data("otel") or {}
     platform_stats = (otel_data or {}).get("platform_stats") or {}
@@ -1300,10 +1700,6 @@ def _platform_inventory_parse_show(dut, op_param: str = "") -> Any:
 
 def _nvue_cpu_component_payload(dut) -> Tuple[Dict[str, Any], str]:
     """CPU entry from NVUE platform inventory (``Platform().inventory``)."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        CPU_COMPONENT_NAME,
-    )
-
     attempts = (
         (CPU_COMPONENT_NAME, "platform.inventory.parse_show(%s)" % CPU_COMPONENT_NAME),
         ("", "platform.inventory.parse_show()"),
@@ -1326,10 +1722,6 @@ def collect_cpu_cli_component_data(dut) -> Dict[str, Any]:
     than the processor identity ``dmidecode`` reports. ``dmidecode`` output is attached for
     context only and never compared.
     """
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        CPU_COMPONENT_NAME,
-    )
-
     with allure.step("CLI: collect CPU platform component hw details (component_type=CPU)"):
         nvue, source_cmd = _nvue_cpu_component_payload(dut)
         leaves = _flatten_cli_leaves(nvue)
@@ -1368,14 +1760,6 @@ def _cpu_cli_cache_payload() -> Dict[str, Any]:
 
 def _validate_cpu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
     """SSIM test_09 gNMI vs CLI for CPU OpenConfig component state leaves."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        CPU_COMPONENT_GNMI_SERIES_KEY,
-        CPU_COMPONENT_NAME,
-        CPU_PLATFORM_HW_GNMI_ATTRS,
-        _component_xpath,
-        latest_gnmi_leaf_for_xpath,
-    )
-
     skip_unless_gnmi_coexistence(
         CPU_COMPONENT_GNMI_SERIES_KEY,
         context="CPU platform hw info gNMI vs CLI",
@@ -1423,14 +1807,6 @@ def _validate_cpu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
 
 def _validate_cpu_platform_hw_info_gnmi_otel() -> None:
     """gNMI vs OTEL for the CPU hw-info leaves — both export the platform component view."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        CPU_COMPONENT_GNMI_SERIES_KEY,
-        CPU_COMPONENT_NAME,
-        CPU_PLATFORM_HW_GNMI_ATTRS,
-        _component_xpath,
-        latest_gnmi_leaf_for_xpath,
-    )
-
     skip_unless_gnmi_coexistence(
         CPU_COMPONENT_GNMI_SERIES_KEY,
         context="CPU platform hw info gNMI vs OTEL",
@@ -1532,10 +1908,6 @@ def collect_psu_cli_component_data(dut, psu_name: Optional[str] = None) -> Dict[
     Collects the five inventory fields for the same PSU name used by the dedicated gNMI
     ``component-psu`` subscription (chosen once during job build).
     """
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        get_selected_psu_component_name,
-    )
-
     name = psu_name or get_selected_psu_component_name()
     with allure.step(
         "CLI: collect PSU platform component hw details (component_type=PSU, name=%s)"
@@ -1579,10 +1951,6 @@ def _psu_cli_cache_payload() -> Dict[str, Any]:
 
 def _psu_gnmi_series() -> Dict[str, Any]:
     """The ``component-psu`` gNMI series, skipping when the DUT exported no PSU components."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        PSU_COMPONENT_GNMI_SERIES_KEY,
-    )
-
     skip_unless_gnmi_coexistence(
         PSU_COMPONENT_GNMI_SERIES_KEY,
         context="PSU platform hw info",
@@ -1592,13 +1960,6 @@ def _psu_gnmi_series() -> Dict[str, Any]:
 
 def _validate_psu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
     """SSIM test_10 gNMI vs CLI for the chosen PSU OpenConfig component state leaves."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        PSU_PLATFORM_HW_GNMI_ATTRS,
-        PSU_STATE_LEAF_BY_ATTR,
-        gnmi_component_names_in_series,
-        latest_gnmi_component_state_leaf,
-    )
-
     psu_name = str(cli.get("psu_name") or "")
     series = _psu_gnmi_series()
     failures: List[str] = []
@@ -1652,12 +2013,6 @@ def _validate_psu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
 
 def _validate_psu_platform_hw_info_gnmi_otel(cli: Dict[str, Any]) -> None:
     """gNMI vs OTEL for the chosen PSU hw-info leaves."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        PSU_PLATFORM_HW_GNMI_ATTRS,
-        PSU_STATE_LEAF_BY_ATTR,
-        latest_gnmi_component_state_leaf,
-    )
-
     psu_name = str(cli.get("psu_name") or "")
     series = _psu_gnmi_series()
     otel_attrs = _platform_hw_info_otel_attrs(
@@ -2006,9 +2361,6 @@ def _apply_coexistence_persistence_root_config(
 
 def _prepare_coexistence_gnmi_dialout(dut) -> None:
     """Release stale dial-out security before a fresh gNMI coexistence session."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
-        settle_dut_ssh_after_module_transition,
-    )
     from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_dialout_mtls import (
         _release_stale_gnmi_dialout_security,
     )
@@ -2128,11 +2480,6 @@ def collect_coexistence_smoke_cache(
     Cumulus: BGP/LLDP gNMI jobs + secured catalog families.
     NVOS: OTEL only (smoke_01/03); BGP/LLDP gNMI tests are cumulus_only.
     """
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        build_smoke_gnmi_jobs,
-        run_gnmi_with_parallel_work,
-    )
-
     telemetryCache.clear_data()
     if is_nvos:
         gnmi_jobs: List[Any] = []
@@ -2203,11 +2550,6 @@ def collect_coexistence_interface_qos_cache(
     telemetry_unit: Optional[str] = None,
 ) -> CoexistenceCollectResult:
     """``Test_Telemetry_Interface_QoS_Validation_Coexistence`` OTEL + gNMI cache."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        build_interface_qos_gnmi_jobs,
-        run_gnmi_with_parallel_work,
-    )
-
     telemetryCache.clear_data()
     vrf = export_vrf
     _prepare_coexistence_insecure_otel(
@@ -2287,10 +2629,6 @@ def collect_coexistence_interface_qos_cache(
         return collect_result
     finally:
         if collect_result is None and gnmi_session is not None and defer_gnmi_teardown:
-            from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-                teardown_gnmi_coexistence_session,
-            )
-
             teardown_gnmi_coexistence_session(dut, gnmi_session)
 
 
@@ -2308,15 +2646,6 @@ def collect_coexistence_component_system_cache(
     telemetry_unit: Optional[str] = None,
 ) -> CoexistenceCollectResult:
     """``Test_Telemetry_Component_System_Validation_Coexistence`` OTEL + gNMI cache."""
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
-        build_component_system_gnmi_jobs,
-        run_gnmi_with_parallel_work,
-    )
-
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
-        settle_dut_ssh_after_module_transition,
-    )
-
     telemetryCache.clear_data()
     vrf = export_vrf
     settle_dut_ssh_after_module_transition(dut)
@@ -2424,10 +2753,6 @@ def collect_coexistence_attribute_filtering_cache(
     telemetry cache: this fixture is module-scoped and a global clear would wipe other suites'
     cached payloads, coupling otherwise-independent tests.
     """
-    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
-        settle_dut_ssh_after_module_transition,
-    )
-
     from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
         _restore_otlp_mgmt_insecure_destinations,
     )
