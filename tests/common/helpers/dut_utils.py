@@ -971,7 +971,6 @@ def enable_nat_for_dpus(duthost, dpu_name_ssh_port_dict, request):
         f"sudo sysctl -p {sysctl_file}",
         f"sudo sonic-dpu-mgmt-traffic.sh inbound -e --dpus "
         f"{','.join(dpu_name_ssh_port_dict.keys())} --ports {','.join(dpu_name_ssh_port_dict.values())}",
-        "sudo iptables-save > /etc/iptables/rules.v4",
         "exit"
     ]
     duthost.shell_cmds(cmds=enable_nat_cmds)
