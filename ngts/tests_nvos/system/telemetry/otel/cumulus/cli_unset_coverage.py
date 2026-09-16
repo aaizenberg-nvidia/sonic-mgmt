@@ -424,6 +424,57 @@ def get_interface_telemetry_labels_applied(dut, iface: str) -> Dict[str, Any]:
     return _iface_telemetry_applied_show(dut, iface, '/label')
 
 
+def get_interface_histogram_ingress_pg_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(
+        dut, iface, '/histogram/ingress-buffer/priority-group'
+    )
+
+
+def get_interface_histogram_egress_tc_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(
+        dut, iface, '/histogram/egress-buffer/traffic-class'
+    )
+
+
+def get_interface_histogram_latency_tc_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(dut, iface, '/histogram/latency/traffic-class')
+
+
+def get_interface_histogram_counter_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(dut, iface, '/histogram/counter/counter-type')
+
+
+def applied_ids(applied_show: Dict[str, Any]) -> set:
+    """List-keyed node ids as strings (``priority-group``, ``traffic-class``, ...)."""
+    return {str(node_id) for node_id in applied_show}
+
+
+def expected_interface_labels_after_unset(unset_label_ids: Iterable[str]) -> Dict[str, Any]:
+    """Applied ``interface <iface> telemetry label`` tree once ``unset_label_ids`` are gone.
+
+    Derived from the same ``CumulusOtelConst.INTF_LABELS`` the baseline configures.
+    """
+    removed = set(unset_label_ids)
+    return {
+        label_id: {"description": description}
+        for label_id, description in _interface_label_pairs()
+        if label_id not in removed
+    }
+
+
+def expected_system_labels_after_unset(unset_label_ids: Iterable[str]) -> Dict[str, Any]:
+    """Applied ``system telemetry label`` tree once ``unset_label_ids`` are gone.
+
+    Derived from the same ``CumulusOtelConst.DEVICE_LABELS`` the baseline configures.
+    """
+    removed = set(unset_label_ids)
+    return {
+        label_id: {"description": description}
+        for label_id, description in CumulusOtelConst.DEVICE_LABELS
+        if label_id not in removed
+    }
+
+
 def unset_system_telemetry_interface_stats_egress_tc(dut, tc: str) -> None:
     _system_telemetry_node('/interface-stats/egress-buffer/traffic-class').unset(
         str(tc), dut_engine=dut
@@ -742,6 +793,12 @@ def validate_unset_stats_group_platform_stats(
 def get_system_interface_stats_egress_tc_applied(dut) -> Dict[str, Any]:
     return _telemetry_applied_show(
         dut, '/interface-stats/egress-buffer/traffic-class'
+    )
+
+
+def get_system_interface_stats_ingress_pg_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(
+        dut, '/interface-stats/ingress-buffer/priority-group'
     )
 
 
