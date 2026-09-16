@@ -32,6 +32,7 @@ from devts.infra.tools.linux_tools.linux_tools import scp_file
 
 from ngts.nvos_constants.constants_nvos import TelemetryConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.FilesTool import FilesTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
@@ -2563,6 +2564,14 @@ def dut_capabilities(
     if _dut_has_connected_transceivers(dut_engine):
         present.add(OtelCapability.HAS_CONNECTED_TRANSCEIVERS)
 
+    if _dut_supports_system_power(dut_engine):
+        present.add(OtelCapability.SUPPORTS_SYSTEM_POWER)
+
+    # NoPSUCapability clears psu_list (BlackMambaDGX, Rosalind), so the device model
+    # already tells us there are no PSU_INFO rows to build power_supply series from.
+    if devices.dut.psu_list:
+        present.add(OtelCapability.HAS_PSU)
+
     logger.info("OTEL capabilities: %s (is_ib_router=%s)", sorted(present), is_ib_router)
     return present
 
@@ -2624,3 +2633,63 @@ def _dut_has_connected_transceivers(dut=None) -> bool:
         return False
     tx_show.ignore_result()
     return bool(OutputParsingTool.parse_show_output_to_dict(tx_show).returned_value)
+
+
+def _dut_platform_json_capabilities(dut=None) -> Optional[Dict[str, Any]]:
+    """The DUT ``platform.json`` ``capabilities`` dict, or ``None`` if unreadable.
+
+    ``{}`` means the file was read and declares no capabilities, which is a
+    conclusive "capability absent"; ``None`` means the probe itself failed.
+    """
+    if dut is None:
+        return None
+    platform = dut.run_cmd(
+        f"{OtelCollectorConst.PLATFORM_JSON_PLATFORM_CMD} 2>/dev/null",
+        validate=False,
+        print_output=False,
+    ).strip()
+    if not platform or len(platform.splitlines()) != 1:
+        logger.debug("platform.json probe: could not resolve platform (%r)", platform[:240])
+        return None
+
+    path = OtelCollectorConst.PLATFORM_JSON_PATH_FMT.format(platform=platform)
+    try:
+        # Shared reader (``sudo cat`` + JSON parse); asserts when the file is
+        # missing or the payload is not JSON, which is a failed probe, not "no
+        # capabilities" — hence None rather than {}.
+        doc = FilesTool.read_json_file(dut, path)
+    except AssertionError as exc:
+        logger.debug("platform.json probe: %s is missing or not JSON (%s)", path, exc)
+        return None
+    # An empty parse is also a failed probe: a real platform.json is never empty.
+    if not isinstance(doc, dict) or not doc:
+        logger.debug("platform.json probe: %s produced no data", path)
+        return None
+    caps = doc.get(OtelCollectorConst.PLATFORM_JSON_CAPABILITIES_KEY) or {}
+    return caps if isinstance(caps, dict) else {}
+
+
+def _dut_supports_system_power(dut=None) -> bool:
+    """True iff ``platform.json`` advertises ``system-power-supported: yes``.
+
+    The PDB metrics (``nvswitch_platform_environment_pdb_*``) are exported only on
+    systems with a power distribution board, where the flag is missing entirely on
+    the rest. A probe that fails counts as supported, so a broken probe fails the
+    strict comparison on a PDB system instead of silently dropping those names.
+    """
+    caps = _dut_platform_json_capabilities(dut)
+    if caps is None:
+        logger.warning(
+            "OTEL: platform.json capabilities unreadable; assuming %s is supported",
+            OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY,
+        )
+        return True
+    value = str(
+        caps.get(OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY) or ""
+    ).strip().lower()
+    logger.info(
+        "OTEL: platform.json %s=%r",
+        OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY,
+        value or None,
+    )
+    return value == OtelCollectorConst.PLATFORM_JSON_CAPABILITY_SUPPORTED_VALUE
