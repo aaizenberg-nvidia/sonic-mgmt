@@ -3855,6 +3855,11 @@ class PortiaSwitch(RosalindSwitch):
         self.sma_amount = 2
         self._extend_firmware_by_sma_amount()
 
+        self.leakage_sensors_count = 0
+        self.list_of_leakages = []
+
+        self.unsupported_commands_list.extend(["nv show platform environment leakage"])
+
     def _init_gnmi_consts(self):
         super()._init_gnmi_consts()
         self.components_gnmi_xpath = [xpath for xpath in self.components_gnmi_xpath if xpath != self.erot_xpath]
