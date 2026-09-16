@@ -189,7 +189,7 @@ def apply_dash_pipeline_config(localhost, duthost, ptfhost, dpuhost):
     logger.info("DASH pipeline config applied")
 
 
-def test_nasa_debug_action(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_setup):
+def test_nasa_debug_action(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_teardown):
     """Test the NASA debuggability action, by sending traffic and checking the debug files.
     The test has multiple steps:
     1. Enable NASA debuggability
@@ -260,7 +260,7 @@ def test_nasa_debug_action(localhost, duthost, ptfhost, dpuhost, dash_pl_config,
     assert f_ctime >= host_epoch, f"Expected generated pcap file creation time to be no earlier than host epoch {host_epoch}, got {f_ctime}"
 
 
-def test_nasa_debug_tech_support(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_setup):
+def test_nasa_debug_tech_support(localhost, duthost, ptfhost, dpuhost, dash_pl_config, ptfadapter, dash_pipeline_teardown):
     """This test will send traffic with NASA debuggability enabled,
        then ensure the debug files are created and present in the tech support dump.
 
