@@ -20,6 +20,12 @@ class OtelCapability:
     HAS_CONNECTED_TRANSCEIVERS = "has-connected-transceivers"
     # NVLink-only platform metrics (absent on IB / Crocodile-class systems).
     SUPPORTS_NVLINK_PLATFORM_METRICS = "supports-nvlink-platform-metrics"
+    # PDB (power distribution board) metrics, advertised by ``platform.json``.
+    SUPPORTS_SYSTEM_POWER = "supports-system-power"
+    # PSU metrics, one series per ``PSU_INFO`` row. Derived from the device model's
+    # ``psu_list``, which ``NoPSUCapability`` clears on PSU-less systems (Black
+    # Mamba DGX, Rosalind); those have no rows, so none of the series are exported.
+    HAS_PSU = "has-psu"
 
 
 class OtelCliTestConst:
@@ -459,7 +465,23 @@ class OtelCollectorConst:
         OtelCapability.HAS_CONNECTED_TRANSCEIVERS: ("nvswitch_platform_transceiver_",),
         OtelCapability.HAS_IB_ROUTER_PROFILE: ("nvswitch_ib_router_",),
         OtelCapability.SUPPORTS_PEER_PORT_STATS: ("nvswitch_peer_port_",),
+        OtelCapability.SUPPORTS_SYSTEM_POWER: ("nvswitch_platform_environment_pdb_",),
+        # Both spellings: Cumulus renamed the family to ``power_supply_*`` and
+        # ``validations.py`` still maps it back to the legacy ``psu_*``.
+        OtelCapability.HAS_PSU: (
+            "nvswitch_platform_environment_power_supply_",
+            "nvswitch_platform_environment_psu_",
+        ),
     }
+
+    # ``platform.json`` capability flags probed on the DUT. ``system-power-supported``
+    # is absent (not ``no``) on systems without a PDB, so only the literal
+    # ``yes`` counts as supported.
+    PLATFORM_JSON_PATH_FMT = "/usr/share/sonic/device/{platform}/platform.json"
+    PLATFORM_JSON_PLATFORM_CMD = "sonic-cfggen -H -v DEVICE_METADATA.localhost.platform"
+    PLATFORM_JSON_CAPABILITIES_KEY = "capabilities"
+    PLATFORM_JSON_SYSTEM_POWER_KEY = "system-power-supported"
+    PLATFORM_JSON_CAPABILITY_SUPPORTED_VALUE = "yes"
 
     # NVOS exports these even when the ib-routing profile is disabled; do not gate them out.
     OTLP_IB_ROUTER_METRICS_ALWAYS_PRESENT: Tuple[str, ...] = (
