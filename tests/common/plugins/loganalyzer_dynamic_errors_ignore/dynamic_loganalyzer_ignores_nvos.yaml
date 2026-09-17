@@ -1177,6 +1177,17 @@
     - Affected_test_cases:
       - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
 
+# NVOS - expected errors during those tests, bug 5091322
+# simulate fan speed fault
+- Errors_list:
+    - '.*WARNING hw-management-tc: WARNING: drwr\d+:\[[\d,\s]*\] FAN tacho issue\. Set tz_pwm \d+.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
+      - tests_nvos/system/test_system_health.py::test_system_health_component_counters
+      - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
+      - tests_nvos/platform/test_platform_firmware_bios/test_platform_firmware_bios.py::test_bios_auto_update_enabled
+
 # NVOS
 - Errors_list:
     - "ERR health-statsd#health_history: nv-gnmi: Container 'nv-gnmi' is not running"
