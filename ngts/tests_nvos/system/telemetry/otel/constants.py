@@ -516,3 +516,20 @@ class OtelCollectorConst:
             "nvswitch_platform_environment_leak_sensor_status",
         ),
     }
+
+
+class OtelSanityTestConst:
+    """Inputs for the OTEL sanity test (``test_otel_sanity``).
+    """
+    COLLECTION_LABEL = "sanity"
+    COLLECTOR_LABEL = "primary (sanity)"
+    # Three interface-stats samples plus the collector warm-up.
+    COLLECTION_WINDOW_SEC = (
+        OtelCollectorConst.INTERFACE_STATS_SAMPLE_INTERVAL_SEC *
+        OtelFunctionalTestConst.MIN_SAMPLE_INTERVALS +
+        OtelCollectorConst.OTEL_COLLECTION_WARM_UP_SEC
+    )
+
+    # The one family the suite bring-up enables, and the OTLP prefix its metrics carry.
+    BASELINE_FAMILY = TelemetryConsts.INTERFACE_STATS
+    BASELINE_METRIC_PREFIX = "nvswitch_interface_"
