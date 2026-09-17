@@ -30,6 +30,13 @@ AttributeKey = Union[Tuple[Any, ...], str]
 _ENV_PSU_METRIC_PREFIX = "nvswitch_platform_environment_psu_"
 _ENV_POWER_SUPPLY_METRIC_PREFIX = "nvswitch_platform_environment_power_supply_"
 
+# NVOS exports both PSU sides: ``power_supply_<leaf>`` is the DC output and
+# ``power_supply_input_<leaf>`` the AC input. ``nv show platform environment psu``
+# reports the input side (its voltage x current equals its power), so on NVOS only
+# the input series has a CLI counterpart. Cumulus exports input_* series too, but
+# its CLI reports the output side, so it keeps resolving output-first.
+_ENV_PSU_NVOS_INPUT_LEAVES = frozenset({"voltage", "current"})
+
 
 def _canonical_env_psu_metric_name(name: str) -> str:
     if name.startswith(_ENV_POWER_SUPPLY_METRIC_PREFIX):
@@ -1090,12 +1097,20 @@ class OtelDataValidations:
     ) -> None:
         """Compare OTEL platform environment metrics against CLI snapshots.
 
+        Every otel-vs-cli mismatch is collected and the test fails once at the end
+        with the complete list, so a single run reports all sensors that disagree
+        instead of stopping at the first one.
+
         ``platform_profile`` selects platform behavior. NVOS exports the same
         ``nvswitch_platform_environment_*`` metric names as Cumulus, so the
-        comparison is shared. On ``nvos`` an exported sensor whose CLI snapshot is
-        missing is collected and the test fails once at the end with the full list
-        (instead of Cumulus's fail-fast ``KeyError``), so every gap is reported in
-        a single run rather than silently passing.
+        comparison is shared. Two things differ on ``nvos``:
+
+        * An exported sensor whose CLI snapshot is missing is collected into the
+          report instead of raising Cumulus's fail-fast ``KeyError``, so every gap
+          shows up rather than silently passing.
+        * PSU voltage/current compare the ``input_*`` series, because
+          ``nv show platform environment psu`` reports the AC input side there
+          (see :data:`_ENV_PSU_NVOS_INPUT_LEAVES`).
         """
         del cli_plat_env_fan  # fan validation blocked (redmine 4134074)
 
@@ -1120,6 +1135,29 @@ class OtelDataValidations:
         # the whole gap is reported at once (see the aggregated check at the end);
         # Cumulus keeps failing fast via KeyError.
         missing_cli: set = set()
+
+        # Every otel-vs-cli mismatch is collected and reported by the single
+        # pytest.fail at the end, so one run lists all of them.
+        failures: List[str] = []
+
+        def _record_mismatch(
+            metric: str,
+            sensor: AttributeKey,
+            otel_value: Any,
+            cli_value: Any,
+            deviation_pct: Optional[float] = None,
+            max_deviation_pct: Optional[float] = None,
+        ) -> None:
+            detail = f" (sensor: {sensor!r}"
+            if deviation_pct is not None:
+                detail += f", deviation: {deviation_pct:.2f}% > {max_deviation_pct}%"
+            detail += ")"
+            message = (
+                f"Data validation for {metric} failed, "
+                f"otel: {otel_value}, cli: {cli_value}{detail}"
+            )
+            logger.error(message)
+            failures.append(message)
 
         def _temp_cli(sensor: AttributeKey) -> Optional[Dict[str, Any]]:
             """CLI temp snapshot for ``sensor``; None (recorded) when absent on NVOS."""
@@ -1147,12 +1185,57 @@ class OtelDataValidations:
             raise KeyError(psu_id)
 
         def _psu_metric_series(leaf: str) -> Tuple[str, Dict[AttributeKey, Any]]:
-            """Prefer renamed ``power_supply_<leaf>`` series, else legacy ``psu_<leaf>``."""
+            """Resolve the PSU series the CLI snapshot can be compared against.
+
+            Prefers the renamed ``power_supply_<leaf>`` series over legacy
+            ``psu_<leaf>``. On NVOS a leaf with an ``input_<leaf>`` export resolves
+            to that input series; the output series is left alone because the CLI
+            never shows it.
+
+            On NVOS the input series is the *only* one comparable to the CLI, so its
+            absence is recorded as a failure whenever the CLI did report PSUs —
+            otherwise a renamed or dropped export would leave the caller iterating
+            an empty series and the test green without validating anything. The
+            strict metric-name test can't cover this: it derives its expectation
+            from the DUT's own ``metrics-classes`` YAML, so a series dropped from
+            both the export and the catalog stays invisible there.
+            """
+            if is_nvos and leaf in _ENV_PSU_NVOS_INPUT_LEAVES:
+                for prefix in (_ENV_POWER_SUPPLY_METRIC_PREFIX, _ENV_PSU_METRIC_PREFIX):
+                    name = f"{prefix}input_{leaf}"
+                    if metrics_platstats.get(name):
+                        return name, metrics_platstats[name]
+                expected = f"{_ENV_POWER_SUPPLY_METRIC_PREFIX}input_{leaf}"
+                if cli_plat_env_psu:
+                    message = (
+                        f"Platform stats: no PSU input_{leaf} series exported "
+                        f"(expected {expected}), so psu {leaf} was not validated for "
+                        f"CLI psus {', '.join(sorted(cli_plat_env_psu))}"
+                    )
+                    logger.error(message)
+                    failures.append(message)
+                else:
+                    logger.info(
+                        "No PSU input_%s series and no CLI psus; nothing to compare", leaf
+                    )
+                return expected, {}
+
             new_name = _ENV_POWER_SUPPLY_METRIC_PREFIX + leaf
             old_name = _ENV_PSU_METRIC_PREFIX + leaf
             if new_name in metrics_platstats and metrics_platstats[new_name]:
                 return new_name, metrics_platstats[new_name]
             return old_name, metrics_platstats.get(old_name, {})
+
+        def _psu_deviation(cli_value: float, otel_value: float) -> float:
+            """Deviation between CLI and OTEL PSU readings.
+
+            Cumulus keeps comparing rounded integers. NVOS compares the raw floats:
+            its input current is well under 1 A, which ``round`` collapses to 0 and
+            then scores a fixed 100% against a zero reference.
+            """
+            if is_nvos:
+                return self.get_percentage_deviation(cli_value, otel_value)
+            return self.get_percentage_deviation(round(cli_value), round(otel_value))
 
         with allure.step("Validate nvswitch_platform_environment_temp_state"):
             for sensor in metrics_platstats.get(
@@ -1173,9 +1256,8 @@ class OtelDataValidations:
                     passed=passed,
                 )
                 if not passed:
-                    pytest.fail(
-                        f"Data validation for nvswitch_platform_environment_temp_state failed, "
-                        f"otel: {otel_state}, cli: {d_cli}"
+                    _record_mismatch(
+                        "nvswitch_platform_environment_temp_state", sensor, otel_state, d_cli
                     )
 
         with allure.step("Validate nvswitch_platform_environment_temp_min"):
@@ -1195,9 +1277,8 @@ class OtelDataValidations:
                         passed=passed,
                     )
                     if not passed:
-                        pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_temp_min failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                        _record_mismatch(
+                            "nvswitch_platform_environment_temp_min", sensor, d_otel, d_cli
                         )
 
         with allure.step("Validate nvswitch_platform_environment_temp_max"):
@@ -1210,9 +1291,8 @@ class OtelDataValidations:
                     d_otel = metrics_platstats["nvswitch_platform_environment_temp_max"][sensor][-1]
                     d_cli = cli["max"]
                     if not _plat_rounded_equal(d_otel, d_cli):
-                        pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_temp_max failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                        _record_mismatch(
+                            "nvswitch_platform_environment_temp_max", sensor, d_otel, d_cli
                         )
 
         with allure.step("Validate nvswitch_platform_environment_temp_current"):
@@ -1240,9 +1320,13 @@ class OtelDataValidations:
                         passed=deviation <= 30,
                     )
                     if deviation > 30:
-                        pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_temp_current failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                        _record_mismatch(
+                            "nvswitch_platform_environment_temp_current",
+                            sensor,
+                            d_otel,
+                            d_cli,
+                            deviation_pct=deviation,
+                            max_deviation_pct=30,
                         )
 
         with allure.step("Validate nvswitch_platform_environment_temp_crit"):
@@ -1255,13 +1339,14 @@ class OtelDataValidations:
                     d_otel = metrics_platstats["nvswitch_platform_environment_temp_crit"][sensor][-1]
                     d_cli = cli["crit"]
                     if not _plat_rounded_equal(d_otel, d_cli):
-                        pytest.fail(
-                            f"Data validation for nvswitch_platform_environment_temp_crit failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                        _record_mismatch(
+                            "nvswitch_platform_environment_temp_crit", sensor, d_otel, d_cli
                         )
 
-        with allure.step("Validate nvswitch_platform_environment_psu_state"):
-            metric_name, series = _psu_metric_series("state")
+        # Steps are titled with the resolved series name: it varies by platform and
+        # image (``psu_*`` vs ``power_supply_*``, output vs ``input_*`` on NVOS).
+        metric_name, series = _psu_metric_series("state")
+        with allure.step(f"Validate {metric_name}"):
             for sensor in series:
                 cli = _psu_cli(sensor[-1])
                 if cli is None:
@@ -1278,13 +1363,10 @@ class OtelDataValidations:
                     passed=passed,
                 )
                 if not passed:
-                    pytest.fail(
-                        f"Data validation for {metric_name} failed, "
-                        f"otel: {otel_state}, cli: {d_cli}"
-                    )
+                    _record_mismatch(metric_name, sensor, otel_state, d_cli)
 
-        with allure.step("Validate nvswitch_platform_environment_psu_voltage"):
-            metric_name, series = _psu_metric_series("voltage")
+        metric_name, series = _psu_metric_series("voltage")
+        with allure.step(f"Validate {metric_name}"):
             logger.info("Running %s data validation", metric_name)
             for sensor in series:
                 cli = _psu_cli(sensor[-1])
@@ -1293,14 +1375,19 @@ class OtelDataValidations:
                 if cli["state"] == "ok":
                     d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["voltage"])
-                    if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 35:
-                        pytest.fail(
-                            f"Data validation for {metric_name} failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                    deviation = _psu_deviation(d_cli, d_otel)
+                    if deviation > 35:
+                        _record_mismatch(
+                            metric_name,
+                            sensor,
+                            d_otel,
+                            d_cli,
+                            deviation_pct=deviation,
+                            max_deviation_pct=35,
                         )
 
-        with allure.step("Validate nvswitch_platform_environment_psu_power"):
-            metric_name, series = _psu_metric_series("power")
+        metric_name, series = _psu_metric_series("power")
+        with allure.step(f"Validate {metric_name}"):
             logger.info("Running %s data validation", metric_name)
             for sensor in series:
                 cli = _psu_cli(sensor[-1])
@@ -1309,14 +1396,19 @@ class OtelDataValidations:
                 if cli["state"] == "ok":
                     d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["power"])
-                    if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 20:
-                        pytest.fail(
-                            f"Data validation for {metric_name} failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                    deviation = _psu_deviation(d_cli, d_otel)
+                    if deviation > 20:
+                        _record_mismatch(
+                            metric_name,
+                            sensor,
+                            d_otel,
+                            d_cli,
+                            deviation_pct=deviation,
+                            max_deviation_pct=20,
                         )
 
-        with allure.step("Validate nvswitch_platform_environment_psu_current"):
-            metric_name, series = _psu_metric_series("current")
+        metric_name, series = _psu_metric_series("current")
+        with allure.step(f"Validate {metric_name}"):
             logger.info("Running %s data validation", metric_name)
             for sensor in series:
                 cli = _psu_cli(sensor[-1])
@@ -1325,14 +1417,19 @@ class OtelDataValidations:
                 if cli["state"] == "ok":
                     d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["current"])
-                    if self.get_percentage_deviation(round(d_cli), round(d_otel)) > 35:
-                        pytest.fail(
-                            f"Data validation for {metric_name} failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
+                    deviation = _psu_deviation(d_cli, d_otel)
+                    if deviation > 35:
+                        _record_mismatch(
+                            metric_name,
+                            sensor,
+                            d_otel,
+                            d_cli,
+                            deviation_pct=deviation,
+                            max_deviation_pct=35,
                         )
 
-        with allure.step("Validate nvswitch_platform_environment_psu_capacity"):
-            metric_name, series = _psu_metric_series("capacity")
+        metric_name, series = _psu_metric_series("capacity")
+        with allure.step(f"Validate {metric_name}"):
             logger.info("Running %s data validation", metric_name)
             for sensor in series:
                 cli = _psu_cli(sensor[-1])
@@ -1342,13 +1439,16 @@ class OtelDataValidations:
                     d_otel = _plat_numeric(series[sensor][-1])
                     d_cli = _plat_numeric(cli["capacity"])
                     if not _plat_rounded_equal(d_otel, d_cli):
-                        pytest.fail(
-                            f"Data validation for {metric_name} failed, "
-                            f"otel: {d_otel}, cli: {d_cli}"
-                        )
+                        _record_mismatch(metric_name, sensor, d_otel, d_cli)
 
         if missing_cli:
-            pytest.fail(
+            failures.append(
                 "Platform stats: exported OTEL sensors have no matching CLI snapshot: " +
                 ", ".join(sorted(missing_cli))
+            )
+
+        if failures:
+            pytest.fail(
+                f"Platform stats data validation failed ({len(failures)} issue(s)):\n" +
+                "\n".join(f"  {idx}. {failure}" for idx, failure in enumerate(failures, 1))
             )
