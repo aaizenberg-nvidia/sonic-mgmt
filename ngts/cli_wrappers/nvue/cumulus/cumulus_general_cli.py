@@ -85,7 +85,7 @@ class CumulusGeneralCli(NvueGeneralCli):
 
     def install_apt_get_pkg(self):
         with allure.step('Install apt-get packages'):
-            self.engine.run_cmd('sudo apt-get install build-essential -y', timeout=120, retry_run=True)
+            self.engine.run_cmd('sudo apt-get install build-essential libatomic1=12.2.0-14+deb12u1 -y', timeout=120, retry_run=True)
             self.engine.run_cmd('sudo apt-get install swig -y', timeout=60, retry_run=True)
             self.engine.run_cmd('sudo apt-get install kmod -y', timeout=60, retry_run=True)
             self.engine.run_cmd('sudo apt-get install pciutils -y', timeout=60, retry_run=True)

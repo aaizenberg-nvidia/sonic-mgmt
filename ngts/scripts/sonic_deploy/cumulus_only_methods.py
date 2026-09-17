@@ -65,7 +65,7 @@ class CumulusInstallationSteps:
         #  below command would enable the bookworm debian repository and replace the cumulus dev repository with release one
         bookworm_repo_enable = "\'s/#\\ *deb/deb/g\'"
         cumulus_dev_repo_disable = "\'2d;3d\'"
-        cumulus_release_repo_enable = "\'4i # deb  https://apt.cumulusnetworks.com/repo CumulusLinux-d12-latest cumulus upstream netq\'"
+        cumulus_release_repo_enable = "\'4i deb  https://apt.cumulusnetworks.com/repo CumulusLinux-d12-latest cumulus upstream netq\'"
         cmd = f"sudo sed -i  -e {bookworm_repo_enable} -e {cumulus_dev_repo_disable} -e {cumulus_release_repo_enable} /etc/apt/sources.list"
         dut['engine'].run_cmd(cmd)
         logging.info(dut['engine'].run_cmd("sudo cat /etc/apt/sources.list"))
