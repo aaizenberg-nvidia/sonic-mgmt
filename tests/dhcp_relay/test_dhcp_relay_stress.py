@@ -105,7 +105,8 @@ def test_dhcp_relay_restart_with_stress(ptfhost, dut_dhcp_relay_data, validate_d
                             "testing_mode": testing_mode,
                             "kvm_support": True,
                             "relay_agent": relay_agent,
-                            "downlink_vlan_iface_name": str(dut_dhcp_relay_data[0]["downlink_vlan_iface"]["name"])},
+                            "downlink_vlan_iface_name": str(dut_dhcp_relay_data[0]["downlink_vlan_iface"]["name"]),
+                            "skip_relay_src_ip_check": True},
                    log_file="/tmp/dhcp_relay_test.stress.DHCPTest.log", is_python3=True)
 
 
