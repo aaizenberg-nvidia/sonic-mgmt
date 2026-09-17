@@ -20,6 +20,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.split_pipeline import (
     prepare_split_pipeline_insecure_pre_run,
     prepare_split_pipeline_secured_pre_run,
     run_split_pipeline_test01_verification,
+    validate_split_pipeline_stats_group_field_unsets,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
     assert_otlp_session_established,
@@ -123,3 +124,35 @@ def test01_otel_telemetry_split_mgmt_vrf_No_TLS(
         vrf=vrf,
         prepare_session=True,
     )
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test02_unset_stats_group_validations(
+    engines, otel_suite_mgmt, test_api,
+):
+    """SSIM ``Test_Otel_Split_Mgmt_Vrf_insecured::test02_unset_stats_group_validations``.
+
+    Note: SSIM ``test02_otel_telemetry_split_unset_cli`` belongs to
+    ``Test_Otel_Split_Default_Vrf_secured`` (whole stats-group delete + global metric gaps),
+    not the mgmt-insecure class. This test covers per-field unset/show on ``test_01``.
+    """
+    TestToolkit.tested_api = test_api
+    suite = otel_suite_mgmt
+    prepare_split_pipeline_insecure_pre_run(engines.dut, vrf=suite.export_vrf)
+    with allure.step("Create test_01 stats-group baseline for unset coverage"):
+        apply_split_pipeline_test01_stats_group(
+            engines.dut,
+            suite.primary_ip,
+            include_router_lldp=True,
+        )
+    try:
+        with allure.step("Validate test_01 per-field unset/show pairs"):
+            validate_split_pipeline_stats_group_field_unsets(engines.dut)
+    finally:
+        with allure.step("Restore test_01 stats-group after field unsets"):
+            apply_split_pipeline_test01_stats_group(
+                engines.dut,
+                suite.primary_ip,
+                include_router_lldp=True,
+            )

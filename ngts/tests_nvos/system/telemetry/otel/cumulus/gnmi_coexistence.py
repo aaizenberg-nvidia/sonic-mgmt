@@ -3250,6 +3250,31 @@ def build_smoke_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectio
     return jobs
 
 
+def build_bgp_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[GnmiCollectionJob]:
+    """Build the BGP subscription used by coexistence reboot validation."""
+    return [
+        job
+        for job in build_smoke_gnmi_jobs(dut, duration_sec=duration_sec)
+        if job.model == "bgp"
+    ]
+
+
+def build_top_level_load_gnmi_jobs(
+    dut, *, duration_sec: int = 150, is_nvos: bool
+) -> List[GnmiCollectionJob]:
+    """Interface + BGP sample subscriptions for SSIM coexistence smoke test15.
+
+    NGTS gnmic dial-out subscribes to the resolved supported paths for each model;
+    this provides the same simultaneous interface/BGP subscription load as SSIM's
+    top-level adapter while retaining per-path cache parsing.
+    """
+    jobs = build_interface_qos_gnmi_jobs(
+        dut, duration_sec=duration_sec, is_nvos=is_nvos
+    )
+    jobs.extend(build_bgp_gnmi_jobs(dut, duration_sec=duration_sec))
+    return jobs
+
+
 def build_interface_qos_gnmi_jobs(
     dut, *, duration_sec: int = 120, is_nvos: bool
 ) -> List[GnmiCollectionJob]:

@@ -8,16 +8,21 @@ marked ``cumulus_only``; dual-platform checks use ``suite.is_nvos`` in collect/v
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_tools.infra.DutUtilsTool import RebootParams
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.telemetry.otel.cumulus import cache as telemetryCache
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
     require_cumulus_at_least,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
     COEXISTENCE_NVOS_INTERFACE_STATS_MAX_GAP,
+    clear_deferred_smoke_gnmi_session,
     coexistence_otel_exclude_metrics_for_dut,
     collect_otel_all_stats_to_cache,
+    collect_coexistence_smoke_cache,
     gnmi_coexistence_cache_ready,
     skip_unless_gnmi_coexistence,
     validate_chassis_platform_hw_info,
@@ -28,6 +33,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
     validate_component_system_otel_time_gaps,
     validate_interface_broadcast_pkts_otel_cli,
     validate_interface_multicast_pkts_otel_cli,
+    validate_interface_octets_otel_cli,
     validate_interface_no_buffer_uc_dropped_pkts_otel_cli,
     validate_interface_stats_time_gap,
     validate_otel_metric_attribute_filtering,
@@ -41,6 +47,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
 from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
     COMPONENT_GNMI_ATTRS,
     INTERFACE_QOS_GNMI_ATTRS,
+    SMOKE_BGP_ATTRS,
     SMOKE_LLDP_ATTRS,
     SYSTEM_GNMI_ATTRS,
     assert_gnmi_timing_pass,
@@ -48,6 +55,8 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
     build_smoke_interface_expected_xpaths,
     build_smoke_system_expected_xpaths,
     discover_asic_model,
+    build_bgp_gnmi_jobs,
+    build_top_level_load_gnmi_jobs,
     discover_lldp_neighbor_context,
     discover_storage_component_name,
     run_and_validate_interface_on_change_subscription,
@@ -59,8 +68,8 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
     validate_top_level_subscription,
     validate_xpath_coverage_per_timestamp,
 )
-from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
-    require_cumulus_at_least,
+from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
+    ensure_mgmt_vrf_secured_otlp_session,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
     discover_swp_interfaces_on_dut,
@@ -322,6 +331,43 @@ def test_14_collect_otel_data_persistence_time_gaps(
     validate_otel_persistence_time_gaps()
 
 
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_smoke_15_otel_validation_while_gnmi_top_level_subscription(
+    engines, otel_suite_mgmt_secured, test_api, tmp_path,
+):
+    """SSIM smoke test15: validate OTEL under simultaneous interface/BGP gNMI load."""
+    TestToolkit.tested_api = test_api
+    wait_sec = 150
+    jobs = build_top_level_load_gnmi_jobs(
+        engines.dut, duration_sec=wait_sec, is_nvos=otel_suite_mgmt_secured.is_nvos
+    )
+    if not jobs:
+        pytest.skip("No supported interface or BGP gNMI paths found for coexistence load")
+    if not otel_suite_mgmt_secured.is_nvos:
+        with allure.step("Re-establish secured mgmt VRF OTLP after prior clear_config"):
+            ensure_mgmt_vrf_secured_otlp_session(
+                engines.dut,
+                otel_suite_mgmt_secured.primary,
+                collector_ip=otel_suite_mgmt_secured.primary_ip,
+            )
+    with allure.step("Collect OTEL while interface/BGP gNMI subscriptions are active"):
+        collect_coexistence_smoke_cache(
+            engines.dut,
+            otel_suite_mgmt_secured.primary,
+            str(tmp_path),
+            sonic_mgmt=engines.sonic_mgmt,
+            wait_sec=wait_sec,
+            gnmi_jobs=jobs,
+            best_effort_gnmi=True,
+        )
+    validate_coexistence_otel_time_gaps()
+    validate_coexistence_otel_metrics(
+        engines.dut,
+        secured=True,
+        include_attributes_count=False,
+    )
+
+
 # --- Test_Telemetry_Interface_QoS_Validation_Coexistence (split pipeline mgmt) ---
 
 
@@ -455,7 +501,20 @@ def test_interface_qos_07_interface_in_multicast_pkts(
 
 
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
-def test_interface_qos_08_interface_no_buffer_uc_dropped_pkts(
+def test_interface_qos_08_interface_in_octets(
+    engines, coexistence_interface_qos_cache, test_api
+):
+    """SSIM Interface/QoS test_07 — OTEL vs CLI for in_octets (GNMI portion skipped on mlx)."""
+    TestToolkit.tested_api = test_api
+    coexistence_interface_qos_cache.ensure_collected()
+    lab = resolve_cumulus_lab_interfaces_on_dut(engines.dut, get_dut_hostname(engines.dut))
+    swps = discover_swp_interfaces_on_dut(engines.dut)
+    iface = lab.test_iface if lab.test_iface in swps else (swps[0] if swps else lab.test_iface)
+    validate_interface_octets_otel_cli(engines.dut, interface=iface)
+
+
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_interface_qos_08a_interface_no_buffer_uc_dropped_pkts(
     engines, coexistence_interface_qos_cache, test_api
 ):
     """SSIM Interface/QoS test_08 — OTEL vs CLI for no_buffer_uc_dropped_pkts (GNMI portion skipped on mlx)."""
@@ -773,3 +832,73 @@ def test_component_system_08_validate_telemetry_platform_hw_info_chassis(
     require_cumulus_at_least(engines.dut, "5.17.0")
     with allure.step("Validate CHASSIS platform hw info (OTEL vs CLI)"):
         validate_chassis_platform_hw_info(engines.dut)
+
+
+@pytest.mark.cumulus_only
+@pytest.mark.reboot
+@pytest.mark.parametrize("test_api", [ApiType.NVUE])
+def test_smoke_16_validate_otel_gnmi_after_reboot(
+    engines,
+    otel_suite_mgmt_secured,
+    topology_obj,
+    test_api,
+    tmp_path,
+):
+    """SSIM smoke test16: reboot, then validate BGP gNMI and secured OTEL.
+
+    Last in this module so a reboot does not invalidate module-scoped caches used
+    by the Interface/QoS and Component/System suites above.
+    """
+    TestToolkit.tested_api = test_api
+    wait_sec = 90
+    jobs = build_bgp_gnmi_jobs(engines.dut, duration_sec=wait_sec)
+    if not jobs:
+        pytest.skip("No BGP neighbor/path available for post-reboot coexistence validation")
+
+    with allure.step("Teardown deferred module gNMI session before reboot"):
+        # No-op when coexistence_smoke_cache was not used in this module run.
+        clear_deferred_smoke_gnmi_session(engines.dut)
+
+    with allure.step("Persist applied NVUE so secured OTLP survives reboot"):
+        NvueGeneralCli.save_config(engines.dut)
+
+    with allure.step("Reboot DUT and wait until the system is ready"):
+        System().action_reboot(
+            reboot_params=RebootParams(topology_obj=topology_obj)
+        ).verify_result()
+
+    with allure.step("Wait for secured mgmt VRF OTLP session after reboot"):
+        ensure_mgmt_vrf_secured_otlp_session(
+            engines.dut,
+            otel_suite_mgmt_secured.primary,
+            collector_ip=otel_suite_mgmt_secured.primary_ip,
+        )
+
+    with allure.step("Collect secured OTEL and BGP gNMI after reboot"):
+        collect_coexistence_smoke_cache(
+            engines.dut,
+            otel_suite_mgmt_secured.primary,
+            str(tmp_path),
+            sonic_mgmt=engines.sonic_mgmt,
+            wait_sec=wait_sec,
+            gnmi_jobs=jobs,
+            include_time_gaps=False,
+        )
+
+    skip_unless_gnmi_coexistence(
+        "gnmi-series-bgp",
+        context="post-reboot BGP xpath coverage",
+    )
+    bgp_job = jobs[0]
+    validate_xpath_coverage_per_timestamp(
+        model="bgp",
+        attrs=SMOKE_BGP_ATTRS,
+        populate_kwargs=bgp_job.populate_kwargs,
+        series_key="gnmi-series-bgp",
+        group_size=2,
+    )
+    validate_coexistence_otel_metrics(
+        engines.dut,
+        secured=True,
+        include_attributes_count=False,
+    )

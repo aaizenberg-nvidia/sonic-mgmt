@@ -68,6 +68,34 @@ from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
 
 logger = logging.getLogger(__name__)
 
+# Module-scoped deferred gNMI session from ``coexistence_smoke_cache`` (cleared before reboot tests).
+_deferred_smoke_gnmi_session: Any = None
+
+
+def register_deferred_smoke_gnmi_session(session: Any, dut=None) -> None:
+    """Track a deferred gNMI session; tear down any previously registered session first."""
+    global _deferred_smoke_gnmi_session
+    if _deferred_smoke_gnmi_session is not None and dut is not None:
+        clear_deferred_smoke_gnmi_session(dut)
+    _deferred_smoke_gnmi_session = session
+
+
+def clear_deferred_smoke_gnmi_session(dut) -> None:
+    """Tear down grpc-tunnel/gnmic left open by module smoke cache (SSIM pre-reboot cleanup)."""
+    global _deferred_smoke_gnmi_session
+    session = _deferred_smoke_gnmi_session
+    _deferred_smoke_gnmi_session = None
+    if session is None:
+        return
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import (
+        teardown_gnmi_coexistence_session,
+    )
+
+    try:
+        teardown_gnmi_coexistence_session(dut, session)
+    except Exception:  # noqa: BLE001 - never leave the slot occupied after a teardown error
+        logger.exception("Failed to tear down deferred coexistence gNMI session")
+
 
 @dataclass
 class CoexistenceCollectResult:
@@ -410,6 +438,7 @@ def validate_coexistence_otel_metrics(
     is_ib_router: bool = False,
     destination_ip: Optional[str] = None,
     use_stats_group: bool = False,
+    include_attributes_count: bool = True,
 ) -> None:
     """SSIM ``test_*_validate_otel_metrics_collection`` parity (Cumulus catalog / NVOS YAML)."""
     otel_data = telemetryCache.get_data("otel")
@@ -450,12 +479,13 @@ def validate_coexistence_otel_metrics(
             total_metrics=total_metrics,
             exclude_metrics=excludes,
         )
-        otel_data_val.validate_collected_metrics_attributes_count(
-            metrics_timestamps,
-            hostname,
-            total_metrics=total_metrics,
-            exclude_metrics=excludes,
-        )
+        if include_attributes_count:
+            otel_data_val.validate_collected_metrics_attributes_count(
+                metrics_timestamps,
+                hostname,
+                total_metrics=total_metrics,
+                exclude_metrics=excludes,
+            )
 
 
 def _validate_coexistence_otel_metrics_nvos(
@@ -2474,6 +2504,9 @@ def collect_coexistence_smoke_cache(
     defer_gnmi_teardown: bool = False,
     is_nvos: bool = False,
     telemetry_unit: Optional[str] = None,
+    gnmi_jobs: Optional[Sequence[Any]] = None,
+    best_effort_gnmi: bool = False,
+    include_time_gaps: bool = True,
 ) -> CoexistenceCollectResult:
     """``Test_Telemetry_Coexistence_Smoke`` OTEL (+ gNMI on Cumulus only).
 
@@ -2481,11 +2514,10 @@ def collect_coexistence_smoke_cache(
     NVOS: OTEL only (smoke_01/03); BGP/LLDP gNMI tests are cumulus_only.
     """
     telemetryCache.clear_data()
-    if is_nvos:
-        gnmi_jobs: List[Any] = []
-    else:
-        gnmi_jobs = build_smoke_gnmi_jobs(dut, duration_sec=wait_sec)
-    if gnmi_jobs and sonic_mgmt is not None:
+    if gnmi_jobs is None:
+        gnmi_jobs = [] if is_nvos else build_smoke_gnmi_jobs(dut, duration_sec=wait_sec)
+    jobs = list(gnmi_jobs)
+    if jobs and sonic_mgmt is not None:
         _prepare_coexistence_gnmi_dialout(dut)
 
     def _collect_otlp() -> Dict[str, Any]:
@@ -2501,37 +2533,42 @@ def collect_coexistence_smoke_cache(
         )
 
     gnmi_session = None
-    if gnmi_jobs and sonic_mgmt is not None:
+    if jobs and sonic_mgmt is not None:
         otel_holder: Dict[str, Any] = {}
 
         def _otlp_and_store():
             otel_holder['payload'] = _collect_otlp()
 
-        gnmi_session = run_gnmi_with_parallel_work(
-            dut,
-            sonic_mgmt,
-            gnmi_jobs,
-            _otlp_and_store,
-            defer_teardown=defer_gnmi_teardown,
-            use_mtls=True,
-        )
-        otel_payload = otel_holder['payload']
+        try:
+            gnmi_session = run_gnmi_with_parallel_work(
+                dut,
+                sonic_mgmt,
+                jobs,
+                _otlp_and_store,
+                defer_teardown=defer_gnmi_teardown,
+                use_mtls=True,
+            )
+        except Exception:  # noqa: BLE001 - SSIM test15 treats gNMI load as best effort
+            if not best_effort_gnmi:
+                raise
+            logger.exception(
+                "gNMI coexistence load failed; preserving SSIM best-effort semantics"
+            )
+        otel_payload = otel_holder.get('payload') or _collect_otlp()
     else:
-        if gnmi_jobs and sonic_mgmt is None:
+        if jobs and sonic_mgmt is None:
             logger.warning('sonic_mgmt not provided; skipping smoke gNMI collection')
         otel_payload = _collect_otlp()
 
-    artifact_path = cumulus_otel_artifact_path(cur_dir)
-    hostname = get_dut_hostname(dut)
-    family_map = list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP) if is_nvos else None
-    otel_payload["time_gaps"] = timegap_analysis_v2(
-        artifact_path,
-        hostname,
-        os_info=get_dut_os_info(dut),
-        family_map=family_map,
-    )
     if is_nvos:
         otel_payload["coexistence_expected_gaps"] = dict(COEXISTENCE_NVOS_SMOKE_TIME_GAPS)
+    if include_time_gaps:
+        otel_payload["time_gaps"] = timegap_analysis_v2(
+            cumulus_otel_artifact_path(cur_dir),
+            get_dut_hostname(dut),
+            os_info=get_dut_os_info(dut),
+            family_map=list(CumulusOtelConst.NVOS_SPLIT_FAMILY_MAP) if is_nvos else None,
+        )
     telemetryCache.add_data("otel", otel_payload)
     return CoexistenceCollectResult(otel_payload=otel_payload, gnmi_session=gnmi_session)
 

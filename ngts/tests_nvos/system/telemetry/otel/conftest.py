@@ -207,7 +207,9 @@ def _teardown_deferred_gnmi_session(dut, gnmi_session) -> None:
 def coexistence_smoke_cache(engines, otel_suite_mgmt_secured, tmp_path_factory):
     """``Test_Telemetry_Coexistence_Smoke`` OTEL cache (secured; NVOS skips gNMI)."""
     from ngts.tests_nvos.system.telemetry.otel.cumulus.coexistence import (
+        clear_deferred_smoke_gnmi_session,
         collect_coexistence_smoke_cache,
+        register_deferred_smoke_gnmi_session,
     )
 
     suite = otel_suite_mgmt_secured
@@ -222,8 +224,11 @@ def coexistence_smoke_cache(engines, otel_suite_mgmt_secured, tmp_path_factory):
         is_nvos=suite.is_nvos,
         telemetry_unit=suite.telemetry_unit,
     )
-    yield cur_dir
-    _teardown_deferred_gnmi_session(engines.dut, collect_result.gnmi_session)
+    register_deferred_smoke_gnmi_session(collect_result.gnmi_session, dut=engines.dut)
+    try:
+        yield cur_dir
+    finally:
+        clear_deferred_smoke_gnmi_session(engines.dut)
 
 
 @pytest.fixture(scope="module")

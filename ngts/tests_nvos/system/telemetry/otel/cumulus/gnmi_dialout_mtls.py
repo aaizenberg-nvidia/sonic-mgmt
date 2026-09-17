@@ -531,8 +531,13 @@ def configure_dut_gnmi_server_mtls(dut, *, dut_ip: str) -> None:
         system.gnmi_server.set(GnmiConsts.GNMI_STATE_FIELD, GnmiConsts.GNMI_STATE_ENABLED, apply=False)
         system.gnmi_server.set('listening-address', dut_ip, apply=False)
         system.gnmi_server.set(CERTIFICATE, GNMI_DIALOUT_SERVER_CERT, apply=False)
-        system.gnmi_server.mtls.set(CA_CERTIFICATE, GNMI_DIALOUT_CA_NAME, apply=True, ask_for_confirmation=True,
-                                    dut_engine=dut,).verify_result()
+        system.gnmi_server.mtls.set(
+            CA_CERTIFICATE,
+            GNMI_DIALOUT_CA_NAME,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
         logger.info('gnmi-server enabled with certificate=%s mtls ca=%s', GNMI_DIALOUT_SERVER_CERT, GNMI_DIALOUT_CA_NAME)
 
 
@@ -555,8 +560,13 @@ def configure_dut_grpc_tunnel_mtls(
         tunnel.set(op_param_name=GrpcTunnelConstants.CA_CERTIFICATE, op_param_value=GNMI_DIALOUT_CA_NAME)
         tunnel.set(op_param_name=GrpcTunnelConstants.CERTIFICATE, op_param_value=GNMI_DIALOUT_CLIENT_CERT)
         tunnel.set(op_param_name=GrpcTunnelConstants.RETRY_INTERVAL, op_param_value=str(retry_interval))
-        tunnel.set(op_param_name=GrpcTunnelConstants.STATE, op_param_value=GnmiConsts.GNMI_STATE_ENABLED, apply=True, ask_for_confirmation=True,
-                   dut_engine=dut,).verify_result()
+        tunnel.set(
+            op_param_name=GrpcTunnelConstants.STATE,
+            op_param_value=GnmiConsts.GNMI_STATE_ENABLED,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
 
 
 def resolve_dut_ip(dut) -> str:
