@@ -2936,7 +2936,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
         self.leakage_sensors_count = 2
         self.list_of_leakages = [f"LEAKAGE-{i}" for i in range(1, self.leakage_sensors_count + 1)]
         self.expected_operation_durations.update({
-            self.generate_tech_support: 165,
+            self.generate_tech_support: 240,
             'julietscaleout generate_tech_support': 165,
             'reboot with new user FW': 450 if is_bug_active(4854038) else 390,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
