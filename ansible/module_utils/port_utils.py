@@ -859,6 +859,13 @@ def get_port_alias_to_name_map(hwsku, asic_name=None):
             # adding placeholder for 100G ports
             port_alias_to_name_map["Port65"] = "Ethernet256"
             port_alias_to_name_map["Port66"] = "Ethernet260"
+        elif hwsku == "ACS-SN6810_LD":
+            # 128 main ports: Ethernet0..Ethernet508 -> etp1..etp128
+            for i in range(128):
+                port_alias_to_name_map["etp%d" % (i + 1)] = "Ethernet%d" % (i * 4)
+            # Two service sub-ports on the last cage -> etp129a/b
+            port_alias_to_name_map["etp129a"] = "Ethernet512"
+            port_alias_to_name_map["etp129b"] = "Ethernet513"
         else:
             if "Arista-7800" in hwsku:
                 assert False, "Please add port_alias_to_name_map for new modular SKU %s." % hwsku
