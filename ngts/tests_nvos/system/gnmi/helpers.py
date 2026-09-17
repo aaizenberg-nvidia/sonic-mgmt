@@ -120,7 +120,7 @@ def run_gnmi_client_in_the_background(target_ip, xpath, device):
     return process
 
 
-def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
+def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0', timeout_sec=4):
     """
     Check gnmi basic flow: show command , disable and enable commands, validate stream updates to gnmi-client.
         Test flow:
@@ -138,7 +138,8 @@ def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
     system = System()
     gnmi_server_obj = system.gnmi_server
     target_ip = Port(mgmt_port_name).interface.get_ipv6_address() if ipv6 else engines.dut.ip
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode)
+    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode,
+                                                timeout_sec=timeout_sec)
 
     with allure.step('Disable gnmi'):
         gnmi_server_obj.disable_gnmi_server()
@@ -147,18 +148,19 @@ def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
 
     with allure.step('Enable gnmi'):
         gnmi_server_obj.enable_gnmi_server()
-        validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode)
+        validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode,
+                                                    timeout_sec=timeout_sec)
 
 
 def validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode='', username='',
-                                                password=''):
+                                                password='', timeout_sec=4):
     with allure.step('Validate gnmi is running and stream updates'):
         validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
         validate_gnmi_server_in_health_issues(system, expected_gnmi_health_issue=False)
         port_description = Tools.RandomizationTool.get_random_string(7)
         change_port_description_and_validate_gnmi_updates(engines, port_description=port_description,
                                                           target_ip=target_ip, mode=mode, username=username,
-                                                          password=password)
+                                                          password=password, timeout_sec=timeout_sec)
 
 
 @retry(Exception, tries=6, delay=2)
@@ -202,7 +204,7 @@ def validate_gnmi_disabled_and_not_running(gnmi_server_obj, engines):
 
 
 def run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, target_port=GnmiConsts.GNMI_DEFAULT_PORT,
-                                     mode='', username='', password=''):
+                                     mode='', username='', password='', timeout_sec=4):
     username = username or devices.dut.default_username
     password = password or devices.dut.default_password
     with allure.step("run gnmi-client and parse output"):
@@ -212,7 +214,7 @@ def run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, target_
         cmd = f"gnmic -a {target_ip} --port {target_port} --skip-verify subscribe --prefix '{prefix_and_path[0]}'" \
             f" --path '{prefix_and_path[1]}' --target nvos -u {username} " \
             f"-p {password} {mode_flag} --format flat"
-        cmd = "timeout -s INT 4s " + cmd
+        cmd = f"timeout -s INT {timeout_sec}s " + cmd
         logger.info(f"run on the sonic mgmt docker {sonic_mgmt_engine.ip}: {cmd}")
         if "poll" == mode:
             gnmi_client_output = sonic_mgmt_engine.run_cmd_set([cmd, '\n', '\n', '\x03', '\x03'],
@@ -1018,7 +1020,7 @@ def _format_continuity_summary(timeline, heartbeat_sec, max_gap_sec, silent_afte
 
 
 def change_port_description_and_validate_gnmi_updates(engines, port_description, target_ip, mode='', username='',
-                                                      password=''):
+                                                      password='', timeout_sec=4):
     selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
     selected_port.interface.set(NvosConst.DESCRIPTION, port_description, apply=True).verify_result()
     selected_port.update_output_dictionary()
@@ -1030,7 +1032,8 @@ def change_port_description_and_validate_gnmi_updates(engines, port_description,
     logger.info(f"sleep {GnmiConsts.SLEEP_TIME_FOR_UPDATE} sec until we start validate the gnmi stream")
     time.sleep(GnmiConsts.SLEEP_TIME_FOR_UPDATE)
     gnmi_stream_updates = run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, mode=mode,
-                                                           username=username, password=password)
+                                                           username=username, password=password,
+                                                           timeout_sec=timeout_sec)
     assert port_description in list(
         gnmi_stream_updates.values()), "we expect to see the new port description in the gnmi-client output but we didn't.\n" \
                                        f"port description: {port_description}\n" \
