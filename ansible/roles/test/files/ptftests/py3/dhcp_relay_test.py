@@ -183,7 +183,6 @@ class DHCPTest(DataplaneBaseTest):
         # 'single' for regular single tor testing
         self.dual_tor = (self.test_params['testing_mode'] == 'dual')
         self.vlan_iface_name = self.test_params.get('downlink_vlan_iface_name', None)
-        self.skip_relay_src_ip_check = self.test_params.get('skip_relay_src_ip_check', False)
 
         # option82 is a byte string created by the relay agent. It contains the circuit_id and remote_id fields.
         # circuit_id is stored as suboption 1 of option 82.
@@ -1227,8 +1226,6 @@ class DHCPTest(DataplaneBaseTest):
         mask.set_do_not_care_scapy(scapy.IP, "proto")
         mask.set_do_not_care_scapy(scapy.IP, "chksum")
         mask.set_do_not_care_scapy(scapy.IP, "dst")
-        if self.skip_relay_src_ip_check:
-            mask.set_do_not_care_scapy(scapy.IP, "src")
         mask.set_do_not_care_scapy(scapy.IP, "options")
 
         mask.set_do_not_care_scapy(scapy.UDP, "chksum")
