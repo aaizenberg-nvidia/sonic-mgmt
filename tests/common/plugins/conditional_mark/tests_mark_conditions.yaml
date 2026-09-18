@@ -5833,6 +5833,12 @@ system_health/test_system_health.py:
     conditions:
       - "asic_type in ['vs']"
 
+system_health/test_system_health.py::test_device_fan_speed_checker:
+  skip:
+    reason: "Aspeed BMC platforms are fanless, so there is no fan speed to mock/check"
+    conditions:
+      - "'bmc' in topo_type"
+
 system_health/test_system_health.py::test_pdb_device_checker:
   skip:
     reason: "PDB tests are not supported on SIMX platforms"
