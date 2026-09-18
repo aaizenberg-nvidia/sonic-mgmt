@@ -97,7 +97,7 @@ BER_KEY_MAP = {
     BER_RAW_PHYSICAL_BER
 }
 
-PLATFORM_GENERATION = ['4280', '4700', '5600', '5610', '5640']
+PLATFORM_GENERATION = ['4280', '4700', '5600', '5610', '5640', '6600', '6810']
 
 CMD_INTERFACE_TRANSCEIVER = "show interface transceiver eeprom"
 CMD_SFPUTIL_EEPROM = "sudo sfputil show eeprom"
