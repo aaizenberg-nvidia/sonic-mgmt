@@ -572,26 +572,6 @@
 		}
 	},
 	"host": {
-		"slm-175": {
-			"component": {
-				"ONIE": [
-					{
-						"force_reboot": true,
-						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0021/dev/9600/onie-updater-x86_64-mlnx_x86-r0",
-						"version": "2025.05-5.3.0021-9600-dev",
-						"reboot": ["cold"]
-					}
-				],
-				"BIOS": [
-					{
-						"force_reboot": true,
-						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_bios/V3000/0ACUZ_01.00.007/Release_9600/0ACUZ.cab",
-						"version": "0ACUZ_01.00.007_9600",
-						"reboot": ["cold"]
-					}
-				]
-			}
-		},
 		"r-tigon-15": {
 			"component": {
 				"CPLD1": [
