@@ -300,6 +300,20 @@ class SonicSecureBootHelper(SecureBootHelper):
         logger.info(f"Polling for {SonicSecureBootConsts.ONIE_TIMEOUT} seconds to login into ONIE mode")
         success = wait_until(SonicSecureBootConsts.ONIE_TIMEOUT, 10, 0, press_enter_until_onie_login)
         if success:
+            # We are at a getty (ONIE Rescue mode spawns one; ONIE Install drops
+            # straight into a passwordless 'ONIE:~ #' and never gets here).
+            #
+            # press_enter_until_onie_login() polls by sending a bare '\r', and on
+            # a getty every one of those submits an empty username and makes it
+            # print a fresh 'login:'. Those extra prompts are still queued in the
+            # pexpect buffer, so sending the username right away delivers it into
+            # the wrong state and getty answers 'Login incorrect' without ever
+            # asking for a password - the wait for PASSWORD_REGEX then times out
+            # and the switch is left stranded in ONIE (Redmine #5261704).
+            #
+            # Re-synchronize first: wait out the queued prompts, then drive one
+            # clean login on the last one.
+            self._wait_for_last_login_prompt()
             self.serial_engine.run_cmd(DefaultConnectionValues.ONIE_USERNAME, [DefaultConnectionValues.PASSWORD_REGEX] +
                                        DefaultConnectionValues.DEFAULT_PROMPTS)
             self.serial_engine.run_cmd(DefaultConnectionValues.ONIE_PASSWORD, DefaultConnectionValues.DEFAULT_PROMPTS)
@@ -307,6 +321,25 @@ class SonicSecureBootHelper(SecureBootHelper):
         self.ensure_onie_mode()
 
         self.serial_engine.run_cmd_and_get_output('onie-stop')
+
+    def _wait_for_last_login_prompt(self, quiet_timeout=5, max_drain=10):
+        """
+        Consume the 'login:' prompts queued up by the polling in
+        login_into_onie_mode() and return once the console is quiet, so the
+        username that follows is sent to a getty that is actually waiting for it.
+
+        Sends nothing - a bare carriage return here would submit yet another
+        empty username and re-arm the very problem this drains.
+        """
+        for _ in range(max_drain):
+            try:
+                self.serial_engine.run_cmd('', [DefaultConnectionValues.LOGIN_REGEX],
+                                           timeout=quiet_timeout, send_without_enter=True)
+            except Exception:
+                # Nothing more arrived within quiet_timeout: the backlog is drained
+                # and getty is sitting at its final prompt.
+                return
+        logger.warning("Still seeing login prompts after %s drains; proceeding anyway", max_drain)
 
     def get_into_onie_mode(self, topology_obj):
         """
