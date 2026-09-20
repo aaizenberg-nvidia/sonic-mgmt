@@ -1560,9 +1560,17 @@ class NvuePerformanceCli(PerformanceCommon):
         external generator does not emit LLDP of its own, so the failure below names the
         forced-unconnected ports as a likely cause.
         """
-        if not self.dut_neighbor_dict:
-            self.dut_neighbor_dict = self.cli_obj.interface.filter_lldp_neighbors(neighbor_list=[PerfConsts.DUT_ALIAS],
-                                                                                  include_neighbor_ports=True)[PerfConsts.DUT_ALIAS]
+        # CLI objects are session-scoped, while performance classes may apply a
+        # different breakout between tests. Always rebuild this map so port
+        # names from the previous topology (for example, swp1s0) cannot leak
+        # into the current one (for example, swp1).
+        self.dut_neighbor_dict = self.cli_obj.interface.filter_lldp_neighbors(
+            neighbor_list=[PerfConsts.DUT_ALIAS],
+            include_neighbor_ports=True)[PerfConsts.DUT_ALIAS]
+        if len(self.dut_neighbor_dict) != len(self.connected_ports):
+            raise TestIssue(
+                f"Not all DUT-facing LLDP neighbors are populated on {self.dut_alias}: "
+                f"{len(self.dut_neighbor_dict)} found but {len(self.connected_ports)} connected ports are expected")
         mloops_tuples_list = []
         down_ports_list = []
         up_ports_list = []
