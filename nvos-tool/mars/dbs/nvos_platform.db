@@ -81,4 +81,7 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/platform/nvos_platform_dpc.cases </cases>
 		<ignore><condition> <key>dut_type</key> <op> not in </op> <value>[rosalind]</value> </condition></ignore>
 	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/platform/nvos_platform_uphy.cases </cases>
+	</test>
 </DBDEF>

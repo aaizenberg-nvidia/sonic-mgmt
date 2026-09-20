@@ -16,6 +16,7 @@ from ngts.nvos_tools.infra.NmxRbacTool import NmxRbacTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.nmx.Apps import ClusterApp
 from ngts.nvos_tools.nmx.Cluster import Cluster
+from ngts.tests_nvos.general.security.certificate.CertInfo import CertInfo
 from ngts.tests_nvos.general.security.helpers import cleanup_certs_for_tests, get_test_certs_dir_location, setup_certs_for_tests
 from ngts.tests_nvos.general.security.nmx_cert.helpers import enable_cluster
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
@@ -56,6 +57,17 @@ def _setup_nmx_rbac(app_name: str, certs_prefix: str):
     bad_rbac_user = UserInfo("bad_user", "bad_password", "admin")
 
     return rbac_tool, cluster_app, rbac_file_name, certs_location, certs, client_cert, server_cert, rbac_user, bad_rbac_user, dut_hostname
+
+
+def _cleanup_nmx_rbac_certs(rbac_tool: NmxRbacTool, certs_location: str, certs: list[CertInfo]) -> None:
+    """
+    Release the certs from the app manager, then delete them.
+
+    The post-reset verification re-binds the certs to run its clients, so at teardown they are still in use
+    and deleting them would be rejected with "is currently being used by the following applications".
+    """
+    rbac_tool.unbind_nmx_certs()
+    cleanup_certs_for_tests(certs_location, certs)
 
 
 def _verify_rbac_reset(setup_context: tuple):  # noqa: PLR0913
@@ -108,7 +120,7 @@ def nmx_controller_rbac_factory_reset_no_params_check() -> Generator[None, None,
         _verify_rbac_reset(setup)
 
     finally:
-        cleanup_certs_for_tests(certs_location, certs)
+        _cleanup_nmx_rbac_certs(rbac_tool, certs_location, certs)
 
     yield
 
@@ -142,7 +154,7 @@ def nmx_telemetry_rbac_factory_reset_no_params_check() -> Generator[None, None, 
         _verify_rbac_reset(setup)
 
     finally:
-        cleanup_certs_for_tests(certs_location, certs)
+        _cleanup_nmx_rbac_certs(rbac_tool, certs_location, certs)
 
     yield
 
@@ -197,7 +209,7 @@ def nmx_controller_rbac_factory_reset_keep_all_config_check() -> Generator[None,
         _verify_rbac_preserved(setup)
 
     finally:
-        cleanup_certs_for_tests(certs_location, certs)
+        _cleanup_nmx_rbac_certs(rbac_tool, certs_location, certs)
 
     yield
 
@@ -231,6 +243,6 @@ def nmx_telemetry_rbac_factory_reset_keep_all_config_check() -> Generator[None, 
         _verify_rbac_preserved(setup)
 
     finally:
-        cleanup_certs_for_tests(certs_location, certs)
+        _cleanup_nmx_rbac_certs(rbac_tool, certs_location, certs)
 
     yield

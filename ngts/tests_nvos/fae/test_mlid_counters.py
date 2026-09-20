@@ -23,6 +23,7 @@ from ngts.tests_nvos.cluster.cluster_consts import AnsiblePlaybooksConsts as Ans
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
 from ngts.tests_nvos.cluster.test_cluster_traffic import assert_test_results
 from ngts.tests_nvos.constants import MINUTE
+from ngts.tests_nvos.interfaces.nvl_port.helpers import wait_for_ports_state
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
 from ngts.nvos_tools.infra.McraTool import McraTool
 from ngts.nvos_tools.system.System import System
@@ -54,6 +55,7 @@ def mlid_mcra_backdoor(devices):
         yield
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_mlid_counters_isolation(engines, devices, nv_command, random_api, test_name):
@@ -340,6 +342,7 @@ def test_mlid_counters_disabled(engines, devices, nv_command, random_api):
             ).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_mlid_counters_version_mismatch(engines, devices, nv_command, random_api):
@@ -501,6 +504,11 @@ def test_mlid_counters_basic_flow_with_traffic(engines, devices, random_api, has
             logger.info("Setting cluster state to enabled")
             ClusterTools.start_cluster(cluster, setup_name, output_format, devices=devices)
 
+        with allure.step("Wait for all access ports to be up"):
+            # The NCCL playbooks fail if any access port is still down when they run.
+            wait_for_ports_state(devices, devices.dut.nvl_access_ports_list, 'acp',
+                                 NvosConsts.LINK_STATE_UP)
+
         with allure.step("Check cluster status"):
             status_check = AnsiblePlaybooksTool.run_playbook_by_key(
                 Ansible.STATUS_HEALTH,
@@ -521,6 +529,9 @@ def test_mlid_counters_basic_flow_with_traffic(engines, devices, random_api, has
                 ansible_inventory_file,
                 {}
             )
+
+        with allure.step("Verify setup playbooks passed"):
+            assert_test_results(status_check, configure_nmx_status, install_nccl_status)
 
         with allure.step("Select a link-up port to bring down during traffic"):
             asic_id = 0
@@ -554,7 +565,12 @@ def test_mlid_counters_basic_flow_with_traffic(engines, devices, random_api, has
                     AnsiblePlaybooksTool.run_playbook_command,
                     nccl_cmd,
                 )
-                time.sleep(160)
+                time.sleep(120)
+                assert not traffic_future.done(), (
+                    "NCCL playbook already finished before the port was set down, so nothing was "
+                    "brought down mid-traffic. Either the run failed before traffic started or it "
+                    "is shorter than the wait above - check the playbook output."
+                )
                 lines_before = _count_snapshot_events_for_asic(engines.dut, asic_id)
                 with allure.step(f"Set {port_name} link state down during traffic"):
                     selected_port.interface.link.state.set(
@@ -563,10 +579,9 @@ def test_mlid_counters_basic_flow_with_traffic(engines, devices, random_api, has
                         ask_for_confirmation=True,
                     ).verify_result()
                     port_down_applied = True
-                execute_nccl_status = traffic_future.result()
-            traffic_status = install_nccl_status and execute_nccl_status
-
-        assert_test_results(status_check, configure_nmx_status, traffic_status)
+                # The port down interrupts the collective, so the playbook is expected to fail and
+                # its status is not asserted.
+                traffic_future.result()
 
         with allure.step("Verify MLID snapshot file during traffic"):
             active_path = _snapshot_active_file(asic_id)
@@ -626,6 +641,7 @@ def _fill_snapshot_fs_and_get_append_capacity(engine, fill_path, snapshot_event_
     path = _snapshot_active_file(asic_id)
     block_size = int(engine.run_cmd(f'sudo stat -f -c %s {path}').strip())
     file_size = int(engine.run_cmd(f'sudo stat -c%s {path}').strip())
+    allocated_bytes = int(engine.run_cmd(f'sudo stat -c%b {path}').strip()) * 512
     df_avail = int(
         engine.run_cmd(f'df -B1 --output=avail {SNAPSHOT_LOG_DIR} | tail -1').strip()
     )
@@ -634,7 +650,8 @@ def _fill_snapshot_fs_and_get_append_capacity(engine, fill_path, snapshot_event_
     )
     used_in_last_block = file_size % block_size
     slack_in_last_block = 0 if used_in_last_block == 0 else block_size - used_in_last_block
-    append_capacity = df_avail + slack_in_last_block
+    allocated_append_capacity = max(slack_in_last_block, allocated_bytes - file_size)
+    append_capacity = df_avail + allocated_append_capacity
     return append_capacity
 
 

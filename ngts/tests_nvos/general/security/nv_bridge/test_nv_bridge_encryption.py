@@ -28,6 +28,7 @@ from ngts.nvos_tools.nmx.Sdn import Sdn
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts as ClusterTestConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.general.security.certificate.CertInfo import CertInfo
 from ngts.tests_nvos.general.security.nmx_cert.constants import (
     NV_BRIDGE_SERVER_PORT,
@@ -337,6 +338,9 @@ def test_bridge_cluster_internal_mtls_reboot_connectivity(
 @pytest.mark.nmx
 @pytest.mark.reboot
 @pytest.mark.track_serial_console
+# Two full reboots (~290s each) plus their post-reboot settle time already exceed the
+# session-wide `--timeout 900`, before any certificate / log-stream / SDN work is counted.
+@pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 @pytest.mark.usefixtures(
     "enable_cluster",

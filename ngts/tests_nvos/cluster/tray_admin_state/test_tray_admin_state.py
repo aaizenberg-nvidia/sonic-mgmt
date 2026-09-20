@@ -50,12 +50,15 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
     Test Objective:
     Verify that the SDN tray show commands return correct output format, that all listed
     trays have their maintenance-state field, and that showing a single tray matches the
-    aggregated output. Since 0.8 the trays view lists SWITCH trays only (compute trays
-    are filtered out — compute-tray admin state is not released to customers).
+    aggregated output. Since the 6623822 fix (0.8 >= 25.03.0722) the trays view lists
+    ALL trays: switch trays with a real maintenance-state, compute trays with 'N/A'
+    (compute-tray admin state is not released to customers — actions stay rejected).
 
-    Tray count is checked against RegressionConfigurations.tray_topology switch_nodes
-    for this setup_name. Wrong count (e.g. 27 vs 1 on RTF) skips with a hint — not a
-    hard fail on misconfigured MNNVL_TOPOLOGY / cluster view.
+    Tray count is checked against RegressionConfigurations.tray_topology
+    (switch_nodes + compute_nodes) for this setup_name. Wrong TOTAL skips with a hint —
+    not a hard fail on misconfigured MNNVL_TOPOLOGY / cluster view. A wrong SPLIT
+    (e.g. zero 'N/A' trays on a lab with compute nodes) FAILS — that is the 6623822
+    regression (compute trays filtered out of the view again).
 
     Precondition: Cluster enabled, gRPC connection to NMX-C is up.
     """
@@ -67,29 +70,57 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
         tray_ids = list(trays_output.keys())
         assert len(tray_ids) > 0, "No trays shown in 'nv show sdn trays'"
 
+        switch_tray_ids, compute_tray_ids = [], []
         for tray_id in tray_ids:
             assert ClusterConsts.MAINTENANCE_STATE in trays_output[tray_id], (
                 f"Tray {tray_id} missing '{ClusterConsts.MAINTENANCE_STATE}' field")
             state = trays_output[tray_id][ClusterConsts.MAINTENANCE_STATE]
-            assert state in VALID_TRAY_STATES, (
-                f"Tray {tray_id} has invalid maintenance-state: {state}")
+            if state == ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE:
+                compute_tray_ids.append(tray_id)
+            else:
+                assert state in VALID_TRAY_STATES, (
+                    f"Tray {tray_id} has invalid maintenance-state: {state} "
+                    f"(expected one of {VALID_TRAY_STATES} for switch trays or "
+                    f"'{ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE}' for compute trays)")
+                switch_tray_ids.append(tray_id)
+        logger.info("Trays view: switch trays %s, compute trays ('N/A') %s",
+                    switch_tray_ids, compute_tray_ids)
 
     with allure.step(f"Verify number of trays matches expected setup size ({expected_tray_count})"):
         if len(tray_ids) != expected_tray_count:
             pytest.skip(
-                f"Tray count mismatch: expected {expected_tray_count} switch trays from lab "
-                f"config (switch_nodes={tray_topology_config['switch_nodes']}; since 0.8 "
-                f"compute trays are filtered out of 'nv show sdn trays'), "
+                f"Tray count mismatch: expected {expected_tray_count} trays from lab config "
+                f"(switch_nodes={tray_topology_config['switch_nodes']} + "
+                f"compute_nodes={tray_topology_config['compute_nodes']}; since the 6623822 "
+                f"fix compute trays are listed with maintenance-state 'N/A'), "
                 f"got {len(tray_ids)}: {tray_ids}. Check MNNVL_TOPOLOGY / cluster discovery — "
                 f"not failing on environment mismatch.")
 
-    with allure.step("Verify local switch slot-number appears in tray output"):
+    with allure.step("Verify switch/compute tray split matches lab config"):
+        # Total is right (else skipped above) — a wrong split is a product bug:
+        # compute trays must be listed with 'N/A' (6623822), switch trays never 'N/A'.
+        assert len(compute_tray_ids) == tray_topology_config['compute_nodes'], (
+            f"Expected {tray_topology_config['compute_nodes']} compute trays with "
+            f"maintenance-state '{ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE}', got "
+            f"{len(compute_tray_ids)}: {compute_tray_ids} — 6623822 regression "
+            f"(compute trays hidden or shown with a real state)?")
+        assert len(switch_tray_ids) == tray_topology_config['switch_nodes'], (
+            f"Expected {tray_topology_config['switch_nodes']} switch trays, got "
+            f"{len(switch_tray_ids)}: {switch_tray_ids}")
+
+    with allure.step("Verify local switch slot-number appears in tray output as a switch tray"):
         local_slot = chassis_info.get('slot-number')
         assert local_slot is not None, "Could not get slot-number from platform chassis-location"
         assert str(local_slot) in tray_ids, (
             f"Local slot {local_slot} not found in tray list {tray_ids}")
+        assert str(local_slot) in switch_tray_ids, (
+            f"Local switch slot {local_slot} shows maintenance-state "
+            f"'{trays_output[str(local_slot)][ClusterConsts.MAINTENANCE_STATE]}' — "
+            f"a switch tray must never be '{ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE}'")
 
     with allure.step("Verify 'nv show sdn trays <slot-id>' matches aggregated output"):
+        # Covers compute trays too: the per-tray view must exist and show 'N/A'
+        # (pre-6623822-fix it returned 'The requested item does not exist').
         for tray_id in tray_ids:
             individual_output = get_tray(sdn, tray_id)
             assert ClusterConsts.MAINTENANCE_STATE in individual_output, (
@@ -101,11 +132,13 @@ def test_tray_show_cmd(engines, devices, random_api, cluster_and_sdn, chassis_in
                 f"Tray {tray_id}: individual show state ({actual_state}) != "
                 f"aggregated show state ({expected_state})")
 
-    with allure.step("Verify all trays default state is 'up'"):
+    with allure.step("Verify default states: switch trays 'up', compute trays 'N/A'"):
         for tray_id in tray_ids:
             state = trays_output[tray_id][ClusterConsts.MAINTENANCE_STATE]
-            assert state == DEFAULT_TRAY_STATE, (
-                f"Tray {tray_id} expected default state '{DEFAULT_TRAY_STATE}', got '{state}'")
+            expected = (ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE
+                        if tray_id in compute_tray_ids else DEFAULT_TRAY_STATE)
+            assert state == expected, (
+                f"Tray {tray_id} expected default state '{expected}', got '{state}'")
 
 
 # ---------------------------------------------------------------------------
@@ -330,10 +363,12 @@ def test_tray_multi_tray_independence(engines, devices, random_api, cluster_and_
 @pytest.mark.nmx
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_tray_bad_params(engines, devices, random_api, cluster_and_sdn, chassis_info,
-                         setup_name, standalone_system, has_loopbox):
+                         tray_topology_config, setup_name, standalone_system, has_loopbox):
     """
     Test Objective:
-    Verify that invalid parameters are rejected by the tray maintenance state commands.
+    Verify that invalid parameters are rejected by the tray maintenance state commands,
+    and that compute trays (listed with maintenance-state 'N/A' since the 6623822 fix)
+    reject both update and restore with the dedicated block message.
 
     Precondition: Cluster enabled, gRPC connection to NMX-C is up.
     """
@@ -366,21 +401,31 @@ def test_tray_bad_params(engines, devices, random_api, cluster_and_sdn, chassis_
             expected_value = ["action_error"]
         result.verify_result(should_succeed=False, expected_value=expected_value)
 
-    with allure.step("Update maintenance-state on a compute tray (not supported since 0.8)"):
+    with allure.step("Update/restore maintenance-state on a compute tray (not supported since 0.8)"):
         # Compute-tray admin state is not released to customers (product decision
         # 2026-08-05; blocked in the NMX-C API from 0.8). The block has a dedicated
         # message, distinct from the bad-id NMX_ST_BADPARAM above. The backend
         # generates the message, so it is the same substring under NVUE and OpenAPI.
+        # Compute slots come from the trays view ('N/A' entries, 6623822 fix) — on a
+        # lab with compute nodes an empty set means the view filters them out again.
         compute_slots = get_compute_tray_slots(sdn)
+        if tray_topology_config.get('compute_nodes', 0) > 0:
+            assert compute_slots, (
+                "Lab has compute trays but none are listed with maintenance-state "
+                f"'{ClusterConsts.COMPUTE_TRAY_MAINTENANCE_STATE}' in 'nv show sdn trays' — "
+                "6623822 regression (compute trays filtered out of the view)?")
         if not compute_slots:
-            logger.info("No compute tray slots in partition GPU locations - skipping compute-tray check")
+            logger.info("No compute trays in the trays view - skipping compute-tray checks")
         else:
             compute_tray_id = random.choice(sorted(compute_slots))
-            result = sdn.trays.action_update_maintenance_state(
-                tray_id=compute_tray_id, maintenance_state='down')
-            result.verify_result(
-                should_succeed=False,
-                expected_value=f"Tray admin state is not supported for tray {compute_tray_id}")
+            expected_block = f"{ClusterConsts.COMPUTE_TRAY_NOT_SUPPORTED_ERR} {compute_tray_id}"
+            with allure.step(f"Verify update rejected for compute tray {compute_tray_id}"):
+                result = sdn.trays.action_update_maintenance_state(
+                    tray_id=compute_tray_id, maintenance_state='down')
+                result.verify_result(should_succeed=False, expected_value=expected_block)
+            with allure.step(f"Verify restore rejected for compute tray {compute_tray_id}"):
+                result = sdn.trays.action_restore_maintenance_state(tray_id=compute_tray_id)
+                result.verify_result(should_succeed=False, expected_value=expected_block)
 
 
 # ---------------------------------------------------------------------------

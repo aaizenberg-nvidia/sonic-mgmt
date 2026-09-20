@@ -1337,6 +1337,28 @@ class PlatformConsts:
     }
 
 
+class UsbFrontPanelConsts:
+    """
+    Front-panel USB disable/enable (FR #4294636). Only feature-specific values live here;
+    enable/disable/yes/no/state come from ActionParamConsts / ActionConsts / SystemConsts.
+    """
+    PENDING_STATE = 'pending-state'
+    REBOOT_REQUIRED = 'reboot-required'
+    OPPOSITE_STATE = {ActionParamConsts.ENABLED: ActionParamConsts.DISABLED,
+                      ActionParamConsts.DISABLED: ActionParamConsts.ENABLED}
+    ACTION_PER_STATE = {ActionParamConsts.ENABLED: ActionConsts.ENABLE,
+                        ActionParamConsts.DISABLED: ActionConsts.DISABLE}
+    CONFIRMATION = 'y'
+    ACTION_REBOOT_EXPECTED_OUTPUT = ('Action succeeded',) + SystemConsts.REBOOT_RESPONSE_MESSAGES
+    LSBLK_COLUMNS = 'NAME,TRAN,TYPE'
+    LSBLK_TRAN_USB = 'usb'
+    LSBLK_TYPE_DISK = 'disk'
+    LSBLK_BLOCKDEVICES = 'blockdevices'
+    COMMAND_NOT_FOUND_RC = 127
+    UNSUPPORTED_ERRORS = ['The requested item does not exist.', 'Invalid Command']
+    ACTION_TIMEOUT = 120
+
+
 class ChassisLocationConsts:
     TRAY_ID = 'tray-index'
     SLOT_NUM = 'slot-number'
@@ -3131,38 +3153,80 @@ class PackageConsts:
 
 
 class LinkHealthConsts:
-    """NVLink link-health indication (QM4 / NVL-6 Rosalind only)."""
+    """NVLink link-health indication (QM4 / NVL-6 Rosalind only).
+
+    Post-0.18 field split: switch ``nv show interface`` leaves are ``state`` /
+    ``trigger`` / ``metric`` / ``time``. ``trigger`` is the FW metric name (e.g.
+    ``PLR-Tx-BW-Loss``) and ``metric`` its index (e.g. ``5``); together they
+    replace the single ``reason`` leaf of HLD 0.15-0.18 (``PLR_Tx_BW_Loss.5``).
+    Both are empty unless state is attention. ``time`` is a local-timezone
+    timestamp in CLI (STATE_DB / gNMI store Unix-epoch ns), cleared on recovery.
+    Images predating the split are still readable: the helpers fall back to
+    splitting ``reason`` on its last dot.
+
+    Peer-port (0.8): compute does not publish the metric index or a FAE clear.
+    ``nv show peer-port <gpu> link health`` is ``state`` / ``trigger`` / ``time``
+    only — ``metric`` is pruned until 1.0/1.1, same as peer-port clear.
+    """
     LINK = 'link'
     HEALTH = 'health'
     LINK_HEALTH = 'link-health'
     STATE = 'state'
-    ATTENTION_TRIGGER_CODE = 'attention-trigger-code'
-    SINCE = 'since'
+    TRIGGER = 'trigger'
+    METRIC = 'metric'
+    TIME = 'time'
+    # Pre-split leaf, still read as a fallback on older images.
+    REASON = 'reason'
     STATE_HEALTHY = 'healthy'
     STATE_ATTENTION = 'attention'
     STATE_NA = 'n/a'
     VALID_STATES = frozenset({STATE_HEALTHY, STATE_ATTENTION, STATE_NA})
+    # Leaf set of the health block after the split. ``reason`` is removed, not
+    # deprecated (HLD 0.16), so it must be gone wherever trigger/metric appear.
+    HEALTH_LEAVES = frozenset({STATE, TRIGGER, METRIC, TIME})
+    REMOVED_HEALTH_LEAVES = frozenset({REASON})
+    # Peer-port 0.8: metric is interface-only until compute 1.0/1.1.
+    PEER_PORT_HEALTH_LEAVES = frozenset({STATE, TRIGGER, TIME})
+    PEER_PORT_PRUNED_HEALTH_LEAVES = frozenset({METRIC})
+    # e.g. PLR-Tx-BW-Loss / Effective-BER (pre-split images use underscores)
+    TRIGGER_PATTERN = r'^[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*$'
+    # Metric index: 0 = n/a, 1-15 = metric1...metric15 (PDDR 38h bits [19:13]),
+    # so an attention must carry an index inside 1-15.
+    METRIC_PATTERN = r'^\d+$'
+    METRIC_INDEX_MIN = 1
+    METRIC_INDEX_MAX = 15
+    # Pre-split combined form: <FW metric name>.<metric index>
+    REASON_PATTERN = r'^[A-Za-z][A-Za-z0-9_-]*(?:[.][A-Za-z0-9_-]+)*[.]\d+$'
     GNMI_PATH_STATE = 'infiniband/link-health/state'
     GNMI_PATH_STATUS = 'infiniband/link-health/state/status'
-    GNMI_PATH_ATTENTION_TRIGGER_CODE = 'infiniband/link-health/state/attention-trigger-code'
-    GNMI_PATH_ATTENTION_SINCE = 'infiniband/link-health/state/attention-since'
+    GNMI_PATH_TRIGGER = 'infiniband/link-health/state/trigger'
+    GNMI_PATH_METRIC = 'infiniband/link-health/state/metric'
+    GNMI_PATH_TIME = 'infiniband/link-health/state/time'
+    # Pre-split leaf; the telemetry proposal for the split is still open, so
+    # gNMI is read as trigger/metric first and reason second.
+    GNMI_PATH_REASON = 'infiniband/link-health/state/reason'
     GNMI_PREFIX_TEMPLATE = 'interfaces/interface[name={port_name}]'
+    # Unused: link-health gNMI subscribe is interface-only
+    # (``interfaces/interface[name=<acp>]``). There is no peer-port subscription
+    # in 0.8; CLI prune of metric is the customer-facing peer-port contract.
     GNMI_PEER_PREFIX_TEMPLATE = 'peer-port/interfaces/interface[name={peer_port_name}]'
     GNMI_STATUS_UNSPECIFIED = 'UNSPECIFIED'
     GNMI_STATUS_HEALTHY = 'HEALTHY'
-    GNMI_STATUS_UNHEALTHY = 'UNHEALTHY'
+    # HLD 0.9: UNHEALTHY → ATTENTION; keep UNHEALTHY alias for older images.
+    GNMI_STATUS_ATTENTION = 'ATTENTION'
+    GNMI_STATUS_UNHEALTHY = GNMI_STATUS_ATTENTION
     GNMI_VALID_STATUSES = frozenset({
         GNMI_STATUS_UNSPECIFIED,
         GNMI_STATUS_HEALTHY,
-        GNMI_STATUS_UNHEALTHY,
+        GNMI_STATUS_ATTENTION,
     })
     ATTENTION_POLL_TIMEOUT_SEC = 25
     ATTENTION_POLL_INTERVAL_SEC = 2
     ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_ATTENTION_CMD'
-    GPU_ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_GPU_ATTENTION_CMD'
-    GPU_LOCAL_PORT_MAP_ENV = 'NVOS_LINK_HEALTH_GPU_LOCAL_PORT_MAP'
     COUNTERS_LINK_HEALTH_FIELD = 'link_health'
-    COUNTERS_ATTENTION_REASON_FIELD = 'attention_reason'
+    COUNTERS_ATTENTION_TRIGGER_FIELD = 'attention_trigger'
+    COUNTERS_ATTENTION_METRIC_FIELD = 'attention_metric'
+    FAE_CLEAR_MAIN_PARAM = ('health', 'health')
 
 
 class PeerPortConsts:
@@ -3186,6 +3250,25 @@ class PeerPortConsts:
     ASSOCIATED_SWITCH_PORT = "associated-switch-port"
     HOSTNAME = "hostname"
     EXPECTED_GPU_HOSTNAME = "GR100"
+    COUNTERS = "counters"
+    LINK = "link"
+    NVL = "nvl"
+    PHY = "phy"
+    DETAIL = "detail"
+    HEALTH = "health"
+    HISTOGRAM = "histogram"
+    # Blocks aggregated by 'nv show peer-port --view=detail', one per drill-in show command
+    DETAIL_VIEW_BLOCKS = (
+        (COUNTERS,),
+        (COUNTERS, LINK),
+        (COUNTERS, NVL),
+        (LINK,),
+        (LINK, HEALTH),
+        (LINK, PHY),
+        (LINK, PHY, DETAIL),
+        (LINK, PHY, HEALTH),
+        (LINK, PHY, HEALTH, HISTOGRAM),
+    )
 
 
 class StoDebug:

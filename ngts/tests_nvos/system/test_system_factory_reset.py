@@ -32,7 +32,6 @@ from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
     verify_nvl_link_health_after_factory_reset,
 )
 
-
 cumulus_owner = "lharo"
 
 

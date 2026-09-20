@@ -880,6 +880,8 @@ def check_spiffe_positive(
                     )
     if verify_auth:
         with allure.step("verify spiffe auth works"):
+            # Re-applying gnmi-server mtls config restarts the nv-gnmi container, so probing auth right
+            # away can hit the agent before it re-bound the new cert and get Unauthenticated.
             wait_for_gnmi_ready(engines)
             cases: List[Case] = [
                 Case(

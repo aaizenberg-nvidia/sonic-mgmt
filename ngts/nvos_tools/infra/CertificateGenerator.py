@@ -4,7 +4,7 @@ import random
 import string
 import subprocess
 import tempfile
-from typing import Union, List
+from typing import Optional, Union, List
 
 from ngts.nvos_tools.infra.OpenSslCmdBuilder import OpenSslCmdBuilder
 
@@ -17,9 +17,12 @@ class CertificateGenerator:
 
     def generate_cert(self, cert_location: str, cert_name: str, cert_subj_cn: str = '', ip: str = '', dn: str = '',
                       new_ca_path: str = '', new_ca_name: str = '', p12_pass: str = '', existing_ca_public: str = '',
-                      existing_ca_private: str = '', expiration_years: int = 10, san_uris: List[str] = [], stdout_func=logging.info):
+                      existing_ca_private: str = '', expiration_years: int = 10, san_uris: List[str] = [],
+                      stdout_func=logging.info, expiration_days: Optional[int] = None):
         """
         create new x509 ca/cert with given properties
+
+        :param expiration_days: leaf validity in days (overrides expiration_years; CA stays long-lived).
 
         manual steps:
         -------------
@@ -58,12 +61,15 @@ class CertificateGenerator:
         assert (new_ca_props and not existing_ca_props) or (existing_ca_props and not new_ca_props), \
             f"must give info for new OR existing CA (but not both)"
 
-        expiration = expiration_years * YEAR
+        cert_expiration = expiration_days if expiration_days is not None else expiration_years * YEAR
+        assert cert_expiration > 0, \
+            f"given certificate expiration (days) not allowed: {cert_expiration}. must give positive number"
+        ca_expiration = max(expiration_years * YEAR, cert_expiration)
 
         ######################
 
         # Prepare CA
-        ca_private_path, ca_public_path = self._prepare_ca(existing_ca_private, existing_ca_public, expiration,
+        ca_private_path, ca_public_path = self._prepare_ca(existing_ca_private, existing_ca_public, ca_expiration,
                                                            new_ca_name, new_ca_path, new_ca_props, stdout_func)
         stdout_func('verify CA with itself')
         self._openssl_verify_cert_with_ca(ca_public_path, ca_public_path, stdout_func)
@@ -71,7 +77,7 @@ class CertificateGenerator:
         # Generate and sign cert using CA
         cert_csr_path, cert_private_path = self._gen_cert_csr_and_private_key(cert_location, cert_name, cert_subj_cn, stdout_func)
         cert_crt_public_path = self._issue_and_sign_public_cert(ca_private_path, ca_public_path, cert_csr_path,
-                                                                cert_location, cert_name, dn, expiration, ip, san_uris,
+                                                                cert_location, cert_name, dn, cert_expiration, ip, san_uris,
                                                                 stdout_func)
         stdout_func('verify generated cert crt with CA')
         self._openssl_verify_cert_with_ca(ca_public_path, cert_crt_public_path, stdout_func)
@@ -334,9 +340,11 @@ class CertificateGenerator:
         target_device_props = [tupl for tupl in target_device_props if tupl[1]]
         subject_alt_name = ','.join([f'{tupl[0]}:{tupl[1]}' for tupl in target_device_props])
 
-        tmp_extfile_content = f'subjectAltName={subject_alt_name}'
-        tmp_extfile = self._prepare_tmp_extfile(tmp_extfile_content)
-        gen_and_issue_cert_public_cmd = f'openssl x509 -req -in {cert_csr_path} -CA {ca_public_path} -CAkey {ca_private_path} -CAcreateserial -out {cert_public_path} -days {expiration} -extfile {tmp_extfile}'
+        tmp_extfile = self._prepare_tmp_extfile(f'subjectAltName={subject_alt_name}')
+        gen_and_issue_cert_public_cmd = (
+            f'openssl x509 -req -in {cert_csr_path} -CA {ca_public_path} -CAkey {ca_private_path} '
+            f'-CAcreateserial -out {cert_public_path} -days {expiration} -extfile {tmp_extfile}'
+        )
         self._run(gen_and_issue_cert_public_cmd, stdout_func)
         self._verify_file(cert_public_path, 'generated certificate crt')
         self._chmod_for_reading(cert_public_path, stdout_func)

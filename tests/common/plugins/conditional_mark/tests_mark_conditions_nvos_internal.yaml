@@ -163,7 +163,6 @@ tests_nvos/platform/test_platform_environment.py::test_show_platform_environment
     - https://redmine.mellanox.com/issues/5098668
     - '''juliet'' in testbed or ''q3400'' in testbed'
 
-
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:
     reason: Testcase skipped on Juliet systems, Juliet Does not have PSU
