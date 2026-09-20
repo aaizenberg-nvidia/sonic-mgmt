@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> PERFORMANCE </group>
+      <name> Spectrum-X RA short regression </name>
+      <info> Spectrum-X RA short regression </info>
+      <owner> ayussinghal </owner>
+    </Test>
+    <Case>
+      <tags> performance </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/perf_mars_pytest_runner.py </wrapper>
+      <tout> 43200 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> spcx ra short regression - Alibaba AR </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/Alibaba_AR_tests/test_Alibaba_ar.py::Test_Alibaba_scenarios_with_reset::test_alibaba_scenario[p2_dut_no_acl-scenario_configuration0-3200-crc-IPv4] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra short regression - TestSpcXRA_2x_lanes </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_2x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv4] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra short regression - TestSpcXRA_4x_lanes </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra short regression - TestSpcX400GTo200G </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/400G_to_200G_Configuration/test_spcx_ra_400G_to_200G.py::TestSpcX400GTo200G::test_400_to_200_bw[4096] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>
