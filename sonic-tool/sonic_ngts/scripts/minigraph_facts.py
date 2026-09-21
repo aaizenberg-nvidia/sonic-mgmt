@@ -106,7 +106,8 @@ def get_dut_ports(config_db_json, logs):
     ports = {}
     logs.append('{} Getting dut ports'.format(time.ctime()))
     for iface in config_db_json["PORT"]:
-        if config_db_json["PORT"][iface].get('role', None) == 'Dpc':
+        if config_db_json["PORT"][iface].get('role', None) == 'Dpc' or \
+                config_db_json["PORT"][iface].get('admin_status') == 'down':
             continue
         ports[iface] = {"alias": config_db_json["PORT"][iface]["alias"], "name": iface}
     logs.append('{} Getting dut ports finished'.format(time.ctime()))
