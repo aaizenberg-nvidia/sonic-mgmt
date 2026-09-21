@@ -493,8 +493,8 @@
 				"BMC": {
 					"AST2600": [
 						{
-							"firmware": "http://nbu-nfs.mellanox.com/auto/sw_system_release/low_level/openbmc/88.0060.2110/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2110.fwpkg",
-							"version": "88.0060.2110",
+							"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/low_level/openbmc/88.0060.2408/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2408.fwpkg",
+							"version": "88.0060.2408",
 							"reboot": ["power off"]
 						},
 						{
