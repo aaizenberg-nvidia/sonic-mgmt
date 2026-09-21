@@ -783,6 +783,7 @@ bgp/test_bgp_update_replication.py:
     conditions:
       - "https://github.com/sonic-net/sonic-mgmt/issues/21110 and 'dualtor-aa' in topo_name"
       - "https://github.com/sonic-net/sonic-mgmt/issues/26841 and 't1-d96u4' in topo_name"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/28034 and topo_name in ['t1-isolated-d448u15-lag']"
 
 bgp/test_bgp_update_timer.py::test_bgp_update_timer_session_down:
   xfail:
