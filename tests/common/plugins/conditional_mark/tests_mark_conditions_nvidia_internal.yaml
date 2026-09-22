@@ -985,12 +985,6 @@ cacl/test_cacl_application.py::test_cacl_application_nondualtor:
     conditions:
     - "https://redmine.mellanox.com/issues/5048947 and 'sn4280' in platform"
 
-hash/test_generic_hash.py:
-  skip:
-    reason: "Test case skip due to RM issue: https://redmine.mellanox.com/issues/5299111 on t1-isolated-d448u15-lag"
-    conditions:
-      - "https://redmine.mellanox.com/issues/5299111 and 't1-isolated-d448u15-lag' in topo_name"
-
 generic_config_updater/test_dynamic_acl.py::test_gcu_acl_forward_rule_removal:
   skip:
     reason: "skip for IPv6-only topologies"
