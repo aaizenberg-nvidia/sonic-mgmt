@@ -31,15 +31,17 @@ SMARTSWITCH_SAFE_RELOAD_IGNORED_DOCKERS = ["dhcp_relay", "dhcp_server"]
 
 
 @pytest.fixture(scope="module", autouse=True)
-def check_image_version(duthost):
+def check_image_version(duthosts, enum_rand_one_per_hwsku_frontend_hostname):
     """Skips this test if the SONiC image installed on DUT is older than 202111
 
     Args:
-        duthost: DUT host object.
+        duthosts: DUT host objects.
+        enum_rand_one_per_hwsku_frontend_hostname: Selected frontend DUT hostname.
 
     Returns:
         None.
     """
+    duthost = duthosts[enum_rand_one_per_hwsku_frontend_hostname]
     skip_release(duthost, ["201811", "201911", "202012", "202106", "202111"])
 
 
