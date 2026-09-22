@@ -1473,11 +1473,11 @@ process_monitoring/test_critical_process_monitoring.py:
 
 process_monitoring/test_critical_process_monitoring.py::test_monitoring_critical_processes:
   xfail:
-    reason: "Testcase expected to fail on bobcat t1 or ptf-any setups due to RM issue: https://redmine.mellanox.com/issues/5100919"
+    reason: "Testcase expected to fail on bobcat t1 or ptf-any setups due to RM issue: https://redmine.mellanox.com/issues/5100919, or on BMC because FEATURE|telemetry has no auto_restart field, due to RM issue: https://redmine.mellanox.com/issues/5235361"
+    conditions_logical_operator: or
     conditions:
-    - "https://redmine.mellanox.com/issues/5100919"
-    - "'bobcat' in testbed"
-    - "'ptf' in topo_name or 't1' in topo_name"
+    - "https://redmine.mellanox.com/issues/5100919 and 'bobcat' in testbed and ('ptf' in topo_name or 't1' in topo_name)"
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5235361"
   skip:
     reason: "skip on simx due to no pdu control"
     conditions:
