@@ -1,6 +1,6 @@
 {
   "author": "system-sw-dev-ops-support@mellanox.com",
-  "notify": "GERRIT_PATCHSET_UPLOADER_EMAIL,GERRIT_CHANGE_OWNER_EMAIL,NBU-sw-ci-sonic@nvidia.com,bcc:NBU-system-sw-dev-ops-support@exchange.nvidia.com",
+  "notify": "GERRIT_PATCHSET_UPLOADER_EMAIL,GERRIT_CHANGE_OWNER_EMAIL,bcc:NBU-system-sw-dev-ops-support@exchange.nvidia.com",
   "timeout": "7",
   "control_file": "/auto/sw_system_project/devops/sw-r2d2-bot/ngci_control_files/sonic_mgmt_control_file.yaml",
   "properties": [
