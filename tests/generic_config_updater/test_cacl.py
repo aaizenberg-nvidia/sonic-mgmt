@@ -8,15 +8,12 @@ from tests.common.gu_utils import apply_patch, expect_op_success, expect_res_suc
 from tests.common.gu_utils import generate_tmpfile, delete_tmpfile
 from tests.common.gu_utils import format_json_patch_for_multiasic
 from tests.common.gu_utils import create_checkpoint, delete_checkpoint, rollback_or_reload
-from tests.common.utilities import file_exists_on_dut, wait_until, update_pfcwd_default_state
+from tests.common.utilities import file_exists_on_dut, wait_until, update_pfcwd_default_state, FULL_LOSSY_HWSKUS
 from tests.common.config_reload import (
     DEFAULT_GOLDEN_CONFIG_PATH,
     config_reload,
     config_reload_minigraph_with_rendered_golden_config_override,
 )
-from tests.common import mellanox_data, broadcom_data
-
-LOSSY_ONLY_HWSKUS = mellanox_data.LOSSY_ONLY_HWSKUS + broadcom_data.LOSSY_ONLY_HWSKUS
 
 # Test on t0 topo to verify functionality and to choose predefined variable
 # admin@vlab-01:~$ show acl table
@@ -58,7 +55,7 @@ def restore_test_env(duthosts, rand_one_dut_front_end_hostname):
     duthost = duthosts[rand_one_dut_front_end_hostname]
     hwsku = duthost.facts["hwsku"]
     original_pfcwd_value = None
-    if hwsku in LOSSY_ONLY_HWSKUS:
+    if hwsku in FULL_LOSSY_HWSKUS:
         original_pfcwd_value = update_pfcwd_default_state(duthost, "/etc/sonic/init_cfg.json", "disable")
     golden_config_exists = file_exists_on_dut(duthost, DEFAULT_GOLDEN_CONFIG_PATH)
     try:
