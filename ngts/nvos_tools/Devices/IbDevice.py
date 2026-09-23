@@ -3969,6 +3969,22 @@ class PortiaSimx(PortiaSimxDevice, PortiaSwitch):
     """Four-ASIC non-expandable NVL72 SIMX tray (N7200_LD)."""
 
 
+class PortiaSwitchN7170(PortiaSwitch):
+    """Legacy N7170_LD naming for the same NVL72 Portia tray, kept alongside N7200_LD."""
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7170_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7170_LD",
+        })
+
+
+class PortiaSimxN7170(PortiaSimxDevice, PortiaSwitchN7170):
+    """Four-ASIC non-expandable NVL72 SIMX tray, legacy N7170_LD naming."""
+
+
 # -------------------------- Portia CPO Switch ----------------------------
 
 

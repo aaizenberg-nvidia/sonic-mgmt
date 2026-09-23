@@ -42,6 +42,7 @@ _ENABLED = TelemetryConsts.State.ENABLED.value
 
 
 @pytest.mark.nvos_build
+@pytest.mark.air_ci
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 def test_otel_sanity_metrics_reach_collector(engines, otel_suite_single, test_api, tmp_path):
     """The configured OTLP export delivers valid interface-stats metrics to the collector.

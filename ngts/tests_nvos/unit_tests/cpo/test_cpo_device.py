@@ -9,6 +9,8 @@ from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoCapable, CpoTopology, is_
 
 PORTIA_NVL72_HW_KEY = "N7200_LD - Portia"
 PORTIA_NVL72_SIMX_KEY = "N7200_LD_simx - Portia"
+PORTIA_NVL72_LEGACY_HW_KEY = "N7170_LD - Portia"
+PORTIA_NVL72_LEGACY_SIMX_KEY = "N7170_LD_simx - Portia"
 PORTIA_CPO_HW_KEY = "N7300_LD - Portia"
 PORTIA_CPO_SIMX_KEY = "N7300_LD_simx - Portia"
 PORTIA_CPO_TA_SIMX_KEY = "N7300_LD_TA_simx - Portia"
@@ -57,6 +59,8 @@ def switch_env_vars(monkeypatch):
     [
         (PORTIA_NVL72_HW_KEY, ("PortiaSwitch", 4, "N7200_LD", "920-9K51W-02L7-GS0", False)),
         (PORTIA_NVL72_SIMX_KEY, ("PortiaSimx", 4, "N7200_LD", "920-9K51W-02L7-GS0", True)),
+        (PORTIA_NVL72_LEGACY_HW_KEY, ("PortiaSwitchN7170", 4, "N7170_LD", "920-9K51W-02L7-GS0", False)),
+        (PORTIA_NVL72_LEGACY_SIMX_KEY, ("PortiaSimxN7170", 4, "N7170_LD", "920-9K51W-02L7-GS0", True)),
         (PORTIA_CPO_HW_KEY, ("PortiaCpoSwitch", 8, "N7300_LD", "920-9K57P-00L7-GS0", False)),
         (PORTIA_CPO_SIMX_KEY, ("PortiaCpoSimx", 8, "N7300_LD", "920-9K57P-00L7-GS0", True)),
         (PORTIA_CPO_TA_SIMX_KEY, ("PortiaCpoTASimx", 2, "N7300_LD_TA", "920-9K57P-00L7-GS0", True)),
