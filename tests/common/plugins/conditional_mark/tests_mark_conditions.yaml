@@ -5603,6 +5603,18 @@ snappi_tests/pfcwd/test_pfcwd_actions.py::test_pfcwd_frwd_over_subs_40_09:
     conditions:
       - "asic_type in ['cisco-8000']"
 
+snappi_tests/reboot/test_fast_reboot.py:
+  skip:
+    reason: "Fast reboot is not supported on SN6600 platforms."
+    conditions:
+      - "platform in ['x86_64-nvidia_sn6600-r0', 'x86_64-nvidia_sn6600_simx-r0', 'x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600_ld_simx-r0']"
+
+snappi_tests/reboot/test_warm_reboot.py:
+  skip:
+    reason: "Warm reboot is not supported on SN6600 platforms."
+    conditions:
+      - "platform in ['x86_64-nvidia_sn6600-r0', 'x86_64-nvidia_sn6600_simx-r0', 'x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600_ld_simx-r0']"
+
 snappi_tests/reboot:
   skip:
     reason: "Skipping snappi reboot on 2025 releases and while https://github.com/sonic-net/sonic-mgmt/issues/27415 is open"
