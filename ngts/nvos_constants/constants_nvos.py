@@ -834,6 +834,7 @@ class SystemConsts:
     STARTUP_FILE_SAVE_CONFIG_TRUE = 'startup_file_config_save.json'
     STARTUP_FILE_INTERACTIVE_COMMANDS = 'startup_file_interactive.json'
     NMX_POSITIVE_JSON = 'ztp_nmx.json'
+    NMX_COMMANDS_ONLY_JSON = 'ztp_nmx_commands_only.json'
     NMX_NOT_EXIST_FILE_JSON = 'ztp_nmx_negative_wrong_file.json'
     NMX_BAD_COMMANDS = 'ztp_nmx_negative_bad_commands.json'
     CONNECTIVITY_IPV4_IPV6 = 'ping_ipv4_ipv6.json'

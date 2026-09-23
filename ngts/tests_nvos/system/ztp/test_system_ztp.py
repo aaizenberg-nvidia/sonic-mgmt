@@ -412,14 +412,14 @@ def test_ztp_nmx_negative(
     """
     Test flow:
         1. Check default values for ztp
-        2. Download and run ztp positive json, when cluster is disabled
+        2. Download and run ztp nmx commands-list json, when cluster is disabled
         3. Download and run ztp json with no exist file, when cluster is disabled
         4. Start cluster
         5. Download and run ztp json with incorrect commands
         6. Stop nmx-controller
-        7. Download and run ztp positive json
+        7. Download and run ztp nmx commands-list json
         8. Stop nmx-telemetry
-        9. Download and run positive ztp json
+        9. Download and run ztp nmx commands-list json
         10. Cleanup
     """
     system = System(None)
@@ -437,8 +437,8 @@ def test_ztp_nmx_negative(
         "ztp_status_code": SystemConsts.ZTP_STATUS_SUCCESS,
     }
 
-    with allure.step("Download ztp nmx positive command list, cluster disabled"):
-        _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs)
+    with allure.step("Download ztp nmx commands list, cluster disabled"):
+        _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs)
 
     with allure.step("Download ztp nmx not exist file"):
         _run_system_ztp_with_empty_config(engines, system)
@@ -456,8 +456,8 @@ def test_ztp_nmx_negative(
     with allure.step("Disable nmx controller and run positive ztp"):
         ClusterTools.stop_app(cluster, ClusterConsts.NMX_CONTROLLER)
 
-        with allure.step("Download ztp nmx positive, when nmx controller disabled"):
-            _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs, run_ztp=False)
+        with allure.step("Download ztp nmx commands list, when nmx controller disabled"):
+            _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs, run_ztp=False)
 
         with allure.step("Enable nmx controller"):
             ClusterTools.start_app(cluster, ClusterConsts.NMX_CONTROLLER, has_loopbox, standalone_system)
@@ -465,9 +465,9 @@ def test_ztp_nmx_negative(
     with allure.step("Disable nmx telemetry and run positive ztp"):
         ClusterTools.stop_app(cluster, ClusterConsts.NMX_TELEMETRY)
 
-        with allure.step("Download ztp nmx positive, when nmx controller disabled"):
+        with allure.step("Download ztp nmx commands list, when nmx telemetry disabled"):
             _run_system_ztp_with_empty_config(engines, system)
-            _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs)
+            _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs)
 
 
 @pytest.mark.ztp
