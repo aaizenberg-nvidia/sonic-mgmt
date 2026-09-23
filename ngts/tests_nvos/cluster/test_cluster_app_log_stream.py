@@ -22,6 +22,24 @@ import re
 logger = logging.getLogger()
 
 
+def nmxc_log_stream_remote_url(player, stream_protocol, url, port):
+    """Build NMX-C log-stream remote-url per protocol.
+
+    rsyslog: hostname:port
+    splunk:  hostname:port?api_token=...
+    elk:     user:pass@hostname:port
+    """
+    if stream_protocol == ClusterConsts.PROTOCOL_RSYSLOG:
+        full_url = f'{url}:{port}'
+        return full_url, full_url
+    if stream_protocol == ClusterConsts.PROTOCOL_SPLUNK:
+        token = player.password
+        full_url = f'{url}:{port}?api_token={token}'
+        return full_url, f'{url}:{port}?api_token=********'
+    full_url = f'{player.username}:{player.password}@{url}:{port}'
+    return full_url, f'{player.username}:********@{url}:{port}'
+
+
 @pytest.mark.parametrize('stream_protocol', ClusterConsts.NMXC_LOG_STREAM_PROTOCOLS)
 @pytest.mark.timeout(7 * MINUTE, func_only=True)
 def test_nmxc_log_stream_set(engines, random_api, stream_protocol):
@@ -43,9 +61,8 @@ def test_nmxc_log_stream_set(engines, random_api, stream_protocol):
         engines.dut.run_cmd(add_hostname_cmd)
 
     port = ClusterConsts.NMXC_LOG_STREAM_PORT[stream_protocol]
-    full_url = f'{player.username}:{player.password}@{url}:{port}'
-    stream = f'{stream_protocol} {full_url}'
-    full_url_show = f'{player.username}:********@{url}:{port}'
+    full_url, full_url_show = nmxc_log_stream_remote_url(player, stream_protocol, url, port)
+    stream = f'{stream_protocol} "{full_url}"'
     msg_uid = int(time.time())  # generates a unique ID using seconds elapsed since epoch
     log_msg = f"Unique Message ID {msg_uid}: Hello from NVOS"
     service = ClusterConsts.CONTROLLER_LOG_STREAM_SERVICE
@@ -160,7 +177,8 @@ def helper_nmxc_log_stream_set_incorrect(player, stream_protocol, url, expected_
         port = ClusterConsts.NMXC_LOG_STREAM_PORT[stream_protocol]
     else:
         port = "0"
-    stream = f'{stream_protocol} {player.username}:{player.password}@{url}:{port}'
+    full_url, _ = nmxc_log_stream_remote_url(player, stream_protocol, url, port)
+    stream = f'{stream_protocol} {full_url}'
     try:
         with allure.step("Start Cluster"):
             cluster = Cluster()

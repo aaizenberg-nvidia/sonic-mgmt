@@ -30,7 +30,7 @@ class OpenApiClusterCli(OpenApiBaseCli):
     @staticmethod
     def action_update_cluster_log_stream(engine, resource_path, stream):
         param_name = ["protocol", "remote-url"]
-        param_value = stream.split(None, 1)
+        param_value = [value.replace('"', '') for value in stream.split(None, 1)]
         return OpenApiClusterCli.action_deprecated(engine, action_type=ActionType.UPDATE.replace('@', ''), resource_path=resource_path, param_name=param_name, param_value=param_value)
 
     @staticmethod
