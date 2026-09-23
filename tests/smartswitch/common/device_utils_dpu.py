@@ -13,6 +13,7 @@ from tests.common.platform.device_utils import (  # noqa: F401,F403
 from tests.common.helpers.platform_api import chassis, module
 from tests.common.utilities import wait_until
 from tests.common.helpers.assertions import pytest_assert
+from tests.common.helpers.dut_utils import is_mellanox_devices
 from tests.common.platform.interface_utils \
      import check_interface_status_of_up_ports
 from tests.common.reboot import wait_for_startup
@@ -329,6 +330,79 @@ def check_dpu_reboot_cause(duthost, dpu_name, reason):
     return False
 
 
+def get_dpu_reboot_cause_count(duthost, dpu_name):
+    """
+    Return the number of reboot-cause history entries for a DPU.
+
+    Args:
+        duthost:   Host handle (NPU).
+        dpu_name:  DPU module name, e.g. ``"DPU0"``.
+
+    Returns:
+        int: Number of history entries.
+    """
+    history = duthost.show_and_parse(
+        f"show reboot-cause history {dpu_name}")
+    return len(history)
+
+
+def check_dpu_reboot_cause_history(duthost, dpu_name, expected_cause,
+                                   pre_count=None):
+    """
+    Validate the reboot-cause history for a DPU after a reboot event.
+
+    Two checks are performed:
+      1. The latest (first) history entry's Cause matches *expected_cause*.
+      2. Exactly one new entry was added by this reboot.  When
+         *pre_count* is provided the current count must equal
+         ``pre_count + 1``.  When *pre_count* is ``None`` the check
+         falls back to verifying no duplicate timestamp entries exist.
+
+    Args:
+        duthost:        Host handle (NPU).
+        dpu_name:       DPU module name, e.g. ``"DPU0"``.
+        expected_cause: A regex pattern string to match against the
+                        ``cause`` field of the latest entry.
+        pre_count:      Number of history entries before the reboot.
+    """
+    history = duthost.show_and_parse(
+        f"show reboot-cause history {dpu_name}")
+
+    pytest_assert(history,
+                  f"{dpu_name}: reboot-cause history is empty")
+
+    # --- Check 1: latest entry cause matches expected ---
+    latest_cause = history[0].get("cause", "")
+    cause_ok = re.search(expected_cause, latest_cause)
+    pytest_assert(cause_ok,
+                  f"{dpu_name}: latest reboot-cause history entry "
+                  f"'{latest_cause}' does not match expected "
+                  f"'{expected_cause}'")
+    logging.info(f"{dpu_name}: latest reboot-cause history cause "
+                 f"'{latest_cause}' matches expected '{expected_cause}'")
+
+    # --- Check 2: exactly one new entry was added ---
+    current_count = len(history)
+    if pre_count is not None:
+        new_entries = current_count - pre_count
+        pytest_assert(new_entries == 1,
+                      f"{dpu_name}: expected 1 new reboot-cause history "
+                      f"entry, but found {new_entries} "
+                      f"(before={pre_count}, after={current_count})")
+        logging.info(f"{dpu_name}: exactly 1 new reboot-cause history "
+                     f"entry added (before={pre_count}, "
+                     f"after={current_count})")
+    else:
+        # Fallback: no pre_count, check for duplicate timestamps
+        names = [entry.get("name", "") for entry in history]
+        duplicates = [n for n in names if names.count(n) > 1]
+        pytest_assert(not duplicates,
+                      f"{dpu_name}: duplicate reboot-cause history "
+                      f"entries detected: {set(duplicates)}")
+        logging.info(f"{dpu_name}: no duplicate reboot-cause history "
+                     f"entries found ({current_count} entries)")
+
+
 def check_pmon_status(duthost):
     """
     Check the status of PMON Container
@@ -516,6 +590,63 @@ def check_dpu_health_status(duthost, dpu_name,
                     pytest_assert(status['state-value'].lower() == expected_state_value,
                                   f"data plane state is not {expected_state_value}")
     return
+
+
+def check_dpu_system_health_reason(duthost, dpu_name, expected_reason):
+    """
+    Validate the Reason field in ``show system-health dpu <dpu_name>``.
+
+    The Reason column is only populated while the corresponding state is
+    **not** "up" (e.g. after a shutdown or during a reboot).  Once the DPU
+    comes back online the field is cleared.  Therefore this function must
+    be called while the DPU midplane is still down.
+
+    Args:
+        duthost:          Host handle (NPU).
+        dpu_name:         DPU module name, e.g. ``"DPU0"``.
+        expected_reason:  A regex pattern string to match against the
+                          ``reason`` field of the
+                          ``dpu_midplane_link_state`` row.
+    """
+    health_output = duthost.show_and_parse(
+        f"show system-health dpu {dpu_name}")
+
+    reason = None
+    for row in health_output:
+        if row.get("name") == dpu_name and \
+                row.get("state-detail") == "dpu_midplane_link_state":
+            reason = row.get("reason", "")
+            break
+
+    pytest_assert(reason is not None,
+                  f"{dpu_name}: dpu_midplane_link_state row not found "
+                  f"in system-health output")
+
+    match_ok = re.search(expected_reason, reason)
+    pytest_assert(match_ok,
+                  f"{dpu_name}: system-health dpu midplane reason "
+                  f"'{reason}' does not match expected "
+                  f"'{expected_reason}'")
+    logging.info(f"{dpu_name}: system-health dpu midplane reason "
+                 f"'{reason}' matches expected '{expected_reason}'")
+
+
+def check_dpus_system_health_reason(duthost, dpu_list, num_dpu_modules,
+                                    expected_reason):
+    """
+    Validate the Reason field for multiple DPUs in parallel.
+
+    Args:
+        duthost:          Host handle (NPU).
+        dpu_list:         List of DPU names to check.
+        num_dpu_modules:  Number of DPU modules (thread pool size).
+        expected_reason:  A regex pattern string to match.
+    """
+    with SafeThreadPoolExecutor(max_workers=num_dpu_modules) as executor:
+        logging.info("Checking system-health dpu reason in parallel")
+        for dpu_name in dpu_list:
+            executor.submit(check_dpu_system_health_reason,
+                            duthost, dpu_name, expected_reason)
 
 
 def get_dpu_id_from_hostname(hostname):
@@ -769,13 +900,16 @@ def verify_dpu_rebooted(dpuhosts, dpu_name, pre_boot_time):
 
 def post_test_dpu_check(duthost, dpuhosts, dpu_name,
                         reboot_cause, extra_dpu_online_timeout=0,
-                        pre_boot_times=None):
+                        pre_boot_times=None,
+                        pre_reboot_cause_counts=None):
     """
     Runs all required checks for a given DPU
     Args:
        duthost: Host handle
        dpuhosts: DPU Host handle
        dpu_name: Name of the DPU
+       pre_reboot_cause_counts: dict of {dpu_name: count} recorded
+           before the reboot via get_dpu_reboot_cause_count.
     Returns:
        Returns Nothing
 
@@ -810,6 +944,13 @@ def post_test_dpu_check(duthost, dpuhosts, dpu_name,
             f"Reboot cause for DPU {dpu_name} is incorrect"
         )
 
+        if is_mellanox_devices(duthost.facts['hwsku']):
+            logging.info(f"Checking reboot cause history of {dpu_name}")
+            pre_count = pre_reboot_cause_counts.get(dpu_name) \
+                if pre_reboot_cause_counts else None
+            check_dpu_reboot_cause_history(duthost, dpu_name, reboot_cause,
+                                           pre_count=pre_count)
+
     # Verify DPU actually rebooted via uptime comparison
     if pre_boot_times and dpu_name in pre_boot_times:
         logging.info(f"Verifying {dpu_name} actually rebooted via uptime comparison")
@@ -827,7 +968,7 @@ def post_test_dpu_check(duthost, dpuhosts, dpu_name,
 
 def post_test_dpus_check(duthost, dpuhosts, dpu_on_list, ip_address_list,
                          num_dpu_modules, reboot_cause, extra_dpu_online_timeout=0,
-                         pre_boot_times=None):
+                         pre_boot_times=None, pre_reboot_cause_counts=None):
     """
     Checks DPU OFF/ON and reboot cause status Post Test
     Args:
@@ -837,6 +978,8 @@ def post_test_dpus_check(duthost, dpuhosts, dpu_on_list, ip_address_list,
        dpu_off_list: List of DPUs that are OFF
        ip_address_list: List of DPU IP address that are ON
        num_dpu_modules: number of dpu modules
+       pre_reboot_cause_counts: dict of {dpu_name: count} recorded
+           before the reboot via get_dpu_reboot_cause_count.
     Returns:
        Returns Nothing
     """
@@ -845,7 +988,8 @@ def post_test_dpus_check(duthost, dpuhosts, dpu_on_list, ip_address_list,
         for dpu in dpu_on_list:
             executor.submit(post_test_dpu_check, duthost,
                             dpuhosts, dpu, reboot_cause,
-                            extra_dpu_online_timeout, pre_boot_times)
+                            extra_dpu_online_timeout, pre_boot_times,
+                            pre_reboot_cause_counts)
 
     logging.info("Checking all powered on DPUs connectivity")
     ping_status = check_dpu_ping_status(duthost, ip_address_list)
@@ -854,14 +998,23 @@ def post_test_dpus_check(duthost, dpuhosts, dpu_on_list, ip_address_list,
     return
 
 
-def dpus_shutdown_and_check(duthost, dpu_list, num_dpu_modules):
+def dpus_shutdown_and_check(duthost, dpu_list, num_dpu_modules,
+                            expected_reason=None):
     """
-    Parallely Execute DPU shutdown for given DPU list
-    Waits and checks parallely whether DPU is actually down
+    Parallelly Execute DPU shutdown for given DPU list
+    Waits and checks parallelly whether DPU is actually down.
+
+    When *expected_reason* is supplied the ``Reason`` field from
+    ``show system-health dpu <name>`` is validated for every DPU
+    **after** it reaches the Offline state (the field is cleared once
+    the DPU comes back online, so it must be checked while down).
+
     Args:
        duthost: Host handle
        dpu_list: List of DPUs to be shutdown
        num_dpu_modules: number of dpu modules
+       expected_reason: optional str or re.Pattern to verify in the
+                        system-health Reason column while DPU is down
     Returns:
        Returns Nothing
     """
@@ -873,6 +1026,11 @@ def dpus_shutdown_and_check(duthost, dpu_list, num_dpu_modules):
                 f"sudo config chassis modules shutdown {dpu_name}"
             )
             executor.submit(_wait_for_dpu_status, duthost, dpu_name, "off", "shutdown")
+
+    if expected_reason is not None and is_mellanox_devices(duthost.facts['hwsku']):
+        logging.info("Checking system-health dpu reason while DPUs are down")
+        check_dpus_system_health_reason(duthost, dpu_list,
+                                        num_dpu_modules, expected_reason)
 
 
 def dpus_startup_and_check(duthost, dpu_list, num_dpu_modules):

@@ -5,6 +5,10 @@ from multiprocessing.pool import ThreadPool
 from tests.common.reboot import reboot_ss_ctrl_dict as reboot_dict, REBOOT_TYPE_HISTOYR_QUEUE, \
     sync_reboot_history_queue_with_dut, execute_reboot_smartswitch_command
 from tests.common.utilities import wait_until
+from tests.common.helpers.dut_utils import is_mellanox_devices
+from tests.smartswitch.common.device_utils_dpu import (
+    check_dpu_module_status, check_dpu_system_health_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +103,37 @@ def log_and_perform_reboot(duthost, reboot_type, dpu_name):
                         "result": async_result}
 
             else:
-                logger.info("Rebooting the DPU {} with type {}".format(dpu_name, reboot_type))
-                return duthost.command("sudo reboot -d {}".format(dpu_name))
+                logger.info(f"Rebooting the DPU {dpu_name} with type {reboot_type}")
+                duthost.shell(f"sudo reboot -d {dpu_name} &>/dev/null &",
+                              executable="/bin/bash")
+
+                _DPU_OFFLINE_TIMEOUT = 300
+                _DPU_OFFLINE_INTERVAL = 10
+                logger.info(f"Waiting for {dpu_name} to go offline")
+                if not wait_until(_DPU_OFFLINE_TIMEOUT,
+                                  _DPU_OFFLINE_INTERVAL, 0,
+                                  check_dpu_module_status, duthost,
+                                  "off", dpu_name):
+                    pytest.fail(f"DPU {dpu_name} did not go offline "
+                                f"within {_DPU_OFFLINE_TIMEOUT}s")
+
+                if is_mellanox_devices(duthost.facts['hwsku']):
+                    logger.info(f"Checking system-health reason for "
+                                f"{dpu_name} while offline")
+                    check_dpu_system_health_reason(
+                        duthost, dpu_name, "Planned: 'reboot'")
+
+                _DPU_ONLINE_TIMEOUT = 300
+                _DPU_ONLINE_INTERVAL = 10
+                logger.info(f"Waiting for {dpu_name} to come back online")
+                if not wait_until(_DPU_ONLINE_TIMEOUT,
+                                  _DPU_ONLINE_INTERVAL, 0,
+                                  check_dpu_module_status, duthost,
+                                  "on", dpu_name):
+                    pytest.fail(f"DPU {dpu_name} did not come back "
+                                f"online within {_DPU_ONLINE_TIMEOUT}s")
+
+                return {"rc": 0, "failed": False}
         elif duthost.facts['is_dpu']:
             pytest.skip("Skipping the reboot test as the DUT is a DPU")
     else:
