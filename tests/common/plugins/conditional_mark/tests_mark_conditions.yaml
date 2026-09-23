@@ -5465,6 +5465,30 @@ snappi_tests:
       - "asic_type in ['vs']"
       - *lossyTopos
 
+snappi_tests/ecn:
+  skip:
+    reason: "Snappi ECN tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/pfc:
+  skip:
+    reason: "Snappi PFC tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/pfcwd:
+  skip:
+    reason: "Snappi PFCWD tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/qos:
+  skip:
+    reason: "Snappi QoS tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
 snappi_tests/bgp/test_bgp_convergence_performance.py:
   xfail:
     reason: "IxNetwork Error in L2/L3 Traffic Apply - https://github.com/sonic-net/sonic-mgmt/issues/23857"
