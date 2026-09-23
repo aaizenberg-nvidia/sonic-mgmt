@@ -787,6 +787,12 @@ everflow/test_everflow_ipv6.py::TestEgressEverflowIPv6::test_everflow_egress_mir
     conditions:
     - https://redmine.mellanox.com/issues/5172208
 
+gnmi/test_gnmi_srv6.py:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303099"
+    conditions:
+      - https://redmine.mellanox.com/issues/5303099
+
 gnmi/test_gnoi_system.py:
   xfail:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4958590"
