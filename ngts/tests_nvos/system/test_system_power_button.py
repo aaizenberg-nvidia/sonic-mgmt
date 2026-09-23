@@ -44,7 +44,7 @@ def test_system_power_button(engines, devices, topology_obj):
     try:
         with allure.step('Simulate power button and check switch is down'):
             _simulate_power_button_press(engines)
-            check_port_status_till_alive(False, engines.dut.ip, engines.dut.ssh_port)
+            check_port_status_till_alive(False, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
 
     finally:
         with allure.step('Recover system with remote reboot'):
