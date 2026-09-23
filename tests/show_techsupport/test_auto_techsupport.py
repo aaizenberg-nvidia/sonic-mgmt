@@ -507,6 +507,57 @@ class TestAutoTechSupport:
             if test_mode == 'techsupport':
                 self.duthost.shell("config auto-techsupport global since \"2 days ago\"")
 
+    @pytest.mark.disable_loganalyzer
+    def test_sai_sdk_dump(self, tbinfo, global_rate_limit_zero, cleanup_list):
+        """
+        Validate that a new or updated SAI dump archive is written without deleting previous dumps.
+        Test logic is as follows:
+        - Record the DUT time rounded down to the minute
+        - Snapshot matching archive filenames and modification times
+        - Trigger SAI call which will fail
+        - Wait for a new or updated SAI dump .tar.gz file modified after that time minus one second
+        :param tbinfo: tbinfo fixture
+        :param global_rate_limit_zero: fixture which disables the global rate limit
+        :param cleanup_list: cleanup list
+        :return: exception in case of failure
+        """
+        # TODO: Check if TEMP_VIEW is enabled. If not, skip the test
+        minigraph_facts = self.duthost.get_extended_minigraph_facts(tbinfo)
+        po_name = 'PortChannel1234'
+        dump_dir = '/var/log/sai_failure_dump'
+
+        with allure.step('Getting test port - any random port which is not PortChannel member'):
+            test_port = get_random_physical_port_non_po_member(minigraph_facts)
+            if not test_port:
+                pytest.skip('Ignore test, can not find physical port which can be used to create stub PortChannel')
+            logger.info('Physical port which will be used in test is: {}'.format(test_port))
+
+        with allure.step('Generate config which will cause SAI call failure'):
+            self.duthost.host.options['variable_manager'].extra_vars.update({'test_port': test_port})
+            self.duthost.template(src=SAI_CALL_TEMPLATE_FILE_PATH, dest=DUT_SAI_CALL_CONFIG_PATH)
+
+        with allure.step('Create stub interface: {}'.format(po_name)):
+            self.duthost.shell('sudo config portchannel add {}'.format(po_name))
+            cleanup_list.append((config_reload, (self.duthost,), {}))
+
+        with allure.step('Add interface: {} to PortChannel: {}'.format(test_port, po_name)):
+            add_po_member(self.duthost, po_name, test_port, minigraph_facts)
+
+        with allure.step('Capture existing SAI dump archives on-device'):
+            trigger_time = self.duthost.command('date "+%Y-%m-%d %H:%M:00 %z"')['stdout'].strip()
+            find_dumps_cmd = ("find {} -maxdepth 1 -type f -name 'sai_sdk_dump_*.tar.gz' "
+                              "-newermt '{} 1 second ago' -printf '%f %T@\\n'").format(dump_dir, trigger_time)
+            existing_dumps = set(self.duthost.command(find_dumps_cmd)['stdout_lines'])
+
+        with allure.step('Apply config(which will cause SAI call failure) on DUT'):
+            self.duthost.shell('sudo config load -y {}'.format(DUT_SAI_CALL_CONFIG_PATH))
+
+        with allure.step('Check that a new or updated SAI dump archive was generated'):
+            assert wait_until(300, 10, 0, lambda: set(self.duthost.command(
+                find_dumps_cmd)['stdout_lines']) - existing_dumps), \
+                'No new or updated SAI dump .tar.gz file newer than {} minus one second in {}'.format(
+                    trigger_time, dump_dir)
+
 
 # Methods used by tests
 def set_limit(duthost, mode, limit_size, cleanup_list=None):
