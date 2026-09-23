@@ -86,9 +86,11 @@ tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_platform]:
 
 tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_ifaces_status]:
   xfail:
-    reason: "Testcase might fail due to RM issue: https://redmine.mellanox.com/issues/5083746"
+    reason: "Testcase might fail due to RM issue: https://redmine.mellanox.com/issues/5083746 or expected to fail on SPC5 due to RM issue: https://redmine.mellanox.com/issues/5275324"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5083746"
+    - "https://redmine.mellanox.com/issues/5275324 and 'sn5640' in platform"
 
 tests/nightly/auto_negotition:
   skip:
