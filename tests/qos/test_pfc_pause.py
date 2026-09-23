@@ -23,7 +23,11 @@ from tests.common.fixtures.ptfhost_utils import change_mac_addresses            
 from tests.common.fixtures.ptfhost_utils import set_ptf_port_mapping_mode                   # noqa: F401
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.helpers.pfc_storm import PFCStorm
+from tests.common import broadcom_data
+from tests.common import mellanox_data
 from tests.common.dualtor.mux_simulator_control import toggle_all_simulator_ports_to_rand_selected_tor  # noqa: F401
+
+LOSSY_ONLY_HWSKUS = mellanox_data.LOSSY_ONLY_HWSKUS + broadcom_data.LOSSY_ONLY_HWSKUS
 
 pytestmark = [
     pytest.mark.topology('t0')
@@ -104,7 +108,8 @@ def pfc_test_setup(duthosts, rand_one_dut_hostname, tbinfo, ptfhost):
     duthost.command('sonic-clear fdb all')
 
     """ Enable DUT's PFC wd """
-    duthost.shell('sudo pfcwd start_default')
+    if duthost.facts["hwsku"] not in LOSSY_ONLY_HWSKUS:
+        duthost.shell('sudo pfcwd start_default')
 
 
 def run_test(pfc_test_setup, fanouthosts, duthost, ptfhost, conn_graph_facts,       # noqa: F811

@@ -438,8 +438,8 @@ def config_reload(sonic_host, config_source='config_db', wait=120, start_bgp=Tru
         golden_override = override_config or macsec_en
         if golden_override:
             cmd += ' -o'
-        if golden_config_path:
-            cmd += ' -p {} '.format(golden_config_path)
+            if golden_config_path:
+                cmd += f' -p {golden_config_path} '
         sonic_host.shell(cmd, executable="/bin/bash")
         # Restore zebra_nexthop using minigraph_facts (parsed on controller) instead of
         # copying a DUT-side script, eliminating duplicated XML parsing.

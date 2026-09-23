@@ -8,13 +8,15 @@ from tests.common.gu_utils import apply_patch, expect_op_success, expect_res_suc
 from tests.common.gu_utils import generate_tmpfile, delete_tmpfile
 from tests.common.gu_utils import format_json_patch_for_multiasic
 from tests.common.gu_utils import create_checkpoint, delete_checkpoint, rollback_or_reload
-from tests.common.utilities import file_exists_on_dut, wait_until, update_pfcwd_default_state
+from tests.common.utilities import file_exists_on_dut, wait_until
+from tests.common.constants import GOLDEN_CONFIG_DB_PATH_ORI
 from tests.common.config_reload import (
     DEFAULT_GOLDEN_CONFIG_PATH,
     config_reload,
     config_reload_minigraph_with_rendered_golden_config_override,
 )
-from tests.common import mellanox_data, broadcom_data
+from tests.common import broadcom_data
+from tests.common import mellanox_data
 
 LOSSY_ONLY_HWSKUS = mellanox_data.LOSSY_ONLY_HWSKUS + broadcom_data.LOSSY_ONLY_HWSKUS
 
@@ -57,12 +59,23 @@ def get_iptable_rules(duthost, ip_netns_namespace_prefix):
 def restore_test_env(duthosts, rand_one_dut_front_end_hostname):
     duthost = duthosts[rand_one_dut_front_end_hostname]
     hwsku = duthost.facts["hwsku"]
-    original_pfcwd_value = None
-    if hwsku in LOSSY_ONLY_HWSKUS:
-        original_pfcwd_value = update_pfcwd_default_state(duthost, "/etc/sonic/init_cfg.json", "disable")
-    golden_config_exists = file_exists_on_dut(duthost, DEFAULT_GOLDEN_CONFIG_PATH)
+    full_lossy = hwsku in LOSSY_ONLY_HWSKUS
+    existing_golden_config = file_exists_on_dut(duthost, DEFAULT_GOLDEN_CONFIG_PATH)
+    restored_golden_config = False
+
     try:
-        if golden_config_exists:
+        if full_lossy:
+            copy_result = duthost.shell(
+                f"cp {GOLDEN_CONFIG_DB_PATH_ORI} {DEFAULT_GOLDEN_CONFIG_PATH}",
+                module_ignore_errors=True,
+            )
+            pytest_assert(
+                copy_result.get("rc") == 0,
+                f"Cannot restore full-lossy golden from {GOLDEN_CONFIG_DB_PATH_ORI} on {duthost.hostname}",
+            )
+            restored_golden_config = True
+
+        if existing_golden_config or restored_golden_config:
             config_reload(
                 duthost,
                 config_source="minigraph",
@@ -78,14 +91,12 @@ def restore_test_env(duthosts, rand_one_dut_front_end_hostname):
                 check_intf_up_ports=True,
                 wait_for_bgp=True,
             )
+
         yield
     finally:
-        if original_pfcwd_value is not None:
-            update_pfcwd_default_state(duthost, "/etc/sonic/init_cfg.json", original_pfcwd_value)
-        if not golden_config_exists and file_exists_on_dut(duthost, DEFAULT_GOLDEN_CONFIG_PATH):
-            duthost.command(
-                "mv {} {}_backup".format(DEFAULT_GOLDEN_CONFIG_PATH, DEFAULT_GOLDEN_CONFIG_PATH)
-            )
+        if not existing_golden_config and not restored_golden_config and file_exists_on_dut(
+                duthost, DEFAULT_GOLDEN_CONFIG_PATH):
+            duthost.command(f"mv {DEFAULT_GOLDEN_CONFIG_PATH} {DEFAULT_GOLDEN_CONFIG_PATH}_backup")
 
 
 @pytest.fixture(scope="module", autouse=True)

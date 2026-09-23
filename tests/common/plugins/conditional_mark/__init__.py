@@ -16,6 +16,8 @@ import pytest
 from tests.common.testbed import TestbedInfo
 from .issue import check_issues, check_if_current_ver_include_bug_fix
 from tests.common.utilities import get_duts_from_host_pattern
+from tests.common import broadcom_data
+from tests.common import mellanox_data
 from tests.common.cisco_data import (
     CISCO_8122_PREFIX,
     CISCO_8122_GR2_PREFIX,
@@ -51,7 +53,10 @@ MARK_CONDITIONS_CONSTANTS = {
                      't2-single-node-min', 't2_single_node_min', 't2_single_node_max',
                      't2_single_node_min_first_6ports',
                      't2_single_node_max_64p', 't2-single-node-max-64p', 't2_single_node_max_64p_v2',
-                     'urh_min', 'lrh_min', 'lt2-min', 'lt2-o224', 'lt2-o32', 'lt2-o256-u32d224']
+                     'urh_min', 'lrh_min', 'lt2-min', 'lt2-o224', 'lt2-o32', 'lt2-o256-u32d224'],
+    "FULL_LOSSY_HWSKUS": (
+        mellanox_data.LOSSY_ONLY_HWSKUS + broadcom_data.LOSSY_ONLY_HWSKUS
+    ),
 }
 
 
