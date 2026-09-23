@@ -5507,6 +5507,12 @@ snappi_tests/ecn:
     conditions:
       - *lossyTopos
 
+snappi_tests/packet_trimming:
+  skip:
+    reason: "Snappi packet trimming tests are not supported on Mellanox SPC1-SPC3 platforms."
+    conditions:
+      - "asic_type == 'mellanox' and asic_gen in ['spc1', 'spc2', 'spc3']"
+
 snappi_tests/pfc:
   skip:
     reason: "Snappi PFC tests are not supported on lossy topologies."
