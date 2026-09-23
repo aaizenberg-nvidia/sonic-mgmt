@@ -13,6 +13,7 @@ from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_constants.constants_nvos import HealthConsts, ApiType
 from ngts.nvos_tools.nmx.Sdn import Sdn
+from ngts.nvos_tools.infra.IbnetdiscoverTool import IbnetdiscoverTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.general.security.password_hardening.PwhConsts import PwhConsts
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
@@ -22,6 +23,13 @@ from retry import retry
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+NMX_C_CONTAINER = 'nmx-c-job.nmx-c-group.nmxc'
+NV_BRIDGE_CLIENT_ENV = (
+    'NV_BRIDGE_CLIENT_MODE=bridge '
+    'NV_BRIDGE_LOG_LEVEL=info '
+    'LD_PRELOAD=/usr/local/nv-bridge/lib/libnv_bridge.so'
+)
 
 
 @pytest.mark.nv_bridge
@@ -94,7 +102,7 @@ def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, 
         1. Start Cluster
         2. Configure NV bridge
         3. Verify NV bridge output
-        4. Send MAD and check no errors
+        4. Discover remote switch CA via ibstat and send MADs with ibnetdiscover --Ca
         5. Unset Cluster
     """
     if single_switch:
@@ -137,7 +145,7 @@ def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, 
         with allure.step("Get tray index of second dut"):
             tray_index = OutputParsingTool.parse_show_output_to_dict(nv_command.platform.chassis_location.show(dut_engine=dut2)).get_returned_value()[ChassisLocationConsts.TRAY_ID]
 
-        with allure.step("Send MAD and check it's successfully"):
+        with allure.step("Discover remote switch CA and send MAD via ibnetdiscover"):
             _send_mad_verify_no_errors(dut, tray_index)
 
     finally:
@@ -434,12 +442,41 @@ def _generate_and_verify_state_file(sdn_files, show_data, engine):
             assert f'"nvbsAddress": "{server_address}"' in file_content, msg
 
 
+def _run_nv_bridge_cmd_in_nmx_c(dut, cmd: str) -> str:
+    """Run a command inside nmx-c with libnv_bridge preloaded (virtual nvbs CAs)."""
+    wrapped = f'export {NV_BRIDGE_CLIENT_ENV}; {cmd}'
+    return dut.run_cmd(f"docker exec {NMX_C_CONTAINER} bash -c '{wrapped}'")
+
+
 def _send_mad_verify_no_errors(dut, tray_index):
-    cmd = 'apt install -y procps vim openssh-client infiniband-diags less iputils-ping'
-    cmd += ' ; ' + 'export NV_BRIDGE_CLIENT_MODE=bridge NV_BRIDGE_LOG_LEVEL=info LD_PRELOAD=/usr/local/nv-bridge/lib/libnv_bridge.so'
-    cmd += ' ; ' + f'smpquery ni -L 1 -C nvbs-{tray_index}-ca-01'
-    output = dut.run_cmd(f"docker exec -it nmx-c-job.nmx-c-group.nmxc bash -c '{cmd}'")
-    assert 'SystemGuid' in output, 'MAD not sent, SystemGuid was not found in output'
+    """Verify MADs through nv-bridge using the remote switch CA.
+
+    smpquery -L 1 does not work with nv-bridge: a local ASIC discovers over FNM
+    links, not the OS bridge (NVBug 5657178, closed as not a bug). Discovery
+    must use ibstat inside nmx-c, then ibnetdiscover --Ca <switch-ca-name>.
+    """
+    ca_name = f'nvbs-{tray_index}-ca-01'
+
+    with allure.step('Install infiniband-diags in nmx-c'):
+        dut.run_cmd(f"docker exec {NMX_C_CONTAINER} bash -c 'apt install -y infiniband-diags'")
+
+    with allure.step(f'Discover NV-bridge CAs via ibstat (expect {ca_name})'):
+        ibstat_output = _run_nv_bridge_cmd_in_nmx_c(dut, 'ibstat')
+        logger.info('ibstat output:\n%s', ibstat_output)
+        # nv-bridge ibstat reports virtual devices as Switch '<name>', not CA '<name>'
+        listed = f"Switch '{ca_name}'" in ibstat_output or f"CA '{ca_name}'" in ibstat_output
+        assert listed, (
+            f"NV-bridge device {ca_name} was not listed by ibstat inside nmx-c:\n{ibstat_output}"
+        )
+
+    with allure.step(f'Run ibnetdiscover --Ca {ca_name}'):
+        output = _run_nv_bridge_cmd_in_nmx_c(dut, f'ibnetdiscover --Ca {ca_name}')
+        logger.info('ibnetdiscover --Ca %s output:\n%s', ca_name, output)
+        assert 'timed out' not in output.lower() and 'iberror' not in output.lower(), (
+            f'ibnetdiscover --Ca {ca_name} failed:\n{output}'
+        )
+        switches = IbnetdiscoverTool.parse_output(output)
+        assert switches, f'ibnetdiscover --Ca {ca_name} returned no switches:\n{output}'
 
 
 def _restart_nv_bridge_container(dut):
