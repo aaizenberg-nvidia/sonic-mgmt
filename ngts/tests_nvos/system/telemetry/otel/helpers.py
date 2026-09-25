@@ -939,13 +939,14 @@ def _probe_dut_otlp_export(dut, *, export_vrf: str, is_nvos: bool, collector_ip:
     unit = shlex.quote(nvtelemetry_unit(is_nvos, export_vrf))
     reach = "'echo >/dev/tcp/%s/%d'" % (collector_ip, OtelCollectorConst.OTLP_GRPC_PORT)
     probes = {
-        'telemetry_export': 'nv show system telemetry export 2>&1',
         'nvtelemetry': 'systemctl status %s --no-pager -n 25 2>&1' % (unit,),
         'reach_default': 'timeout 3 bash -lc %s 2>&1 || true' % (reach,),
         'reach_vrf': 'timeout 3 ip vrf exec %s bash -lc %s 2>&1 || true' % (export_vrf, reach),
     }
     lines = ['=== DUT_OTLP_PROBE [%s] vrf=%s unit=%s ===' % (tag, export_vrf, unit)]
     with allure.step('Probe DUT OTLP export (%s)' % (tag,)):
+        export = component_show_text(System().telemetry.export, dut).strip()[-1500:]
+        lines.append('--- telemetry_export ---\n%s' % (export,))
         for name, cmd in probes.items():
             out = (dut.run_cmd(cmd, validate=False, print_output=False) or '').strip()[-1500:]
             lines.append('--- %s ---\n%s' % (name, out))
@@ -1104,7 +1105,7 @@ def setup_otel_suite_secured(
         apply_otel_secured_telemetry_config,
     )
     from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
-        assert_otlp_session_established,
+        assert_otlp_session_established_or_restart_client,
     )
     from ngts.tests_nvos.system.telemetry.otel.cumulus.tls import (
         configure_collector_tls,
@@ -1178,7 +1179,13 @@ def setup_otel_suite_secured(
             )
 
     with allure.step("Verify OTLP TLS session established"):
-        assert_otlp_session_established(primary)
+        assert_otlp_session_established_or_restart_client(
+            primary,
+            dut,
+            vrf,
+            telemetry_unit=nvtelemetry_unit(is_nvos, vrf),
+            is_nvos=is_nvos,
+        )
 
     return OtelSuiteContext(
         primary=primary,
@@ -2771,6 +2778,24 @@ def dut_capabilities(
     return present
 
 
+def component_show_text(node, dut=None) -> str:
+    """Show ``node`` as text. A missing node does not fail the caller.
+
+    Goes through the component model so the same probe works under NVUE and OpenAPI.
+    """
+    try:
+        result = node.show(dut_engine=dut, if_returned_value=False)
+    except Exception as exc:  # noqa: BLE001 - capability probes are best-effort
+        return str(exc)
+    result.ignore_result()
+    raw = result.returned_value
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw)
+    if raw:
+        return str(raw)
+    return str(result.info or "")
+
+
 def _nvue_probe_failed(output: str) -> bool:
     return not output.strip() or "Error:" in output or "is not one of" in output
 
@@ -2778,10 +2803,8 @@ def _nvue_probe_failed(output: str) -> bool:
 def _dut_has_ib_router_profile_enabled(dut=None) -> bool:
     """True iff ib-routing is enabled; False when ``system profile`` is absent (typical Cumulus)."""
     if dut is not None:
-        out = dut.run_cmd(
-            "nv show system profile ib-routing -o json 2>&1",
-            validate=False,
-            print_output=False,
+        out = component_show_text(
+            BaseComponent(System().profile, path="/ib-routing"), dut
         )
         if _nvue_probe_failed(out):
             logger.debug("IB router profile probe unavailable: %s", out[:240])
@@ -2810,11 +2833,7 @@ def _dut_has_ib_router_profile_enabled(dut=None) -> bool:
 def _dut_has_connected_transceivers(dut=None) -> bool:
     """True iff ``nv show platform transceiver`` returns a non-empty payload."""
     if dut is not None:
-        out = dut.run_cmd(
-            "nv show platform transceiver -o json 2>&1",
-            validate=False,
-            print_output=False,
-        )
+        out = component_show_text(Platform().transceiver, dut)
         if _nvue_probe_failed(out):
             return False
         try:

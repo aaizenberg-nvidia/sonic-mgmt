@@ -19,6 +19,10 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelC
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_telemetry import list_swp_interfaces
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
     apply_otel_mgmt_vrf_no_tls_telemetry_config,
+    apply_staged_candidate,
+    nvue_quoted,
+    stage_interface_histogram_member,
+    stage_interface_telemetry_label,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
     discover_swp_interfaces_on_dut,
@@ -133,11 +137,7 @@ def require_cumulus_exactly(dut, version: str) -> None:
 
 
 def _nv_apply(dut) -> None:
-    from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
-
-    NvueGeneralCli.apply_config(
-        dut, ask_for_confirmation=True, verify_execution=True
-    )
+    apply_staged_candidate(dut)
 
 
 def _system_telemetry_node(path: str) -> BaseComponent:
@@ -174,19 +174,6 @@ def _nvos_ib_interfaces_for_unset(dut) -> List[str]:
     return sorted(port.name for port in Port.get_list_of_ports(dut, reqs))
 
 
-def _stage_nv_set(dut, cmd: str) -> None:
-    """Stage one ``nv set`` without probing the shell exit status.
-
-    ``validate=True`` makes the engine run ``echo "$?"`` and scrape the first digits
-    out of the reply. On mlx DUT shells every command can carry ``/tmp/cen<N>:
-    Permission denied`` bash noise (see ``cleanup_stale_nvue_censor_files``), so that
-    scrape can return the digits of the tempfile name instead of the real status and
-    fail a command that actually succeeded. ``nv config apply`` is the real gate: it
-    rejects the whole staged revision if any of these sets was invalid.
-    """
-    dut.run_cmd(cmd, validate=False, print_output=False)
-
-
 def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -> None:
     """SSIM ``OtelMgmtVrfNoTLSConfig.configure_topo`` spine ``swp`` loop (lines 62-128).
 
@@ -207,34 +194,22 @@ def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -
         for iface in ifaces:
             if not is_nvos:
                 for pg in range(8):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"ingress-buffer priority-group {pg}",
+                    stage_interface_histogram_member(
+                        dut, iface, "ingress-buffer", "priority-group", pg
                     )
                 for tc in range(8):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"egress-buffer traffic-class {tc}",
+                    stage_interface_histogram_member(
+                        dut, iface, "egress-buffer", "traffic-class", tc
                     )
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"latency traffic-class {tc}",
+                    stage_interface_histogram_member(
+                        dut, iface, "latency", "traffic-class", tc
                     )
                 for counter_type in ("rx-byte", "crc"):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"counter counter-type {counter_type}",
+                    stage_interface_histogram_member(
+                        dut, iface, "counter", "counter-type", counter_type
                     )
             for label_id, description in label_pairs:
-                _stage_nv_set(
-                    dut,
-                    f"nv set interface {iface} telemetry label {label_id} "
-                    f'description "{description}"',
-                )
+                stage_interface_telemetry_label(dut, iface, label_id, description)
         _nv_apply(dut)
 
 
@@ -242,11 +217,11 @@ def _set_device_labels(dut) -> None:
     """SSIM ``OtelMgmtVrfNoTLSConfig`` system telemetry device labels (lines 339-359)."""
     with allure.step("Configure system telemetry device labels (CLI coverage)"):
         for label_id, description in CumulusOtelConst.DEVICE_LABELS:
-            _stage_nv_set(
-                dut,
-                f"nv set system telemetry label {label_id} "
-                f'description "{description}"',
-            )
+            BaseComponent(System().telemetry, path=f"/label/{label_id}").set(
+                TelemetryConsts.DESCRIPTION,
+                nvue_quoted(description),
+                dut_engine=dut,
+            ).verify_result()
         _nv_apply(dut)
 
 
@@ -261,17 +236,16 @@ def cleanup_otel_cli_coverage_labels(dut) -> None:
             ifaces = []
         for iface in ifaces:
             for label_id in label_ids:
-                dut.run_cmd(
-                    f"nv unset interface {iface} telemetry label {label_id}",
-                    validate=False,
-                )
+                BaseComponent(
+                    Interface(None, port_name=iface),
+                    path=f"/telemetry/label/{label_id}",
+                ).unset(dut_engine=dut).ignore_result()
 
     with allure.step("Clean system telemetry labels configured by CLI coverage"):
         for label_id, _ in CumulusOtelConst.DEVICE_LABELS:
-            dut.run_cmd(
-                f"nv unset system telemetry label {label_id}",
-                validate=False,
-            )
+            BaseComponent(System().telemetry, path=f"/label/{label_id}").unset(
+                dut_engine=dut
+            ).ignore_result()
         _nv_apply(dut)
 
 

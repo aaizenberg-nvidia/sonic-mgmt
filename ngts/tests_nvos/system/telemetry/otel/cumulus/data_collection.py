@@ -301,10 +301,16 @@ def collect_and_cache_secured_otel_session(
             dut, collector, vrf=vrf, telemetry_unit=telemetry_unit, is_nvos=is_nvos
         )
         from ngts.tests_nvos.system.telemetry.otel.cumulus.telemetry_health import (
-            assert_otlp_session_established,
+            assert_otlp_session_established_or_restart_client,
         )
 
-        assert_otlp_session_established(collector)
+        assert_otlp_session_established_or_restart_client(
+            collector,
+            dut,
+            vrf,
+            telemetry_unit=telemetry_unit,
+            is_nvos=is_nvos,
+        )
 
     truncate_collector_export(collector)
     collect_telemetry_data(

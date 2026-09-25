@@ -210,6 +210,35 @@ def assert_otlp_session_established(
         )
 
 
+def assert_otlp_session_established_or_restart_client(
+    collector: OtelCollector,
+    dut,
+    vrf: str,
+    *,
+    telemetry_unit: Optional[str] = None,
+    is_nvos: bool = False,
+) -> None:
+    """Poll for the collector session, restarting the DUT client once if needed.
+
+    A large secured ``nv config apply`` does not always bounce ``nv-telemetry``
+    before the first poll. The client then keeps the pre-TLS export and never
+    finishes the handshake, so the collector shows no ESTABLISHED session.
+    """
+    try:
+        assert_otlp_session_established(collector)
+        return
+    except BaseException as exc:
+        if exc.__class__.__name__ != "Failed":
+            raise
+        logger.warning(
+            "OTLP session not established; restarting telemetry client and retrying"
+        )
+    restart_nvtelemetry(dut, vrf, unit=telemetry_unit)
+    if not is_nvos:
+        restart_asic_monitor(dut, vrf)
+    assert_otlp_session_established(collector, max_attempts=12)
+
+
 def ensure_mgmt_vrf_secured_otlp_session(dut, collector, *, collector_ip: str) -> None:
     """Re-apply secured mgmt VRF OTLP and verify collector TCP session.
 
