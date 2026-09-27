@@ -113,8 +113,12 @@ def check_interfaces_and_services(dut, interfaces, xcvr_skip_list,
     if "6000" in dut.facts['hwsku']:
         interfaces_wait_time = MAX_WAIT_TIME_FOR_INTERFACES * 8
 
-    if dut.is_supervisor_node():
-        logging.info("skipping interfaces related check for supervisor")
+    skip_interface_check = dut.is_supervisor_node() or dut.is_bmc()
+    if skip_interface_check:
+        logging.info(
+            "Skipping interface and transceiver checks for %s",
+            "supervisor" if dut.is_supervisor_node() else "BMC",
+        )
     else:
         # Only check administratively up ports. Admin-down ports in conn_graph/minigraph
         # are expected to stay down and should not fail interface status checks.
@@ -138,8 +142,10 @@ def check_interfaces_and_services(dut, interfaces, xcvr_skip_list,
             check_transceiver_basic(
                 dut, asic_index, interfaces_per_asic, xcvr_skip_list)
 
+    # Retain the existing PMON check for BMC, but not for supervisors.
+    if not dut.is_supervisor_node():
         logging.info("Check pmon daemon status")
-        if dut.facts["platform"] == "x86_64-cel_e1031-r0":
+        if dut.facts["platform"] == "x86_64-cel_e1031-r0" or dut.is_bmc():
             result = wait_until(300, 20, 0, check_pmon_daemon_status, dut)
         else:
             result = wait_until(60, 5, 0, check_pmon_daemon_status, dut)
