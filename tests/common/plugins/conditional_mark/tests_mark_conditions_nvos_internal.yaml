@@ -596,14 +596,6 @@ ngts/tests_nvos/checklist/test_firmware_install_same_version.py:
     - '''juliet-146'' in testbed'
     - '''juliet-160'' in testbed'
 
-ngts/tests_nvos/platform/test_platform_firmware.py::test_show_platform_firmware:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5304992'
-    conditions_logical_operator: and
-    conditions:
-    - https://redmine.mellanox.com/issues/5304992
-    - '''juliet'' in testbed'
-
 ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'

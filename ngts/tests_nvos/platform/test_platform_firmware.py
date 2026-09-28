@@ -40,9 +40,7 @@ def test_show_platform_firmware(engines, devices, random_api):
     with allure.step("Test output of nv show platform firmware"):
         firmware_items = devices.dut.constants.firmware
         if devices.dut.constants.erots:
-            # Individual EROT components (e.g. EROT-BMC, EROT-CPU, EROT-FPGA, EROT-ASIC1, EROT-ASIC2) are only
-            # shown under 'nv show fae platform firmware', not the regular command
-            firmware_items = devices.dut.constants.firmware + ['EROT']
+            firmware_items = devices.dut.constants.firmware + devices.dut.constants.erots + ['EROT']
         validate_firmware_keys(platform, firmware_items, engines.dut)
 
     with allure.step("Test specific firmware components"):

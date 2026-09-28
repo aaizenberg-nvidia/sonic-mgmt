@@ -3324,10 +3324,9 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             "asic-model": self.asic_type,
         })
 
-        # Rosalind does not have fans, PSUs, or transceivers (liquid cooled) - must be set AFTER super()
+        # Rosalind does not have fans or transceivers (liquid cooled) - must be set AFTER super()
         self.fan_list = []
         self.fan_led_list = []
-        self.psu_list = []
         self.psu_fan_list = []
         self.transceiver_list = []
 
@@ -3457,8 +3456,8 @@ class RosalindSwitch(RosalindSurrogateSwitch):
         self.fan_led_list = []
 
     def _init_psu_list(self):
-        """Rosalind does not have PSUs (100% liquid cooled)"""
-        self.psu_list = []
+        """Rosalind has no swappable PSUs (100% liquid cooled); a PDB is shown instead"""
+        self.psu_list = ['PDB1']
         self.psu_fan_list = []
 
     def setup_cluster_for_sdn_config(self, cluster, engine, dut_engines):
