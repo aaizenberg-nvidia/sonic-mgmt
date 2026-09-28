@@ -598,10 +598,10 @@ ngts/tests_nvos/checklist/test_firmware_install_same_version.py:
 
 ngts/tests_nvos/platform/test_platform_firmware.py::test_show_platform_firmware:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5304992'
     conditions_logical_operator: and
     conditions:
-    - https://redmine.mellanox.com/issues/4543350
+    - https://redmine.mellanox.com/issues/5304992
     - '''juliet'' in testbed'
 
 ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
@@ -813,5 +813,11 @@ tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_re
     reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
     conditions:
       - "'rtf' in testbed"
+
+ngts/tests_nvos/general/config_commands/test_config_verify.py::test_verify_empty_applied:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5305123'
+    conditions:
+    - https://redmine.mellanox.com/issues/5305123
 
 ########################## NVOS IGNORE END ##########################
