@@ -127,7 +127,7 @@ class SonicDhcpRelayCliMaster(SonicDhcpRelayCliDefault):
 
         relay_lines = [
             line for line in status_output.splitlines()
-            if re.match(r'^(isc-dhcpv4-relay-|dhcp6relay)', line.strip())
+            if re.search(r'(?:^|:)(isc-dhcpv4-relay-\S*|dhcp6relay)\b', line.strip())
         ]
         if not relay_lines:
             logger.info('No relay forwarding processes found in supervisord - dhcprelayd not yet ready')
