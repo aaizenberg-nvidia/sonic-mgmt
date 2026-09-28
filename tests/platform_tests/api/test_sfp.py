@@ -42,6 +42,11 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(scope="module")
+def rand_selected_dut(duthosts, enum_rand_one_per_hwsku_hostname):
+    return duthosts[enum_rand_one_per_hwsku_hostname]
+
+
 @pytest.fixture(scope="class")
 def setup(request, duthosts, enum_rand_one_per_hwsku_hostname,
           xcvr_skip_list, conn_graph_facts, shutdown_ebgp):     # noqa: F811
@@ -900,14 +905,13 @@ class TestSfpApi(PlatformApiTestBase):
             logger.info("No interfaces to flap after SFP reset")
         self.assert_expectations()
 
-    def test_tx_disable(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_tx_disable(self, rand_selected_dut, localhost,
                         platform_api_conn, is_sw_control_feature_enabled):    # noqa: F811
         """This function tests both the get_tx_disable() and tx_disable() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx"])
-        if is_mellanox_device(duthost):
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx"])
+        if is_mellanox_device(rand_selected_dut):
             port_indices_to_tested = self.get_port_indices_to_tested_for_mellanox_device(
-                duthost, is_sw_control_feature_enabled)
+                rand_selected_dut, is_sw_control_feature_enabled)
         else:
             port_indices_to_tested = self.sfp_setup["sfp_test_port_indices"]
 
@@ -933,14 +937,13 @@ class TestSfpApi(PlatformApiTestBase):
                                     "Transceiver {} TX disable data is incorrect".format(i))
         self.assert_expectations()
 
-    def test_tx_disable_channel(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_tx_disable_channel(self, rand_selected_dut, localhost,
                                 platform_api_conn, is_sw_control_feature_enabled):     # noqa: F811
         """This function tests both the get_tx_disable_channel() and tx_disable_channel() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx", "nokia"])
-        if is_mellanox_device(duthost):
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx", "nokia"])
+        if is_mellanox_device(rand_selected_dut):
             port_indices_to_tested = self.get_port_indices_to_tested_for_mellanox_device(
-                duthost, is_sw_control_feature_enabled)
+                rand_selected_dut, is_sw_control_feature_enabled)
         else:
             port_indices_to_tested = self.sfp_setup["sfp_test_port_indices"]
 
@@ -1034,11 +1037,10 @@ class TestSfpApi(PlatformApiTestBase):
                             .format(i, "enable" if state is True else "disable"))
         self.assert_expectations()
 
-    def test_power_override(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_power_override(self, rand_selected_dut, localhost,
                             platform_api_conn, is_sw_control_feature_enabled):    # noqa: F811
         """This function tests both the get_power_override() and set_power_override() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx", "nokia"])
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx", "nokia"])
 
         for i in self.sfp_setup["sfp_test_port_indices"]:
             info_dict = sfp.get_transceiver_info(platform_api_conn, i)
@@ -1056,9 +1058,11 @@ class TestSfpApi(PlatformApiTestBase):
             self.expect(power_override_bit_value_pretest is not None,
                         "Unable to retrieve transceiver {} power override data".format(i))
 
-            if is_mellanox_device(duthost) and not is_sw_control_feature_enabled:
+            if is_mellanox_device(rand_selected_dut) and (
+                    not is_sw_control_feature_enabled or not is_sw_control_enabled(rand_selected_dut, i)):
                 logger.warning(
-                    "Skipping set_power_override for transceiver {} (not supported on this platform)".format(i))
+                    "test_power_override: Skipping set_power_override for Mellanox transceiver {} "
+                    "(software control is not enabled for the device or port)".format(i))
                 continue
 
             # Enable power override in both low-power and high-power modes
