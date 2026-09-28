@@ -75,6 +75,7 @@ class PytestConst:
 
 
 class SonicConst:
+    SDK_CLEAR_ALL_COUNTERS_FORCE_CMD = "docker exec syncd bash -c 'sx_api_port_counter_clear_all.py --force'"
     PORT_SPLIT_NUM_1 = 1
     PORT_SPLIT_NUM_2 = 2
     PORT_SPLIT_NUM_3 = 3

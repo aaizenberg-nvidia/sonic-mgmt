@@ -114,6 +114,11 @@ class TestSRv6Leaf(TestSRv6Base):
                     self.conf_args["template_path"],
                     dut_ports, drop_over_max_config['num_dummy_acls'])
 
+        with allure.step("Clear counters"):
+            self.cli_object.interface.clear_counters_by_force()
+            self.cli_object.interface.clear_counters()
+            self.cli_object.interface.clear_queue_counters()
+
         with allure.step(f"Run bisection traffic pattern on {len(upstream)} upstream ports <-> {len(downstream)} downstream ports"):
             create_workload_stream = get_workload_method(workload)
             if is_drop_over_max:
@@ -151,6 +156,8 @@ class TestSRv6Leaf(TestSRv6Base):
                 tc_occ_reference_offset=tc_occ_reference_offset,
                 validate_pg_total_occ=True)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
+            samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
+            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
@@ -159,6 +166,7 @@ class TestSRv6Leaf(TestSRv6Base):
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       run_validate_counters=not is_drop_over_max,
                                       run_validate_no_drops_on_tg_ports=not is_drop_over_max,
+                                      samples_params_dict=samples_params_dict,
                                       additional_validations=additional_validations)
             try:
                 run_validation(config)

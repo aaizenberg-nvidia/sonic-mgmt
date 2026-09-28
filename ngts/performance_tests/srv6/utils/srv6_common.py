@@ -425,7 +425,7 @@ class TestSRv6Base:
 
     def get_trimming_bw_threshold(self, traffic_type):
         dut_tx_util_th = MRCConsts.DUT_TX_UTIL_TH
-        if self.chip_type == "SPC6" and is_redmine_issue_active([5239628])[0]:
+        if self.chip_type == "SPC6":
             dut_tx_util_th = MRCConsts.SPC6_TRIMMING_DUT_TX_UTIL_TH
         bw_threshold = {
             MRCConsts.EGRESS_PORT_GROUP_NAME: {ValidationConsts.TX: min(self.shaper_value, dut_tx_util_th),
