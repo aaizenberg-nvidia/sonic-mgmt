@@ -772,6 +772,14 @@ class SPCXRAConsts:
     PACKET_NUM_800G_x2 = PACKET_NUM_800G_x1
     PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS = {"SPC4": 72, "SPC5": 72, "SPC6": 108}
 
+    # Per-chip, per-speed minimum spine data packet size (bytes), used when the
+    # --min_packet_size pytest flag is enabled. A chip/speed combination missing
+    # here means the flag is not yet configured for it (test skips).
+    MIN_PACKET_SIZE_BY_CHIP_TYPE = {
+        "SPC4": {"200G": 1800, "400G": 2048, "800G": 2424},
+        "SPC6": {"200G": 1248, "400G": 1248, "800G": 1248},
+    }
+
     # Downstream (spine -> host) destination IPs for the leaf scenario, one address per DUT right port.
     # These mirror the DVS reference literals in
     # performance_config_templates/spcx_ra/dvs/dut.jinja ("dip_left_to_right" and the base of

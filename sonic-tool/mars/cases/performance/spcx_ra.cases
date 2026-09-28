@@ -23,22 +23,57 @@
       </params>
     </cmd>
   </case>
-  <!-- THIS CASE CAN RUN ONLY ON "sx_sdk_4_10_2000" AND "master" BRANCH BASED IMAGES - NOT ON "sx_sdk_4_10_1000" -->
   <case>
-    <name> spcx ra min packet size </name>
-    <info> AR max-bandwidth (rebalancer enabled) at the ai_mix min packet size profile (19/11/11/11 mix) </info>
+    <name> spcx ra - TestSpcXRA_2x_lanes extended ar thresholds ai_mix </name>
+    <info> AR max-bandwidth (rebalancer enabled) with SPC6 extended AR grading (7 congestion grades), traffic profile ai_mix </info>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --spcx-ra-traffic-profile=ai_mix\'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_2x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ar_extended_thresholds --spcx-ra-traffic-profile=ai_mix\'"</static_args>
       </params>
     </cmd>
   </case>
   <case>
-    <name> spcx ra extended ar thresholds </name>
-    <info> AR max-bandwidth (rebalancer enabled) with SPC6 extended AR grading (7 congestion grades) </info>
+    <name> spcx ra extended ar thresholds ai_mix </name>
+    <info> AR max-bandwidth (rebalancer enabled) with SPC6 extended AR grading (7 congestion grades), traffic profile ai_mix </info>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ar_extended_thresholds\'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ar_extended_thresholds --spcx-ra-traffic-profile=ai_mix\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra - TestSpcXRA_1x_lanes min_packet_size </name>
+    <info> One test per class, single hardcoded parametrize each, --min_packet_size enabled </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_1x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --min_packet_size\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra - TestSpcXRA_2x_lanes min_packet_size </name>
+    <info> One test per class, single hardcoded parametrize each, --min_packet_size enabled </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_2x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --min_packet_size\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra - TestSpcXRA_4x_lanes min_packet_size </name>
+    <info> One test per class, single hardcoded parametrize each, --min_packet_size enabled </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --min_packet_size\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra - TestSpcXRA_8x_lanes min_packet_size </name>
+    <info> One test per class, single hardcoded parametrize each, --min_packet_size enabled </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_8x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --min_packet_size\'"</static_args>
       </params>
     </cmd>
   </case>

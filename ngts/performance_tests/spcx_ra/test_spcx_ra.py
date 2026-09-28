@@ -43,8 +43,8 @@ from ngts.helpers.performance.performance_setup_helpers import (
     ValidationConfig, apply_test_configuration_guarded, configure_incremental_dips_on_tg,
     get_obj_method, restore_session_basic_configuration, run_traffic,
     run_validation, set_ports_admin_state, skip_dvs_leaf_scenario_on_active_bug,
-    skip_test_on_unsupported_chip_type, skip_test_on_unsupported_os,
-    validate_perf_dut_ingress_buffer_mode,
+    skip_performance_test_conditionally, skip_test_on_unsupported_chip_type,
+    skip_test_on_unsupported_os, validate_perf_dut_ingress_buffer_mode,
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
@@ -383,6 +383,8 @@ def _with_lanes_allure_title(method):
     @functools.wraps(method)
     def wrapper(self, request, *args, **kwargs):
         title = f"{request.node.name} {self.CONFIG.allure_title_suffix(self.chip_type)}"
+        if kwargs.get("is_min_packet_size"):
+            title += " [min_packet_size]"
         if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
             title += f" [{self.traffic_profile}]"
         if self.conf_args.get("extended_grading"):
@@ -411,23 +413,43 @@ class _SpcXRATestBase:
 
     @allure.description('AR enabled + auto buffer mode (rebalancer) on. Verify port utilization.')
     @_with_lanes_allure_title
-    def test_ar_perf_max_bandwidth_rebalancer_enabled(self, request):
+    def test_ar_perf_max_bandwidth_rebalancer_enabled(self, request, is_min_packet_size):
         """Verify port utilization with AR + auto buffer mode (rebalancer) on.
 
         Runs the spine traffic profile selected by ``--spcx-ra-traffic-profile``:
         ``sanity`` (default) keeps the single RoCE data stream built by the
         autouse fixture, ``ai_mix`` rebuilds it with the AI control-packet mix
-        alongside the same per-speed data load.
+        alongside the same per-speed data load. ``--min_packet_size`` is not
+        supported together with the ``ai_mix`` profile; that combination fails.
 
         Args:
             request: pytest ``FixtureRequest`` (provides the test name).
+            is_min_packet_size: Value of the ``--min_packet_size`` pytest flag. When
+                True, the spine data packet size is taken from
+                ``SPCXRAConsts.MIN_PACKET_SIZE_BY_CHIP_TYPE`` for this chip type and
+                port speed instead of the default ``PerfConsts.PACKET_SIZE_4K``.
+
+        Raises:
+            ValueError: If ``--min_packet_size`` is combined with the ``ai_mix``
+                traffic profile.
         """
+        if is_min_packet_size and self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+            raise ValueError("--min_packet_size is not supported with the ai_mix traffic profile")
+
         test_name = get_perf_test_name(request)
         data_packet_size = PerfConsts.PACKET_SIZE_4K
         # Ad-hoc packet-mix experiment: fewer RoCE data (4K) packets per cycle, more of
         # each control packet (RoCE ACK / RTT probe / RTT probe response / CNP) per cycle.
         data_packet_count = 19
         control_packet_count = 11
+        if is_min_packet_size:
+            speed_label = f"{int(self.CONFIG.for_chip(self.chip_type).port_speed_bps) // 1_000_000}G"
+            min_packet_size = SPCXRAConsts.MIN_PACKET_SIZE_BY_CHIP_TYPE.get(
+                self.chip_type, {}).get(speed_label)
+            skip_performance_test_conditionally(
+                min_packet_size is None,
+                f"Min packet size not configured for chip type {self.chip_type} at {speed_label}")
+            data_packet_size = min_packet_size
 
         with allure.step("Validate rebalancer (auto buffer mode) is active on the DUT"):
             if isinstance(self.cli_object, NvueCli):
