@@ -34,6 +34,7 @@ from ngts.nvos_tools.Devices.SwitchCapabilities import (
     CpoCapability,
     NoAsicPowerCapability,
     NoFanCapability,
+    NoLeakageCapability,
     NoPSUCapability,
     PortiaCpoCapability,
     SwitchCapabilityHandler,
@@ -3837,7 +3838,8 @@ class PortiaSwitch(RosalindSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
-        SwitchCapabilityHandler.apply_capabilities(self, [NoPSUCapability(), NoFanCapability()])
+        SwitchCapabilityHandler.apply_capabilities(
+            self, [NoPSUCapability(), NoFanCapability(), NoLeakageCapability()])
 
     def _init_constants(self):
         super()._init_constants()
@@ -3872,11 +3874,6 @@ class PortiaSwitch(RosalindSwitch):
         self._extend_firmware_by_cpld_amount()
         self.sma_amount = 2
         self._extend_firmware_by_sma_amount()
-
-        self.leakage_sensors_count = 0
-        self.list_of_leakages = []
-
-        self.unsupported_commands_list.extend(["nv show platform environment leakage"])
 
     def _init_gnmi_consts(self):
         super()._init_gnmi_consts()

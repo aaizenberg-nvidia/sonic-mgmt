@@ -80,6 +80,9 @@ def test_factory_resolves_portia_models(switch_type, expected):
     assert switch.require_mloop_setup is is_simx
     assert switch.show_platform_output["system-type"] == system_type
     assert switch.platform_inventory_switch_values["model"].regex.pattern == model
+    assert switch.leakage_sensors_count == 0
+    assert switch.list_of_leakages == []
+    assert "nv show platform environment leakage" in switch.unsupported_commands_list
 
 
 def test_simx_classes_are_thin_overlays_of_real_models():
