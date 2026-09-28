@@ -4,15 +4,12 @@ import pytest
 
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.switch_recovery import recover_dut_with_remote_reboot
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
-from ngts.nvos_constants.constants_nvos import SystemConsts, RebootConsts
+from ngts.nvos_constants.constants_nvos import RebootConsts
 from ngts.tests_nvos.system.reboot_telemetry_helpers import (
-    REBOOT_REASON_SHOW_EXEMPTED_ERR_MSGS,
     RebootReasonCategory,
     assert_nvue_gnmi_counters_match,
     gnmi_client_for_dut,
@@ -22,19 +19,26 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
 
 logger = logging.getLogger()
 
+# HW-MGMT raises this edge for both the power button and Redfish. power-mgmt
+# watches only this node and records reboot -H -r "Power Cycle" -u BMC
+# (NVBug 6828687; the old events/power_button watcher was removed in 6093193).
+GRACEFUL_PWR_OFF_EVENT = '/var/run/hw-management/events/graceful_pwr_off'
+GRACEFUL_PWR_OFF_USER = 'BMC'
+
 
 @pytest.mark.dut_reboot
 @pytest.mark.bmc
 def test_system_power_button(engines, devices, topology_obj):
     """
-    Test cover juliet power button functionality
+    Test cover power button functionality
         Test flow:
-            1. simulate power button and check switch going down
+            1. inject the graceful_pwr_off event and check the switch goes down
             2. recover switch with remote reboot
             3. check reboot reason
     """
     system = System()
-    expected_reason, expected_user = devices.dut.reboot_reason_dict[RebootConsts.POWER_BUTTON]
+    expected_reason = RebootConsts.REBOOT_REASON_POWER_CYCLE
+    expected_user = GRACEFUL_PWR_OFF_USER
     gnmi_client = gnmi_client_for_dut(engines.dut, devices.dut)
 
     with allure.step('NVUE and gNMI reboot counters must match before power button test'):
@@ -52,19 +56,12 @@ def test_system_power_button(engines, devices, topology_obj):
 
         if not is_redmine_issue_active([4003176][0]):
             with allure.step("Verify NVUE and gNMI reboot telemetry after reboot"):
-                reason_row = OutputParsingTool.parse_json_str_to_dictionary(
-                    system.reboot.reason.show(exempted_err_msgs=REBOOT_REASON_SHOW_EXEMPTED_ERR_MSGS)
-                ).get_returned_value()
-                reason_val = reason_row.get("reason", "")
-                if isinstance(reason_val, dict):
-                    reason_val = reason_val.get("reason", "")
-                telemetry_details = str(reason_val).strip()
                 verify_reboot_telemetry_after_reboot(
                     snapshot_before=telemetry_before,
                     system=system,
                     gnmi_client=gnmi_client,
                     expected_category=RebootReasonCategory.USER_INITIATED,
-                    expected_details=telemetry_details,
+                    expected_details=expected_reason,
                     expected_user=expected_user,
                 )
 
@@ -72,7 +69,8 @@ def test_system_power_button(engines, devices, topology_obj):
 
 
 def _simulate_power_button_press(engines):
-    engines.dut.run_cmd('sudo touch /var/run/hw-management/events/power_button')
-    engines.dut.run_cmd('sudo chmod 777 /var/run/hw-management/events/power_button')
-    engines.dut.run_cmd('sudo service power-mgmt restart')
-    engines.dut.run_cmd('sudo echo 1 > /var/run/hw-management/events/power_button')
+    status = engines.dut.run_cmd('systemctl is-active power-mgmt').strip()
+    assert status == 'active', f'power-mgmt is not active: {status!r}'
+    # Write 0 first so a node that is already 1 still produces an IN_MODIFY edge.
+    engines.dut.run_cmd(f"sudo sh -c 'echo 0 > {GRACEFUL_PWR_OFF_EVENT}'")
+    engines.dut.run_cmd(f"sudo sh -c 'echo 1 > {GRACEFUL_PWR_OFF_EVENT}'")
