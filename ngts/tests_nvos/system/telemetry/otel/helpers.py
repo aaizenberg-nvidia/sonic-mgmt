@@ -30,9 +30,11 @@ import yaml
 import ngts.tools.test_utils.allure_utils as allure
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 
-from ngts.nvos_constants.constants_nvos import TelemetryConsts
+from ngts.nvos_constants.constants_nvos import PeerPortConsts, TelemetryConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.FilesTool import FilesTool
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
@@ -644,6 +646,74 @@ def _stage_nvos_test01_stats_group(
         )
 
 
+def _peer_port_node(device) -> BaseComponent:
+    """Peer-port feature knob: ``system peer-port`` on IB, ``fae system peer-port`` on NVLink."""
+    return System().peer_port if device.is_ib() else Fae().system.peer_port
+
+
+def _peer_port_interval_sec(node: BaseComponent) -> int:
+    try:
+        shown = str(node.parse_show().get(PeerPortConsts.INTERVAL, "")).strip()
+        return int(shown) if shown else PeerPortConsts.INTERVAL_DEFAULT
+    except Exception:  # noqa: BLE001
+        return PeerPortConsts.INTERVAL_DEFAULT
+
+
+def _peer_counters_keys(dut) -> List[str]:
+    out = dut.run_cmd(
+        "sonic-db-cli COUNTERS_DB keys 'PEER_COUNTERS:*' 2>&1",
+        validate=False,
+        print_output=False,
+    )
+    return [line.strip() for line in (out or "").splitlines() if line.strip().startswith("PEER_COUNTERS:")]
+
+
+def enable_peer_port_feature(dut, devices=None) -> None:
+    """Enable the peer-port feature and wait for ``PEER_COUNTERS`` rows in ``COUNTERS_DB``.
+
+    ``nvswitch_peer_port_*`` is built from those rows. IB defaults the knob to
+    disabled; NVLink defaults it to enabled. Fails when no rows appear, which on IB
+    means no HCA peers, no running Subnet Manager, or a fabric that is not Active.
+    """
+    device = devices.dut if devices is not None else TestToolkit.get_device()
+    node = _peer_port_node(device)
+    with allure.step("Enable peer-port feature and wait for PEER_COUNTERS rows"):
+        set_kwargs = {"ask_for_confirmation": "-y"} if device.is_ib() else {}
+        node.set(
+            op_param_name=PeerPortConsts.STATE,
+            op_param_value=PeerPortConsts.STATE_ENABLED,
+            apply=True,
+            **set_kwargs,
+        ).verify_result()
+
+        interval = _peer_port_interval_sec(node)
+        deadline = (
+            time.time() +
+            OtelCollectorConst.PEER_PORT_ENABLE_GRACE_SEC +
+            interval * OtelCollectorConst.PEER_PORT_SETTLE_INTERVALS
+        )
+        keys = _peer_counters_keys(dut)
+        while not keys and time.time() < deadline:
+            time.sleep(min(interval, 2))
+            keys = _peer_counters_keys(dut)
+
+        assert keys, (
+            "peer-port is enabled but COUNTERS_DB has no PEER_COUNTERS rows, so no "
+            "nvswitch_peer_port_* series can be exported. On IB this means no HCA peers, "
+            "no running Subnet Manager, or a fabric that is not Active."
+        )
+        logger.info("peer-port enabled: %d PEER_COUNTERS rows", len(keys))
+
+
+def disable_peer_port_feature(dut, devices=None) -> None:
+    """Return the peer-port knob to its platform default (``unset``)."""
+    device = devices.dut if devices is not None else TestToolkit.get_device()
+    node = _peer_port_node(device)
+    with allure.step("Unset peer-port feature state"):
+        unset_kwargs = {"ask_for_confirmation": "-y"} if device.is_ib() else {}
+        node.unset(op_param=PeerPortConsts.STATE, apply=True, **unset_kwargs).verify_result()
+
+
 def enable_nvos_telemetry_families(
     dut,
     collector_ip: str,
@@ -755,6 +825,8 @@ def enable_nvos_telemetry_families(
                 system, dut, otlp_dest_ips, stats_group_id=sg_id_used
             )
         apply_telemetry_configuration(system, dut, is_nvos=True)
+        if TelemetryConsts.PEER_PORT_STATS in enabled:
+            enable_peer_port_feature(dut)
 
     return build_nvos_enablement(
         enabled,
@@ -808,6 +880,8 @@ def enable_nvos_families_export(
                 system, dut, collector_ips, stats_group_id=sg_id_used
             )
         apply_telemetry_configuration(system, dut, is_nvos=True)
+        if TelemetryConsts.PEER_PORT_STATS in enabled:
+            enable_peer_port_feature(dut)
 
     return build_nvos_enablement(
         enabled,
@@ -1099,6 +1173,13 @@ def teardown_otel_suite(engines, suite: OtelSuiteContext) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.error("OTEL teardown: NVUE cleanup raised: %s", exc)
             failures.append(f"NVUE cleanup: {exc}")
+
+    if suite.is_nvos:
+        try:
+            disable_peer_port_feature(engines.dut)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("OTEL teardown: peer-port unset raised: %s", exc)
+            failures.append(f"peer-port unset: {exc}")
 
     active_collectors = [c for c in (suite.primary, suite.secondary) if c is not None]
 
@@ -2556,9 +2637,8 @@ def dut_capabilities(
     if is_ib_router or _dut_has_ib_router_profile_enabled(dut_engine):
         present.add(OtelCapability.HAS_IB_ROUTER_PROFILE)
 
-    # peer-port-stats and selected platform metrics are NVLink-only; IB skips them.
+    # Selected platform metrics are NVLink-only; IB skips them.
     if not devices.dut.is_ib():
-        present.add(OtelCapability.SUPPORTS_PEER_PORT_STATS)
         present.add(OtelCapability.SUPPORTS_NVLINK_PLATFORM_METRICS)
 
     if _dut_has_connected_transceivers(dut_engine):

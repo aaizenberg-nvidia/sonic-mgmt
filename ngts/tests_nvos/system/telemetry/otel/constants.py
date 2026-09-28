@@ -16,7 +16,6 @@ class OtelCapability:
     """Capabilities emitted by ``helpers.dut_capabilities``."""
 
     HAS_IB_ROUTER_PROFILE = "has-ib-router-profile"
-    SUPPORTS_PEER_PORT_STATS = "supports-peer-port-stats"
     HAS_CONNECTED_TRANSCEIVERS = "has-connected-transceivers"
     # NVLink-only platform metrics (absent on IB / Crocodile-class systems).
     SUPPORTS_NVLINK_PLATFORM_METRICS = "supports-nvlink-platform-metrics"
@@ -388,6 +387,11 @@ class OtelCollectorConst:
     IB_ROUTER_STATS_SAMPLE_INTERVAL_SEC = 10
     PLATFORM_STATS_SAMPLE_INTERVAL_SEC = 60
 
+    # Peer-port feature enable: nmx-t-ib (re)start + IB discovery, then this many
+    # feature polling cycles for the first PEER_COUNTERS rows to land in COUNTERS_DB.
+    PEER_PORT_ENABLE_GRACE_SEC = 30
+    PEER_PORT_SETTLE_INTERVALS = 3
+
     # Floor of 70s ensures a platform-stats sample (60s + warm-up) always fits in the wait.
     OTEL_COLLECTION_WARM_UP_SEC = 10
     OTEL_COLLECTION_MIN_WAIT_SEC = 70
@@ -484,7 +488,6 @@ class OtelCollectorConst:
     OTLP_METRIC_NAME_PREFIXES_GATED_BY_CAPABILITY: Dict[str, Tuple[str, ...]] = {
         OtelCapability.HAS_CONNECTED_TRANSCEIVERS: ("nvswitch_platform_transceiver_",),
         OtelCapability.HAS_IB_ROUTER_PROFILE: ("nvswitch_ib_router_",),
-        OtelCapability.SUPPORTS_PEER_PORT_STATS: ("nvswitch_peer_port_",),
         OtelCapability.SUPPORTS_SYSTEM_POWER: ("nvswitch_platform_environment_pdb_",),
         # Both spellings: Cumulus renamed the family to ``power_supply_*`` and
         # ``validations.py`` still maps it back to the legacy ``psu_*``.
