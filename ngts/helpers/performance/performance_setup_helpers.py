@@ -881,7 +881,7 @@ def get_ar_congestion_thresholds(chip_type):
     return {
         "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.LOW_AR_THRESHOLD,
         "congestion_thresh_med": PerfConsts.MED_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.MED_AR_THRESHOLD,
-        "congestion_thresh_hi": PerfConsts.HIGH_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.HIGH_AR_THRESHOLD,
+        "congestion_thresh_hi": PerfConsts.get_high_ar_threshold(chip_type),
     }
 
 

@@ -112,8 +112,8 @@ class ChipBandwidth:
             (``congestion_thresh_med``), defaulting to
             ``PerfConsts.MED_AR_THRESHOLD``. Overridden on SPC6 entries.
         high_ar_threshold: Per-config AR high-congestion threshold
-            (``congestion_thresh_hi``), defaulting to
-            ``PerfConsts.HIGH_AR_THRESHOLD``. Overridden on SPC6 entries.
+            (``congestion_thresh_hi``). Left None to take the per-chip default
+            from ``PerfConsts.get_high_ar_threshold``. Overridden on SPC6 entries.
         ar_extended_thresholds: Ordered AR congestion thresholds 4-7 in cells,
             enabling SPC6 extended grading (port grades up to 7) on top of
             lo/med/hi. Left None to keep the legacy three-threshold grading,
@@ -133,7 +133,7 @@ class ChipBandwidth:
     link_phy_speed: Optional[str] = None
     low_ar_threshold: Optional[int] = None
     mid_ar_threshold: int = PerfConsts.MED_AR_THRESHOLD
-    high_ar_threshold: int = PerfConsts.HIGH_AR_THRESHOLD
+    high_ar_threshold: Optional[int] = None
     ar_extended_thresholds: Optional[Tuple[int, int, int, int]] = None
 
 
@@ -302,12 +302,14 @@ class LanesConfig:
                                 else (PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
                                       else PerfConsts.LOW_AR_THRESHOLD))
             mid_ar_threshold = chip_speed_config.mid_ar_threshold
-            high_ar_threshold = chip_speed_config.high_ar_threshold
+            high_ar_threshold = (chip_speed_config.high_ar_threshold
+                                 if chip_speed_config.high_ar_threshold is not None
+                                 else PerfConsts.get_high_ar_threshold(chip_type))
             ar_extended_thresholds = chip_speed_config.ar_extended_thresholds
         else:
             low_ar_threshold = PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD
             mid_ar_threshold = PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.MED_AR_THRESHOLD
-            high_ar_threshold = PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.HIGH_AR_THRESHOLD
+            high_ar_threshold = PerfConsts.get_high_ar_threshold(chip_type)
             ar_extended_thresholds = None
         conf_args = {
             "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",

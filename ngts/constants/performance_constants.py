@@ -149,7 +149,15 @@ class PerfConsts:
     MED_AR_THRESHOLD = 800
     MED_AR_THRESHOLD_SPC6 = 800
     HIGH_AR_THRESHOLD = 2000
+    # SPC4 AR does not recover from repeated link toggles with hi=2000: TC occupancy stays
+    # above it and TX is stuck at ~88% (test_ar_perf_link_flap[port_repeated_toggle]).
+    HIGH_AR_THRESHOLD_SPC4 = 1200
     HIGH_AR_THRESHOLD_SPC6 = 1200
+    # Chip types not listed fall back to HIGH_AR_THRESHOLD (see get_high_ar_threshold).
+    HIGH_AR_THRESHOLD_BY_CHIP = {
+        "SPC4": HIGH_AR_THRESHOLD_SPC4,
+        "SPC6": HIGH_AR_THRESHOLD_SPC6
+    }
     # AR extended grading adds congestion thresholds 4-7 (port grades up to 7) on top of
     # lo/med/hi. SPC6 is the first generation to support it - add newer generations here
     # as they arrive (see get_ar_extended_grading_conf_args).
@@ -411,6 +419,18 @@ class PerfConsts:
     TIMEOUT_FOR_INSTALL_MODE = 120
     IMAGE_SETTLING_TIME = 30
     MAX_CELLS_RANGE_FOR_BINARY_SEARCH = 100
+
+    @staticmethod
+    def get_high_ar_threshold(chip_type):
+        """Return the legacy AR high-congestion threshold (``congestion_thresh_hi``) for a chip type.
+
+        Args:
+            chip_type: ASIC generation of the DUT (e.g. "SPC4", "SPC6").
+
+        Returns:
+            The threshold in cells.
+        """
+        return PerfConsts.HIGH_AR_THRESHOLD_BY_CHIP.get(chip_type, PerfConsts.HIGH_AR_THRESHOLD)
 
     @staticmethod
     def get_ar_extended_grading_conf_args(chip_type, extended_thresholds=None):

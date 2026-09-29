@@ -563,11 +563,11 @@ class NvuePerformanceCli(PerformanceCommon):
         if conf_args['params']:
             ctl = conf_args.get('params', {}).get("low_ar_thresh", PerfConsts.LOW_AR_THRESHOLD)
             ctm = conf_args.get('params', {}).get("med_ar_thresh", PerfConsts.MED_AR_THRESHOLD)
-            cth = conf_args.get('params', {}).get("high_ar_thresh", PerfConsts.HIGH_AR_THRESHOLD)
+            cth = conf_args.get('params', {}).get("high_ar_thresh", PerfConsts.get_high_ar_threshold(chip_type))
         else:
             ctl = PerfConsts.LOW_AR_THRESHOLD if chip_type != "SPC6" else PerfConsts.LOW_AR_THRESHOLD_SPC6
             ctm = PerfConsts.MED_AR_THRESHOLD
-            cth = PerfConsts.HIGH_AR_THRESHOLD
+            cth = PerfConsts.get_high_ar_threshold(chip_type)
 
         # SDK AR buffer modes: SX_AR_BUFFER_MODE_INGRESS_E (ibm) and SX_AR_BUFFER_MODE_AUTO_E (rebalancer).
         # Cumulus switchd maps these to ar.ibm = ingress | auto.
