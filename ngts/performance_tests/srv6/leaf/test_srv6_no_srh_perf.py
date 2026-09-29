@@ -565,6 +565,25 @@ class TestSRv6NoSrhPerf:
         if cmd_list:
             self.engine.run_cmd_set(cmd_list)
 
+    def _clear_counters(self, label: str) -> None:
+        """Clear DUT port and queue counters right before a traffic run.
+
+        The SDK-level force clear must precede ``clear_counters``, otherwise
+        the sonic-clear baseline is snapshotted on pre-reset values. Callers
+        pass ``CLEAR_COUNTERS=False`` to the traffic validator so these
+        counters span the whole traffic run.
+
+        Args:
+            label (str): Run identifier shown in the allure step title.
+
+        Returns:
+            None
+        """
+        with allure.step(f"[{label}] Clear counters"):
+            self.cli_object.interface.clear_counters_by_force()
+            self.cli_object.interface.clear_counters()
+            self.cli_object.interface.clear_queue_counters()
+
     @pytest.mark.FR_4867615()
     @pytest.mark.parametrize("packet_size", CHOSEN_PACKET_SIZES_ENTROPY_COMPARISON)
     def test_no_srh_entropy_comparison(self, request, packet_size):
@@ -678,6 +697,8 @@ class TestSRv6NoSrhPerf:
                 create_workload_stream=no_srh_stream,
                 upstream_ports=upstream, downstream_ports=downstream)
 
+        self._clear_counters(f"{label}-entropy")
+
         with allure.step(f"Run {label}-entropy traffic on all ports"):
             set_shaper_on_traffic_gen(self.players, speed=self.conf_args["speed"],
                                       shaper_value=self.shaper_value)
@@ -693,12 +714,15 @@ class TestSRv6NoSrhPerf:
                     ValidationConsts.TX: min(self.shaper_value, MRCConsts.DUT_TX_UTIL_TH),
                     ValidationConsts.RX: min(self.shaper_value, MRCConsts.DUT_TX_UTIL_TH)},
             }
+            samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
+            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(
                 players=self.players, test_name=test_name,
                 scenario=self.scenario, chip_type=self.chip_type,
                 bw_threshold=bw_threshold,
                 tc_occ_threshold=None,
-                power_threshold=self.power_thresholds_by_chip_type)
+                power_threshold=self.power_thresholds_by_chip_type,
+                samples_params_dict=samples_params_dict)
             traffic_validation_jsons_list, violations_list = run_validation(
                 config, ignore_violations=True)
 
