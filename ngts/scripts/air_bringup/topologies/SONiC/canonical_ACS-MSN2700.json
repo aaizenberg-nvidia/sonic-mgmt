@@ -1,0 +1,57 @@
+{
+  "nodes": {
+    "dut": {
+      "emulation_type": "SWITCH_ETHERNET",
+      "model": "MSN2700",
+      "os": "dummy_os",
+      "memory": 8192,
+      "cpu": 4
+    },
+    "ha": {
+      "os": "sonic_vm",
+      "memory": 2048,
+      "cpu": 2,
+      "interfaces": [
+        {"name": "eth0"},
+        {"name": "eth1"},
+        {"name": "eth2"}
+      ]
+    },
+    "hb": {
+      "os": "sonic_vm",
+      "memory": 2048,
+      "cpu": 2,
+      "interfaces": [
+        {"name": "eth0"},
+        {"name": "eth1"},
+        {"name": "eth2"}
+      ]
+    },
+    "hypervisor": {
+      "os": "generic_vmhost",
+      "cpu": 1,
+      "memory": 2560,
+      "storage": 12
+    }
+  },
+  "links": [
+    [{"node": "ha", "interface": "eth1"}, {"node": "dut", "interface": "Ethernet0"}],
+    [{"node": "ha", "interface": "eth2"}, {"node": "dut", "interface": "Ethernet60"}],
+    [{"node": "hb", "interface": "eth1"}, {"node": "dut", "interface": "Ethernet64"}],
+    [{"node": "hb", "interface": "eth2"}, {"node": "dut", "interface": "Ethernet124"}],
+    [{"node": "dut", "interface": "Ethernet4"}, {"node": "dut", "interface": "Ethernet8"}],
+    [{"node": "dut", "interface": "Ethernet12"}, {"node": "dut", "interface": "Ethernet16"}],
+    [{"node": "dut", "interface": "Ethernet20"}, {"node": "dut", "interface": "Ethernet24"}],
+    [{"node": "dut", "interface": "Ethernet28"}, {"node": "dut", "interface": "Ethernet32"}],
+    [{"node": "dut", "interface": "Ethernet36"}, {"node": "dut", "interface": "Ethernet40"}],
+    [{"node": "dut", "interface": "Ethernet44"}, {"node": "dut", "interface": "Ethernet48"}],
+    [{"node": "dut", "interface": "Ethernet52"}, {"node": "dut", "interface": "Ethernet56"}],
+    [{"node": "dut", "interface": "Ethernet68"}, {"node": "dut", "interface": "Ethernet72"}],
+    [{"node": "dut", "interface": "Ethernet76"}, {"node": "dut", "interface": "Ethernet80"}],
+    [{"node": "dut", "interface": "Ethernet84"}, {"node": "dut", "interface": "Ethernet88"}],
+    [{"node": "dut", "interface": "Ethernet92"}, {"node": "dut", "interface": "Ethernet96"}],
+    [{"node": "dut", "interface": "Ethernet100"}, {"node": "dut", "interface": "Ethernet104"}],
+    [{"node": "dut", "interface": "Ethernet108"}, {"node": "dut", "interface": "Ethernet112"}],
+    [{"node": "dut", "interface": "Ethernet116"}, {"node": "dut", "interface": "Ethernet120"}]
+  ]
+}

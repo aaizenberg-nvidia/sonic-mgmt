@@ -9,6 +9,7 @@ import numpy as np
 
 from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
 from devts.infra.tools.topology_tools.topology_setup_utils import get_topology_by_setup_name
+from ngts.tools.topology_tools.air_topology_kwargs import get_air_topology_kwargs
 from ngts.constants.constants import SerialConsts
 
 logging.basicConfig(level=logging.DEBUG)
@@ -226,7 +227,8 @@ if __name__ == "__main__":
     replace_ptfadapter_init_py(mgmt_repo)
 
     if 'air' in setup_name:
-        topology = get_topology_by_setup_name(setup_name=setup_name, slow_cli=False)
+        topology = get_topology_by_setup_name(
+            setup_name=setup_name, slow_cli=False, **get_air_topology_kwargs(setup_name))
         ansible_host = topology.players['dut']['engine'].ip
         ansible_port = topology.players['dut']['engine'].ssh_port
         devdescription = json.loads(topology.players['dut']['attributes'].noga_query_data['attributes']['Specific']['devdescription'])

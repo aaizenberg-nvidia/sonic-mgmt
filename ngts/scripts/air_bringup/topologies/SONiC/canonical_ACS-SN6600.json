@@ -1,0 +1,108 @@
+{
+  "nodes": {
+    "dut": {
+      "emulation_type": "SWITCH_ETHERNET",
+      "model": "SN6600",
+      "os": "dummy_os",
+      "memory": 16384,
+      "cpu": 4
+    },
+    "ha": {
+      "os": "sonic_vm",
+      "memory": 2048,
+      "cpu": 2,
+      "interfaces": [
+        {"name": "eth0"},
+        {"name": "eth1"},
+        {"name": "eth2"}
+      ]
+    },
+    "hb": {
+      "os": "sonic_vm",
+      "memory": 2048,
+      "cpu": 2,
+      "interfaces": [
+        {"name": "eth0"},
+        {"name": "eth1"},
+        {"name": "eth2"}
+      ]
+    },
+    "hypervisor": {
+      "os": "generic_vmhost",
+      "cpu": 1,
+      "memory": 2560,
+      "storage": 12
+    }
+  },
+  "links": [
+      [{"node": "ha", "interface": "eth1"}, {"node": "dut", "interface": "Ethernet0", "split": "2x"}],
+      [{"node": "ha", "interface": "eth2"}, {"node": "dut", "interface": "Ethernet252", "split": "2x"}],
+      [{"node": "hb", "interface": "eth1"}, {"node": "dut", "interface": "Ethernet256", "split": "2x"}],
+      [{"node": "hb", "interface": "eth2"}, {"node": "dut", "interface": "Ethernet508", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet4", "split": "2x"}, {"node": "dut", "interface": "Ethernet248", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet260", "split": "2x"}, {"node": "dut", "interface": "Ethernet504", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet8", "split": "2x"}, {"node": "dut", "interface": "Ethernet16", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet12", "split": "2x"}, {"node": "dut", "interface": "Ethernet20", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet24", "split": "2x"}, {"node": "dut", "interface": "Ethernet32", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet28", "split": "2x"}, {"node": "dut", "interface": "Ethernet36", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet40", "split": "2x"}, {"node": "dut", "interface": "Ethernet48", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet44", "split": "2x"}, {"node": "dut", "interface": "Ethernet52", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet56", "split": "2x"}, {"node": "dut", "interface": "Ethernet64", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet60", "split": "2x"}, {"node": "dut", "interface": "Ethernet68", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet72", "split": "2x"}, {"node": "dut", "interface": "Ethernet80", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet76", "split": "2x"}, {"node": "dut", "interface": "Ethernet84", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet88", "split": "2x"}, {"node": "dut", "interface": "Ethernet96", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet92", "split": "2x"}, {"node": "dut", "interface": "Ethernet100", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet104", "split": "2x"}, {"node": "dut", "interface": "Ethernet112", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet108", "split": "2x"}, {"node": "dut", "interface": "Ethernet116", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet120", "split": "2x"}, {"node": "dut", "interface": "Ethernet128", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet124", "split": "2x"}, {"node": "dut", "interface": "Ethernet132", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet136", "split": "2x"}, {"node": "dut", "interface": "Ethernet144", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet140", "split": "2x"}, {"node": "dut", "interface": "Ethernet148", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet152", "split": "2x"}, {"node": "dut", "interface": "Ethernet160", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet156", "split": "2x"}, {"node": "dut", "interface": "Ethernet164", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet168", "split": "2x"}, {"node": "dut", "interface": "Ethernet176", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet172", "split": "2x"}, {"node": "dut", "interface": "Ethernet180", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet184", "split": "2x"}, {"node": "dut", "interface": "Ethernet192", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet188", "split": "2x"}, {"node": "dut", "interface": "Ethernet196", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet200", "split": "2x"}, {"node": "dut", "interface": "Ethernet208", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet204", "split": "2x"}, {"node": "dut", "interface": "Ethernet212", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet216", "split": "2x"}, {"node": "dut", "interface": "Ethernet224", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet220", "split": "2x"}, {"node": "dut", "interface": "Ethernet228", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet232", "split": "2x"}, {"node": "dut", "interface": "Ethernet240", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet236", "split": "2x"}, {"node": "dut", "interface": "Ethernet244", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet264", "split": "2x"}, {"node": "dut", "interface": "Ethernet272", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet268", "split": "2x"}, {"node": "dut", "interface": "Ethernet276", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet280", "split": "2x"}, {"node": "dut", "interface": "Ethernet288", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet284", "split": "2x"}, {"node": "dut", "interface": "Ethernet292", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet296", "split": "2x"}, {"node": "dut", "interface": "Ethernet304", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet300", "split": "2x"}, {"node": "dut", "interface": "Ethernet308", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet312", "split": "2x"}, {"node": "dut", "interface": "Ethernet320", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet316", "split": "2x"}, {"node": "dut", "interface": "Ethernet324", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet328", "split": "2x"}, {"node": "dut", "interface": "Ethernet336", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet332", "split": "2x"}, {"node": "dut", "interface": "Ethernet340", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet344", "split": "2x"}, {"node": "dut", "interface": "Ethernet352", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet348", "split": "2x"}, {"node": "dut", "interface": "Ethernet356", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet360", "split": "2x"}, {"node": "dut", "interface": "Ethernet368", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet364", "split": "2x"}, {"node": "dut", "interface": "Ethernet372", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet376", "split": "2x"}, {"node": "dut", "interface": "Ethernet384", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet380", "split": "2x"}, {"node": "dut", "interface": "Ethernet388", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet392", "split": "2x"}, {"node": "dut", "interface": "Ethernet400", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet396", "split": "2x"}, {"node": "dut", "interface": "Ethernet404", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet408", "split": "2x"}, {"node": "dut", "interface": "Ethernet416", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet412", "split": "2x"}, {"node": "dut", "interface": "Ethernet420", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet424", "split": "2x"}, {"node": "dut", "interface": "Ethernet432", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet428", "split": "2x"}, {"node": "dut", "interface": "Ethernet436", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet440", "split": "2x"}, {"node": "dut", "interface": "Ethernet448", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet444", "split": "2x"}, {"node": "dut", "interface": "Ethernet452", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet456", "split": "2x"}, {"node": "dut", "interface": "Ethernet464", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet460", "split": "2x"}, {"node": "dut", "interface": "Ethernet468", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet472", "split": "2x"}, {"node": "dut", "interface": "Ethernet480", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet476", "split": "2x"}, {"node": "dut", "interface": "Ethernet484", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet488", "split": "2x"}, {"node": "dut", "interface": "Ethernet496", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet492", "split": "2x"}, {"node": "dut", "interface": "Ethernet500", "split": "2x"}],
+      [{"node": "dut", "interface": "Ethernet512", "split": "1x"}, {"node": "dut", "interface": "Ethernet520", "split": "1x"}],
+      [{"node": "dut", "interface": "Ethernet528", "split": "1x"}, {"node": "dut", "interface": "Ethernet536", "split": "1x"}]
+
+  ]
+}

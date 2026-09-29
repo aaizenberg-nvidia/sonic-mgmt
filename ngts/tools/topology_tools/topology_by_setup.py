@@ -1,9 +1,10 @@
+import logging
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from devts.infra.tools.topology_tools.topology_setup_utils import get_topology_by_setup_name, create_player_entry
 from ngts.cli_wrappers.linux.linux_cli import LinuxCli
 from ngts.constants.constants import PlayersAliases, BmcDeployConstants
-import logging
 from ngts.common.util import get_specified_installed_dpu_indexes
+from ngts.tools.topology_tools.air_topology_kwargs import get_air_topology_kwargs
 
 logger = logging.getLogger()
 
@@ -26,7 +27,9 @@ def get_dpu_player_key(dut_alias, device_alias):
 def get_topology_by_setup_name_and_aliases(
     setup_name, slow_cli, override_type=False
 ):
-    topology = get_topology_by_setup_name(setup_name, slow_cli, override_type)
+
+    topology = get_topology_by_setup_name(
+        setup_name, slow_cli, override_type, **get_air_topology_kwargs(setup_name))
     topology = update_dut_alias(topology)
     for dut_alias, dut_info in list(topology.players.items()):
         dut_name = dut_info["attributes"].noga_query_data["attributes"][

@@ -1,0 +1,32 @@
+{
+  "nodes": {
+    "dut": {
+      "cpu": 8,
+      "memory": 16384,
+      "nic_model": "e1000",
+      "emulation_type": "SWITCH_NVLINK",
+      "model": "n7200_ld",
+      "guid": "1024",
+      "chassis_sn": "3210987654321",
+      "tray_index": "1",
+      "slot_number": "10",
+      "topology_id": "128",
+      "simulator_image": "XX.2020.1984"
+    },
+    "hypervisor": {
+      "cpu": 1,
+      "memory": 2560,
+      "storage": 12,
+      "nic_model": "virtio",
+      "os": "generic_vmhost"
+    }
+  },
+  "links": [
+    [{"node": "dut", "interface": "acp1"}, {"node": "dut", "interface": "acp2"}],
+    [{"node": "dut", "interface": "acp3"}, {"node": "dut", "interface": "acp4"}],
+    [{"node": "dut", "interface": "fnma0p1"}, {"node": "dut", "interface": "fnma1p2"}],
+    [{"node": "dut", "interface": "fnma1p1"}, {"node": "dut", "interface": "fnma2p2"}],
+    [{"node": "dut", "interface": "fnma2p1"}, {"node": "dut", "interface": "fnma3p2"}],
+    [{"node": "dut", "interface": "fnma3p1"}, {"node": "dut", "interface": "fnma0p2"}]
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "model": "n5110_ld",
+  "num_asics": 4,
+  "emulation_type": "SWITCH_NVLINK",
+  "nic_model": "e1000",
+  "resources": {
+    "hypervisor": {
+      "cpu": 2,
+      "memory": 4096,
+      "storage": 12
+    },
+    "oob-mgmt-server": {
+      "cpu": 4,
+      "memory": 4096,
+      "storage": 10
+    }
+  }
+}

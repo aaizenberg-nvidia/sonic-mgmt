@@ -1,0 +1,25 @@
+{
+  "model": "n6100_ld_sa",
+  "num_asics": 1,
+  "emulation_type": "SWITCH_NVLINK",
+  "nic_model": "e1000",
+  "chassis_sn": "3210987654321",
+  "topology_id": "128",
+  "resources": {
+    "hypervisor": {
+      "cpu": 2,
+      "memory": 4096,
+      "storage": 12
+    },
+    "oob-mgmt-server": {
+      "cpu": 4,
+      "memory": 4096,
+      "storage": 10
+    }
+  },
+  "instance_specific": {
+    "guid": ["1024", "2048", "3072", "4096", "5120", "6144", "7168", "8192", "9216"],
+    "tray_index": ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    "slot_number": ["10", "11", "12", "13", "14", "15", "16", "17", "18"]
+  }
+}
