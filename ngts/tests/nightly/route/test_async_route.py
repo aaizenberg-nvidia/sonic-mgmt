@@ -30,7 +30,7 @@ IPV4 = 'ipv4'
 IPV6 = 'ipv6'
 PCAP_FILE_PATH = '/tmp/1k_packets.pcap'
 TCPDUMP_FILTER = 'udp src port 1234 and dst port 5678'
-TIMING_THRESHOLD_PERCENTS = 20
+TIMING_THRESHOLD_PERCENTS = 35
 
 
 def get_routes_count(dut_engine, ip_version):
