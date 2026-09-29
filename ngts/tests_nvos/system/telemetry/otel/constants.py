@@ -9,7 +9,8 @@ metric-name gating used by the OTel coverage tests.
 
 import enum
 from typing import Dict, Tuple
-from ngts.nvos_constants.constants_nvos import TelemetryConsts
+
+from ngts.nvos_constants.constants_nvos import DatabaseConst, TelemetryConsts
 
 
 class OtelCapability:
@@ -536,3 +537,65 @@ class OtelSanityTestConst:
     # The one family the suite bring-up enables, and the OTLP prefix its metrics carry.
     BASELINE_FAMILY = TelemetryConsts.INTERFACE_STATS
     BASELINE_METRIC_PREFIX = "nvswitch_interface_"
+
+
+class OtelDbValidationConst:
+    """Inputs for the OTEL vs Redis test (``test_otel_all_metrics_vs_db``)."""
+    COLLECTION_LABEL = "db_validation"
+
+    # Redis key separator per DB, following sonic's database_config.json convention.
+    DB_KEY_SEPARATOR: Dict[str, str] = {
+        DatabaseConst.CONFIG_DB_NAME: "|",
+        DatabaseConst.STATE_DB_NAME: "|",
+        DatabaseConst.APPL_DB_NAME: ":",
+        DatabaseConst.COUNTERS_DB_NAME: ":",
+    }
+    # Declared labels used to pair a Redis row with an OTEL series (see MetricSpec.identity_labels):
+    # isKey / extractedFromPattern labels plus these well-known identity fields.
+    IDENTITY_LABEL_NAMES: Tuple[str, ...] = (
+        "interface", "name", "channel", "lane", "direction", "id", "type", "partition", "slot",
+    )
+
+    # Port sample: one up port per oper speed, topped up to UP_PORT_COUNT, plus down ports.
+    UP_PORT_COUNT = 3
+    DOWN_PORT_COUNT = 2
+    # Peers of the selected ports; random peers are used when none of them has one.
+    FALLBACK_PEER_COUNT = 2
+    PORT_SPEED_FIELD = "SAI_PORT_STAT_INFINIBAND_SPEED_OPER"
+
+    # The COUNTERS table collector (switch-level ASIC power) only reads switch objects.
+    SWITCH_OBJECT_OID_GLOB = "oid:0x21*"
+    # interface-id COUNTERS collector adds these fields to every port row.
+    SWITCH_COUNTERS_CONSTANT_FIELDS: Dict[str, str] = {"in-broadcast-pkts": "0", "out-broadcast-pkts": "0"}
+
+    FAMILY_BY_PREFIX: Tuple[Tuple[str, str], ...] = (
+        ("nvswitch_interface_", TelemetryConsts.INTERFACE_STATS),
+        ("nvswitch_peer_port_", "peer-port-stats"),
+        ("nvswitch_platform_", "platform-stats"),
+        ("nvswitch_ib_router_", "ib-router-stats"),
+    )
+
+    # Gauges that only grow are checked like counters: pre <= otel <= post.
+    COUNTER_NAME_SUBSTRINGS: Tuple[str, ...] = ("time_since",)
+    # Enumerations and info series must match one of the snapshots exactly.
+    EXACT_NAME_SUBSTRINGS: Tuple[str, ...] = ("_alarm", "_state", "_status", "_info", "_fault", "_mode")
+    # Absolute tolerance (percentage points) for utilization gauges.
+    GAUGE_ABS_TOLERANCE: Tuple[Tuple[str, float], ...] = (("cpu_utilization", 30.0),)
+    # Cumulus-style max % deviation for sampled gauges; first substring match wins.
+    GAUGE_DEVIATION_PCT: Tuple[Tuple[str, float], ...] = (
+        ("_ber", 100.0),
+        ("temp", 30.0),
+        ("voltage", 20.0),
+        ("current", 35.0),
+        ("power", 35.0),
+        ("fan", 25.0),
+        ("memory", 25.0),
+        ("disk", 25.0),
+    )
+    DEFAULT_GAUGE_DEVIATION_PCT = 25.0
+    # UMF skips values Redis reports as unset.
+    UNSET_VALUE = -1
+    # Datapoints stamped this close to the post snapshot may carry values read after it.
+    SAMPLE_READ_MARGIN_NS = 2_000_000_000
+    # Failing series listed in the pytest message; the full table is in the Allure attachment.
+    MAX_FAILURES_IN_MESSAGE = 30

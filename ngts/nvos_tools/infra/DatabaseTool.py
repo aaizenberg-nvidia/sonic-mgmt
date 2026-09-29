@@ -1,4 +1,5 @@
 import logging
+import shlex
 import socket
 from typing import Any
 
@@ -40,6 +41,22 @@ class DatabaseTool:
     def redis_cli_eval(engine, db_num, script, keys):
         keys_str = " ".join(f'"{key}"' for key in keys)
         cmd = f'redis-cli -n {db_num} EVAL "{script}" {len(keys)} {keys_str}'
+        logger.info(f'Running {cmd}')
+        return engine.run_cmd(cmd)
+
+    @staticmethod
+    def sonic_db_cli_eval(engine: ProxySshEngine, asic: str, db_name: str, script: str, keys):
+        """Run a Lua ``EVAL`` via ``sonic-db-cli``, which routes to the DB's own redis instance.
+
+        Unlike :meth:`redis_cli_eval` (raw ``redis-cli -n <id>``, always the default
+        ``127.0.0.1:6379`` instance), ``sonic-db-cli`` reads ``database_config.json`` to
+        find the right instance/socket for ``db_name`` - required on multi-instance
+        setups where DBs like ``APPL_DB``/``COUNTERS_DB`` are not on the default port.
+        """
+        asic = f"-n {asic} " if asic else ""
+        # Keys come from live Redis data, so quote every argument for the shell.
+        keys_str = " ".join(shlex.quote(key) for key in keys)
+        cmd = f'sonic-db-cli {asic}{db_name} EVAL {shlex.quote(script)} {len(keys)} {keys_str}'
         logger.info(f'Running {cmd}')
         return engine.run_cmd(cmd)
 
