@@ -44,8 +44,9 @@ from ngts.helpers.performance.performance_recovery import get_performance_sessio
 from ngts.helpers.performance.performance_setup_helpers import (
     ValidationConfig, apply_test_configuration_guarded, configure_incremental_dips_on_tg,
     get_obj_method, restore_session_basic_configuration, run_traffic,
-    run_validation, set_ports_admin_state, skip_test_on_unsupported_chip_type,
-    skip_test_on_unsupported_os, validate_perf_dut_ingress_buffer_mode,
+    run_validation, set_ports_admin_state, skip_dvs_leaf_scenario_on_active_bug,
+    skip_test_on_unsupported_chip_type, skip_test_on_unsupported_os,
+    validate_perf_dut_ingress_buffer_mode,
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
@@ -491,6 +492,7 @@ class _SpcXRATestBase:
         Args:
             request: pytest ``FixtureRequest``.
         """
+        skip_dvs_leaf_scenario_on_active_bug(self.cli_object, self.chip_type)
         test_name = get_perf_test_name(request)
         packet_size = PerfConsts.PACKET_SIZE_4K
         add_test_mongo_metadata(

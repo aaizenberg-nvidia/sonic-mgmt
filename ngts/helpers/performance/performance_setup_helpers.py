@@ -14,6 +14,7 @@ from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, Vali
 from ngts.helpers.thread_log_filter import redirect_thread_stdout
 from ngts.helpers.custom_catch_exception_thread import CatchExceptionThread, parse_threads_exceptions_at_join
 from devts.infra.tools.exceptions.test_issue import TestIssue
+from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.helpers.performance.performance_db_helpers import add_test_mongo_metadata, get_perf_test_name
 from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_utilization_fairness, validate_tc,
                                                       validate_counters, validate_no_drops_on_tg_ports,
@@ -34,6 +35,11 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import Optional, List, Dict, Any, Callable
 
 logger = logging.getLogger()
+
+DVS_LEAF_SCENARIO_REDMINE_ISSUE = 5308120
+# Bug #5308120: the leaf scenarios fail on DVS SPC6. While the issue is open they are skipped on
+# that NOS and chip only; once it is closed they run again without a code change.
+DVS_LEAF_SCENARIO_SKIPPED_CHIP = "SPC6"
 
 
 def get_is_simx(players):
@@ -860,6 +866,29 @@ def skip_test_on_unsupported_os(cli_obj, unsupported_os):
             pytest.skip(f"This test is not supported in {CliType.DVS}")
         elif unsupported_os == CliType.SONIC and isinstance(cli_obj, SonicCli):
             pytest.skip(f"This test is not supported in {CliType.SONIC}")
+
+
+def skip_dvs_leaf_scenario_on_active_bug(cli_obj: object, chip_type: str) -> None:
+    """
+    Skips a leaf scenario on DVS SPC6 while the DVS leaf scenario Redmine issue is active.
+
+    The NOS and chip are checked before Redmine is queried, so every other NOS and chip
+    returns without a Redmine request. A Redmine failure reports the issue as inactive,
+    so the test runs.
+
+    Args:
+        cli_obj (object): DUT CLI object (players['dut']['cli']).
+        chip_type (str): Chip type of the DUT, e.g. "SPC6".
+
+    Raises:
+        pytest.skip.Exception: When the DUT is DVS on the skipped chip and the issue is active.
+    """
+    if not isinstance(cli_obj, DvsCli) or chip_type != DVS_LEAF_SCENARIO_SKIPPED_CHIP:
+        return
+    is_issue_active, issue_id = is_redmine_issue_active([DVS_LEAF_SCENARIO_REDMINE_ISSUE])
+    if is_issue_active:
+        pytest.skip(f"Leaf scenario is skipped on {CliType.DVS} {chip_type} "
+                    f"while Redmine issue {issue_id} is active")
 
 
 def skip_test_on_unsupported_chip_type(current_chip_type, unsupported_chip_type):

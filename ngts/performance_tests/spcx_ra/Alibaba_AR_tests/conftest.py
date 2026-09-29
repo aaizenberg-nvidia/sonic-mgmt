@@ -15,7 +15,7 @@ from ngts.constants.constants import BugHandlerConst, CliType, InfraConst
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration_guarded, restore_session_basic_configuration,
     save_session_base_configuration, skip_test_on_unsupported_os,
-    get_ar_congestion_thresholds)
+    skip_dvs_leaf_scenario_on_active_bug, get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
@@ -140,6 +140,8 @@ def alibaba_scenarios_fixture(request, players, chip_type, scenario_configuratio
     """
     if scenario_configuration is None:
         raise ValueError("scenario_configuration must be provided")
+    if not scenario_configuration.two_sided_ar:
+        skip_dvs_leaf_scenario_on_active_bug(players['dut']['cli'], chip_type)
     is_ipv6 = basic_setup_configuration
     conf_args = get_conf_args(is_ipv6, chip_type)
     try:

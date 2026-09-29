@@ -17,6 +17,7 @@ from ngts.helpers.performance.performance_setup_helpers import (save_base_config
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration,
                                                                 skip_test_on_unsupported_os,
+                                                                skip_dvs_leaf_scenario_on_active_bug,
                                                                 get_ar_congestion_thresholds)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.performance_tests.conftest import get_all_players_ports
@@ -408,11 +409,14 @@ def move_alibaba_acl_dump(players):
     )
 
 
-def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations):
+def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations, dut_cli_obj, chip_type):
     """
     Apply all skip conditions for alibaba leaf scenario tests.
     Must be called before apply_test_configuration so skips happen without configuring the DUT.
     """
+    if test_params.is_leaf_scenario:
+        skip_dvs_leaf_scenario_on_active_bug(dut_cli_obj, chip_type)
+
     if test_params.test_id in ALI_PWS_TESTS_LIST and ip_combinations.ipv6_enabled == "ipv6_enabled":
         pytest.skip(f"Skipping PWS test {test_params.test_id} with IPv6 enabled")
 
@@ -437,8 +441,8 @@ def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations):
 
 
 @pytest.fixture(scope='class', autouse=True)
-def basic_setup_configuration(players, conf_args, test_params, ip_combinations):
-    _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations)
+def basic_setup_configuration(players, conf_args, test_params, ip_combinations, chip_type):
+    _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations, players['dut']['cli'], chip_type)
 
     try:
         with allure.step('Save Players initial Configuration'):
