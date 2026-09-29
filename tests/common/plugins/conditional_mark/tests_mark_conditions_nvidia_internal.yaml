@@ -831,6 +831,13 @@ ip/test_mgmt_ipv6_only.py::test_ntp_ipv6_only:
     conditions:
     - "'r-lionfish-13' in testbed"
 
+packet_trimming/test_packet_trimming_.*::test_trimming_during_warm_reboot:
+  regex: true
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303333"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5303333 and 'sn5640' in platform"
+
 passw_hardening/test_passw_hardening.py:
   skip:
     reason: "Testcase skipped because the test is related to performance, no meaningful to run it on simx platform "
