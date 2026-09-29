@@ -12,6 +12,7 @@ import time
 import yaml
 
 import allure
+import pytest
 from retry.api import retry_call
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 try:
@@ -126,6 +127,16 @@ def checkout_sonic_mgmt_change(sonic_mgmt_change):
     git_checkout_command = ["git", "-c", safe_directory_arg, "checkout", ref]
     logger.info("About to execute command: %s", git_checkout_command)
     subprocess.run(git_checkout_command, cwd=repo_root, check=True)
+
+
+def get_image_fw_version(image_path):
+    """Return FW_VERSION_SWITCH from the README next to the SONiC installer."""
+    readme_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(image_path))), 'README')
+    with open(readme_path) as readme:
+        for line in readme:
+            if line.startswith('FW_VERSION_SWITCH:'):
+                return line.split()[1]
+    raise Exception(f'FW_VERSION_SWITCH not found in {readme_path}')
 
 
 class DeploymentContext:
@@ -803,6 +814,11 @@ class DeployOrchestrator:
 
     def execute_installation(self):
         """Execute installation phase for all DUTs"""
+        if self.context.chip_type == "SPC6":
+            fw_version = get_image_fw_version(self.context.base_version)
+            if fw_version < "2020.1136":
+                pytest.exit(f"Deployment paused: SPC6 requires FW >= 2020.1136, "
+                            f"but image contains {fw_version}")
 
         executor = None if self.context.deploy_sequential else concurrent.futures.ThreadPoolExecutor()
         use_GA_image = False
