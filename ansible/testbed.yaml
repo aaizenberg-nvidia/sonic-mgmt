@@ -5871,7 +5871,7 @@
   topo: t0
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5885,7 +5885,7 @@
   topo: t0-56
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5899,7 +5899,7 @@
   topo: t1
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5913,7 +5913,7 @@
   topo: t1-lag
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5927,7 +5927,7 @@
   topo: ptf32
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5941,7 +5941,7 @@
   topo: ptf-any
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -5955,10 +5955,10 @@
   topo: t0
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -5969,10 +5969,10 @@
   topo: t0-56
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -5983,10 +5983,10 @@
   topo: t1
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -5997,10 +5997,10 @@
   topo: t1-lag
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -6011,10 +6011,10 @@
   topo: ptf32
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -6025,10 +6025,10 @@
   topo: ptf-any
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
@@ -6193,7 +6193,7 @@
   topo: t1-lag
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-02
-  ptf_ip: 10.245.40.3/16
+  ptf_ip: 10.245.40.3/20
   ptf_ipv6:
   server: server_82
   vm_base: VM8801
@@ -6207,10 +6207,10 @@
   topo: t0
   ptf_image_name: docker-ptf-mlnx
   ptf: ptf-mtvr-panther-03
-  ptf_ip: 10.245.40.36/16
+  ptf_ip: 10.245.40.36/20
   ptf_ipv6:
   server: server_83
-  vm_base: VM8901
+  vm_base: VM8933
   dut:
     - mtvr-panther-03
   inv_name: lab
