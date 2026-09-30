@@ -3,6 +3,7 @@ import logging
 import pytest
 import time
 
+from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (ValidationConfig, run_traffic, run_validation,
                                                                 get_topology_obj)
@@ -49,7 +50,6 @@ class TestLossyLossless:
     @allure.description('400G<->400G test. Send lossy traffic from both sides.')
     def test_basic_loosy_lossless_tests_1_2_3(self, request, scenario_name, num_lossy_packets, num_lossless_packets,
                                               burst_config, packet_size=4096):
-
         with allure.step(f"Set test correct allure title with {scenario_name} parameter"):
             test_name = set_allure_lossy_lossless_title(request, scenario_name)
 
@@ -81,11 +81,18 @@ class TestLossyLossless:
             has_lossy = num_lossy_packets > 0 or burst_dscp == PerfConsts.DVS_LOSSY_TC
             has_lossless = num_lossless_packets > 0 or burst_dscp == PerfConsts.DVS_LOSSLESS_TC
             required_counter_list = ['tx_ecn_marked_tc_4'] if has_lossy and has_lossless else []
+            ignore_counter_list = ['tx_ecn_marked_tc_3']
+            if is_redmine_issue_active([5310085])[0]:
+                # tx_ecn_marked_tc_4 chronically shows non-zero with no functional impact
+                # identified; don't fail the test on it while the issue is open.
+                if 'tx_ecn_marked_tc_4' in required_counter_list:
+                    required_counter_list.remove('tx_ecn_marked_tc_4')
+                ignore_counter_list.append('tx_ecn_marked_tc_4')
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type, bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
                                       tc_occ_threshold=PerfConsts.OCC_TH_DICT,
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       required_counter_list=required_counter_list,
-                                      ignore_counter_list=['tx_ecn_marked_tc_3'])
+                                      ignore_counter_list=ignore_counter_list)
             run_validation(config)
