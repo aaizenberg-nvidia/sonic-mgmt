@@ -629,12 +629,6 @@ ha/test_ha_npu_process_crash.py:
     conditions:
     - "https://redmine.mellanox.com/issues/5138419"
 
-dhcp_relay/test_dhcp_relay.py::test_dhcp_broadcast_not_flooded:
-  xfail:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100749"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5100749"
-
 dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_non_default_vrf:
   xfail:
     reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5240149"
