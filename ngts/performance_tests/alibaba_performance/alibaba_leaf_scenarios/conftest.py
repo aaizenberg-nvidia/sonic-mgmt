@@ -432,6 +432,18 @@ def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations, dut_cli_ob
             is_redmine_issue_active([4662379])[0]):
         pytest.skip("Skipping Ali scenario 3, IPv4 enabled and IPv6 enabled")
 
+    if (test_params.test_id == TEST_ID_SUPER_SPINE_TO_LEAF_AR_ENABLED_SPLIT_2_64K_DIPS and
+        ip_combinations.ipv4_enabled == "ipv4_enabled" and ip_combinations.ipv6_enabled == "ipv6_disabled" and
+            is_redmine_issue_active([5310407])[0]):
+        pytest.skip("Skipping Ali scenario super_spine_to_leaf, IPv4 enabled and IPv6 disabled - "
+                    "bandwidth/utilization validation failure")
+
+    if (test_params.test_id == TEST_ID_SUPER_SPINE_TO_LEAF_AR_ENABLED_SPLIT_2_64K_DIPS and
+        ip_combinations.ipv4_enabled == "ipv4_disabled" and ip_combinations.ipv6_enabled == "ipv6_enabled" and
+            is_redmine_issue_active([5310407])[0]):
+        pytest.skip("Skipping Ali scenario super_spine_to_leaf, IPv4 disabled and IPv6 enabled - "
+                    "bandwidth/utilization validation failure")
+
     if is_redmine_issue_active([4662378])[0] and test_params.test_id == TEST_ID_SHAPER_99_9_AR_ENABLED_SPLIT_4_128_DIPS:
         pytest.skip("Skipping test for 99.9 percent shaper value")
 
