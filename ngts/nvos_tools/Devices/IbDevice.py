@@ -3828,6 +3828,7 @@ class RosalindRTF(RosalindSwitch):
 class PortiaSwitch(RosalindSwitch):
     """Four-ASIC non-expandable NVL72 Portia tray (N7200_LD)."""
 
+    ACP_PORTS_PER_ASIC = 144
     FNM_PORTS_PER_ASIC = 2
 
     def update_show_platform_output(self, platform_output):
@@ -3941,7 +3942,7 @@ class PortiaSwitch(RosalindSwitch):
         super()._init_interface_lists()
         self.mgmt_ports = ['eth0']
         self.network_ports = self.mgmt_ports + ['lo']
-        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, 144 * self.asic_amount + 1)]
+        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = []
         self.nvl_internal_fnm_ports = [f'fnma{asic}p{port_num}'
                                        for asic in range(self.asic_amount)
@@ -4033,7 +4034,6 @@ class PortiaCpoSwitch(PortiaSwitch):
 
     def _init_interface_lists(self):
         super()._init_interface_lists()
-        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = [f'sw{sw}p1s{subport}'
                                      for sw in range(1, self.SW_GROUPS_PER_ASIC * self.asic_amount + 1)
                                      for subport in range(1, self.SW_SUBPORTS_PER_GROUP + 1)]
@@ -4090,7 +4090,6 @@ class PortiaNpoSwitch(PortiaSwitch):
 
     def _init_interface_lists(self):
         super()._init_interface_lists()
-        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = [f'sw{sw}p1s{subport}'
                                      for sw in range(1, self.SW_GROUPS_PER_ASIC * self.asic_amount + 1)
                                      for subport in range(1, self.SW_SUBPORTS_PER_GROUP + 1)]
@@ -4118,10 +4117,9 @@ class PortiaNpoTASimx(PortiaSimxDevice, PortiaNpoSwitch):
 
 
 class PortiaSurrogateNex(PortiaSwitch):
-    """Two-ASIC Portia NEX surrogate tray (N7210_LD): no fans."""
+    """Four-ASIC Portia NEX surrogate tray (N7210_LD): no fans."""
 
-    def __init__(self, asic_amount=2):
-        super().__init__(asic_amount=asic_amount)
+    ACP_PORTS_PER_ASIC = 72
 
     def _init_constants(self):
         super()._init_constants()
