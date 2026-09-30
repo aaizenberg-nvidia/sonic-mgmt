@@ -1,0 +1,36 @@
+[sonic_latest]
+# MEC01 community testbed sws-cham6s-21_setup topologies
+sws-cham6s-21  ansible_host=10.220.15.213 sonic_version=v2  sonic_hwsku=ACS-SN6810_LD iface_speed=800000 serial_console="ssh -l rcon:7018 10.220.9.36" ptf_host=ptf-sws-cham6s-21 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host="" console_baudrate=115200 base_mac=B0:BE:45:74:D1:FA serial=MT263760244L model=SN6810_LD syseeprom_info="{'0x21': u'SN6810_LD', '0x22': u'920-9N64K-00LI-TS2', '0x23': u'MT263760244L', '0x24': u'B0:BE:45:74:D1:FA', '0x25': u'09/17/2026 15:04:32', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6810_ld-r0', '0x29': u'2025.05-5.3.0021-115200', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia'}"
+sws-cham6s-21-t0-d96-u30s2 ansible_host=10.220.15.213 sonic_version=v2 sonic_hwsku=ACS-SN6810_LD iface_speed=800000 serial_console="ssh -l rcon:7018 10.220.9.36" ptf_host=ptf-sws-cham6s-21 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host="" console_baudrate=115200 base_mac=B0:BE:45:74:D1:FA serial=MT263760244L model=SN6810_LD syseeprom_info="{'0x21': u'SN6810_LD', '0x22': u'920-9N64K-00LI-TS2', '0x23': u'MT263760244L', '0x24': u'B0:BE:45:74:D1:FA', '0x25': u'09/17/2026 15:04:32', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6810_ld-r0', '0x29': u'2025.05-5.3.0021-115200', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia'}"
+sws-cham6s-21-t1-d118u8s2 ansible_host=10.220.15.213 sonic_version=v2 sonic_hwsku=ACS-SN6810_LD iface_speed=800000 serial_console="ssh -l rcon:7018 10.220.9.36" ptf_host=ptf-sws-cham6s-21 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host="" console_baudrate=115200 base_mac=B0:BE:45:74:D1:FA serial=MT263760244L model=SN6810_LD syseeprom_info="{'0x21': u'SN6810_LD', '0x22': u'920-9N64K-00LI-TS2', '0x23': u'MT263760244L', '0x24': u'B0:BE:45:74:D1:FA', '0x25': u'09/17/2026 15:04:32', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6810_ld-r0', '0x29': u'2025.05-5.3.0021-115200', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia'}"
+sws-cham6s-21-ptp-126 ansible_host=10.220.15.213 sonic_version=v2 sonic_hwsku=ACS-SN6810_LD iface_speed=800000 serial_console="ssh -l rcon:7018 10.220.9.36" ptf_host=ptf-sws-cham6s-21 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" pdu_host="" console_baudrate=115200 base_mac=B0:BE:45:74:D1:FA serial=MT263760244L model=SN6810_LD syseeprom_info="{'0x21': u'SN6810_LD', '0x22': u'920-9N64K-00LI-TS2', '0x23': u'MT263760244L', '0x24': u'B0:BE:45:74:D1:FA', '0x25': u'09/17/2026 15:04:32', '0x26': u'16', '0x28': u'x86_64-nvidia_sn6810_ld-r0', '0x29': u'2025.05-5.3.0021-115200', '0x2A': u'546', '0x2B': u'Nvidia', '0x2D': u'Nvidia'}"
+
+
+sws-cham6s-22 ansible_host=sws-cham6s-22 ansible_ssh_user="{{ lookup('env','SONIC_SWITCH_USER') }}" ansible_ssh_pass="{{ lookup('env','SONIC_SWITCH_PASSWORD') }}" os=sonic
+
+[sonic:children]
+sonic_latest
+
+[leaf_topo_1]
+sws-cham6s-21
+sws-cham6s-21-t0-d96-u30s2
+sws-cham6s-21-t1-d118u8s2
+sws-cham6s-21-ptp-126
+
+[leaf_topo_1:vars]
+podset_number=200
+
+[lab]
+sws-cham6s-21
+sws-cham6s-21-t0-d96-u30s2
+sws-cham6s-21-t1-d118u8s2
+sws-cham6s-21-ptp-126
+
+[ptf]
+# sws-cham6s-21_setup PTF host
+ptf-sws-cham6s-21 ansible_host=10.220.189.95 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+10.220.189.95 ansible_host=10.220.189.95 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+
+[pdu]
+
+

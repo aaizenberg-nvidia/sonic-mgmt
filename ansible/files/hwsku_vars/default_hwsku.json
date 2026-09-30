@@ -261,5 +261,9 @@
     "sws-cham6s-20_setup": {
         "default_hwsku": "ACS-SN6810_LD",
         "support_hwsku": ["ACS-SN6810_LD"]
+    },
+    "sws-cham6s-21_setup": {
+        "default_hwsku": "ACS-SN6810_LD",
+        "support_hwsku": ["ACS-SN6810_LD"]
     }
 }
