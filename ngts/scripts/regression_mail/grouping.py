@@ -151,6 +151,8 @@ def _row_ticket_refs(
     workbook: WorkbookSnapshot,
 ) -> List[str]:
     if row.result == "skipped":
+        if workbook.issue_skip_analysis_complete:
+            return unique_sorted(workbook.issue_skip_tickets.get(row.record_id, ()))
         return unique_sorted(
             extract_redmine_urls(row.message) +
             extract_public_issue_urls(row.message)
@@ -655,7 +657,7 @@ class _SkipSourceEvidence:
 
 
 class SourceSkipAnalyzer:
-    """Preserve Excel-message-only skip attribution."""
+    """Resolve issue-attributed skips from source conditions and Excel facts."""
 
     def enrich(
         self,
@@ -663,7 +665,54 @@ class SourceSkipAnalyzer:
         workbook: WorkbookSnapshot,
         source_root: Path,
     ) -> SemanticReport:
-        del workbook, source_root
+        rules = _load_condition_rules(source_root)
+        issue_skip_tickets: Dict[str, List[str]] = {}
+        public_issue_conditions: DefaultDict[str, List[str]] = defaultdict(list)
+        for row in workbook.skipped:
+            row_tickets = _evidence_ticket_refs(
+                " ".join(_row_source_values(row))
+            )
+            if not row_tickets:
+                continue
+            evidence = _condition_rule_evidence(rules, row)
+            matching_rules = [item for item in evidence if item.condition_matched]
+            matching_tickets = {
+                ticket.casefold()
+                for item in matching_rules
+                for ticket in item.tickets
+            }
+            tickets = [
+                ticket
+                for ticket in row_tickets
+                if ticket.casefold() in matching_tickets
+            ]
+            if not evidence:
+                tickets = row_tickets
+            if not tickets:
+                continue
+            issue_skip_tickets[row.record_id] = tickets
+            for item in matching_rules:
+                conditions = dict(item.ticket_conditions)
+                item_tickets = {value.casefold() for value in item.tickets}
+                for ticket in tickets:
+                    if (
+                        not extract_public_issue_urls(ticket) or
+                        ticket.casefold() not in item_tickets
+                    ):
+                        continue
+                    condition = normalize_text(
+                        conditions.get(ticket) or item.condition
+                    )
+                    condition = strip_public_issue_urls(condition)
+                    if condition and condition not in public_issue_conditions[ticket]:
+                        public_issue_conditions[ticket].append(condition)
+        workbook.issue_skip_tickets = issue_skip_tickets
+        workbook.public_issue_conditions = dict(public_issue_conditions)
+        workbook.issue_skip_analysis_complete = True
+        refreshed = build_deterministic_report(workbook)
+        refreshed.internal_error_groups = report.internal_error_groups
+        report.failure_groups = refreshed.failure_groups
+        report.skip_groups = refreshed.skip_groups
         return report
 
 
@@ -753,11 +802,9 @@ def _condition_rule_evidence(
                 logical_operator,
                 row,
             )
-            active_tickets = _evidence_ticket_refs(
-                " ".join(active_conditions)
-            )
+            condition_tickets = _evidence_ticket_refs(" ".join(conditions))
             reason_tickets = _evidence_ticket_refs(reason)
-            tickets = unique_sorted(active_tickets + reason_tickets)
+            tickets = unique_sorted(condition_tickets + reason_tickets)
             row_tickets = {
                 value.casefold()
                 for value in _evidence_ticket_refs(
@@ -773,8 +820,28 @@ def _condition_rule_evidence(
             ]
             if not matches and not overlap:
                 continue
-            if not active_tickets and overlap:
+            if not condition_tickets and overlap:
                 tickets = unique_sorted(overlap)
+            if matches and condition_tickets:
+                active_condition_tickets = _evidence_ticket_refs(
+                    " ".join(active_conditions)
+                )
+                tickets = unique_sorted(
+                    [
+                        ticket
+                        for ticket in reason_tickets
+                        if ticket not in condition_tickets
+                    ] + (
+                        active_condition_tickets
+                        if _tickets_are_required_for_conditions(
+                            conditions,
+                            logical_operator,
+                            row,
+                            condition_tickets,
+                        )
+                        else []
+                    )
+                )
             condition_text = " {} ".format(
                 logical_operator.lower()
             ).join(active_conditions or conditions)
@@ -791,7 +858,8 @@ def _condition_rule_evidence(
             else:
                 ticket_conditions.extend(
                     (ticket, condition_text)
-                    for ticket in active_tickets
+                    for ticket in tickets
+                    if ticket in condition_tickets
                 )
             assigned_tickets = {
                 ticket.casefold()
@@ -882,18 +950,18 @@ def _matching_conditions(
     if not conditions:
         return True, []
     evaluations = [
-        (_evaluate_condition(condition, row), condition)
+        (_active_condition(condition, row), condition)
         for condition in conditions
     ]
     if operator == "OR":
         active = [
-            condition
-            for matched, condition in evaluations
+            rendered
+            for (matched, rendered), _condition in evaluations
             if matched is True
         ]
         return bool(active), active
-    if all(matched is True for matched, _condition in evaluations):
-        return True, list(conditions)
+    if all(result[0] is True for result, _condition in evaluations):
+        return True, [result[1] for result, _condition in evaluations]
     return False, []
 
 
@@ -901,17 +969,85 @@ def _evaluate_condition(
     condition: str,
     row: ResultRow,
 ) -> Optional[bool]:
+    return _active_condition(condition, row)[0]
+
+
+def _active_condition(
+    condition: str,
+    row: ResultRow,
+) -> Tuple[Optional[bool], str]:
+    tickets = _evidence_ticket_refs(condition)
+    placeholders = {
+        ticket: "__skip_ticket_{}".format(index)
+        for index, ticket in enumerate(tickets)
+    }
+    expression = condition
+    for ticket, placeholder in placeholders.items():
+        expression = expression.replace(ticket, placeholder)
     expression = re.sub(
         r"https?://[^\s'\"),]+",
         "True",
-        condition,
+        expression,
     )
     try:
         parsed = ast.parse(expression, mode="eval")
-        value = _evaluate_condition_node(parsed.body, _condition_facts(row))
-        return bool(value)
+        facts = {
+            **_condition_facts(row),
+            **{placeholder: True for placeholder in placeholders.values()},
+        }
+        value, active = _prune_condition_node(parsed.body, facts)
+        if not value or active is None:
+            return bool(value), condition
+        if ast.dump(active) == ast.dump(parsed.body):
+            return True, condition
+        rendered = ast.unparse(active)
+        for ticket, placeholder in placeholders.items():
+            rendered = rendered.replace(placeholder, ticket)
+        return True, rendered
     except (KeyError, SyntaxError, TypeError, ValueError):
-        return None
+        return None, condition
+
+
+def _prune_condition_node(
+    node: ast.AST,
+    facts: Mapping[str, object],
+) -> Tuple[bool, Optional[ast.AST]]:
+    if isinstance(node, ast.BoolOp):
+        evaluated = [
+            _prune_condition_node(value, facts)
+            for value in node.values
+        ]
+        if isinstance(node.op, ast.Or):
+            active = [
+                value
+                for matched, value in evaluated
+                if matched and value is not None
+            ]
+            if not active:
+                return False, None
+            return True, active[0] if len(active) == 1 else ast.BoolOp(node.op, active)
+        if isinstance(node.op, ast.And):
+            if not all(matched for matched, _value in evaluated):
+                return False, None
+            active = [value for _matched, value in evaluated if value is not None]
+            return True, active[0] if len(active) == 1 else ast.BoolOp(node.op, active)
+    return bool(_evaluate_condition_node(node, facts)), node
+
+
+def _tickets_are_required_for_conditions(
+    conditions: Sequence[str],
+    operator: str,
+    row: ResultRow,
+    tickets: Sequence[str],
+) -> bool:
+    original, _active = _matching_conditions(conditions, operator, row)
+    if not original:
+        return False
+    disabled = list(conditions)
+    for ticket in tickets:
+        disabled = [condition.replace(ticket, "False") for condition in disabled]
+    still_matches, _active = _matching_conditions(disabled, operator, row)
+    return not still_matches
 
 
 def _evaluate_condition_node(
@@ -1025,12 +1161,19 @@ def _condition_facts(row: ResultRow) -> Dict[str, object]:
         for key, value in row.values.items()
     }
     topology = normalize_text(row.topology)
+    platform = normalize_text(row.platform) or normalize_text(values.get("platform"))
+    hwsku = normalize_text(row.hwsku) or normalize_text(values.get("hwsku"))
+    asic_type = normalize_text(values.get("asic_type"))
+    if not asic_type and (
+        "nvidia" in platform.casefold() or
+        "mlnx" in platform.casefold() or
+        "mellanox" in hwsku.casefold()
+    ):
+        asic_type = "mellanox"
     return {
         **values,
-        "platform": normalize_text(row.platform) or
-        normalize_text(values.get("platform")),
-        "hwsku": normalize_text(row.hwsku) or
-        normalize_text(values.get("hwsku")),
+        "platform": platform,
+        "hwsku": hwsku,
         "topo_name": topology or
         normalize_text(values.get("topo_name")),
         "topo_type": normalize_text(values.get("topo_type")) or
@@ -1042,8 +1185,10 @@ def _condition_facts(row: ResultRow) -> Dict[str, object]:
             values.get("version") or
             values.get("os_version")
         ),
-        "asic_type": normalize_text(values.get("asic_type")),
+        "asic_type": asic_type,
         "asic_gen": normalize_text(values.get("asic_gen")),
+        "is_mellanox": asic_type == "mellanox",
+        "is_nvidia": asic_type == "mellanox",
     }
 
 

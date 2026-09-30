@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from base64 import b64encode
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
@@ -27,20 +28,21 @@ _PUBLIC_REPO = "https://github.com/sonic-net/sonic-mgmt.git"
 _EXACT_MGMT_PR = re.compile(
     r"^https://github\.com/sonic-net/sonic-mgmt/pull/(\d+)$"
 )
-_EXACT_IMAGE_PR = re.compile(
-    r"^https://github\.com/sonic-net/sonic-buildimage/pull/(\d+)$"
+_EXACT_PUBLIC_RC_PR = re.compile(
+    r"^https://github\.com/sonic-net/([A-Za-z0-9_.-]+)/pull/(\d+)$"
 )
 _EXACT_PUBLIC_WORK_ITEM = re.compile(
     r"^https://github\.com/(sonic-net|nvidia-sonic)/"
     r"([A-Za-z0-9_.-]+)/(issues|pull)/(\d+)$",
     re.IGNORECASE,
 )
-_IMAGE_PR = re.compile(
-    r"https://github\.com/sonic-net/sonic-buildimage/pull/\d+(?![A-Za-z0-9_-])"
-)
 _HASH = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
 _TAG_FROM_VERSION = re.compile(r"^(\d{6}_RC\.\d+)")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_GERRIT_CHANGE = re.compile(
+    r"^https://(git-[A-Za-z0-9.-]+)/r/c/[A-Za-z0-9_./-]+/\+/(\d+)$",
+    re.IGNORECASE,
+)
 
 
 class GitHistoryResolver:
@@ -82,7 +84,7 @@ class GitHistoryResolver:
                 timeout=300,
             )
         try:
-            public_branch = self._public_branch(train)
+            public_branch = train
             internal_patch_ids = self._patch_ids(internal_ref)
             internal_commits = self._lines(
                 self._git(
@@ -97,7 +99,7 @@ class GitHistoryResolver:
                 public_branch.replace("/", "_"),
             )
             temporary_refs.append(public_ref)
-            self._git(
+            self._network_git(
                 "fetch",
                 "--no-tags",
                 self.public_repo,
@@ -169,24 +171,6 @@ class GitHistoryResolver:
         except Exception:
             shutil.rmtree(resolution.source_root, ignore_errors=True)
         self._delete_refs(resolution.temporary_refs)
-
-    def _public_branch(self, train: str) -> str:
-        completed = self.runner(
-            ["git", "ls-remote", "--heads", self.public_repo],
-            cwd=str(self.repo_root),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=120,
-        )
-        for line in completed.stdout.splitlines():
-            ref = line.split("\t")[-1]
-            if ref == "refs/heads/{}".format(train):
-                return train
-        raise RuntimeError(
-            "exact public sonic-mgmt branch {!r} does not exist".format(train)
-        )
 
     def _branch_cutoff_date(
         self,
@@ -285,6 +269,19 @@ class GitHistoryResolver:
             timeout=timeout,
         )
 
+    def _network_git(
+        self,
+        *args: str,
+        timeout: int = 300,
+    ) -> subprocess.CompletedProcess:
+        errors: List[subprocess.CalledProcessError] = []
+        for _attempt in range(3):
+            try:
+                return self._git(*args, timeout=timeout)
+            except subprocess.CalledProcessError as error:
+                errors.append(error)
+        raise errors[-1]
+
     def _delete_refs(self, refs: Sequence[str]) -> None:
         for ref in refs:
             try:
@@ -295,6 +292,60 @@ class GitHistoryResolver:
     @staticmethod
     def _lines(value: str) -> List[str]:
         return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+class GerritClient:
+    """Fetch titles for explicitly referenced internal Gerrit changes."""
+
+    def __init__(
+        self,
+        username: str,
+        api_key: str,
+        timeout: int = 60,
+        opener: Any = urlopen,
+    ):
+        self.username = username.strip()
+        self.api_key = api_key.strip()
+        self.timeout = timeout
+        self.opener = opener
+
+    def describe_changes(self, urls: Iterable[str]) -> Dict[str, str]:
+        if not self.username or not self.api_key:
+            raise RuntimeError("Gerrit credentials are not configured")
+        result: Dict[str, str] = {}
+        errors: List[Exception] = []
+        authorization = "Basic " + b64encode(
+            "{}:{}".format(self.username, self.api_key).encode("utf-8")
+        ).decode("ascii")
+        for url in ordered_unique(urls):
+            match = _GERRIT_CHANGE.fullmatch(url)
+            if not match:
+                raise ValueError("unsupported Gerrit change URL: {!r}".format(url))
+            host, change = match.groups()
+            if host.casefold() != "git-nbu-sw.nvidia.com":
+                raise ValueError("unsupported Gerrit host: {!r}".format(host))
+            request = Request(
+                "https://{}/r/a/changes/{}/detail".format(host, change),
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": authorization,
+                    "User-Agent": "sonic-regression-mail/1",
+                },
+            )
+            try:
+                with self.opener(request, timeout=self.timeout) as response:
+                    body = response.read().decode("utf-8")
+                if body.startswith(")]}'"):
+                    body = body.split("\n", 1)[1] if "\n" in body else ""
+                payload = json.loads(body)
+                title = normalize_text(payload.get("subject"))
+                if title:
+                    result[url] = title
+            except Exception as error:
+                errors.append(error)
+        if not result and errors:
+            raise errors[0]
+        return result
 
 
 def _release_train(version: str) -> str:
@@ -358,13 +409,24 @@ class GitHubClient:
                         requested_tag,
                     )
                 )
-        ref = self.rc_status_ref or requested_tag
-        payload = self._get_json(
-            "/repos/{}/contents/RC_STATUS.md?ref={}".format(
-                self.rc_status_repository,
-                quote(ref, safe=""),
-            )
-        )
+        refs = ordered_unique((self.rc_status_ref, normalized_version, requested_tag))
+        payload = None
+        errors: List[Exception] = []
+        for ref in refs:
+            try:
+                payload = self._get_json(
+                    "/repos/{}/contents/RC_STATUS.md?ref={}".format(
+                        self.rc_status_repository,
+                        quote(ref, safe=""),
+                    )
+                )
+                break
+            except Exception as error:
+                errors.append(error)
+                if self.rc_status_ref:
+                    break
+        if payload is None:
+            raise errors[-1]
         if not isinstance(payload, Mapping):
             raise ValueError("GitHub returned a non-object RC_STATUS response")
         try:
@@ -439,11 +501,26 @@ class GitHubClient:
         raise RuntimeError("GitHub open pull request pagination exceeded 20 pages")
 
     def get_image_prs(self, urls: Iterable[str]) -> List[PullRequest]:
-        return self._get_pull_requests(
-            urls,
-            _EXACT_IMAGE_PR,
-            "sonic-net/sonic-buildimage",
-        )
+        result: List[PullRequest] = []
+        for url in ordered_unique(urls):
+            match = _EXACT_PUBLIC_RC_PR.fullmatch(url)
+            if not match:
+                raise ValueError(
+                    "non-public or unexpected RC PR URL rejected: {!r}".format(url)
+                )
+            repository, _number = match.groups()
+            result.extend(
+                self._get_pull_requests(
+                    [url],
+                    re.compile(
+                        r"^https://github\.com/sonic-net/{}/pull/(\d+)$".format(
+                            re.escape(repository)
+                        )
+                    ),
+                    "sonic-net/{}".format(repository),
+                )
+            )
+        return result
 
     def inspect_issue_links(
         self,
@@ -489,6 +566,7 @@ class GitHubClient:
                         payload.get("body")
                     ),
                     "state": normalize_text(payload.get("state")),
+                    "closed_at": normalize_text(payload.get("closed_at")),
                     "merged": bool(
                         payload.get("merged") or
                         payload.get("merged_at")
@@ -580,6 +658,7 @@ def _bounded_public_work_item_body(value: object, limit: int = 12000) -> str:
 
 def _parse_rc_status(markdown: str, expected_version: str) -> RcStatus:
     tag = _table_value(markdown, "Tag")
+    release = _clean_markdown_value(_table_value(markdown, "Release"))
     expected_tag_match = _TAG_FROM_VERSION.match(
         normalize_version(expected_version)
     )
@@ -590,10 +669,16 @@ def _parse_rc_status(markdown: str, expected_version: str) -> RcStatus:
             )
         )
     expected_tag = expected_tag_match.group(1)
-    if _clean_markdown_value(tag) != expected_tag:
+    document_tag = _clean_markdown_value(tag)
+    release_train = expected_tag.split("_RC.", 1)[0] + "_RC"
+    if (
+        document_tag and
+        document_tag != expected_tag and
+        release != release_train
+    ):
         raise ValueError(
             "RC_STATUS.md Tag {!r} does not match requested release tag {!r}".format(
-                _clean_markdown_value(tag),
+                document_tag,
                 expected_tag,
             )
         )
@@ -610,8 +695,35 @@ def _parse_rc_status(markdown: str, expected_version: str) -> RcStatus:
     return RcStatus(
         image_branch=branch,
         image_public_hash=hash_match.group(0),
-        image_pr_urls=ordered_unique(_IMAGE_PR.findall(markdown)),
+        image_pr_urls=_applied_public_pr_urls(markdown),
     )
+
+
+def _applied_public_pr_urls(markdown: str) -> List[str]:
+    """Return APPLIED pull requests from public sonic-net repositories."""
+
+    result: List[str] = []
+    headers: List[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        normalized = [normalize_text(cell).casefold() for cell in cells]
+        if "status" in normalized and "source" in normalized:
+            headers = normalized
+            continue
+        if not headers or len(cells) != len(headers):
+            continue
+        if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        values = dict(zip(headers, cells))
+        if normalize_text(values.get("status")).casefold() != "applied":
+            continue
+        source = normalize_text(values.get("source"))
+        if _EXACT_PUBLIC_RC_PR.fullmatch(source) and source not in result:
+            result.append(source)
+    return result
 
 
 def _table_value(markdown: str, label: str) -> str:

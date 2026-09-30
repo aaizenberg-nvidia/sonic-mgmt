@@ -62,6 +62,10 @@ class ResultRow:
             names.append(self.sanitized_testname)
         return names
 
+    @property
+    def version(self) -> str:
+        return str(self.values.get("os_version") or "")
+
 
 @dataclass
 class WorkbookSnapshot:
@@ -80,6 +84,8 @@ class WorkbookSnapshot:
     public_issue_conditions: Dict[str, List[str]] = field(
         default_factory=dict
     )
+    issue_skip_tickets: Dict[str, List[str]] = field(default_factory=dict)
+    issue_skip_analysis_complete: bool = False
     dashboard_statuses: Dict[str, str] = field(default_factory=dict)
     record_excel_rows: Dict[str, List[int]] = field(default_factory=dict, repr=False)
 
@@ -90,6 +96,30 @@ class WorkbookSnapshot:
     @property
     def skipped(self) -> List[ResultRow]:
         return [row for row in self.selected_rows if row.result == "skipped"]
+
+    @property
+    def issue_skipped(self) -> List[ResultRow]:
+        if not self.issue_skip_analysis_complete:
+            return []
+        return [
+            row
+            for row in self.skipped
+            if self.issue_skip_tickets.get(row.record_id)
+        ]
+
+    @property
+    def coverage(self) -> Optional[float]:
+        if self.skipped and not self.issue_skip_analysis_complete:
+            return None
+        executed = self.result_counts.get("pass", 0) + self.result_counts.get("fail", 0)
+        denominator = executed + len(self.issue_skipped)
+        return (executed / denominator * 100.0) if denominator else None
+
+    @property
+    def pass_rate(self) -> Optional[float]:
+        passed = self.result_counts.get("pass", 0)
+        executed = passed + self.result_counts.get("fail", 0)
+        return (passed / executed * 100.0) if executed else None
 
 
 @dataclass(frozen=True)
@@ -165,6 +195,7 @@ class SemanticGroup:
     redmine_urls: List[str] = field(default_factory=list)
     internal_review_status: str = ""
     internal_review_warning: bool = False
+    link_titles: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
