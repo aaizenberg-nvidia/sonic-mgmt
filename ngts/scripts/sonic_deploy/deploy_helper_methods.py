@@ -822,7 +822,7 @@ class DeployOrchestrator:
 
     def execute_installation(self):
         """Execute installation phase for all DUTs"""
-        if self.context.chip_type == "SPC6":
+        if self.context.primary_dut['cli_type'] == CliType.SONIC and self.context.chip_type == "SPC6":
             # deploy_only_target installs only the target image.
             base_image = "" if self.context.deploy_only_target else self.context.base_version
             target_image = self.context.target_version
