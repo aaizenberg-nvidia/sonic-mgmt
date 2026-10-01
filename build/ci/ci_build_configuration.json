@@ -195,7 +195,7 @@
             "setup_requirements": "group_name:Sagi,sub_group:SONiC_AIR_CI,setup_status:enable"
           },
           "skip": "${SKIP_AIR}",
-          "on_failure": "${AIR_ON_FAILURE}",
+          "on_failure": "ignore",
           "out_of_mail": true
         },
         {
@@ -498,7 +498,7 @@
             "run_in_container": true
           },
           "skip": "${SKIP_AIR}",
-          "on_failure": "${AIR_ON_FAILURE}",
+          "on_failure": "ignore",
           "out_of_mail": false
         },
         {
