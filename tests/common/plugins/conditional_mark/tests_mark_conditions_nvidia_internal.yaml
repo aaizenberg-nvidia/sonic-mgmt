@@ -1646,42 +1646,82 @@ high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
+
+high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_disabled_stream:
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_full_buffer_pool_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_full_ingress_priority_group_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_full_port_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_full_queue_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
+
+high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_poll_interval_validation:
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_port_counters:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_port_shutdown_stream:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538 after WJH toggle"
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 platform_tests/api/test_chassis.py::TestChassisApi::test_get_watchdog:
   skip:
