@@ -205,7 +205,14 @@ def _compare_all(reference: _Reference, exported, docs, snapshots) -> "tuple[Lis
             if missing_rows:
                 rows.extend(missing_rows)
             elif pre_set.error_rows or post_set.error_rows:
-                rows.append(_metric_row(spec.name, ref.RESULT_NOT_VALIDATED, "Redis row failed to parse"))
+                # The declared field is present - Redis has something for this metric,
+                # it just doesn't parse as the declared type. That's still "Redis has
+                # data" with a type/format problem noted, not an unverifiable case.
+                errors = {**pre_set.error_rows, **post_set.error_rows}
+                first_key = sorted(errors)[0]
+                extra = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+                detail = f"Redis has a value but it fails to parse - {first_key}: {errors[first_key]}{extra}"
+                rows.append(_metric_row(spec.name, ref.RESULT_FAIL, detail))
             else:
                 rows.append(_metric_row(spec.name, ref.RESULT_NOT_VALIDATED, "not exported and no Redis source"))
             continue

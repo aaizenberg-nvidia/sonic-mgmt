@@ -469,6 +469,38 @@ def select_ports(
     )
 
 
+def select_all_ports(maps: InterfaceMappings, discovery: RedisSnapshot) -> PortSelection:
+    """Every switch port, every peer, every transceiver module - no sampling.
+
+    Same shape as :func:`select_ports`, for callers that need to know whether a
+    metric has a Redis source *anywhere* on the DUT: sampling a subset of ports
+    would wrongly report "no DB source" for a metric whose field only exists on a
+    port that wasn't picked.
+    """
+    state_rows = discovery.table("STATE_DB", "IB_PORT_TABLE")
+    counters_rows = discovery.table("COUNTERS_DB", "COUNTERS")
+
+    ports = sorted(maps.switch_ports())
+    oper_status: Dict[str, str] = {}
+    speeds: Dict[str, str] = {}
+    for alias, oid in maps.switch_ports().items():
+        internal = maps.alias_to_internal.get(alias, "")
+        oper_status[alias] = state_rows.get(internal, {}).get("oper_status", "").strip().lower()
+        speeds[alias] = counters_rows.get(oid, {}).get(OtelDbValidationConst.PORT_SPEED_FIELD, "")
+
+    peer_names = maps.peer_names()
+    peers = {name: maps.alias_to_oid[name] for name in peer_names}
+
+    return PortSelection(
+        ports=ports,
+        oper_status=oper_status,
+        speeds=speeds,
+        peers=peers,
+        modules={extract_switch_from_alias(alias) for alias in ports},
+        seed=-1,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Mapping specs and UMF collector selection (contract/agent.go)
 # --------------------------------------------------------------------------- #
@@ -835,11 +867,16 @@ class ExpectedPoint:
 @dataclass
 class ExpectedSet:
     points: List[ExpectedPoint] = field(default_factory=list)
-    error_rows: Set[str] = field(default_factory=set)
+    # Row key -> the _SkipRow/BuilderError message that skipped it.
+    error_rows: Dict[str, str] = field(default_factory=dict)
 
 
 class _SkipRow(Exception):
-    """The Go code returns an error for this row (datapoint skipped)."""
+    """The Go code returns an error for this row (datapoint skipped) - a real failure."""
+
+
+class _NoSource(Exception):
+    """The declared Redis field is simply absent from this row - not an error, no data."""
 
 
 def _is_pattern_site(info: Dict[str, Any]) -> bool:
@@ -905,7 +942,7 @@ def _row_value(spec: MetricSpec, key: str, attrs: Attrs, ctx: CalculatorContext)
         return lookup_calculator(info["calculatorFunc"])(key, attrs, ctx)
     if info.get("redisField"):
         if info["redisField"] not in attrs:
-            raise _SkipRow(f"field {info['redisField']} missing")
+            raise _NoSource(f"field {info['redisField']} missing")
         return _parse_value(spec, attrs[info["redisField"]])
     if info.get("constantValue") is not None:
         constant = int(info["constantValue"])
@@ -966,8 +1003,10 @@ def build_expected_points(spec: MetricSpec, rows: List[Row], ctx: CalculatorCont
                 if _numeric(value):
                     labels = _apply_labels(spec, row.key, row.attrs, ctx, skip_pattern_sites=False)
                     result.points.append(ExpectedPoint(labels, value, row.key))
-        except (_SkipRow, BuilderError):
-            result.error_rows.add(row.key)
+        except _NoSource:
+            pass
+        except (_SkipRow, BuilderError) as err:
+            result.error_rows[row.key] = str(err)
     return result
 
 
