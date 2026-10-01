@@ -220,11 +220,31 @@ tests/nightly/secure:
     conditions:
     - "'sn4280' in platform"
 
+tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_fwutil_install_onie_key_check_fail:
+  skip:
+    reason: "Testcase skipped on bison platforms due to RM issue: https://redmine.mellanox.com/issues/5314350"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5314350 and 'sn5640' in platform"
+
+tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_unsigned_grub_secure_boot:
+  skip:
+    reason: "Testcase skipped on bison platforms due to RM issue: https://redmine.mellanox.com/issues/5314350"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5314350 and 'sn5640' in platform"
+
+tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_unsigned_shim_secure_boot:
+  skip:
+    reason: "Testcase skipped on bison platforms due to RM issue: https://redmine.mellanox.com/issues/5314350"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5314350 and 'sn5640' in platform"
+
 tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_unsgined_vmlinuz_secure_boot:
   skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5261704"
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5261704 or on bison platforms due to RM issue: https://redmine.mellanox.com/issues/5314350"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5261704"
+    - "https://redmine.mellanox.com/issues/5314350 and 'sn5640' in platform"
 
 tests/nightly/secure/test_secure_corrupt_fw/test_secure_corrupt_fw.py:
   xfail:
