@@ -57,9 +57,10 @@ _COEXISTENCE_TUNNEL_NAMES = (
     'coexistence_lldp',
     'coexistence_bgp',
     # Dedicated smoke top-level tunnels (kept distinct so the module-scoped smoke session that
-    # defers teardown does not collide with the Interface/QoS and Component/System collections).
+    # defers cleanup does not collide with the Interface quality-of-service and Component/System collections).
     'coexistence_smoke_interface_top',
     'coexistence_smoke_system_top',
+    'coexistence_smoke_component_top',
 )
 
 
@@ -385,10 +386,28 @@ def _release_stale_gnmi_dialout_security(dut) -> None:
         except Exception as exc:
             logger.debug('gnmi-server mtls unset: %s', exc)
         try:
-            system.gnmi_server.unset(apply=True, ask_for_confirmation=True)
-        except Exception:
+            system.gnmi_server.unset(
+                apply=True, ask_for_confirmation=True, dut_engine=dut
+            ).verify_result()
+        except Exception as exc:
+            logger.debug('gnmi-server unset: %s', exc)
             dut.run_cmd('nv unset system gnmi-server -y', validate=False)
             dut.run_cmd('nv config apply -y', validate=False)
+        try:
+            show = system.gnmi_server.parse_show(dut_engine=dut) or {}
+        except Exception as exc:
+            logger.debug('gnmi-server show after unset: %s', exc)
+            show = {}
+        if not isinstance(show, dict):
+            show = {}
+        mtls = show.get('mtls') if isinstance(show.get('mtls'), dict) else {}
+        if mtls.get(CA_CERTIFICATE) == GNMI_DIALOUT_CA_NAME or show.get(
+            CERTIFICATE
+        ) == GNMI_DIALOUT_SERVER_CERT:
+            logger.warning(
+                'gnmi-server still bound after unset (leaks into the next module): %s',
+                str(show)[:400],
+            )
         time.sleep(_CERT_IMPORT_RETRY_DELAY_SEC)
         for cert_name in (GNMI_DIALOUT_CLIENT_CERT, GNMI_DIALOUT_SERVER_CERT):
             dut.run_cmd(
@@ -512,8 +531,13 @@ def configure_dut_gnmi_server_mtls(dut, *, dut_ip: str) -> None:
         system.gnmi_server.set(GnmiConsts.GNMI_STATE_FIELD, GnmiConsts.GNMI_STATE_ENABLED, apply=False)
         system.gnmi_server.set('listening-address', dut_ip, apply=False)
         system.gnmi_server.set(CERTIFICATE, GNMI_DIALOUT_SERVER_CERT, apply=False)
-        system.gnmi_server.mtls.set(CA_CERTIFICATE, GNMI_DIALOUT_CA_NAME, apply=True, ask_for_confirmation=True,
-                                    dut_engine=dut,).verify_result()
+        system.gnmi_server.mtls.set(
+            CA_CERTIFICATE,
+            GNMI_DIALOUT_CA_NAME,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
         logger.info('gnmi-server enabled with certificate=%s mtls ca=%s', GNMI_DIALOUT_SERVER_CERT, GNMI_DIALOUT_CA_NAME)
 
 
@@ -536,8 +560,13 @@ def configure_dut_grpc_tunnel_mtls(
         tunnel.set(op_param_name=GrpcTunnelConstants.CA_CERTIFICATE, op_param_value=GNMI_DIALOUT_CA_NAME)
         tunnel.set(op_param_name=GrpcTunnelConstants.CERTIFICATE, op_param_value=GNMI_DIALOUT_CLIENT_CERT)
         tunnel.set(op_param_name=GrpcTunnelConstants.RETRY_INTERVAL, op_param_value=str(retry_interval))
-        tunnel.set(op_param_name=GrpcTunnelConstants.STATE, op_param_value=GnmiConsts.GNMI_STATE_ENABLED, apply=True, ask_for_confirmation=True,
-                   dut_engine=dut,).verify_result()
+        tunnel.set(
+            op_param_name=GrpcTunnelConstants.STATE,
+            op_param_value=GnmiConsts.GNMI_STATE_ENABLED,
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).verify_result()
 
 
 def resolve_dut_ip(dut) -> str:

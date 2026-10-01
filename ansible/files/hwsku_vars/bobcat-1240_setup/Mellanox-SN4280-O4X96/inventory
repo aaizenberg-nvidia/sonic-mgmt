@@ -1,0 +1,45 @@
+[sonic_latest]
+# MEC01 testbed bobcat-1240 topologies
+bobcat-1240  ansible_host=10.220.12.140  sonic_version=v2  sonic_hwsku=Mellanox-SN4280-O4X96 switch_type="switch" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:00" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:00 serial=MT2549XZ037F  model=MSN4280-WS2RXO-NS syseeprom_info="{'0x21': 'SN4280', '0x22': 'MSN4280-WS2RXO-NS', '0x23': 'MT2549XZ037F', '0x24': '28:01:CD:0B:07:00', '0x25': '12/02/2025 05:09:12', '0x26': '16', '0x28': 'x86_64-nvidia_sn4280-r0', '0x29': '2025.05-5.3.0017-9600-dev', '0x2a': '222', '0x2b': 'Nvidia', '0xfe': '0xD8975499'}"
+bobcat-1240-t1-d96u4  ansible_host=10.220.12.140  sonic_version=v2  sonic_hwsku=Mellanox-SN4280-O4X96 switch_type="switch" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:00" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:00 serial=MT2549XZ037F  model=MSN4280-WS2RXO-NS syseeprom_info="{'0x21': 'SN4280', '0x22': 'MSN4280-WS2RXO-NS', '0x23': 'MT2549XZ037F', '0x24': '28:01:CD:0B:07:00', '0x25': '12/02/2025 05:09:12', '0x26': '16', '0x28': 'x86_64-nvidia_sn4280-r0', '0x29': '2025.05-5.3.0017-9600-dev', '0x2a': '222', '0x2b': 'Nvidia', '0xfe': '0xD8975499'}"
+bobcat-1240-ptf-any   ansible_host=10.220.12.140 sonic_version=v2 sonic_hwsku=Mellanox-SN4280-O4X96 switch_type="switch" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:00" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:00 serial=MT2549XZ037F  model=MSN4280-WS2RXO-NS syseeprom_info="{'0x21': 'SN4280', '0x22': 'MSN4280-WS2RXO-NS', '0x23': 'MT2549XZ037F', '0x24': '28:01:CD:0B:07:00', '0x25': '12/02/2025 05:09:12', '0x26': '16', '0x28': 'x86_64-nvidia_sn4280-r0', '0x29': '2025.05-5.3.0017-9600-dev', '0x2a': '222', '0x2b': 'Nvidia', '0xfe': '0xD8975499'}"
+bobcat-1240-dpu-0   ansible_host=10.220.12.140 ansible_ssh_port=5021 sonic_version=v2 sonic_hwsku=Nvidia-bf3-com-dpu switch_type="dpu" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:DE" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:DE serial=MT2548XZ07KU model=SA004902 syseeprom_info="{'0x22': u'SA004902', '0x23': u'MT2548XZ07KU', '0x21': u'BF-3 P-SERIES BASED COM EXPRESS RE-SPIN MODULE, 64GB DDR5, WITH DENSILINK, DPU MODE', '0x24': u'28:01:CD:0B:07:DE', '0x27': u'A6', '0xfe': u'0xE3E32537'}"
+bobcat-1240-dpu-1   ansible_host=10.220.12.140 ansible_ssh_port=5022 sonic_version=v2 sonic_hwsku=Nvidia-bf3-com-dpu switch_type="dpu" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:E6" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:E6 serial=MT2548XZ07K7 model=SA004902 syseeprom_info="{'0x22': u'SA004902', '0x23': u'MT2548XZ07K7', '0x21': u'BF-3 P-SERIES BASED COM EXPRESS RE-SPIN MODULE, 64GB DDR5, WITH DENSILINK, DPU MODE', '0x24': u'28:01:CD:0B:07:E6', '0x27': u'A6', '0xfe': u'0x92D73A70'}"
+bobcat-1240-dpu-2   ansible_host=10.220.12.140 ansible_ssh_port=5023 sonic_version=v2 sonic_hwsku=Nvidia-bf3-com-dpu switch_type="dpu" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:EE" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:EE serial=MT2548XZ07KV model=SA004902 syseeprom_info="{'0x22': u'SA004902', '0x23': u'MT2548XZ07KV', '0x21': u'BF-3 P-SERIES BASED COM EXPRESS RE-SPIN MODULE, 64GB DDR5, WITH DENSILINK, DPU MODE', '0x24': u'28:01:CD:0B:07:EE', '0x27': u'A6', '0xfe': u'0x5AFDEA1C'}"
+bobcat-1240-dpu-3   ansible_host=10.220.12.140 ansible_ssh_port=5024 sonic_version=v2 sonic_hwsku=Nvidia-bf3-com-dpu switch_type="dpu" iface_speed=400000 serial_console="ssh -l rcon:7005 10.220.15.235" ptf_host=ptf-bobcat-1240 ptf_portmap="roles/test/files/mlnx/default_interface_to_front_map.ini" fanout_switch=leopard-1241 dut_mac="28:01:CD:0B:07:F6" pdu_host="pdu-10-193-230-193" base_mac=28:01:CD:0B:07:F6 serial=MT2548XZ07KT model=SA004902 syseeprom_info="{'0x22': u'SA004902', '0x23': u'MT2548XZ07KT', '0x21': u'BF-3 P-SERIES BASED COM EXPRESS RE-SPIN MODULE, 64GB DDR5, WITH DENSILINK, DPU MODE', '0x24': u'28:01:CD:0B:07:F6', '0x27': u'A6', '0xfe': u'0xA64A8924'}"
+
+leopard-1241 ansible_host=leopard-1241 ansible_ssh_user="{{ lookup('env','SONIC_SWITCH_USER') }}" ansible_ssh_pass="{{ lookup('env','SONIC_SWITCH_PASSWORD') }}" os=sonic
+
+[sonic:children]
+sonic_latest
+
+[leaf_topo_1]
+# MEC01 bobcat-1240 topologies
+bobcat-1240
+bobcat-1240-t1-d96u4
+bobcat-1240-ptf-any
+bobcat-1240-dpu-0
+bobcat-1240-dpu-1
+bobcat-1240-dpu-2
+bobcat-1240-dpu-3
+
+[leaf_topo_1:vars]
+podset_number=200
+
+[lab]
+# MEC01 bobcat-1240 topologies
+bobcat-1240
+bobcat-1240-t1-d96u4
+bobcat-1240-ptf-any
+bobcat-1240-dpu-0
+bobcat-1240-dpu-1
+bobcat-1240-dpu-2
+bobcat-1240-dpu-3
+
+[ptf]
+# MEC01 bobcat-1240 PTF host
+ptf-bobcat-1240 ansible_host=10.220.10.190 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+10.220.10.190 ansible_host=10.220.10.190 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
+
+[pdu]
+pdu-10-193-230-193 ansible_host=10.193.230.193 protocol=snmp pdu_ro_snmp_version=v3 pdu_ro_snmp_user="{{ lookup('env','SNMP_RO_USER') }}" pdu_ro_snmp_auth_type=sha pdu_ro_snmp_auth_pass="{{ lookup('env','SNMP_RO_AUTH_PASSWORD') }}" pdu_ro_snmp_priv_type=aes pdu_ro_snmp_priv_pass="{{ lookup('env','SNMP_RO_PRIV_PASSWORD') }}" pdu_rw_snmp_version=v3 pdu_rw_snmp_user="{{ lookup('env','SNMP_RW_USER') }}" pdu_rw_snmp_auth_type=sha pdu_rw_snmp_auth_pass="{{ lookup('env','SNMP_RW_AUTH_PASSWORD') }}" pdu_rw_snmp_priv_type=aes pdu_rw_snmp_priv_pass="{{ lookup('env','SNMP_RW_PRIV_PASSWORD') }}"

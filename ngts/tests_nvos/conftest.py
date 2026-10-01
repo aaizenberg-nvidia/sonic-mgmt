@@ -3,11 +3,11 @@ from typing import Dict, Optional
 import concurrent.futures
 from pathlib import Path
 import datetime
+import fcntl
 import logging
 import os
 import random
 import smtplib
-import subprocess
 import time
 import json
 from email.mime.text import MIMEText
@@ -27,6 +27,7 @@ from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 from ngts.helpers.object_filters import filter_objects
 from ngts.nvos_tools.infra.BmcTool import BmcTool
+from ngts.tools.infra import reset_ansible_ssh_control_masters
 from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL
 from ngts.cli_wrappers.linux.linux_general_clis import LinuxGeneralCli
 from ngts.cli_wrappers.nvue.nvue_base_clis import NvueBaseCli
@@ -40,10 +41,10 @@ from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_tools.cli_coverage.nvue_cli_coverage import NVUECliCoverage
+from ngts.nvos_tools.ib.IbPortsTool import IbPortsTool
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.nvos_tools.infra import ExceptionTool
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner
-from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DiskTool import DiskTool
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
@@ -73,27 +74,25 @@ from ngts.nvos_tools.infra.AirTool import get_internal_ip_for_oob_server
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 EXPECTED_KERNEL_PATTERNS = [
     re.compile(r".*DPC: error containment capabilities:.*"),
     re.compile(r".*ib3: multicast join failed for.*, status -\d+"),
+    re.compile(r".*RAS: Correctable Errors collector initialized.*"),
 ]
 
 pytest_plugins = [
     "ngts.common.plugins.valgrind.plugin",
+    'ngts.common.plugins.nvos_run_policy',
 ]
 
 
-def pytest_configure(config):
-    """
-    Load Vault secrets early in pytest initialization for local (non-MARS) runs.
-    This hook runs before session start and any fixtures.
+def pytest_configure(config: pytest.Config):
+    """Load Vault secrets for local NVOS test runs.
 
-    For MARS runs, secrets are already provided via environment variables.
-    For local runs, we fetch secrets from Vault.
-
-    This only runs when NVOS tests are being executed.
+    MARS supplies secrets through the environment, so Vault loading is skipped
+    for MARS-managed pytest processes.
     """
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
@@ -186,6 +185,43 @@ def pytest_collection_modifyitems(config, items):
     run_nvos_pytest_items_modification(config, items)
 
 
+def _get_empty_allure_step_name(session):
+    project_id = session.config.getoption('--allure_server_project_id', default=None)
+    if project_id:
+        return project_id
+    args = getattr(session.config, 'args', None) or []
+    return ','.join(os.path.basename(str(arg)) for arg in args) or 'unknown-step'
+
+
+def _get_current_pytest_cmd(session):
+    return 'pytest {}'.format(' '.join(session.config.invocation_params.args))
+
+
+def _record_empty_allure_step(session, reason):
+    record = {
+        'step_name': _get_empty_allure_step_name(session),
+        'setup_name': session.config.getoption('--setup_name', default=None) or '',
+        'session_id': session.config.getoption('--session_id', default=None) or '',
+        'mars_key_id': session.config.getoption('--mars_key_id', default=None) or '',
+        # Set by the MARS run_db per-case <pre> (set_environment_variables) from
+        # [[run_time:mars_last_case_name]] / [[run_time:test_name]] / [[run_time:db_name]];
+        # empty outside a run_db case context.
+        'db_name': os.environ.get('MARS_DB_NAME', ''),
+        'case_name': os.environ.get('MARS_CASE_NAME', ''),
+        'test_name': os.environ.get('MARS_TEST_NAME', ''),
+        'pytest_cmd': _get_current_pytest_cmd(session),
+        'reason': reason,
+    }
+    project_id = session.config.getoption('--allure_server_project_id', default=None) or 'unknown'
+    file_path = InfraConst.CASE_INCLUDE_EMPTY_ALLURE_STEPS_TMPL.format(project_id)
+    with open(file_path, 'a') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.write(json.dumps(record) + '\n')
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def pytest_collection_finish(session: pytest.Session):
     """Fail explicitly when a MARS-managed run selects zero tests.
 
@@ -209,6 +245,8 @@ def pytest_collection_finish(session: pytest.Session):
     if keyword:
         filters.append(f"-k '{keyword}'")
     filter_desc = ' '.join(filters) if filters else 'no marker/keyword filters'
+
+    _record_empty_allure_step(session, filter_desc)
 
     pytest.exit(
         f"CI/Regression run (session_id={session_id}) selected 0 tests with {filter_desc}. "
@@ -374,7 +412,7 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                         serial_log_content = file.read()
                 with allure.step('attach content to allure'):
                     allure.attach('Serial Console log during test', serial_log_content)
-            except Exception as e:
+            except Exception:
                 err = f'failed to attach serial output from {serial_log_file_path} : {ExceptionTool.format_traceback()}'
                 logging.warning(err)
                 allure.attach('Attachment Failure', err)
@@ -383,56 +421,13 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                 pass
 
 
-def _reset_ansible_ssh_control_masters():
-    """Close ansible's ssh ControlMaster sockets so the next ansible task reconnects.
-
-    A reboot under test kills the remote sshd session, but ansible.cfg uses
-    'ControlMaster=auto -o ControlPersist=7200s' with a ~35-minute ServerAlive window
-    (ServerAliveInterval=30 * ServerAliveCountMax=70), so the local master socket keeps
-    multiplexing to the dead session and every subsequent ansible task (loganalyzer
-    analyze_logs, sysdumps, serial log analyzer) blocks until the pytest test timeout.
-    Rebuilding the host object does NOT help: ControlMaster=auto re-attaches to the same
-    dead master. We must drop the master itself.
-
-    ansible's default ControlPath is a hash ('%C'), so we cannot map a socket back to a
-    host; for a reboot test it is safe to close them all -- any unrelated master simply
-    reconnects on next use. 'ssh -O exit' only talks to the local control socket (no
-    network), so it cannot hang; we still bound it and fall back to removing the socket file.
-    """
-    cp_dir = os.path.join(os.environ.get("ANSIBLE_HOME", os.path.expanduser("~/.ansible")), "cp")
-    try:
-        sockets = [os.path.join(cp_dir, name) for name in os.listdir(cp_dir)]
-    except OSError:
-        sockets = []
-    closed = 0
-    for sock in sockets:
-        closed_this = False
-        try:
-            res = subprocess.run(["ssh", "-O", "exit", "-o", "ControlPath={}".format(sock), "none"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
-            closed_this = res.returncode == 0
-        except (subprocess.TimeoutExpired, OSError):
-            closed_this = False
-        if not closed_this:
-            # ssh -O exit did not confirm a clean close (no/wedged master or timeout):
-            # remove the socket file so a fresh master is created on the next connect.
-            try:
-                os.unlink(sock)
-                closed_this = True
-            except OSError:
-                pass
-        if closed_this:
-            closed += 1
-    logging.info("Reset %d ansible ssh ControlMaster socket(s) under %s after reboot", closed, cp_dir)
-
-
 @pytest.fixture(autouse=True)
 def reset_ansible_connection_after_reboot(loganalyzer):
     """Refresh the ansible ssh connection after any test that rebooted the DUT.
 
     The NVOS 'duthosts' ansible engines are session-scoped (built once and reused), so
     nothing re-establishes them after a per-test reboot. Combined with ansible's
-    persistent ControlMaster (see _reset_ansible_ssh_control_masters), the first ansible
+    persistent ControlMaster (see reset_ansible_ssh_control_masters), the first ansible
     consumer in teardown -- typically loganalyzer's analyze_logs, but also sysdumps /
     serial log analyzer -- blocks on the dead master until the whole-test pytest timeout
     fires (observed as 'Failed: Timeout >900.0s' on test_reboot_test).
@@ -453,7 +448,7 @@ def reset_ansible_connection_after_reboot(loganalyzer):
     if getattr(pytest, 'dut_rebooted', False):
         pytest.dut_rebooted = False
         with allure.step('Reset ansible ssh ControlMaster after reboot'):
-            _reset_ansible_ssh_control_masters()
+            reset_ansible_ssh_control_masters()
 
 
 @pytest.fixture(scope='session')
@@ -635,7 +630,7 @@ Top 3 Slowest Commands:
                 for i, (cmd, time_taken, status) in enumerate(stats["slowest_commands"][:3], 1):
                     text_summary += f"{i}. {cmd[:60]}{'...' if len(cmd) > 60 else ''} - {time_taken:.3f}s ({status})\n"
 
-                text_summary += f"\nAll Commands (in execution order):\n"
+                text_summary += "\nAll Commands (in execution order):\n"
                 for i, (cmd, response_time, status) in enumerate(commands, 1):
                     text_summary += f"{i:3d}. [{response_time:6.3f}s] {cmd} ({status})\n"
 
@@ -765,6 +760,24 @@ def devices(topology_obj):
     return devices
 
 
+@pytest.fixture(scope='session')
+def ib_ports(engines):
+    """
+    Live IB port topology of the DUT, discovered once per session.
+
+    Prefer this over reading the static connectivity json: that file is a snapshot
+    regenerated only when someone runs test_and_update_connectivity_json.py, so its
+    link-state fields can be months stale, while this reflects the fabric now.
+
+    Not autouse - discovery runs ibdiagnet (about a minute), so only tests that ask
+    for it pay that cost.
+
+        def test_something(ib_ports):
+            port_a, port_b = ib_ports.loop_ports()
+    """
+    return IbPortsTool.discover(engines.dut)
+
+
 @pytest.fixture(scope='session', autouse=True)
 def configure_opensm_multiplanar(devices):
     """
@@ -811,7 +824,14 @@ def serial_engine(topology_obj, devices):
     """
     :return: serial connection
     """
-    return ConnectionTool.create_serial_connection(topology_obj, devices)
+    serial_engine = SerialConsoleTool.get_serial_console_session(topology_obj)
+    try:
+        SerialConsoleTool.exit_existing_login(serial_engine)
+        SerialConsoleTool.login_nos(serial_engine, devices.dut.default_username, devices.dut.default_password)
+        yield serial_engine
+    finally:
+        # simx (QEMU telnet) consoles accept a single client: a leaked session blocks every later test
+        serial_engine.disconnect()
 
 
 @pytest.fixture
@@ -1557,12 +1577,17 @@ def update_fw_versions_json_file(fw_versions_json_file):
 
 
 @pytest.fixture
-def handle_la_marker_in_manufacture(engines, loganalyzer):
+def handle_la_marker_in_manufacture(request, engines: EnginesT, loganalyzer: dict):
     """
     When the test ends, injects the log-analyzer test-start marker as the first line in the log.
     This is intended for tests that cause all log files to be deleted, e.g. by manufacture or factory-reset.
     This fixture calls the 'loganalyzer' fixture just to ensure that these 2 fixtures run in the correct order.
     """
+    if request.config.getoption("--disable_loganalyzer") or "disable_loganalyzer" in request.keywords:
+        logging.info("Log analyzer is disabled")
+        yield
+        return
+
     try:
         marker = engines.dut.run_cmd(r"grep -oE '\S+ \S+ start-LogAnalyzer-.*' " + SyslogConsts.SYSLOG_LOG_PATH,
                                      validate=True).splitlines()[-1]
@@ -1589,7 +1614,7 @@ def _validate_matrix_arg(matrix_arg: str) -> Optional[Dict]:
     if matrix_arg.endswith('.json'):
         path = Path(matrix_arg)
         if not path.exists():
-            return
+            raise ArgumentTypeError(f"file does not exist: {matrix_arg!r}")
 
         with path.open() as f:
             matrix_arg = f.read()

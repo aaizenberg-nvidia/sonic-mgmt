@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from ngts.nvos_constants.constants_nvos import ApiType, HealthConsts, PlatformConsts
-from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.nvos_tools.infra.DutUtilsTool import RebootParams
 from ngts.nvos_tools.infra.Fae import Fae, VoltageDpc
@@ -14,6 +13,7 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
 from ngts.ngts_types import DevicesT, EnginesT, TopologyT
+from ngts.tests_nvos.platform.conftest import skip_unsupported_dpc
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,7 @@ def _dpc_fetch_install_and_verify(voltage_dpc_obj: VoltageDpc, path: str, filena
         System().validate_health_status(HealthConsts.OK)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.parametrize("test_api", [random.choice(ApiType.ALL_TYPES)])
 def test_voltage_dpc_install(engines: EnginesT, devices: DevicesT, topology_obj: TopologyT, test_api: ApiType):
     """
@@ -124,8 +125,7 @@ def test_voltage_dpc_install(engines: EnginesT, devices: DevicesT, topology_obj:
         5. Verify revision IDs match the latest version
         6. Clean up fetched files
     """
-    if not isinstance(devices.dut, RosalindSwitch):
-        pytest.skip("DPC voltage update is only supported on Rosalind devices")
+    skip_unsupported_dpc(devices.dut)
 
     TestToolkit.tested_api = test_api
     voltage_dpc_obj = Fae().platform.voltage_dpc
@@ -173,8 +173,7 @@ def test_voltage_dpc_install_bad_flow(engines: EnginesT, devices: DevicesT, topo
         3. Attempt install -- expect failure, no reboot
         4. Clean up fetched files
     """
-    if not isinstance(devices.dut, RosalindSwitch):
-        pytest.skip("DPC voltage update is only supported on Rosalind devices")
+    skip_unsupported_dpc(devices.dut)
 
     TestToolkit.tested_api = test_api
     voltage_dpc_obj = Fae().platform.voltage_dpc

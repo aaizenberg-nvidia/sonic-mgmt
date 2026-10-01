@@ -1,11 +1,12 @@
-"""Offline dry-run of the real Gen2 CPO show tests.
+"""Offline dry-run of the Gen2 CPO show tests.
 
 Runs the actual test functions from tests_nvos/platform/cpo/test_cpo_show.py
 end-to-end - test body, tool layer, command building, JSON parsing and
 validators - against a FakeDutEngine that serves generated sample outputs
 instead of an SSH connection (see fake_dut.py, incl. how to add a test).
-`devices.dut` is a real PortiaCpo4Asic object, so topology and port lists are
-the genuine article. NVUE only; action/reset/event tests stay DUT-only.
+`devices.dut` is a four-ASIC PortiaCpoSimx test instance, so topology and port
+lists use the production device implementation. NVUE only; action/reset/event
+tests stay DUT-only.
 
 Run offline (no setup) with:
     python -m pytest ngts/tests_nvos/unit_tests/cpo -c ngts/pytest.ini \
@@ -22,8 +23,6 @@ from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.unit_tests.cpo import sample_outputs as samples
 from ngts.tests_nvos.unit_tests.cpo.fake_dut import FakeDutEngine, build_show_tree
-
-PORTIA_CPO_4ASIC_KEY = "N7220_LD - Portia_CPO_4ASIC"
 
 
 def _dry_run_tests() -> tuple:
@@ -44,9 +43,9 @@ def fake_fixtures(monkeypatch) -> dict:
     monkeypatch.setenv("NVU_SWITCH_NEW_PASSWORD", "dummy")
     monkeypatch.setenv("NVU_SWITCH_USER", "dummy")
     monkeypatch.setenv("NVU_SWITCH_PASSWORD", "dummy")
-    from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
+    from ngts.nvos_tools.Devices.IbDevice import PortiaCpoSimx
 
-    device = DeviceFactory.create_device(PORTIA_CPO_4ASIC_KEY)
+    device = PortiaCpoSimx(asic_amount=4)
     # the sample generators are written against this exact topology
     assert device.cpo == samples.TOPOLOGY
 

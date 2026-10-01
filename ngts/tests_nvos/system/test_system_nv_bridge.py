@@ -13,6 +13,7 @@ from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_constants.constants_nvos import HealthConsts, ApiType
 from ngts.nvos_tools.nmx.Sdn import Sdn
+from ngts.nvos_tools.infra.IbnetdiscoverTool import IbnetdiscoverTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.general.security.password_hardening.PwhConsts import PwhConsts
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
@@ -22,6 +23,13 @@ from retry import retry
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+NMX_C_CONTAINER = 'nmx-c-job.nmx-c-group.nmxc'
+NV_BRIDGE_CLIENT_ENV = (
+    'NV_BRIDGE_CLIENT_MODE=bridge '
+    'NV_BRIDGE_LOG_LEVEL=info '
+    'LD_PRELOAD=/usr/local/nv-bridge/lib/libnv_bridge.so'
+)
 
 
 @pytest.mark.nv_bridge
@@ -94,7 +102,7 @@ def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, 
         1. Start Cluster
         2. Configure NV bridge
         3. Verify NV bridge output
-        4. Send MAD and check no errors
+        4. Discover remote switch CA via ibstat and send MADs with ibnetdiscover --Ca
         5. Unset Cluster
     """
     if single_switch:
@@ -137,7 +145,7 @@ def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, 
         with allure.step("Get tray index of second dut"):
             tray_index = OutputParsingTool.parse_show_output_to_dict(nv_command.platform.chassis_location.show(dut_engine=dut2)).get_returned_value()[ChassisLocationConsts.TRAY_ID]
 
-        with allure.step("Send MAD and check it's successfully"):
+        with allure.step("Discover remote switch CA and send MAD via ibnetdiscover"):
             _send_mad_verify_no_errors(dut, tray_index)
 
     finally:
@@ -282,6 +290,8 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
     TestToolkit.tested_api = test_api
     cluster = Cluster()
     sdn = Sdn()
+    sdnFiles = sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[
+        SystemConsts.NV_BRIDGE_CLIENT_STATE]
     try:
         with allure.step("Enable cluster"):
             output = OutputParsingTool.parse_show_output_to_dict(
@@ -303,38 +313,13 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
                                      local_host=True)
             show_data = OutputParsingTool.parse_json_str_to_dictionary(nv_command.system.nv_bridge.show()).get_returned_value()
 
-        with allure.step("Execute action generate for nv-bridge-client-state"):
-            result = sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].action_generate_sdn()
-            result.verify_result()
-
-        with allure.step("Verify state file is generated"):
-            output = OutputParsingTool.parse_show_output_to_dict(
-                sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].files.show(output_format=OutputFormat.json),
-                output_format=OutputFormat.json).get_returned_value()
-            assert output, "Expected nv-bridge-client-state file to be generated"
-
-        with allure.step("Verify state file content matches nv show system nv-bridge"):
-            file_path = next(iter(output.values()))["path"]
-
-            file_content = engines.dut.run_cmd(f"sudo cat {file_path}")
-            assert file_content, "State file content is empty"
-
-            msg = f"File content is invalid. content: {file_content}"
-
-            hostname = engines.dut.run_cmd(f"hostname")
-            assert f'"nvbdUuid": "{hostname}' in file_content, msg
-
-            if show_data.get("connections"):
-                server_id = show_data.get("server-id", "")
-                assert f'"nvbsUuid": "{server_id}"' in file_content, msg
-
-                conn = next(iter(show_data["connections"].values()))
-                server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
-                assert f'"nvbsAddress": "{server_address}"' in file_content, msg
+        with allure.step("Generate and verify nv-bridge-client-state file"):
+            sdnFiles.files.delete_all_existing_files()
+            _generate_and_verify_state_file(sdnFiles, show_data, engine=engines.dut)
 
     finally:
         with allure.step("Delete generated files"):
-            sdn.state.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[SystemConsts.NV_BRIDGE_CLIENT_STATE].files.delete_files()
+            sdnFiles.files.delete_all_existing_files()
         with allure.step("Disable cluster"):
             cluster.unset(apply=True, dut_engine=engines.dut)
 
@@ -404,6 +389,7 @@ def _verify_nv_bridge_output(nv_bridge, state=None, health=None, health_reason=N
     if health_reason:
         ValidationTool.verify_field_value_in_output(output_dictionary, SystemConsts.NV_BRIDGE_HEALTH_REASON, health_reason).verify_result()
     if connections:
+        assert output_dictionary['connections'], 'No nv-bridge connection established'
         if active and client_address and client_id and server_address:
             assert active in output_dictionary['connections']['1'][SystemConsts.NV_BRIDGE_CLIENT_ACTIVE], f'Connection is not {active}'
             assert client_address in output_dictionary['connections']['1'][SystemConsts.NV_BRIDGE_CLIENT_ADDRESS], f'Client-address {client_address} not in output'
@@ -421,12 +407,77 @@ def _verify_nv_bridge_output(nv_bridge, state=None, health=None, health_reason=N
         assert output_dictionary['connections'] == {}, 'Connections not empty'
 
 
+# nv-bridge reports its state to nmx-controller every 10 seconds,
+# so the first generated files may not reflect the connection yet
+@retry(Exception, tries=5, delay=2)
+def _generate_and_verify_state_file(sdn_files, show_data, engine):
+    with allure.step("Generate nv-bridge-client-state file"):
+        sdn_files.action_generate_sdn().verify_result()
+
+        output = OutputParsingTool.parse_show_output_to_dict(
+            sdn_files.files.show(output_format=OutputFormat.json),
+            output_format=OutputFormat.json).get_returned_value()
+        assert output, "Expected nv-bridge-client-state file to be generated"
+
+    with allure.step("Verify file content"):
+        # file names are timestamped, so the highest name is the newest file
+        # The file names end in YYYYMMDD_HHMMSS, which sorts correctly as a plain string, so max() on the keys is enough.
+        file_path = output[max(output)]["path"]
+        file_content = engine.run_cmd(f"sudo cat {file_path}")
+        assert file_content, "State file content is empty"
+
+    msg = f"File content is invalid. content: {file_content}"
+
+    with allure.step("Verify hostname in state file"):
+        hostname = engine.run_cmd("hostname")
+        assert f'"nvbdUuid": "{hostname}' in file_content, msg
+
+    if show_data.get("connections"):
+        with allure.step("Verify server id in state file"):
+            server_id = show_data.get("server-id", "")
+            assert f'"nvbsUuid": "{server_id}"' in file_content, msg
+
+        with allure.step("Verify server address in state file"):
+            conn = next(iter(show_data["connections"].values()))
+            server_address = conn.get(SystemConsts.NV_BRIDGE_SERVER_ADDRESS, "")
+            assert f'"nvbsAddress": "{server_address}"' in file_content, msg
+
+
+def _run_nv_bridge_cmd_in_nmx_c(dut, cmd: str) -> str:
+    """Run a command inside nmx-c with libnv_bridge preloaded (virtual nvbs CAs)."""
+    wrapped = f'export {NV_BRIDGE_CLIENT_ENV}; {cmd}'
+    return dut.run_cmd(f"docker exec {NMX_C_CONTAINER} bash -c '{wrapped}'")
+
+
 def _send_mad_verify_no_errors(dut, tray_index):
-    cmd = 'apt install -y procps vim openssh-client infiniband-diags less iputils-ping'
-    cmd += ' ; ' + 'export NV_BRIDGE_CLIENT_MODE=bridge NV_BRIDGE_LOG_LEVEL=info LD_PRELOAD=/usr/local/nv-bridge/lib/libnv_bridge.so'
-    cmd += ' ; ' + f'smpquery ni -L 1 -C nvbs-{tray_index}-ca-01'
-    output = dut.run_cmd(f"docker exec -it nmx-c-job.nmx-c-group.nmxc bash -c '{cmd}'")
-    assert 'SystemGuid' in output, 'MAD not sent, SystemGuid was not found in output'
+    """Verify MADs through nv-bridge using the remote switch CA.
+
+    smpquery -L 1 does not work with nv-bridge: a local ASIC discovers over FNM
+    links, not the OS bridge (NVBug 5657178, closed as not a bug). Discovery
+    must use ibstat inside nmx-c, then ibnetdiscover --Ca <switch-ca-name>.
+    """
+    ca_name = f'nvbs-{tray_index}-ca-01'
+
+    with allure.step('Install infiniband-diags in nmx-c'):
+        dut.run_cmd(f"docker exec {NMX_C_CONTAINER} bash -c 'apt install -y infiniband-diags'")
+
+    with allure.step(f'Discover NV-bridge CAs via ibstat (expect {ca_name})'):
+        ibstat_output = _run_nv_bridge_cmd_in_nmx_c(dut, 'ibstat')
+        logger.info('ibstat output:\n%s', ibstat_output)
+        # nv-bridge ibstat reports virtual devices as Switch '<name>', not CA '<name>'
+        listed = f"Switch '{ca_name}'" in ibstat_output or f"CA '{ca_name}'" in ibstat_output
+        assert listed, (
+            f"NV-bridge device {ca_name} was not listed by ibstat inside nmx-c:\n{ibstat_output}"
+        )
+
+    with allure.step(f'Run ibnetdiscover --Ca {ca_name}'):
+        output = _run_nv_bridge_cmd_in_nmx_c(dut, f'ibnetdiscover --Ca {ca_name}')
+        logger.info('ibnetdiscover --Ca %s output:\n%s', ca_name, output)
+        assert 'timed out' not in output.lower() and 'iberror' not in output.lower(), (
+            f'ibnetdiscover --Ca {ca_name} failed:\n{output}'
+        )
+        switches = IbnetdiscoverTool.parse_output(output)
+        assert switches, f'ibnetdiscover --Ca {ca_name} returned no switches:\n{output}'
 
 
 def _restart_nv_bridge_container(dut):

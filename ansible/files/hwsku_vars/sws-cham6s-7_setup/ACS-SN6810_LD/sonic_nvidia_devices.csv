@@ -1,0 +1,5 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+sws-cham6s-7,10.220.14.37/22,ACS-SN6810_LD,DevSonic,,sonic
+sws-cham6s-8,10.220.14.39/22,ACS-SN6810_LD,FanoutLeaf,,sonic
+fit-sonic-vrt-mec-161,10.220.161.80,TestServ,Server,,
+rcon,10.220.9.36,,ConsoleServer,ssh,sonic

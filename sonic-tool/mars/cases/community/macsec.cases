@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> MACsec Test </info>
+            <name> macsec </name>
+            <owner> SONiC </owner>
+        </Test>
+        <Case>
+            <tags> MACSEC </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 55555 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> macsec/test_docker_restart.py </info>
+        <name> macsec_test_docker_restart </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts macsec/test_docker_restart.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>

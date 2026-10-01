@@ -19,10 +19,12 @@ from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.nvos_tools.system.Aaa import Aaa
+from ngts.nvos_tools.system.AsicDebugConfig import AsicDebugConfig
 from ngts.nvos_tools.system.Config import Config
 from ngts.nvos_tools.system.ControlPlane import ControlPlane
 from ngts.nvos_tools.system.Debug_log import DebugLog
 from ngts.nvos_tools.system.Disk import Disk
+from ngts.nvos_tools.system.AsicDebugConfig import AsicDebugConfig
 from ngts.nvos_tools.system.Events import Events
 from ngts.nvos_tools.system.Files import Files
 from ngts.nvos_tools.system.GnmiServer import GnmiServer
@@ -40,10 +42,12 @@ from ngts.nvos_tools.system.SshServer import SshServer
 from ngts.nvos_tools.system.SnmpServer import SnmpServer
 from ngts.nvos_tools.system.Stats import Stats
 from ngts.nvos_tools.system.Syslog import Syslog
+from ngts.nvos_tools.system.SystemInternal import SystemInternal
 from ngts.nvos_tools.system.Techsupport import TechSupport
 from ngts.nvos_tools.system.Telemetry import Telemetry
 from ngts.nvos_tools.system.Version import Version
 from ngts.nvos_tools.system.Ztp import Ztp
+from ngts.nvos_tools.system.SystemInternal import SystemInternal
 from ngts.nvos_tools.system.Dns import Dns
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.GrpcTunnel import GrpcTunnel
@@ -93,10 +97,11 @@ class System(BaseComponent):
         self.disk = Disk(self)
         self.memory = BaseComponent(self, path='/memory')
         self.cpu = BaseComponent(self, path='/cpu')
-        self.asic_debug_config = BaseComponent(self, path='/asic-debug-config')
+        self.internal = SystemInternal(self)
+        self.asic_debug_config = AsicDebugConfig(self)
         self.cpu_debug_config = BaseComponent(self, path='/cpu-debug-config')
         self.bmc_debug_config = BaseComponent(self, path='/bmc-debug-config')
-        self.nv_bridge = BaseComponent(self, path='/nv-bridge')
+        self.nv_bridge = NvBridge(self)
         self.control_plane = ControlPlane(self)
         self.packages = Packages(self)
 
@@ -291,3 +296,33 @@ class WebServerAPI(BaseComponent):
 class Api(MTLSableServerResource):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/api')
+
+
+class NvBridge(BaseComponent):
+    """system/nv-bridge component (NVBridge / NVLink-over-IP resiliency)."""
+
+    SWITCH_OVER_ACTION = 'switch-over'
+    SWITCH_OVER_TARGET_KEY = 'node-type'
+    # Success marker every `nv action` prints; used so OpenAPI output validation is
+    # not vacuous (an empty expected_output matches any response, incl. errors).
+    ACTION_SUCCEEDED = 'Action succeeded'
+
+    def __init__(self, parent_obj=None):
+        BaseComponent.__init__(self, parent=parent_obj, path='/nv-bridge')
+
+    def action_switch_over(self, target, dut_engine=None, expected_output=None) -> ResultObj:
+        """``nv action switch-over system nv-bridge <target>`` via the active API.
+
+        Routes through BaseComponent.action so the call honors TestToolkit.tested_api,
+        exercising either the NVUE CLI or the OpenAPI REST endpoint.
+
+        expected_output defaults to the action success marker so a failed/error response
+        (e.g. nvb-s down) is correctly reported as a failed ResultObj on both APIs,
+        rather than passing vacuously on OpenAPI where '' matches any output.
+        """
+        return self.action(
+            self.SWITCH_OVER_ACTION,
+            main_param=(self.SWITCH_OVER_TARGET_KEY, target),
+            engine=dut_engine,
+            expected_output=expected_output or self.ACTION_SUCCEEDED,
+        )

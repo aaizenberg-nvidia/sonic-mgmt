@@ -2,18 +2,19 @@
 {% set right_lldp_ports = get_right_left_ports_dict(bring_up_ports=False)['right_ports'] %}
 {% set split_left = parameter_dict.split_left %}
 {% set split_right = parameter_dict.split_right %}
-{% set pre_left = cumulus_ports_already_logical_split(left_lldp_ports) %}
-{% set pre_right = cumulus_ports_already_logical_split(right_lldp_ports) %}
+{% set total_ports = parameter_dict.total_ports %}
+{% set pre_left = cumulus_ports_match_requested_split(left_lldp_ports, split_left) %}
+{% set pre_right = cumulus_ports_match_requested_split(right_lldp_ports, split_right) %}
 {% set _ = validate_no_unsupported_service_port_split(left_lldp_ports, split_left, "SRv6 DUT left ports") %}
 {% set _ = validate_no_unsupported_service_port_split(right_lldp_ports, split_right, "SRv6 DUT right ports") %}
 {% set left_parent_ports = get_swp_parent_port_names(left_lldp_ports) %}
 {% set right_parent_ports = get_swp_parent_port_names(right_lldp_ports) %}
-{% if pre_left and split_left | int == 2 %}
+{% if pre_left %}
 {% set left_ports = sort_swp_split_port_names(left_lldp_ports) %}
 {% else %}
 {% set left_ports = get_swp_ports_for_split(left_lldp_ports, split_left) %}
 {% endif %}
-{% if pre_right and split_right | int == 2 %}
+{% if pre_right %}
 {% set right_ports = sort_swp_split_port_names(right_lldp_ports) %}
 {% else %}
 {% set right_ports = get_swp_ports_for_split(right_lldp_ports, split_right) %}
@@ -39,7 +40,7 @@
             set-hostname: disabled
         vrf: mgmt
         type: eth
-    {% if split_left | int != 1 and not (pre_left and split_left | int == 2) %}
+    {% if split_left | int != 1 %}
     {% for port in left_parent_ports %}
       {{ port }}:
         link:
@@ -48,7 +49,7 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% if split_right | int != 1 and not (pre_right and split_right | int == 2) %}
+    {% if split_right | int != 1 %}
     {% for port in right_parent_ports %}
       {{ port }}:
         link:
@@ -140,7 +141,7 @@
               l2: {}
               l3: {}
               tunnel: {}
-        state: {% if parameter_dict.chip_type == 'SPC4' %}disabled{% else %}enabled{% endif %}
+        state: {% if parameter_dict.chip_type in ['SPC4', 'SPC6'] %}disabled{% else %}enabled{% endif %}
     vrf:
       default:
         router:

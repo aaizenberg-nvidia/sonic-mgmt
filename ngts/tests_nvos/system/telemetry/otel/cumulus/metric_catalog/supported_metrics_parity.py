@@ -815,8 +815,17 @@ CL_516_QOS_BUFFER_METRICS = [
     'nvswitch_shared_buffer_pool_desc_time_since_clear'
 ]
 
+# CL 5.17+ platform hw-details only. Partition and power-supply metrics are CL 5.18+
+# (``CL_518_PLATFORM_PARTITION_STATS`` / ``CL_518_PLATFORM_POWER_SUPPLY_STATS``).
 CL_517_ADDITIONAL_PLATFORM_STATS = [
     'nvswitch_platform_info_hw_details',
+    'nvswitch_platform_environment_power_supply_capacity',
+    'nvswitch_platform_environment_power_supply_current',
+    'nvswitch_platform_environment_power_supply_input_current',
+    'nvswitch_platform_environment_power_supply_input_voltage',
+    'nvswitch_platform_environment_power_supply_power',
+    'nvswitch_platform_environment_power_supply_state',
+    'nvswitch_platform_environment_power_supply_voltage',
 ]
 
 # CL 5.17+ Control Plane Software Stats
@@ -952,7 +961,7 @@ CL_517_LINK_DEBOUNCE_STATS = [
     'nvswitch_interface_link_debounce_ignored_events',
 ]
 
-# CL 5.18+ platform ASIC resource telemetry (``platform-stats`` / ``platform-info``).
+# CL 5.18+ platform ASIC resource telemetry (``platform-stats`` / ``asic-resource``).
 CL_518_PLATFORM_ASIC_RESOURCE_STATS = [
     'nvswitch_platform_asic_resource_free',
     'nvswitch_platform_asic_resource_high_watermark',
@@ -961,7 +970,7 @@ CL_518_PLATFORM_ASIC_RESOURCE_STATS = [
     'nvswitch_platform_asic_resource_used',
 ]
 
-# CL 5.18+ platform boot/partition info (``nv_system_images`` / platform-info).
+# CL 5.18+ platform partition / boot-slot telemetry (``platform-stats`` / ``platform-info``).
 CL_518_PLATFORM_PARTITION_STATS = [
     'nvswitch_platform_current_boot_partition',
     'nvswitch_platform_next_boot_partition',

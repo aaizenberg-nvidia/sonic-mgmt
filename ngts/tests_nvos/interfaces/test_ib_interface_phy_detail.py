@@ -348,6 +348,9 @@ def _get_test_ports(engine, device) -> Tuple[Port, Port, Port, Port, Port]:
         '10.7.148.248': ('sw7p1', 'sw8p2', 'sw61p1'),
         '10.7.148.249': ('sw7p1', 'sw8p2', 'sw61p1'),
 
+        # taipan:
+        '10.7.145.34': ('sw121p1', 'sw122p1', 'sw43p1'),
+
         # juliet:
         '10.7.145.52': ('sw2p1s1', 'sw3p1s1', 'sw17p1s1'),
         '10.7.145.53': ('sw2p1s1', 'sw3p1s1', 'sw17p1s1'),

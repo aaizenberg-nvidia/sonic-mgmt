@@ -7,12 +7,50 @@ from typing import Tuple
 import ngts.tools.test_utils.allure_utils as allure
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner, EngineCmdRunner
 from ngts.nvos_tools.infra.IpTool import IpTool
-from ngts.tests_nvos.system.gnmi.constants import GnmiMode
+from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiStreamMode
+
+
+def compose_subscribe_stream_flags(stream_mode: str = None, sample_interval=None, heartbeat_interval=None,
+                                   suppress_redundant: bool = False, updates_only: bool = False) -> str:
+    """
+    Build the gnmic STREAM subscription flags, as a single leading-space-prefixed fragment.
+
+    Shared by every subscribe call site (GnmiClient and the raw gnmic command builders in
+    helpers) so the flag spelling stays in one place.
+
+    gnmic defaults ``--stream-mode`` to target-defined, so asking only for a sample interval
+    would not actually yield SAMPLE mode; an interval therefore implies SAMPLE unless the
+    caller named a mode. ``heartbeat_interval`` is honored in both SAMPLE (with
+    suppress-redundant) and ON_CHANGE per gNMI spec sections 3.5.1.5.2 and 3.5.1.5.1.
+    """
+    if stream_mode is None and sample_interval:
+        stream_mode = GnmiStreamMode.SAMPLE
+    if stream_mode:
+        assert stream_mode in GnmiStreamMode.ALL_MODES, f'unsupported gnmi stream mode: "{stream_mode}"'
+
+    flags = []
+    if stream_mode:
+        flags.append(f'--stream-mode {stream_mode}')
+    if sample_interval:
+        flags.append(f'--sample-interval {sample_interval}')
+    if heartbeat_interval:
+        flags.append(f'--heartbeat-interval {heartbeat_interval}')
+    if suppress_redundant:
+        flags.append('--suppress-redundant')
+    if updates_only:
+        flags.append('--updates-only')
+    return f" {' '.join(flags)}" if flags else ''
 
 
 class GnmiClient:
     def __init__(self, server_host, server_port, username, password, cmd_time: int = 5, cacert='',
-                 verify_tools_installed: bool = False, print_outputs: bool = True, engine=None):
+                 verify_tools_installed: bool = False, print_outputs: bool = True, engine=None,
+                 spool_output: bool = False):
+        """
+        Set ``spool_output`` for long-lived subscriptions whose output is only read once the
+        session is closed (streaming many paths for minutes): the runner then spools to temp
+        files instead of pipes, which would otherwise fill their buffer and block gnmic.
+        """
         assert cmd_time >= 0, f'unsupported cmd time: {cmd_time}. must be >= 0'
 
         self.server_host = server_host
@@ -21,9 +59,13 @@ class GnmiClient:
         self.password = password
         self.cacert = cacert
         self.cmd_time = cmd_time
+        # Kept so callers that rebuild a client from this one inherit the host gnmic runs on,
+        # not just the target and credentials.
+        self.engine = engine
 
         if engine is None:
-            self.cmd_runner = CmdRunner('GnmiClient', self.cmd_time, print_outputs)
+            self.cmd_runner = CmdRunner('GnmiClient', self.cmd_time, print_outputs,
+                                        spool_output=spool_output)
         else:
             # Run gnmic on the given engine (e.g. the sonic-mgmt host) instead of the local test
             # player. EngineCmdRunner mirrors CmdRunner (separate stdout/stderr, per-command
@@ -94,24 +136,36 @@ class GnmiClient:
     def gnmic_subscribe_multi_path(self, prefix, paths, mode: str = GnmiMode.STREAM, flat: bool = False,
                                    sample_interval=None, username='', password='', skip_cert_verify: bool = False,
                                    cacert='', debug_mode: bool = True, cmd_time=None,
-                                   keep_session_alive: bool = False, wait_till_done: bool = False) -> Tuple[
+                                   keep_session_alive: bool = False, wait_till_done: bool = False,
+                                   stream_mode: str = None, heartbeat_interval=None,
+                                   suppress_redundant: bool = False, updates_only: bool = False,
+                                   log_to_stderr: bool = False) -> Tuple[
             str, str, int, subprocess.Popen]:
         """
         Subscribe to several `--path` entries under one `--prefix` in a single gnmic invocation.
 
-        When `sample_interval` is set (e.g. '1s'), a STREAM subscription is requested in SAMPLE
-        stream-mode so the server emits a fresh result-set every interval rather than one snapshot.
-        Defaults to `--format json` (set `flat=True` for `--format flat`).
+        `stream_mode` selects the gNMI SubscriptionMode ('sample', 'on-change', 'target-defined');
+        setting `sample_interval` alone implies SAMPLE. `heartbeat_interval` requests periodic
+        resends of unchanged leaves, `suppress_redundant` drops unchanged samples, and
+        `updates_only` skips the initial sync. Defaults to `--format json` (set `flat=True` for
+        `--format flat`); only the JSON form carries the per-notification timestamps that
+        heartbeat continuity checks need.
+
+        `log_to_stderr` adds `--log`, which makes gnmic report a rejected subscription instead of
+        silently retrying it on its `--retry` timer. Worth setting for any long-lived STREAM
+        subscription whose emptiness would otherwise be read as the server going quiet.
         """
         assert paths, 'paths list cannot be empty'
         allowed_modes = GnmiMode.ALL_MODES if not keep_session_alive else [GnmiMode.STREAM, GnmiMode.POLL]
         assert mode in allowed_modes, f'unsupported gnmi subscribe mode: "{mode}"'
         mode_flag = f"--mode {mode}" if mode != GnmiMode.STREAM else GnmiMode.STREAM
-        sample_flags = f" --stream-mode sample --sample-interval {sample_interval}" if sample_interval else ''
+        stream_flags = compose_subscribe_stream_flags(stream_mode, sample_interval, heartbeat_interval,
+                                                      suppress_redundant, updates_only)
         path_flags = " ".join(f"--path '{path}'" for path in paths)
         format_flag = ' --format flat' if flat else ' --format json'
+        log_flag = ' --log' if log_to_stderr else ''
         subscribe_op = (f"subscribe --prefix '{prefix}' {path_flags} --target nvos {mode_flag}" +
-                        sample_flags + format_flag)
+                        stream_flags + format_flag + log_flag)
         return self._run_gnmic_op(subscribe_op, skip_cert_verify, cacert, debug_mode, cmd_time, username, password,
                                   keep_session_alive, wait_till_done)
 

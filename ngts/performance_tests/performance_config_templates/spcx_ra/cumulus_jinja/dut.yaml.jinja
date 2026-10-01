@@ -4,28 +4,55 @@
 {% set split_right = parameter_dict.split_right %}
 {% set total_ports = parameter_dict.total_ports %}
 {% set two_sided_ar = parameter_dict.two_sided_ar | string %}
-{% set pre_left = cumulus_ports_already_logical_split(left_lldp_ports) %}
-{% set pre_right = cumulus_ports_already_logical_split(right_lldp_ports) %}
+{# The SPCX-RA suites reuse two_sided_ar as the leaf-run selector: it is False only for the leaf
+   scenario. Despite the name it no longer gates adaptive routing, which is enabled on every swp
+   in both modes; it selects whether the downstream side is pinned per port or left to ECMP. #}
+{% set is_leaf_mode = two_sided_ar == 'False' %}
+{% set pre_left = cumulus_ports_match_requested_split(left_lldp_ports, split_left) %}
+{% set pre_right = cumulus_ports_match_requested_split(right_lldp_ports, split_right) %}
 {% set _ = validate_no_unsupported_service_port_split(left_lldp_ports, split_left, "SPX-RA DUT left ports") %}
 {% set _ = validate_no_unsupported_service_port_split(right_lldp_ports, split_right, "SPX-RA DUT right ports") %}
 {% set left_parent_ports = get_swp_parent_port_names(left_lldp_ports) %}
 {% set right_parent_ports = get_swp_parent_port_names(right_lldp_ports) %}
-{% if pre_left and split_left | int == 2 %}
+{% if pre_left %}
 {% set left_ports = sort_swp_split_port_names(left_lldp_ports) %}
 {% else %}
 {% set left_ports = get_swp_ports_for_split(left_lldp_ports, split_left) %}
 {% endif %}
-{% if pre_right and split_right | int == 2 %}
+{% if pre_right %}
 {% set right_ports = sort_swp_split_port_names(right_lldp_ports) %}
 {% else %}
 {% set right_ports = get_swp_ports_for_split(right_lldp_ports, split_right) %}
 {% endif %}
-{% set left_count = left_ports|length %}
-{% set right_count = right_ports|length %}
-{% set left_address_list = generate_ip_address_list("172.15.1.2", "172::1:2", mode="dual", number_of_address=left_count) %}
-{% set right_address_list = generate_ip_address_list("192.168.1.2", "192::1:2", mode="dual", number_of_address=right_count) %}
-{% set left_bgp_neighbors = generate_ip_address_list("172.15.1.1", "172::1:1", mode="dual", number_of_address=left_count) %}
-{% set right_bgp_neighbors = generate_ip_address_list("192.168.1.1", "192::1:1", mode="dual", number_of_address=right_count) %}
+{# Port-selection encapsulation: only when exclusion/inclusion is active, size the address
+   space to the FULL (pre-exclusion) port set and index each configured port by its position
+   in that full list. This leaves a gap for excluded ports instead of compacting, so the DUT's
+   per-port subnets stay aligned with the unfiltered TG side (otherwise every port after an
+   excluded one lands in a mismatched subnet and its ARP/ND fails). When inactive the address
+   lists are sized exactly as before (no behavior change). #}
+{% set ps_active = port_selection_active() %}
+{% if ps_active %}
+{% set full_dict = get_full_right_left_ports_dict(bring_up_ports=False) %}
+{% if pre_left %}
+{% set left_ports_full = sort_swp_split_port_names(full_dict['left_ports']) %}
+{% else %}
+{% set left_ports_full = get_swp_ports_for_split(full_dict['left_ports'], split_left) %}
+{% endif %}
+{% if pre_right %}
+{% set right_ports_full = sort_swp_split_port_names(full_dict['right_ports']) %}
+{% else %}
+{% set right_ports_full = get_swp_ports_for_split(full_dict['right_ports'], split_right) %}
+{% endif %}
+{% set left_addr_count = left_ports_full|length %}
+{% set right_addr_count = right_ports_full|length %}
+{% else %}
+{% set left_addr_count = left_ports|length %}
+{% set right_addr_count = right_ports|length %}
+{% endif %}
+{% set left_address_list = generate_ip_address_list("172.15.1.2", "172::1:2", mode="dual", number_of_address=left_addr_count) %}
+{% set right_address_list = generate_ip_address_list("192.168.1.2", "192::1:2", mode="dual", number_of_address=right_addr_count) %}
+{% set left_bgp_neighbors = generate_ip_address_list("172.15.1.1", "172::1:1", mode="dual", number_of_address=left_addr_count) %}
+{% set right_bgp_neighbors = generate_ip_address_list("192.168.1.1", "192::1:1", mode="dual", number_of_address=right_addr_count) %}
 - header:
     model: sn5600
     nvue-api-version: nvue_v1
@@ -40,7 +67,7 @@
             set-hostname: disabled
         vrf: mgmt
         type: eth
-    {% if split_left | int != 1 and not (pre_left and split_left | int == 2) %}
+    {% if split_left | int != 1 %}
     {% for port in left_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -49,7 +76,7 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% if split_right | int != 1 and not (pre_right and split_right | int == 2) %}
+    {% if split_right | int != 1 %}
     {% for port in right_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -58,39 +85,41 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% set counter = namespace(value=0) %}
     {% for port in left_ports %}
+    {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
       {{ port }}:
-      {% if not (split_left | int == 8 and parameter_dict.get('link_phy_speed')) %}
+      {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
         ipv4:
           address:
-            {{ left_address_list["v4"][counter.value] }}/24 : {}
+            {{ left_address_list["v4"][ipidx] }}/24 : {}
         ipv6:
           address:
-            {{ left_address_list["v6"][counter.value] }}/120 : {}
-        {% set counter.value = counter.value + 1 %}
-        {% if two_sided_ar=='True' %}
+            {{ left_address_list["v6"][ipidx] }}/120 : {}
         router:
           adaptive-routing:
             state: enabled
-        {% endif %}
         type: swp
     {% endfor %}
-    {% set counter = namespace(value=0) %}
     {% for port in right_ports %}
+    {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
       {{ port }}:
-      {% if not (split_right | int == 8 and parameter_dict.get('link_phy_speed')) %}
+      {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
         ipv4:
           address:
-            {{ right_address_list["v4"][counter.value] }}/24 : {}
+            {{ right_address_list["v4"][ipidx] }}/24 : {}
         ipv6:
           address:
-            {{ right_address_list["v6"][counter.value] }}/120 : {}
-        {% set counter.value = counter.value + 1 %}
+            {{ right_address_list["v6"][ipidx] }}/120 : {}
+        {# Emitted in both modes on purpose. In leaf mode the per-port host routes below give the
+           right side a single nexthop each, so there is no ECMP group here for adaptive routing to
+           act on and this setting is inert. Emitting it anyway keeps the right-side interface
+           stanzas identical between the two-sided and leaf configurations, so the leaf
+           "nv config replace" leaves those interfaces alone instead of reconfiguring all of them
+           and stranding their static routes on the ones that do not come back. #}
         router:
           adaptive-routing:
             state: enabled
@@ -99,20 +128,54 @@
     qos:
       pfc:
         default-global:
-          port-buffer: 20200
+          {# port-buffer only on chips with a published value, from PFC_PORT_BUFFER_BY_CHIP.
+             Omitted elsewhere so NVUE sizes it: SPC5 rejects the SPC6 figure against a
+             258432-byte limit, and neither Spectrum-X deployment guide gives a Spectrum-5
+             replacement. #}
+          {% if parameter_dict.get('pfc_port_buffer') %}
+          port-buffer: {{ parameter_dict.pfc_port_buffer }}
+          {% endif %}
           switch-priority:
             '3': {}
-          xoff-threshold: 65000
-          xon-threshold: 65000
+          xoff-threshold: 75000
+          xon-threshold: 75000
       roce:
         state: enabled
         mode: lossless
+      {# Lossy traffic in this topology is negligible, so the default 50/50 egress buffer split
+         starves the RoCE class. Both Spectrum-X deployment guides resize the pools to 90/10. #}
+      traffic-pool:
+        default-lossy:
+          memory-percent: 10
+        roce-lossless:
+          memory-percent: 90
     router:
       adaptive-routing:
         state: enabled
+      {# Without BFD a failed link is only detected when the BGP hold timer expires, so a dead
+         nexthop stays in the upstream ECMP group for seconds. 300ms x 3 detects it in ~900ms. #}
+      bfd:
+        state: enabled
+        profile:
+          default:
+            detect-multiplier: 3
+            min-rx-interval: 300
+            min-tx-interval: 300
       bgp:
         state: enabled
         autonomous-system: spine
+        {# Hold best-path selection until the session set has settled. With 512 neighbours coming
+           up at once the default of 0 lets BGP advertise from a partial view and then churn. #}
+        convergence-wait:
+          establish-wait-time: 15
+          time: 30
+        {# The leaf re-apply restarts FRR mid-test; graceful restart keeps forwarding on stale
+           routes across that restart instead of withdrawing the whole ECMP group. #}
+        graceful-restart:
+          mode: full
+          path-selection-deferral-time: 180
+          restart-time: 180
+          stale-routes-time: 180
         router-id: 3.3.3.3
       policy:
         route-map:
@@ -158,10 +221,46 @@
               l2: {}
               l3: {}
               tunnel: {}
-        state: enabled
+        state: {% if parameter_dict.chip_type == 'SPC6' %}disabled{% else %}enabled{% endif %}
     vrf:
       default:
         router:
+          {% if is_leaf_mode %}
+          {# One host route per right port, each with a single nexthop, so longest-prefix match
+             resolves every downstream destination to exactly one egress interface. Without these,
+             a covering prefix learned over BGP resolves the same destinations to an ECMP group and
+             sprays them across all right ports.
+             The destinations use the same bases and step as NvuePerformanceCli.get_leaf_dip_list,
+             so the routed set matches the generated set, and no speaker in this topology advertises
+             that range, so a destination that loses its route is dropped rather than silently
+             resolving through BGP. Both families are emitted regardless of the tested one; the
+             unused one is never hit.
+             Destinations are indexed by position among the configured ports, never by position in
+             the full pre-exclusion list. Unlike the link addresses above, no second device derives
+             these, so an excluded port needs no gap reserved for it: the routed set stays the first
+             N addresses, which is what the Python side generates from the same N. The nexthop keeps
+             the full index, since that address belongs to the peer on that wire. #}
+          {% set leaf_dips = generate_ip_address_list(parameter_dict.leaf_dip_base_v4,
+                                                      parameter_dict.leaf_dip_base_v6,
+                                                      step_v4=parameter_dict.leaf_dip_step,
+                                                      step_v6=parameter_dict.leaf_dip_step,
+                                                      mode="dual",
+                                                      number_of_address=right_ports|length) %}
+          static:
+            {% for port in right_ports %}
+            {% if ps_active %}{% set nhidx = list_index(right_ports_full, port) %}{% else %}{% set nhidx = loop.index0 %}{% endif %}
+            {{ leaf_dips["v4"][loop.index0] }}/32:
+              address-family: ipv4-unicast
+              via:
+                {{ right_bgp_neighbors["v4"][nhidx] }}:
+                  type: ipv4-address
+            {{ leaf_dips["v6"][loop.index0] }}/128:
+              address-family: ipv6-unicast
+              via:
+                {{ right_bgp_neighbors["v6"][nhidx] }}:
+                  type: ipv6-address
+            {% endfor %}
+          {% endif %}
           bgp:
             address-family:
               ipv4-unicast:
@@ -174,35 +273,47 @@
                 state: enabled
             autonomous-system: spine    
             neighbor:
-              {% for neighbor in left_bgp_neighbors["v4"] %}
-              {{ neighbor }}:
+              {% for port in left_ports %}
+              {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ left_bgp_neighbors["v4"][ipidx] }}:
                 peer-group: v4_group_left
                 type: numbered
-                update-source: {{ left_address_list["v4"][loop.index0] }}
+                update-source: {{ left_address_list["v4"][ipidx] }}
               {% endfor %}
-              {% for neighbor in left_bgp_neighbors["v6"] %}
-              {{ neighbor }}:
+              {% for port in left_ports %}
+              {% if ps_active %}{% set ipidx = list_index(left_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ left_bgp_neighbors["v6"][ipidx] }}:
                 peer-group: v6_group_left
                 type: numbered
-                update-source: {{ left_address_list["v6"][loop.index0] }}
+                update-source: {{ left_address_list["v6"][ipidx] }}
               {% endfor %}
-              {% for neighbor in right_bgp_neighbors["v4"] %}
-              {{ neighbor }}:
+              {% for port in right_ports %}
+              {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ right_bgp_neighbors["v4"][ipidx] }}:
                 peer-group: v4_group_right
                 type: numbered
-                update-source: {{ right_address_list["v4"][loop.index0] }}
+                update-source: {{ right_address_list["v4"][ipidx] }}
               {% endfor %}
-              {% for neighbor in right_bgp_neighbors["v6"] %}
-              {{ neighbor }}:
+              {% for port in right_ports %}
+              {% if ps_active %}{% set ipidx = list_index(right_ports_full, port) %}{% else %}{% set ipidx = loop.index0 %}{% endif %}
+              {{ right_bgp_neighbors["v6"][ipidx] }}:
                 peer-group: v6_group_right
                 type: numbered
-                update-source: {{ right_address_list["v6"][loop.index0] }}
+                update-source: {{ right_address_list["v6"][ipidx] }}
               {% endfor %}
+            {# Ignore AS-path differences when selecting multipaths. Every generator link peers
+               from its own AS, so without this the paths are not considered equal-cost and the
+               upstream ECMP group cannot form at full width. #}
+            path-selection:
+              multipath:
+                aspath-ignore: enabled
             peer-group:
               v4_group_left:
                 address-family:
                   ipv4-unicast:
                     state: enabled
+                bfd:
+                  profile: default
                 remote-as: external
               v6_group_left:
                 address-family:
@@ -213,11 +324,15 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
+                bfd:
+                  profile: default
                 remote-as: external
               v4_group_right:
                 address-family:
                   ipv4-unicast:
                     state: enabled
+                bfd:
+                  profile: default
                 remote-as: external
               v6_group_right:
                 address-family:
@@ -228,5 +343,7 @@
                     policy:
                       inbound:
                         route-map: prefer_v6_global
+                bfd:
+                  profile: default
                 remote-as: external
             state: enabled  

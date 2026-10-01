@@ -5,6 +5,15 @@
     version: 25.01.3932-014
 - set:
     interface:
+      lo:
+        acl:
+          acl-default-loopback:
+            inbound:
+              control-plane: {}
+          acl-default-loopback-ipv6:
+            inbound:
+              control-plane: {}
+        type: loopback
       swA1p1,swA14p1:
         link:
           connection-mode: ndr
@@ -20,3 +29,18 @@
             password: $y$j9T$Uay927sQ.WFouaJb1uHpd/$Vn58Jt3rx4TElcI7KUYbtA/qQtK/qKM2qWy9J9wanF3
       date-time:
         timezone: Asia/Jerusalem
+
+      control-plane:
+        acl:
+          acl-default-dos:
+            inbound: {}
+          acl-default-dos-ipv6:
+            inbound: {}
+          acl-default-outbound:
+            outbound: {}
+          acl-default-outbound-ipv6:
+            outbound: {}
+          acl-default-whitelist:
+            inbound: {}
+          acl-default-whitelist-ipv6:
+            inbound: {}

@@ -15,7 +15,7 @@ logger = logging.getLogger()
 
 OPEN_SM_PATH = "/opt/ufm/opensm/sbin/opensm"  # UFM opensm (used for multiplanar)
 DOCA_OPEN_SM_PATH = "opensm"  # Doca opensm - executed directly via Doca, not through UFM
-SM_MASTER_OPEN_SM_PATH = "/labhome/juliav/workspace/sm_regression/sources/SM_MASTER/usr/sbin/opensm"  # SM Master path
+STOCK_OPEN_SM_PATH = "/usr/sbin/opensm"  # Stock MLNX_OFED/DOCA opensm shipped on the traffic host
 OPEN_SM_CFG_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/issu/opensm.cfg"
 MISSING_HFNM_MESSAGE = "HA and HFNM can't be found in topology"
 MISSING_HOST = "Host {} is missing from topology"
@@ -25,7 +25,7 @@ GET_OPENSM_CMD = "ps aux | grep opensm"
 class OpenSmTool:
     # Class-level configuration for opensm path.
     # Set automatically by the configure_opensm_path fixture in conftest.py
-    OPENSM_PATH = SM_MASTER_OPEN_SM_PATH
+    OPENSM_PATH = STOCK_OPEN_SM_PATH
 
     # Whether the DUT requires a multiplanar-capable opensm (e.g. Black Mamba, Taipan).
     # Set automatically by the configure_opensm_multiplanar fixture from devices.dut.multi_planar.
@@ -158,14 +158,6 @@ class OpenSmTool:
                 return ResultObj(False, "Failed to create smi2 SMI device required for multiplanar")
 
             logging.info(f"Using opensm path: {desired_path}")
-            if multiplanar:
-                # CX8 needs to see the planarized interface
-                if "smi2" not in output:
-                    engines.hfnm.run_cmd(
-                        f"/opt/mellanox/iproute2/sbin/rdma dev add smi2 type SMI parent {port_name}")
-                opensm_path = '/opt/ufm/opensm/sbin/opensm'
-            else:
-                opensm_path = '/labhome/juliav/workspace/sm_regression/sources/SM_MASTER/usr/sbin/opensm'
 
             output = engines.hfnm.run_cmd("ibstat {}".format(port_name))
             guid = ''
@@ -270,8 +262,10 @@ class OpenSmTool:
         if not lines:
             return None
 
-        # Check for known paths, otherwise assume DOCA (no path prefix)
-        for path in [SM_MASTER_OPEN_SM_PATH, OPEN_SM_PATH]:
+        # Check for known paths, otherwise assume DOCA (no path prefix).
+        # STOCK path is checked so a stock /usr/sbin/opensm is recognized as its
+        # configured path (not misread as DOCA -> needless restart).
+        for path in [OPEN_SM_PATH, STOCK_OPEN_SM_PATH]:
             if path in output:
                 return path
         return DOCA_OPEN_SM_PATH

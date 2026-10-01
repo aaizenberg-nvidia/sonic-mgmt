@@ -25,6 +25,10 @@ from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -367,6 +371,7 @@ def test_verify_switchd_restart(engines, login_source_ip_addresses, monitor_user
 
 
 @pytest.mark.cumulus_only
+@pytest.mark.dut_reboot
 def test_verify_reboot(engines, login_source_ip_addresses, monitor_user_for_ssh_allowed):
     """
     Verify SSH server config persists after node reboot.

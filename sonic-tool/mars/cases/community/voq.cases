@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> VOQ Test </info>
+            <name> voq </name>
+            <owner> SONiC </owner>
+        </Test>
+        <Case>
+            <tags> T2 VOQ </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 55555 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_init.py </info>
+        <name> voq_test_voq_init </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_init.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_ipfwd.py </info>
+        <name> voq_test_voq_ipfwd </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_ipfwd.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_nbr.py </info>
+        <name> voq_test_voq_nbr </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_nbr.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_disrupts.py </info>
+        <name> voq_test_voq_disrupts </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_disrupts.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_intfs.py </info>
+        <name> voq_test_voq_intfs </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_intfs.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_counter.py </info>
+        <name> voq_test_voq_counter </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_counter.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_chassis_app_db_consistency.py </info>
+        <name> voq_test_voq_chassis_app_db_consistency </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_chassis_app_db_consistency.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_fabric_reach.py </info>
+        <name> voq_test_fabric_reach </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_fabric_reach.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_fabric_capacity.py </info>
+        <name> voq_test_voq_fabric_capacity </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_fabric_capacity.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_fabric_status_all.py </info>
+        <name> voq_test_voq_fabric_status_all </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_fabric_status_all.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> no </value>
+            </condition>
+        </ignore>
+        <info> voq/test_voq_fabric_isolation.py </info>
+        <name> voq_test_voq_fabric_isolation </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts voq/test_voq_fabric_isolation.py </static_args>
+            </params>
+        </cmd>
+    </case>
+</CASEDEF>

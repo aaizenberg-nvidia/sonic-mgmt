@@ -9,13 +9,18 @@ from retry import retry
 from retry.api import retry_call
 from tests.common.utilities import wait_until
 from ngts.constants.constants import MarsConstants
-from ngts.helpers.json_file_helper import extract_fw_data
+from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
 from ngts.cli_util.cli_parsers import generic_sonic_output_parser
 from devts.infra.tools.general_constants.constants import DockerBringupConstants
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from devts.infra.tools.validations.traffic_validations.ping.send import ping_till_alive
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+# import via the factory module: in the source layout the direct module path loads a second
+# copy of the class, breaking isinstance() against factory-created engines
+from devts.infra.tools.connection_tools.serial_engine_factory import (
+    PexpectSerialEngine,
+)
+from devts.infra.tools.connection_tools.utils import extend_rcon_with_ssh_options
 from ngts.cli_wrappers.sonic.sonic_onie_clis import SonicOnieCli
 from ngts.tests.nightly.secure.constants import SecureBootConsts, SonicSecureBootConsts, SecureUpgradeConsts
 
@@ -46,16 +51,14 @@ class SecureBootHelper:
         serial_alias = dut_alias + '_serial'
         logger.info("Serial engine is: {}".format(serial_alias))
         att = topology_obj.players[serial_alias]['attributes'].noga_query_data['attributes']
-        # add connection options to pass connection problems
-        extended_rcon_command = att['Specific']['serial_conn_cmd'].split(' ')
-        extended_rcon_command.insert(1, DefaultConnectionValues.BASIC_SSH_CONNECTION_OPTIONS)
-        extended_rcon_command = ' '.join(extended_rcon_command)
-        serial_engine_instance = PexpectSerialEngine(ip=att['Specific']['ip'],
-                                                     username=att['Topology Conn.']['CONN_USER'],
-                                                     password=att['Topology Conn.']['CONN_PASSWORD'],
-                                                     rcon_command=extended_rcon_command,
-                                                     timeout=30)
-        return serial_engine_instance
+        # built directly (not via SerialEngineFactory.create) because secure-boot
+        # needs a pexpect engine even on non-NVUE (SONiC) setups
+        return PexpectSerialEngine(
+            ip=att['Specific']['ip'],
+            username=att['Topology Conn.']['CONN_USER'],
+            password=att['Topology Conn.']['CONN_PASSWORD'],
+            rcon_command=extend_rcon_with_ssh_options(att['Specific']['serial_conn_cmd']),
+            timeout=30)
 
     @staticmethod
     def get_non_secure_image_path():
@@ -267,25 +270,24 @@ class SonicSecureBootHelper(SecureBootHelper):
         if respond != 0:
             raise RuntimeError(f"Switch is not in ONIE mode. Output: {output}")
 
-    def login_into_onie_mode(self):
+    def login_into_onie_mode(self, topology_obj=None):
         """
         This function will login into onie mode
         After secure boot violation, the switch may be stuck in GRUB menu, so we need to handle that first
         """
-        # First check if we're stuck in GRUB menu and need to select ONIE: Rescue
+        # After a secure-boot violation the DUT is stuck in a 'bad shim' boot
+        # loop and cannot boot SONiC. Power-cycle it so the firmware lands
+        # cleanly on the grub menu, then enter ONIE via the grub-shell
+        # 'configfile' flow (see enter_onie_from_grub_menu_by_serial), which
+        # loads the ONIE partition grub.cfg directly - no chainload, no reliance
+        # on the UEFI BootOrder (sonic-buildimage#24249, Redmine #5261704).
         try:
-            _, respond = self.serial_engine.run_cmd('\r',
-                                                    [
-                                                        "\\*ONIE",
-                                                        "\\*SONiC",
-                                                    ], timeout=10)
-
-            if respond == 0:
-                logger.info("Already selected ONIE")
+            if topology_obj is not None:
+                self.cli_objects.dut.general.remote_reboot(
+                    topology_obj, boot_into_onie=True, wait_till_alive=False)
             else:
-                # Press down arrow to navigate to ONIE
-                logger.info("Pressing down arrow to navigate to ONIE")
-                self.serial_engine.run_cmd('\x1b[B')
+                self.serial_engine.run_cmd('\x1b', ["\\*ONIE", "\\*SONiC", "GNU GRUB"], timeout=15)
+                self.cli_objects.dut.general.enter_onie_from_grub_menu_by_serial(self.serial_engine)
         except Exception as e:
             logger.info(f"No GRUB menu detected or already past it: {str(e)}")
 
@@ -298,6 +300,20 @@ class SonicSecureBootHelper(SecureBootHelper):
         logger.info(f"Polling for {SonicSecureBootConsts.ONIE_TIMEOUT} seconds to login into ONIE mode")
         success = wait_until(SonicSecureBootConsts.ONIE_TIMEOUT, 10, 0, press_enter_until_onie_login)
         if success:
+            # We are at a getty (ONIE Rescue mode spawns one; ONIE Install drops
+            # straight into a passwordless 'ONIE:~ #' and never gets here).
+            #
+            # press_enter_until_onie_login() polls by sending a bare '\r', and on
+            # a getty every one of those submits an empty username and makes it
+            # print a fresh 'login:'. Those extra prompts are still queued in the
+            # pexpect buffer, so sending the username right away delivers it into
+            # the wrong state and getty answers 'Login incorrect' without ever
+            # asking for a password - the wait for PASSWORD_REGEX then times out
+            # and the switch is left stranded in ONIE (Redmine #5261704).
+            #
+            # Re-synchronize first: wait out the queued prompts, then drive one
+            # clean login on the last one.
+            self._wait_for_last_login_prompt()
             self.serial_engine.run_cmd(DefaultConnectionValues.ONIE_USERNAME, [DefaultConnectionValues.PASSWORD_REGEX] +
                                        DefaultConnectionValues.DEFAULT_PROMPTS)
             self.serial_engine.run_cmd(DefaultConnectionValues.ONIE_PASSWORD, DefaultConnectionValues.DEFAULT_PROMPTS)
@@ -305,6 +321,25 @@ class SonicSecureBootHelper(SecureBootHelper):
         self.ensure_onie_mode()
 
         self.serial_engine.run_cmd_and_get_output('onie-stop')
+
+    def _wait_for_last_login_prompt(self, quiet_timeout=5, max_drain=10):
+        """
+        Consume the 'login:' prompts queued up by the polling in
+        login_into_onie_mode() and return once the console is quiet, so the
+        username that follows is sent to a getty that is actually waiting for it.
+
+        Sends nothing - a bare carriage return here would submit yet another
+        empty username and re-arm the very problem this drains.
+        """
+        for _ in range(max_drain):
+            try:
+                self.serial_engine.run_cmd('', [DefaultConnectionValues.LOGIN_REGEX],
+                                           timeout=quiet_timeout, send_without_enter=True)
+            except Exception:
+                # Nothing more arrived within quiet_timeout: the backlog is drained
+                # and getty is sitting at its final prompt.
+                return
+        logger.warning("Still seeing login prompts after %s drains; proceeding anyway", max_drain)
 
     def get_into_onie_mode(self, topology_obj):
         """
@@ -315,7 +350,7 @@ class SonicSecureBootHelper(SecureBootHelper):
         topology_obj.players['dut']['engine'].send_config_set([onie_reboot_script_cmd], exit_config_mode=False,
                                                               cmd_verify=False)
         logger.info("Login to ONIE config mode")
-        self.login_into_onie_mode()
+        self.login_into_onie_mode(topology_obj)
 
     def manipulate_signature(self, test_server_engine, filepath):
         """
@@ -684,10 +719,7 @@ class SonicSecureBootHelper(SecureBootHelper):
         path_to_current_folder = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
         fw_pkg_path = f'{path_to_current_folder}/../../{MarsConstants.UPDATED_FW_TAR_PATH}'
         fw_data = extract_fw_data(fw_pkg_path)
-        hw_type = platform_params.filtered_platform.upper()
-        # The chassis name of 2700a1 in firmware.json and platform_components.json is "MSN2700-A1"
-        if hw_type == "MSN2700A1":
-            hw_type = "MSN2700-A1"
+        hw_type = normalize_firmware_chassis_name(platform_params.filtered_platform)
         dut_name = platform_params['setup_name'].strip('_setup').split('_')[-1]
         component_data = None
         try:

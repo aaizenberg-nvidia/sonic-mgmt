@@ -10,6 +10,7 @@ from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from ngts.ngts_types import DevicesT, EnginesT
 from ngts.nvos_constants.constants_nvos import HealthConsts, SystemConsts, FansConsts
 from ngts.nvos_tools.infra.FilesTool import FilesTool
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 
 logger = logging.getLogger()
@@ -301,9 +302,14 @@ class HWSimulator:
 
     @staticmethod
     def reset_health_service(engine: LinuxSshEngine) -> None:
-        """Restart health-statsd on the DUT to clear accumulated issues history."""
-        with allure.step("Restart health-statsd to clear issues history"):
-            logger.info("Restarting health-statsd to clear accumulated issues after test")
-            engine.run_cmd("sudo systemctl restart health-statsd")
+        """Restart the health monitoring service on the DUT to clear accumulated issues history.
+
+        The unit name is OS-specific: Cumulus uses 'cumulus-sdk-health-mon', NVOS uses 'health-statsd'.
+        """
+        service = (HealthConsts.CUMULUS_HEALTH_SERVICE if TestToolkit.devices.dut.is_eth()
+                   else HealthConsts.NVOS_HEALTH_SERVICE)
+        with allure.step(f"Restart {service} to clear issues history"):
+            logger.info(f"Restarting {service} to clear accumulated issues after test")
+            engine.run_cmd(f"sudo systemctl restart {service}.service")
             time.sleep(10)
             System().health.wait_until_health_status_change_after_reboot(HealthConsts.OK)

@@ -28,6 +28,8 @@ def skip_dhcp_relay_v4_test(topology_obj):
 
 @pytest.fixture(scope='module', autouse=True)
 def configure_dhcp_scale(topology_obj, cli_objects, interfaces, engines):
+    skip_v4 = is_smartswitch_platform(topology_obj)
+
     dutha1 = topology_obj.ports['dut-ha-1']
     duthb1 = topology_obj.ports['dut-hb-1']
     hbdut1 = topology_obj.ports['hb-dut-1']
@@ -58,7 +60,8 @@ def configure_dhcp_scale(topology_obj, cli_objects, interfaces, engines):
                                                                               ('2{}::1'.format(item), '64')]})
         ip_config_dict['hb'].append({'iface': '{}.{}'.format(hbdut1, item), 'ips': [('10.{}.0.2'.format(item), '24'),
                                                                                     ('2{}::2'.format(item), '64')]})
-        dhcp_relay_config_dict['dut'][0]['dhcp_servers'].append('10.{}.0.2'.format(item))
+        if not skip_v4:
+            dhcp_relay_config_dict['dut'][0]['dhcp_servers'].append('10.{}.0.2'.format(item))
         dhcp_relay_config_dict['dut'][0]['dhcp_servers'].append('2{}::2'.format(item))
 
     logger.info('Starting DHCP relay scale configuration')

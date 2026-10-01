@@ -51,6 +51,12 @@ class ClusterConsts:
     WAIT_FOR_APPS_RUNNING = 50  # Reduce to 15 once bug is fixed [NVOS - Design] Bug SW #4099507: [Non-Functional ] [NVL5 - JULIET - NMX] | nmxc-conn takes too long to be in "up" state | Assignee: Or Farfara | Status: Opened on other team
     UNDEFINED_STATE_ERR_MSG = 'Error: At state: \'undefined\' is not one of [\'enabled\', \'disabled\']'
     DEFAULT_LOG_LEVEL = 'notice'
+    NMX_USER_CONFIG_JSON_PATH = '/etc/cluster_infra/conf/user_config.json'
+    DEFAULT_NMX_USER_CONFIG = {
+        'nmx-telemetry-log-level': DEFAULT_LOG_LEVEL,
+        'nmx-controller-dscp-nvbridge-value': '46',
+        'nmx-controller-log-level': DEFAULT_LOG_LEVEL,
+    }
     UNDEFINED_LOG_LEVEL = "'undefined' is not one of ['critical', 'error', 'warn', 'notice', 'info', 'debug']"
     SLEEP_AFTER_LOG_ROTATE = 20
     PARTITIONS_NAMES = ['test_partition1', 'test_partition2', 'test_partition3']
@@ -63,25 +69,47 @@ class ClusterConsts:
     NMX_TELEMETRY_PREFIX = 'nmx-t'
     INITIAL_APPS_PATH = '/usr/local/cluster_pkgfiles/'
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
+    # Valid rdm_config test content (approved by the nmx-c team; changes multicast rounding mode,
+    # so it is limited to upgrade/reset flows). nmx-c rejects installing EMPTY sdn config files
+    # (NVBug 6447101), so the rdm/chassis test edits below must inject real content.
+    RDM_TEST_CONFIG_LINES = ['[rdm]',
+                             'rdm_rm_native_8_bit 1',
+                             'rdm_rm_mixed_8_bit 1',
+                             'rdm_rm_native_16_bit 1',
+                             'rdm_rm_mixed_16_bit 1',
+                             'rdm_rm_deterministic_mode 1']
+    # chassis_mapping line format: 'chassisId<index> <13-char REAL chassis S/N>' - the S/N must be
+    # the system's real one (nv show platform chassis-location), otherwise GFM never goes operational.
+    # Call sites must format with chassis_sn=ClusterTools.get_chassis_sn().
     CONFIG_FILES_CHANGE = {'sm_config': "true",
                            'fm_config': "sudo sed -i \"/^GFM_WAIT_TIMEOUT_SEC=/c\\GFM_WAIT_TIMEOUT_SEC=350\" {file_path}",
-                           'rdm_config': "true",
-                           'chassis_mapping': "true",
+                           # guarded append: at most once, and never onto a file that already carries [rdm]
+                           'rdm_config': "sudo bash -c 'grep -q \"^\\[rdm\\]\" {file_path} || printf \"" + '\\n'.join(RDM_TEST_CONFIG_LINES) + "\\n\" >> {file_path}'",
+                           # append only when the file has no chassisId entries (standalone generates it
+                           # empty - NVBug 6447101); on real clusters the generated mapping already has
+                           # chassisId1..N lines and a duplicate chassisId1 would corrupt the mapping
+                           'chassis_mapping': "sudo bash -c 'grep -q \"^chassisId\" {file_path} || echo \"chassisId1 {chassis_sn}\" >> {file_path}'",
                            'telemetry': "true"}
     EXPECTED_LINE_TO_BE_PRESERVED_AFTER_UPGRADE = {'sm_config': "",
                                                    'fm_config': "GFM_WAIT_TIMEOUT_SEC=350",
-                                                   'rdm_config': "",
-                                                   'chassis_mapping': "",
+                                                   'rdm_config': RDM_TEST_CONFIG_LINES[-1],
+                                                   'chassis_mapping': "chassisId1",
                                                    'telemetry': ""}
     CONFIG_FILES_CONTENT_CHANGE = {
         'sm_config': lambda content: content,
         'fm_config': lambda content: re.sub(r'^GFM_WAIT_TIMEOUT_SEC=.*$', 'GFM_WAIT_TIMEOUT_SEC=350', content, flags=re.MULTILINE),
-        'rdm_config': lambda content: content,
+        # newline-neutral: mirrors the cat output of the appended file (no leading blank line when the
+        # initial content is empty, no trailing newline - netmiko strips the trailing prompt line)
+        'rdm_config': lambda content: ((content + '\n') if content.strip() else '') + '\n'.join(ClusterConsts.RDM_TEST_CONFIG_LINES),
+        # chassis_mapping expected content needs the runtime chassis S/N; the content verifier
+        # currently skips chassis_mapping, so the transformation stays identity.
         'chassis_mapping': lambda content: content,
         'telemetry': lambda content: content
     }
     NMX_CONTROLLER_CONFIG_CHASSIS_MAPPING = 'chassis_mapping'
+    NMX_CONTROLLER_CONFIG_FM = 'fm_config'
     PARTITION_TYPES = ['location_based', 'gpuuid_based']
+    DEFAULT_PARTITION_ID = '32766'
     EMPTY_PARTITION_ID = '10'
     EMPTY_PARTITION_NAME = "empty_partition"
     CREATED_PARTITION_NAME = "user_partition"
@@ -99,6 +127,11 @@ class ClusterConsts:
     # maintenance state constants
     MAINTENANCE_STATE = 'maintenance-state'
     MAINTENANCE_STATE_OPTIONS = ['up', 'diag', 'down']
+    # Compute trays are listed in 'nv show sdn trays' with maintenance-state 'N/A'
+    # (6623822 fix, 0.8 >= 25.03.0722): their admin state is not supported — the
+    # update/restore actions are rejected with COMPUTE_TRAY_NOT_SUPPORTED_ERR.
+    COMPUTE_TRAY_MAINTENANCE_STATE = 'N/A'
+    COMPUTE_TRAY_NOT_SUPPORTED_ERR = 'Tray admin state is not supported for tray'
 
     # DSCP Marking constants
     DSCP_MARKING_FIELD = 'dscp-marking'
@@ -202,6 +235,8 @@ class AnsiblePlaybooksConsts:
     SOFTWARE_CONFIGURE_SWITCH = 'SOFTWARE_CONFIGURE_SWITCH'
     TESTS_EXECUTE = 'TESTS_EXECUTE'
     TESTS_EXECUTE_P2P = 'TESTS_EXECUTE_P2P'
+    TESTS_INSTALL_NCCL = 'TESTS_INSTALL_NCCL'
+    TESTS_EXECUTE_NCCL = 'TESTS_EXECUTE_NCCL'
 
     # =========================================================================
     # Component Keys (from JSON file)
@@ -350,6 +385,18 @@ class AnsiblePlaybooksConsts:
             'collection_path': PATH_TO_NVIDIA_INTERNAL_NVLINK,
             'component_param_mapping': [],  # No components - just runs tests
             'extra_args': '-e \'{"cuda_test_list":["p2p_bandwidth"]}\''  # Runs only p2p_bandwidth test
+        },
+        TESTS_INSTALL_NCCL: {
+            'name': 'tests_install_nccl.yml',
+            'collection_path': PATH_TO_NVIDIA_NVLINK,
+            'component_param_mapping': [],
+            'extra_args': ''
+        },
+        TESTS_EXECUTE_NCCL: {
+            'name': 'tests_execute_nccl.yml',
+            'collection_path': PATH_TO_NVIDIA_NVLINK,
+            'component_param_mapping': [],
+            'extra_args': ''
         },
         SOFTWARE_CONFIGURE_SWITCH: {
             'name': 'software_configure_switch.yml',

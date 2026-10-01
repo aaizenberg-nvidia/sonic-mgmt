@@ -99,7 +99,6 @@ def test_set_unset_platform_firmware_default(engines):
 
 
 @pytest.mark.checklist
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.platform
 def test_platform_firmware_image_rename(engines, devices, topology_obj, clear_asic_files):
@@ -150,7 +149,6 @@ def test_platform_firmware_image_rename(engines, devices, topology_obj, clear_as
 
 
 @pytest.mark.checklist
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.platform
 def test_platform_firmware_image_upload(engines, devices, topology_obj):

@@ -1,0 +1,2 @@
+StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
+rcon,7009,sws-cham6s-7,ssh,,root

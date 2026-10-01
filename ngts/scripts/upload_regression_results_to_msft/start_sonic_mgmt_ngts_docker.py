@@ -1,10 +1,12 @@
 #!/auto/app/Python-3.6.2/bin/python
 import sys
 import argparse
+import datetime
 import logging
 import os
 import re
 import json
+import subprocess
 import time
 import pdb
 path = os.path.abspath(__file__)
@@ -14,6 +16,11 @@ sys.path.append(sonic_mgmt_path)
 logger = logging.getLogger()
 
 DOCKER_REGISTRY = "nbu-harbor.gtm.nvidia.com"
+JENKINS_MANAGED_LABEL = "nvidia.jenkins.managed"
+JENKINS_JOB_LABEL = "nvidia.jenkins.job"
+JENKINS_JOB = "TEST_sonic_upload_regression_results_to_msft"
+JENKINS_CONTAINER_PREFIX = "sonic-mgmt-sw-r2d2-bot-jenkins-{}-".format(JENKINS_JOB)
+STALE_CONTAINER_TIMEOUT = 24 * 60 * 60
 SONIC_MGMT_MOUNTPOINTS = {
     '/.autodirect/mswg/projects': '/.autodirect/mswg/projects',
     '/auto/sw_system_project': '/auto/sw_system_project',
@@ -54,29 +61,27 @@ def init_logger(log_level):
 
 
 def create_secrets_vars_script(container_name):
-    export_env_var_script_path = "/tmp/{CONTAINER_NAME}_export_env_var.sh".format(CONTAINER_NAME=container_name)
     env_file_script_path = "/tmp/{CONTAINER_NAME}_env_file.sh".format(CONTAINER_NAME=container_name)
-    if os.path.exists(export_env_var_script_path):
-        os.popen("rm -f {SCRIPT_PATH}".format(SCRIPT_PATH=export_env_var_script_path))
     regex = r"variableName: (.*)"
     file_dir_path = os.path.dirname(os.path.realpath(__file__))
     sonic_secrets_template_path = os.path.join(file_dir_path, "build/sonic_secret_template.yaml")
     with open(sonic_secrets_template_path) as f:
         sonic_secrets_template_content = f.read()
     env_vars = re.findall(regex, sonic_secrets_template_content)
-    script_content = ["#!/bin/bash\n"]
-    env_file_content = ["#!/bin/bash\n"]
+    env_file_content = []
     for env_var in env_vars:
         env_var_value = os.getenv(env_var)
-        script_content.append("export {env_var}=\'{env_var_value}\'\n".format(env_var=env_var,
-                                                                              env_var_value=env_var_value))
         env_file_content.append("{env_var}={env_var_value}\n".format(env_var=env_var,
                                                                      env_var_value=env_var_value))
-    with open(export_env_var_script_path, 'w') as f:
-        f.writelines(script_content)
-    with open(env_file_script_path, 'w') as f:
+    file_descriptor = os.open(
+        env_file_script_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    with os.fdopen(file_descriptor, 'w') as f:
         f.writelines(env_file_content)
-    return export_env_var_script_path
+    os.chmod(env_file_script_path, 0o600)
+    return env_file_script_path
 
 
 def pull_image(ngts_version):
@@ -107,6 +112,41 @@ def get_container_mountpoints():
     return container_mountpoints
 
 
+def remove_container(container_name):
+    with open(os.devnull, "w") as devnull:
+        subprocess.call(
+            ["sudo", "docker", "rm", "-f", container_name],
+            stdout=devnull,
+            stderr=devnull,
+        )
+
+
+def cleanup_stale_containers():
+    managed = subprocess.check_output([
+        "sudo", "docker", "ps", "-aq",
+        "--filter", "label={}={}".format(JENKINS_MANAGED_LABEL, "true"),
+        "--filter", "label={}={}".format(JENKINS_JOB_LABEL, JENKINS_JOB),
+    ]).decode().split()
+    legacy = subprocess.check_output([
+        "sudo", "docker", "ps", "-aq",
+        "--filter", "name={}".format(JENKINS_CONTAINER_PREFIX),
+    ]).decode().split()
+    now = int(time.time())
+    for container_id in set(managed + legacy):
+        try:
+            created_at = subprocess.check_output([
+                "sudo", "docker", "inspect", "--format", "{{.Created}}",
+                container_id,
+            ]).decode().strip()
+            created_at = int((datetime.datetime.strptime(created_at[:19], "%Y-%m-%dT%H:%M:%S") -
+                              datetime.datetime(1970, 1, 1)).total_seconds())
+        except (subprocess.CalledProcessError, ValueError):
+            continue
+        if now - created_at > STALE_CONTAINER_TIMEOUT:
+            logger.info("Removing stale Jenkins container %s", container_id)
+            remove_container(container_id)
+
+
 def check_container_started(container_name, max_retries=3):
     for i in range(max_retries):
         attempt = i + 1
@@ -130,18 +170,6 @@ def check_container_started(container_name, max_retries=3):
         time.sleep(5)
 
     raise AssertionError("Failed to start container %s after tried %d times." % (container_name, max_retries))
-
-
-def config_secrets_on_container(secrets_vars_script_path, container_name):
-    logger.info("Configure container after starting it")
-    copy_script_cmd = "sudo docker cp {SCRIPT_PATH} " \
-                      "{CONTAINER_NAME}:/etc/profile.d/".format(SCRIPT_PATH=secrets_vars_script_path,
-                                                                CONTAINER_NAME=container_name)
-    os.popen(copy_script_cmd)
-    update_bashrc_cmd = "sudo docker exec {container_name} bash -c " \
-                        "\"cat /etc/profile.d/{container_name}_export_env_var.sh >>" \
-                        " /root/.bashrc\"".format(container_name=container_name)
-    os.popen(update_bashrc_cmd)
 
 
 def copy_sonic_mgmt_to_container(container_name):
@@ -184,22 +212,31 @@ def copy_sonic_mgmt_to_container(container_name):
 
 
 def create_sonic_mgmt_ngts_docker(ngts_version, container_name):
+    cleanup_stale_containers()
     image_name = pull_image(ngts_version)
     container_mountpoints = get_container_mountpoints()
-    secrets_vars_script_path = create_secrets_vars_script(container_name)
+    create_secrets_vars_script(container_name)
     logger.info("Try to remove existing docker container anyway")
-    os.popen("sudo docker rm -f {CONTAINER_NAME}".format(CONTAINER_NAME=container_name))
-    cmd = "sudo docker run -d {CONTAINER_MOUNTPOINTS} " \
+    remove_container(container_name)
+    cmd = "sudo docker run -d --security-opt seccomp=unconfined " \
+          "--label {MANAGED_LABEL}=true --label {JOB_LABEL}={JOB} " \
+          "{CONTAINER_MOUNTPOINTS} " \
           "--name {CONTAINER_NAME} {IMAGE_NAME}:{IMAGE_TAG}".format(CONTAINER_MOUNTPOINTS=container_mountpoints,
+                                                                    MANAGED_LABEL=JENKINS_MANAGED_LABEL,
+                                                                    JOB_LABEL=JENKINS_JOB_LABEL,
+                                                                    JOB=JENKINS_JOB,
                                                                     CONTAINER_NAME=container_name,
                                                                     IMAGE_NAME=image_name,
                                                                     IMAGE_TAG=ngts_version)
-    os.popen(cmd)
-    logger.info("Created container, wait a few seconds for it to start")
-    time.sleep(5)
-    check_container_started(container_name)
-    config_secrets_on_container(secrets_vars_script_path, container_name)
-    copy_sonic_mgmt_to_container(container_name)
+    try:
+        subprocess.check_call(cmd, shell=True)
+        logger.info("Created container, wait a few seconds for it to start")
+        time.sleep(5)
+        check_container_started(container_name)
+        copy_sonic_mgmt_to_container(container_name)
+    except Exception:
+        remove_container(container_name)
+        raise
 
 
 if __name__ == '__main__':

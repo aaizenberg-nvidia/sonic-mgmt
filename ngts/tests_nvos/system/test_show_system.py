@@ -23,6 +23,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.reboot_telemetry_helpers import REBOOT_REASON_SHOW_EXEMPTED_ERR_MSGS
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger()
 
 
@@ -56,6 +60,11 @@ def test_system(test_api, engines, devices, topology_obj, nv_command, test_name)
     with allure.step('validate expected fields exist in output'):
 
         keys_to_remove = [SystemConsts.LOCATION, SystemConsts.CONTACT]  # keys pruned from output
+        if TestToolkit.tested_api == ApiType.OPENAPI:
+            # The OpenAPI GET returns the full /system subtree (incl. platform/memory),
+            # which NVUE 'nv show system' doesn't surface; prune only for OpenAPI.
+            keys_to_remove += [SystemConsts.PLATFORM, SystemConsts.MEMORY]
+
         for key in keys_to_remove:
             system_output.pop(key, None)
 
@@ -331,7 +340,7 @@ def test_system_location_set(test_api, engines, nv_command):
 
 
 @pytest.mark.system
-@pytest.mark.simx
+@pytest.mark.dut_reboot
 @pytest.mark.cumulus
 def test_factory_reset_for_system_contact_location(engines, nv_command, devices):
     """

@@ -10,7 +10,8 @@ import json
 import datetime as dt
 from abc import ABCMeta, abstractmethod
 from perscache import Cache
-from ngts.helpers.redmine_cache_helper import access_redmine_cache    
+from ngts.helpers.redmine_cache_helper import access_redmine_cache
+from ngts.constants.constants import CliType, CLI_TYPE_CACHE_PATH
 
 cache = Cache()
 
@@ -41,19 +42,35 @@ def initialize_cached_variables(session):
 
 
 def pytest_runtest_setup(item):
-    if not item.config.getoption('disable_loganalyzer') or item.config.getoption('force_load_err_list'):
-        extended_ignore_list = get_extended_ignore_list(item)
-        item.session.config.cache.set("extended_ignore_list", extended_ignore_list)
+    if (item.config.getoption('disable_loganalyzer') or "disable_loganalyzer" in item.keywords) \
+            and not item.config.getoption('force_load_err_list'):
+        return
+    extended_ignore_list = get_extended_ignore_list(item)
+    item.session.config.cache.set("extended_ignore_list", extended_ignore_list)
 
 
 def pytest_runtest_teardown(item):
     item.session.config.cache.set("extended_ignore_list", [])
 
 
+def get_cli_type():
+    try:
+        cli_type = os.environ.get("CLI_TYPE")
+        if not cli_type:
+            logger.info("CLI_TYPE not found in environment variables, getting from cache")
+            with open(CLI_TYPE_CACHE_PATH, 'r') as f:
+                cli_type = json.load(f)
+        return cli_type
+    except Exception as e:
+        logger.info(f"An error occurred while getting CLI type: {e}")
+        return ''
+
+
 def get_extended_ignore_list(item):
     extended_ignore_list = []
 
-    dynamic_la_ignore_list = get_ignore_list()
+    cli_type = get_cli_type()
+    dynamic_la_ignore_list = get_ignore_list(cli_type)
     for ignore_block in dynamic_la_ignore_list:
 
         errors_regexp_to_be_ignored_list = ignore_block.get(DynamicLaConsts.ERRORS_LIST)
@@ -75,13 +92,18 @@ def get_extended_ignore_list(item):
 
 
 @cache(ttl=dt.timedelta(hours=36))
-def get_ignore_list():
+def get_ignore_list(cli_type):
     logger.info('Reading dynamic errors ignore data from file')
     ignore_list = list()
     la_dynamic_ignore_folder_path = os.environ.get("DYNAMIC_INGNORE_PATH")
     if not la_dynamic_ignore_folder_path:
         la_dynamic_ignore_folder_path = os.path.dirname(__file__)
-    path_to_dynamic_la_ignore_file = os.path.join(la_dynamic_ignore_folder_path, 'dynamic_loganalyzer_ignores*.yaml')
+    logger.info(f'CLI type: {cli_type}')
+    if cli_type == CliType.SONIC:
+        la_ignore_file = "dynamic_loganalyzer_ignores.yaml"  # SpellCheck-ignoreLine
+    else:
+        la_ignore_file = "dynamic_loganalyzer_ignores*.yaml"  # SpellCheck-ignoreLine
+    path_to_dynamic_la_ignore_file = os.path.join(la_dynamic_ignore_folder_path, la_ignore_file)
     ignore_files_list = glob.glob(path_to_dynamic_la_ignore_file)
     ignore_files = [f for f in ignore_files_list if os.path.exists(f)]
     if not ignore_files:
@@ -101,12 +123,12 @@ def get_ignore_list():
 
 
 @cache(ttl=dt.timedelta(hours=36))
-def get_redmine_issues_status():
+def get_redmine_issues_status(cli_type):
     logger.info('Reading Redmine Issues Status from API')
-    ignore_list = get_ignore_list()
+    ignore_list = get_ignore_list(cli_type)
     ignore_list_string = json.dumps(ignore_list)
     all_redmine_issues = re.findall(r"\"Redmine\":\s*\[(\d+)\]", ignore_list_string)
-    issues_active_status_dict = access_redmine_cache(all_redmine_issues, use_active_status=True)
+    issues_active_status_dict = access_redmine_cache(all_redmine_issues)
     return issues_active_status_dict
 
 
@@ -344,7 +366,8 @@ class RedmineDynamicErrorsIgnore(LaDynamicErrorsIgnore):
         if self.conditions_dict.get(self.validation_name):
             is_errors_ignore_required = False
             rm_issues_list = self.conditions_dict[self.validation_name]
-            redmine_issues_status = get_redmine_issues_status()
+            cli_type = get_cli_type()
+            redmine_issues_status = get_redmine_issues_status(cli_type)
             is_issue_active = any([redmine_issues_status[str(issue)] for issue in rm_issues_list])
             if is_issue_active:
                 is_errors_ignore_required = True

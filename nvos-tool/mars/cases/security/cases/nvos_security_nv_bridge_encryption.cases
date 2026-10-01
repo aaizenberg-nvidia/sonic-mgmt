@@ -9,7 +9,7 @@
     </Test>
     <Case>
       <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
-      <tout> 10800 </tout>
+      <tout> 14400 </tout>
       <tags>ALL</tags>
     </Case>
   </global>

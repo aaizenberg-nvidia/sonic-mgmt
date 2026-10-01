@@ -13,7 +13,7 @@ logger = logging.getLogger()
 @pytest.mark.app_ext
 @pytest.mark.parametrize("upgrade_type", ["repo", "repo_force"])
 @allure.title('App package upgrade ')
-def test_app_upgrade(cli_objects, pre_install_app, upgrade_type):
+def test_app_upgrade(cli_objects, pre_install_app, upgrade_type, e1000_tx_watchdog_debug):
     """
     This test case is test app upgrade, it includes following sub test cases:
     1. Upgrade app to normal version

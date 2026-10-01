@@ -7,6 +7,7 @@ from collections import OrderedDict
 
 SPC3_SI_PARAMS_EXCEL = 'spc3_si_params.xls'
 SPC4_SI_PARAMS_EXCEL = 'spc4_si_params.xls'
+SPC6_SI_PARAMS_EXCEL = 'spc6_si_params.xls'
 
 GLOBAL_MEDIA_SETTINGS = 'GLOBAL_MEDIA_SETTINGS'
 SPC3_PORT_RANGE = '1-32'
@@ -16,9 +17,11 @@ GROUP_ID = 0
 
 SPC3 = 'spc3'
 SPC4 = 'spc4'
+SPC5 = 'spc5'
+SPC6 = 'spc6'
 
-PORT = 'port'
-MODULE = 'module'
+PORT = 'port'       # media_settings.json
+MODULE = 'module'   # optics_si_settings.json
 
 NUM_OF_LANES = 8
 LANE_PREFIX = 'lane'
@@ -30,15 +33,22 @@ IDENTIFIER = 'Identifier'
 SPECIFICATION_COMPLIANCE = 'Specification compliance'
 EEPROM_DATA_TO_EXTRACT = [APPLICATION_ADVERTISEMENT, IDENTIFIER, SPECIFICATION_COMPLIANCE]
 
-FILTERS_BY_SPC = {
-    SPC3: {'Tech': 'Active', 'device': 'Firebird'},
-    SPC4: {'Tech': 'Active', 'device': 'Albatross'}
+ACTIVE = 'Active'
+
+# Passive copper links are left on the SerDes defaults, so these are the only parameters set for them
+PASSIVE_SI_PARAMS = {
+    'tx_precoding': 1,
+    'rx_precoding': 1
 }
+
+# The specification compliance reported for passive copper cables
+PASSIVE_COPPER_SPEC_COMPLIANCE = 'passive_copper_media_interface'
 
 SPEED = 'SPEED'
 LANES = 'LANES'
 
 LANE_SPEED_TO_GENERATION = {
+    200: 'XDR',
     100: 'NDR',
     50: 'HDR',
     25: 'EDR',
@@ -52,6 +62,56 @@ SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS = {
     'FDR': 'FDR/56GbE',
     'EDR': 'EDR/100GbE',
     'HDR': 'HDR/200GbE'
+}
+
+SI_PARAMS_EXCEL = 'si_params_excel'
+SI_PARAMS_SHEET = 'si_params_sheet'
+SERDES_DEVICE = 'serdes_device'
+SPEED_COLUMN = 'speed_column'
+PORT_RANGE = 'port_range'
+SPEED_ALIASES = 'speed_aliases'
+PASSIVE_MIN_LANE_SPEED = 'passive_min_lane_speed'
+
+# PASSIVE_MIN_LANE_SPEED of a generation whose passive copper SI settings are not maintained
+PASSIVE_SKIP = None
+
+# SI_PARAMS_EXCEL of a generation whose SI datasheet is not published yet. Only its passive copper settings,
+# which are not taken from the datasheet, are generated - the remaining datasheet keys are left out of its config.
+NO_SI_DATASHEET = None
+
+SPC_CONFIG = {
+    SPC3: {
+        SI_PARAMS_EXCEL: SPC3_SI_PARAMS_EXCEL,
+        SI_PARAMS_SHEET: 'TX_DB_HDR',
+        SERDES_DEVICE: 'Firebird',
+        SPEED_COLUMN: 'speed / protocol',
+        PORT_RANGE: SPC3_PORT_RANGE,
+        SPEED_ALIASES: SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS,
+        PASSIVE_MIN_LANE_SPEED: PASSIVE_SKIP
+    },
+    SPC4: {
+        SI_PARAMS_EXCEL: SPC4_SI_PARAMS_EXCEL,
+        SI_PARAMS_SHEET: 'TX_DB',
+        SERDES_DEVICE: 'Albatross',
+        SPEED_COLUMN: 'speed / protocol',
+        PORT_RANGE: SPC4_PORT_RANGE,
+        SPEED_ALIASES: None,
+        PASSIVE_MIN_LANE_SPEED: 50
+    },
+    SPC5: {
+        SI_PARAMS_EXCEL: NO_SI_DATASHEET,
+        PORT_RANGE: SPC4_PORT_RANGE,
+        PASSIVE_MIN_LANE_SPEED: 50
+    },
+    SPC6: {
+        SI_PARAMS_EXCEL: SPC6_SI_PARAMS_EXCEL,
+        SI_PARAMS_SHEET: 'in',
+        SERDES_DEVICE: 'Maglan',
+        SPEED_COLUMN: 'Speed',
+        PORT_RANGE: SPC4_PORT_RANGE,
+        SPEED_ALIASES: None,
+        PASSIVE_MIN_LANE_SPEED: 50
+    }
 }
 
 APPLICATIONS_DATA_BY_SFF_SPEC = {
@@ -129,7 +189,22 @@ PORTS_SI_PARAM_NAMES_EXCEL_TO_JSON = {
         'fir_pre3': 'pre3',
         'fir_main': 'main',
         'fir_post1': 'post1'
+    },
+    SPC6: {
+        'tap0': 'pre3',
+        'tap1': 'pre2',
+        'tap2': 'pre1',
+        'tap3': 'main',
+        'tap4': 'post',
+        'tap5': 'post1'
     }
+}
+
+# SPC3 has its own module SI columns, all the generations from SPC4 on share these
+SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
+    'rx_out_amp': 'OutputAmplitudeTargetRx',
+    'rx_out_emp_pre': 'OutputEqPreCursorTargetRx',
+    'rx_out_emp_post': 'OutputEqPostCursorTargetRx'
 }
 
 MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
@@ -138,11 +213,8 @@ MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON = {
         'cmis_pre': 'OutputEqPreCursorTargetRx',
         'cmis_post': 'OutputEqPostCursorTargetRx'
     },
-    SPC4: {
-        'rx_out_amp': 'OutputAmplitudeTargetRx',
-        'rx_out_emp_pre': 'OutputEqPreCursorTargetRx',
-        'rx_out_emp_post': 'OutputEqPostCursorTargetRx'
-    }
+    SPC4: SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON,
+    SPC6: SPC4_AND_NEWER_MODULE_SI_PARAM_NAMES_EXCEL_TO_JSON
 }
 
 # This dictionary maps between EEPROM entries for the identifier field and their corresponding representation in JSON.
@@ -155,26 +227,26 @@ def parse_args():
     @summary: generate the ArgumentParser, parse arguments and return them
     """
     parser = argparse.ArgumentParser(description='Generate Independent Module jsons')
-    parser.add_argument('-s', '--spc', type=str, choices=['spc3', 'spc4'], help="Spectrum3 or Spectrum4 indication", required=True)
+    parser.add_argument('-s', '--spc', type=str.lower, choices=[SPC3, SPC4, SPC5, SPC6], help="Spectrum3, Spectrum4, Spectrum5 or Spectrum6 indication", required=True)
     parser.add_argument('-e', '--eeprom_input', type=str, help="Path to a txt file containing module's EEPROM data")
     parser.add_argument('-m', '--mode', type=str, choices=['port', 'module'], help="The required IM json file - 'port' or 'module' SI data", required=True)
     return parser.parse_args()
 
 
 def get_groups():
-    lanes_range = SPC3_PORT_RANGE if args.spc == SPC3 else SPC4_PORT_RANGE
-    return lanes_range
+    return SPC_CONFIG[args.spc][PORT_RANGE]
+
+
+def get_speed_column():
+    return SPC_CONFIG[args.spc][SPEED_COLUMN]
 
 
 def get_excel_row_id(speed):
-    row_id = None
-    if args.spc == SPC4:
-        if speed in LANE_SPEED_TO_GENERATION:
-            row_id = LANE_SPEED_TO_GENERATION[speed]
-    elif args.spc == SPC3:
-        if speed in LANE_SPEED_TO_GENERATION and LANE_SPEED_TO_GENERATION[speed] in SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS:
-            row_id = SPC3_EXCEL_SPEED_COLUMN_TO_SPEED_ALIAS[LANE_SPEED_TO_GENERATION[speed]]
-    return row_id
+    generation = LANE_SPEED_TO_GENERATION.get(speed)
+    if generation is None:
+        return None
+    speed_aliases = SPC_CONFIG[args.spc].get(SPEED_ALIASES)
+    return generation if speed_aliases is None else speed_aliases.get(generation)
 
 
 def build_si_param_section(df):
@@ -203,13 +275,14 @@ def export_to_json(json_dict):
 
 
 def get_filtered_df():
-    si_params_excel = SPC3_SI_PARAMS_EXCEL if args.spc == SPC3 else SPC4_SI_PARAMS_EXCEL
-    si_params_sheet_name = 'TX_DB_HDR' if args.spc == 'spc3' else 'TX_DB'
-    df = pd.read_excel(si_params_excel, sheet_name=si_params_sheet_name)
-    filtered_df = df
-    for k, v in FILTERS_BY_SPC[args.spc].items():
-        filtered_df = filtered_df.loc[df[k] == v]
-    return filtered_df
+    """
+    @summary: read the SI datasheet of the requested Spectrum generation and keep only its SerDes device rows
+    """
+    spc_config = SPC_CONFIG[args.spc]
+    if spc_config[SI_PARAMS_EXCEL] is NO_SI_DATASHEET:
+        return None
+    df = pd.read_excel(spc_config[SI_PARAMS_EXCEL], sheet_name=spc_config[SI_PARAMS_SHEET])
+    return df.loc[(df['device'] == spc_config[SERDES_DEVICE]) & (df['Tech'] == ACTIVE)]
 
 
 # ----------------------------------------------------- Port SI -----------------------------------------------------
@@ -239,7 +312,8 @@ def extract_data_from_eeprom(eeprom_data_list, delimiter=':'):
             line_splitted = line.split(delimiter)
             spec_comp_processing = False
             for key in EEPROM_DATA_TO_EXTRACT:
-                if key in line_splitted[0]:
+                # The field name has to match in full, otherwise 'Extended Identifier' is taken for 'Identifier'
+                if key == line_splitted[0].strip():
                     # only Specification compliance needs special treatment over several lines
                     if key in APPLICATION_ADVERTISEMENT:
                         extracted_data[key] = [line_splitted[1].split()[0].strip()]
@@ -259,6 +333,11 @@ def extract_data_from_eeprom(eeprom_data_list, delimiter=':'):
 def generate_media_keys_dict(extracted_data_dict_list=None):
     media_keys_dict = {}
     for extracted_data_dict in extracted_data_dict_list:
+        # Only CMIS modules advertise applications, which the port SI settings are keyed by
+        missing_data = [key for key in EEPROM_DATA_TO_EXTRACT if not extracted_data_dict.get(key)]
+        if missing_data:
+            print("Skipping a module with no {}".format(' and no '.join(missing_data)))
+            continue
         media_key_spec_identifier = '-'.join([extracted_data_dict[EEPROM_DATA_TO_EXTRACT[1]]
                                                  , extracted_data_dict[EEPROM_DATA_TO_EXTRACT[2]]])
         if media_key_spec_identifier not in media_keys_dict:
@@ -345,22 +424,45 @@ def get_port_json_data(excel_row_dict):
     return json_data
 
 
+def get_passive_json_data():
+    return {param_name: get_port_single_param_values(decimal_to_hexadecimal(param_value))
+            for param_name, param_value in PASSIVE_SI_PARAMS.items()}
+
+
 def get_port_si_params(df, media_key_to_lane_speed_keys):
+    passive_min_lane_speed = SPC_CONFIG[args.spc][PASSIVE_MIN_LANE_SPEED]
     si_params = {}
     for media_key, applications in media_key_to_lane_speed_keys.items():
+        is_passive = media_key.endswith(PASSIVE_COPPER_SPEC_COMPLIANCE)
+        if is_passive and passive_min_lane_speed is PASSIVE_SKIP:
+            print("Skipping '{}', passive SI settings are not maintained for {}".format(media_key, args.spc))
+            continue
+        if not is_passive and df is None:
+            print("Skipping '{}', the {} SI datasheet active modules are taken from is not available"
+                  .format(media_key, args.spc))
+            continue
         media_key_si_params = {}
         for application in applications:
             lane_speed = get_application_lane_speed(application)
             if lane_speed is None:
                 continue
+            application_json_str = SPEED_PREFIX + application
+            if is_passive:
+                if lane_speed >= passive_min_lane_speed:
+                    media_key_si_params[application_json_str] = get_passive_json_data()
+                continue
             row_id = get_excel_row_id(lane_speed)
-            application_si_excel_data = df.loc[(df['speed / protocol'] == row_id) & (df['group'] == GROUP_ID)]
+            application_si_excel_data = df.loc[(df[get_speed_column()] == row_id) & (df['group'] == GROUP_ID)]
+            if application_si_excel_data.empty:
+                print("Skipping '{}' of '{}', the {} SI datasheet has no row for a {}G lane speed"
+                      .format(application, media_key, args.spc, lane_speed))
+                continue
             application_si_excel_data_dict = application_si_excel_data.to_dict(orient='records')[0]
             application_si_json_data = get_port_json_data(application_si_excel_data_dict)
 
-            application_json_str = SPEED_PREFIX + application
             media_key_si_params[application_json_str] = application_si_json_data
-        si_params[media_key] = media_key_si_params
+        if media_key_si_params:
+            si_params[media_key] = media_key_si_params
     return si_params
 # ----------------------------------------------------- Port SI -----------------------------------------------------
 
@@ -395,7 +497,7 @@ def get_module_si_params(df):
         row_id = get_excel_row_id(supported_speed)
         if not row_id:
             continue
-        generation_si_excel_data = df.loc[(df['speed / protocol'] == row_id) & (df['group'] == GROUP_ID)]
+        generation_si_excel_data = df.loc[(df[get_speed_column()] == row_id) & (df['group'] == GROUP_ID)]
         if generation_si_excel_data.empty:
             continue
         generation_si_excel_data_dict = generation_si_excel_data.to_dict(orient='records')[0]

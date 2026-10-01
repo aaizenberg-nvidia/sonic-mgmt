@@ -11,6 +11,9 @@ import logging
 from ngts.cli_wrappers.common.general_clis_common import GeneralCliCommon
 
 
+cumulus_owner = "yleibovichwe"
+
+
 @pytest.mark.cumulus
 @pytest.mark.security
 @pytest.mark.parametrize("api_type", [ApiType.NVUE, ApiType.OPENAPI])

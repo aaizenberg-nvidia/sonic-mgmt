@@ -330,6 +330,7 @@ def test_nv_bridge_hello(
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 def test_external_port_scan_with_acl_removed(
     engines: EnginesT,
+    scanner_engine: LinuxSshEngine,
     published_ports: Dict[int, str],
     internal_probe_ports: Dict[int, str],
 ):
@@ -337,12 +338,6 @@ def test_external_port_scan_with_acl_removed(
     only published ports are open."""
     dut = engines.dut
     dut_ip = dut.ip
-
-    scanner_engine = getattr(engines, "sonic_mgmt", None) or getattr(engines, "server", None)
-    if scanner_engine is None:
-        pytest.skip(
-            "No external engine (sonic-mgmt or server) available to run nmap"
-        )
 
     with allure.step("Save current iptables rules"):
         helpers.save_iptables(dut)

@@ -402,35 +402,50 @@ def test_lag_members_scale(topology_obj, interfaces, engines, cleanup_list, plat
         service_ports = get_service_port(platform_params.platform)
         all_ifaces_info = exclude_service_ports(all_ifaces_info, service_ports)
         all_ifaces_info = exclude_dpu_interfaces(all_ifaces_info, platform_params.platform)
-        # We need to create bond on ifaces with the same type, choose list with ifaces with the same type
+        # Use the largest group of ports with a compatible hardware type.
         interfaces_types_dict = get_interfaces_by_type_dict(all_ifaces_info)
         test_ifaces_type = get_ifaces_type_which_has_bigger_ifaces_list(interfaces_types_dict)
         all_interfaces_with_same_type = interfaces_types_dict[test_ifaces_type]
         member_interfaces = random.sample(all_interfaces_with_same_type, min(max_lag_members,
                                                                              len(all_interfaces_with_same_type)))
         lb_member_interfaces = get_lag_lb_members(interfaces, member_interfaces)
+        # Preserve ports intentionally left admin-down after setup bring-up identified link issues.
+        admin_up_lb_member_interfaces = [
+            interface for interface in lb_member_interfaces if all_ifaces_info[interface]['Admin'] == 'up'
+        ]
 
-        with allure.step('Set same speed to all interfaces'):
-            dut_orig_ifaces_speeds = dut_cli.interface.get_interfaces_speed(all_interfaces_with_same_type)
-            # Get minimal supported speed
-            min_speed = min([speed_string_to_int_in_mb(speed) for speed in dut_orig_ifaces_speeds.values()])
-            # Get speed for all members and if it's not similar - set all ports to minimal supported speed
-            members_speed = {}
-            [members_speed.update({iface: dut_orig_ifaces_speeds[iface]}) for iface in member_interfaces]
-            if not all(x == list(members_speed.values())[0] for x in list(members_speed.values())):
+        with allure.step('Set same speed to all LAG members'):
+            dut_oper_ifaces_speeds = dut_cli.interface.get_interfaces_speed(all_interfaces_with_same_type)
+            dut_original_port_config = json.loads(
+                engines.dut.run_cmd('sonic-cfggen -d --print-data', print_output=False))['PORT']
+
+            # Use operational speeds to decide whether the LAG members need a common speed.
+            min_oper_speed = min(speed_string_to_int_in_mb(speed)
+                                 for speed in dut_oper_ifaces_speeds.values())
+            member_oper_speeds = [dut_oper_ifaces_speeds[interface] for interface in member_interfaces]
+            if any(speed != member_oper_speeds[0] for speed in member_oper_speeds[1:]):
                 interfaces_config_list = []
-                for interface in all_interfaces_with_same_type:
+                for interface in member_interfaces:
+                    original_configured_speed = dut_original_port_config.get(interface, {}).get('speed')
+                    assert original_configured_speed, f'Missing configured speed for interface {interface}'
                     interfaces_config_list.append({'iface': interface,
-                                                   'speed': min_speed,
-                                                   'original_speed': dut_orig_ifaces_speeds.get(interface, min_speed)})
+                                                   'speed': min_oper_speed,
+                                                   'original_speed': original_configured_speed})
                 interfaces_config_dict = {
                     'dut': interfaces_config_list
                 }
                 add_interface_conf(topology_obj, interfaces_config_dict, cleanup_list)
+                configured_speeds = dut_cli.interface.get_interfaces_speed(member_interfaces)
+                unexpected_speeds = {
+                    interface: speed for interface, speed in configured_speeds.items()
+                    if speed_string_to_int_in_mb(speed) != min_oper_speed
+                }
+                assert not unexpected_speeds, \
+                    'Failed to set all LAG members to speed {}: {}'.format(min_oper_speed, unexpected_speeds)
 
         with allure.step('Disable all member loopback interfaces'):
-            dut_cli.interface.disable_interfaces(lb_member_interfaces)
-            cleanup_list.append((dut_cli.interface.enable_interfaces, (lb_member_interfaces,)))
+            dut_cli.interface.disable_interfaces(admin_up_lb_member_interfaces)
+            cleanup_list.append((dut_cli.interface.enable_interfaces, (admin_up_lb_member_interfaces,)))
 
         with allure.step('Create PortChannel with all ports as members'):
             lag_config_dict = {
@@ -1047,17 +1062,21 @@ def config_bond_type_lag(topology_obj, interfaces, cleanup_list):
 
 def get_interfaces_by_type_dict(interfaces_info):
     """
-    Get dictionary with lists of RJ45 interfaces and rest QSFP interfaces
+    Group CPO and RJ45 interfaces separately from other pluggable interfaces.
     :param interfaces_info: parsed output from "show interfaces status" command
     :return: dictionary
     """
     rg45_type = 'RJ45'
     qsfp_type = 'QSFP'
-    interfaces_types_dict = {rg45_type: [], qsfp_type: []}
+    cpo_type = 'CPO'
+    interfaces_types_dict = {rg45_type: [], qsfp_type: [], cpo_type: []}
 
     for interface in interfaces_info:
-        if interfaces_info[interface]['Type'] == rg45_type:
+        interface_type = interfaces_info[interface]['Type']
+        if interface_type == rg45_type:
             interfaces_types_dict[rg45_type].append(interface)
+        elif interface_type == cpo_type:
+            interfaces_types_dict[cpo_type].append(interface)
         else:
             interfaces_types_dict[qsfp_type].append(interface)
 
@@ -1067,7 +1086,7 @@ def get_interfaces_by_type_dict(interfaces_info):
 def get_ifaces_type_which_has_bigger_ifaces_list(interfaces_types_dict):
     """
     Get type of interface which has bigger number of interfaces
-    :param interfaces_types_dict: dict, example: {'RJ45': ['Ethernet0', 'Ethernet1'], 'QSFP': ['Ethernet2']}
+    :param interfaces_types_dict: dict of interface types and their interfaces
     :return: str, interface type which have bigger list of interfaces
     """
     num_of_ifaces = 0

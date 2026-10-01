@@ -29,7 +29,7 @@ class PxeTool:
 
     # ---- Steps for ONIE ----
     OPN_STEPS = 1
-    IPN_STEPS = 5
+    IPN_STEPS = 3
 
     # ---- Authentication Prompts ----
     PASSWORD_PROMPT = "Enter Password"      # PXE password prompt
@@ -84,7 +84,7 @@ class PxeTool:
                 out2, resp = serial_engine.run_cmd(
                     cls.ENTER,
                     [cls.INVALID_PASSWORD_PROMPT, cls.SUCCESSFUL_DOWNLOAD, cls.SECURE_BOOT_VIOLATION],
-                    timeout=15,
+                    timeout=25,
                     send_without_enter=True
                 )
                 if resp == 0:

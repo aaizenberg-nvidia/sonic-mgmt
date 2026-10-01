@@ -11,6 +11,9 @@ from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
 
 
+cumulus_owner = "yleibovichwe"
+
+
 @pytest.fixture(autouse=True)
 def rotate_logs():
     """
@@ -44,6 +47,9 @@ def test_techsupport_show_and_since(engines, test_name, random_api, devices, ser
     path = devices.dut.techsupport_files_path
     file1 = None
     folder = None
+
+    with allure.step("Cleanup sdk files before running the test"):
+        engines.dut.run_cmd("sudo rm -rf /var/log/mellanox/sdk* 2>/dev/null || true")
 
     with allure.step('Test techsupport show and since functionality'):
         # --- INVALID DATE HANDLING (no generation) ---

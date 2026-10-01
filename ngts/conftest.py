@@ -27,20 +27,21 @@ from ngts.cli_wrappers.linux.linux_cli import LinuxCli, LinuxCliStub
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli, SonicCliStub
 from ngts.cli_wrappers.sonic.sonic_general_clis import SonicGeneralCliDefault
-from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType, SonicConst
+from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType, SonicConst, \
+    PlayersAliases
 from ngts.constants.constants import REGRESSION_TYPE_ENV_VAR, RegressionType
-from ngts.constants.constants import InfraConst, PytestConst, NvosCliTypes, DebugKernelConsts, CliType
 from ngts.constants.constants import SerialLoggerConst
+from ngts.constants.constants import CLI_TYPE_CACHE_PATH
 from ngts.helpers.general_helper import get_all_setups, get_dut_cli_objs_from_topo_obj
 from ngts.helpers.sonic_branch_helper import get_sonic_branch, update_branch_in_topology, update_sanitizer_in_topology, \
     get_sonic_image
 from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
-from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool, DOCA_OPEN_SM_PATH, SM_MASTER_OPEN_SM_PATH
+from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool, DOCA_OPEN_SM_PATH, STOCK_OPEN_SM_PATH
 from ngts.tests.nightly.app_extension.app_extension_helper import APP_INFO, get_app_repository
 from ngts.tools.allure_report.allure_report_attacher import add_fixture_end_tag, add_fixture_name, \
     clean_stored_cmds_with_fixture_scope, update_fixture_scope_list, enable_record_cmds
 from ngts.tools.infra import get_platform_info, get_devinfo, is_deploy_run, get_chip_type
-from ngts.tools.infra import get_topology_from_noga
+from ngts.tools.infra import get_topology_from_noga, reset_ansible_ssh_control_masters
 from ngts.tools.test_utils.nvos_general_utils import get_switch_type, is_ipv6_setup
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.scripts.allure_summary.bug_marker import apply_bug_markers, finalize_bug_categories
@@ -80,6 +81,9 @@ def pytest_sessionstart(session: pytest.Session):
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_PLATFORM_TYPE, None)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_BRANCH_NAME, None)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_IMAGE_TYPE, None)
+
+    # Must run before collection: conditional_mark already shells out to ansible there.
+    reset_ansible_ssh_control_masters()
 
     # Disable stream logging if pytest is running in live mode
     _disable_logging_root_handlers()
@@ -219,6 +223,9 @@ def pytest_addoption(parser):
                      help='Which environment variable to use for default dut password')
     parser.addoption("--skip_bug_handler_action", action="store_true", default=False, required=False,
                      help="Whether to skip (True) log analyzer bug handler actions when loganalyzer is enabled, or not (False)")
+    parser.addoption("--ar_extended_thresholds", action="store_true", default=False, required=False,
+                     help="Whether to use the SPC6 extended AR grading (7 congestion grades) instead of "
+                          "the legacy 3-grade lo/med/hi thresholds. Defaults to the legacy 3-grade thresholds.")
     parser.addoption('--fail_install_if_secure_boot_off', action='store', default='yes',
                      help='Whether to fail NVOS installation due to disabled Secure-Boot')
     parser.addoption('--skip_weekend_cases', required=False, action='store', default="",
@@ -235,6 +242,15 @@ def pytest_addoption(parser):
                      help='On Performance tests, this parameter will determine if the tests run with ipv4 or ipv6')
     parser.addoption('--parameter_file_location', dest="parameter_file_location", required=False, action='store', default=None,
                      help='location of the parameter file for ar parameters optimiser')
+    parser.addoption('--perf-exclude-ports', dest="perf_exclude_ports", required=False,
+                     action='store_true', default=False,
+                     help='Performance tests: enable port exclusion from the configured setup/scenario list.')
+    parser.addoption('--perf-include-ports', dest="perf_include_ports", required=False,
+                     action='store_true', default=False,
+                     help='Performance tests: enable port inclusion from the configured setup/scenario list.')
+    parser.addoption('--perf-ports-config', dest="perf_ports_config", required=False,
+                     action='store', default=None,
+                     help='Performance tests: override the port-selection YAML configuration path.')
     parser.addoption(SerialLoggerConst.CMD_LINE_KEY, action='store', required=False,
                      choices=SerialLoggerConst.CMD_LINE_VALUES, default=SerialLoggerConst.MODE_OFF,
                      help='Action for serial log handler. Options: off (no serial logging), store (without analyzing), '
@@ -458,7 +474,7 @@ def configure_opensm_path(doca_traffic_system):
     Configure OpenSmTool.OPENSM_PATH based on whether this is a doca traffic system.
     This runs automatically at the beginning of the test session.
     """
-    OpenSmTool.set_opensm_path(DOCA_OPEN_SM_PATH if doca_traffic_system else SM_MASTER_OPEN_SM_PATH)
+    OpenSmTool.set_opensm_path(DOCA_OPEN_SM_PATH if doca_traffic_system else STOCK_OPEN_SM_PATH)
 
 
 @pytest.fixture(scope='session')
@@ -628,6 +644,9 @@ def export_cli_type_to_cache(topology, request):
     cli_type = topology[0]['dut']['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
     request.session.config.cache.set('CLI_TYPE', cli_type)
     os.environ['CLI_TYPE'] = cli_type
+    # for community tests
+    with open(CLI_TYPE_CACHE_PATH, 'w') as f:
+        json.dump(cli_type, f)
 
 
 def update_topology_with_cli_class(topology, request=None, is_performance=False):
@@ -639,7 +658,8 @@ def update_topology_with_cli_class(topology, request=None, is_performance=False)
             # and its cli is already set at attach time.
             continue
         cli_type = player_info['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
-        if player_key == 'dut' or player_key == PerfConsts.LEFT_TG_ALIAS or player_key == PerfConsts.RIGHT_TG_ALIAS:
+        if player_key == 'dut' or player_key in PlayersAliases.multi_duts_list or \
+                player_key == PerfConsts.LEFT_TG_ALIAS or player_key == PerfConsts.RIGHT_TG_ALIAS:
             if cli_type in NvosCliTypes.NvueCliTypes:
                 update_nvos_topology(topology, player_key, player_info, request)
                 nvos_setup = True
@@ -864,7 +884,7 @@ def platform_params(show_platform_summary, setup_name, initial_topology_obj):
     platform_data = DottedDict()
     platform_data.platform = show_platform_summary['platform']
     platform_data.filtered_platform = re.search(
-        r"(msn\d{4}a\w?|msn\d{4}c|msn\d{4}|sn\d{4}\_(?!simx)[a-z]+|sn\d{4}[a-z]?|qm\d{4}|q\d{4}|mqm\d{4}|mbf.*c|900.*a|bf.*dpu|N5110_LD|N5100_LD|N5112_LD|N5200_LD|N5600_LD|N5500_LD|N6150_LD|[Nn]6300_LD|[Nn]6100_LD|[Nn]7100_LD|[Nn]7170_LD)",
+        r"(msn\d{4}a\w?|msn\d{4}c|msn\d{4}|sn\d{4}\_(?!simx)[a-z]+|sn\d{4}[a-z]?|n\d{4}_ld(?:_ta)?|qm\d{4}|q\d{4}|mqm\d{4}|mbf.*c|900.*a|bf.*dpu)",
         show_platform_summary['platform'], re.IGNORECASE).group(1)
     if 'air' in setup_name.lower():
         platform_data.hwsku = json.loads(initial_topology_obj.players['dut']['attributes'].noga_query_data['attributes']['Specific']['devdescription'])['hwsku']

@@ -9,11 +9,12 @@ from ngts.helpers.performance.performance_counter_helpers import should_validate
 from ngts.helpers.performance.performance_setup_helpers import (ValidationConfig, run_traffic, run_validation, get_topology_obj,
                                                                 validate_traffic_results,
                                                                 set_ports_admin_state,
-                                                                skip_test_on_unsupported_os, get_obj_method)
+                                                                skip_test_on_unsupported_os, get_obj_method,
+                                                                configure_incremental_dips_on_tg)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, BwFairnessThreshold
 from ngts.constants.constants import CliType
-from ngts.performance_tests.spcx_ra.conftest import get_spcx_ra_leaf_traffic
+from ngts.performance_tests.spcx_ra.conftest import get_spcx_ra_leaf_traffic, get_spcx_ra_spine_traffic
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name
 
 logger = logging.getLogger()
@@ -42,7 +43,13 @@ class TestSpcX400GTo200G:
         skip_test_on_unsupported_os(self.cli_object, CliType.NVUE)
 
         test_name = get_perf_test_name(request)
-        self.traffic_jsons = get_spcx_ra_leaf_traffic(self.players, self.conf_args)
+
+        if self.conf_args["use_incremental_dips"]:
+            with allure.step("Create incremental dips on left traffic generator"):
+                configure_incremental_dips_on_tg(self.players, players_aliases=[PerfConsts.LEFT_TG_ALIAS])
+
+        self.traffic_jsons = get_spcx_ra_leaf_traffic(self.players, self.conf_args, use_incremental_dips=self.conf_args["use_incremental_dips"],
+                                                      incremental_dip_num_packets=SPCXRAConsts.PACKET_NUM_400G_x2[self.chip_type])
 
         with allure.step(f"Run traffic on all the ports. Packet size is {packet_size} bytes"):
             run_traffic(self.players, self.scenario, self.traffic_jsons)

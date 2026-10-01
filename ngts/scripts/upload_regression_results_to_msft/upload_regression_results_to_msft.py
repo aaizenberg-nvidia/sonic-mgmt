@@ -20,6 +20,9 @@ from ngts.scripts.upload_regression_results_to_msft.oracle_db import OracleDb
 
 logger = logging.getLogger()
 
+REDMINE_ISSUE_RE = re.compile(r"https://redmine\.mellanox\.com/issues/(\d+)")
+GENERIC_FAIL_ERROR_MSG = "error logs were found during the test run"
+
 stm_user = os.getenv("STM_USER")
 stm_password = os.getenv("STM_PASSWORD")
 sonic_mgmt_user = os.getenv("SONIC_MGMT_USER")
@@ -27,18 +30,25 @@ sonic_mgmt_password = os.getenv("SONIC_MGMT_PASSWORD")
 
 
 def validate_env_variables():
-    assert all([stm_user, stm_password, sonic_mgmt_user, sonic_mgmt_password]), \
-        f"One or more environment variables was not located," \
-        f"STM_USER: {stm_user}, STM_PASSWORD: {stm_password}, " \
-        f"SONIC_MGMT_USER: {sonic_mgmt_user}, SONIC_MGMT_PASSWORD: {sonic_mgmt_password}"
+    required = {
+        "STM_USER": stm_user,
+        "STM_PASSWORD": stm_password,
+        "SONIC_MGMT_USER": sonic_mgmt_user,
+        "SONIC_MGMT_PASSWORD": sonic_mgmt_password,
+    }
+    missing = sorted(name for name, value in required.items() if not value)
+    assert not missing, "Missing required environment variables: {}".format(
+        ", ".join(missing)
+    )
 
 
 def init_parser():
     description = ('Functionality of the script: \n'
                    'Use case #1: create an excel to review regression results for a given image.\n'
                    'Use case #2: Modify results - '
-                   '             2.1: Update Redmine issues in skips to community issues/user message.\n'
-                   '             2.1: Remove testcases from xml per user request.\n'
+                   '             2.1: Update Redmine issues in skips/fail/error to community issues/user message.\n'
+                   '             2.2: Sanitize fail/error messages that still contain internal Redmine URLs.\n'
+                   '             2.3: Remove testcases from xml per user request.\n'
                    'Use case #3: Compare the results to MSFT/MARS database.\n'
                    'Use case #4: Save sessions to MARS database.\n'
                    'Use case #5: Upload the results to MSFT database and save them based on an approved excel.\n')
@@ -84,6 +94,8 @@ def init_parser():
                                        'some other message in JSON format, the JSON file should be in the format of '
                                        '{"redmine_issue": "new_message"}',
                                        default=None)
+    parser_modify_results.add_argument('--generate_upload_mail', action='store_true',
+                                       help='Generate the regression report from the modified Excel and send it')
     # EXPORT ARGUMENTS
     parser_export_results.add_argument('--export_excel', dest='export_excel_path',
                                        help='Path to excel table file that should be exported to MSFT.',
@@ -142,6 +154,7 @@ class ReleaseResultsUploader:
         elif self.command == "modify":
             self.user_excel_table_path = arguments.user_excel_table_path
             self.redmine_issues_to_update_path = arguments.redmine_issues_to_update_path
+            self.generate_upload_mail = arguments.generate_upload_mail
             self.user_modified_excel_table_path = os.path.join(self.sonic_version_release_results_dir,
                                                                f"user_modified_{self.excel_table_name}")
         elif self.command == "export":
@@ -172,6 +185,7 @@ class ReleaseResultsUploader:
         self.hosts = set()
         self.sessions_testbed_properties = dict()
         self.modified_xml_path = dict()
+        self.exported_hwsku_topologies = dict()
         file_dir_path = os.path.dirname(os.path.realpath(__file__))
         self.build_mail_table = os.path.join(file_dir_path, "build_mail_table.txt")
         if os.path.exists(self.build_mail_table):
@@ -251,14 +265,66 @@ class ReleaseResultsUploader:
         sessions = self.user_sessions if self.user_sessions else self.query_sessions_for_image()
         logger.info(f'Session are: {sessions}')
         self.update_sessions_testbed_properties(sessions)
-        platform_filtered_sessions = self.filter_sessions(sessions)
-        logger.info(f'Platform filtered Sessions are: {platform_filtered_sessions}')
-        self.create_excel_table(platform_filtered_sessions)
+        # user_sessions: keep all provided sessions (no MSFT_PLATFORMS filter)
+        if self.user_sessions:
+            sessions_for_excel = sessions
+            for session in sessions_for_excel:
+                self.hosts.add(self.sessions_testbed_properties[session]['host'])
+            logger.info(f'user_sessions: skipping platform filter, keeping {len(sessions_for_excel)} sessions')
+        else:
+            sessions_for_excel = self.filter_sessions(sessions)
+            logger.info(f'Platform filtered Sessions are: {sessions_for_excel}')
+        self.create_excel_table(sessions_for_excel)
         logger.info(f'Collected excel results table is at : {self.excel_table_path}')
         setups_in_results = self.get_setups_from_results(self.all_setups)
         setups_not_in_results = set(self.all_setups).difference(setups_in_results)
         filter_setups_not_in_results = self.filter_setups(setups_not_in_results)
         self.compose_collect_results_mail(setups_in_results, filter_setups_not_in_results)
+        self.send_regression_report(self.excel_table_path)
+
+    def send_regression_report(self, excel_path):
+        """Run the deterministic report workflow in the current NGTS Docker."""
+
+        enabled = os.getenv("REGRESSION_MAIL_ENABLED", "").strip().lower()
+        if enabled not in {"1", "true", "yes"}:
+            logger.info("Deterministic regression report email is not enabled")
+            return
+        recipients = os.getenv("REGRESSION_MAIL_TO", "").strip()
+        if not recipients:
+            raise RuntimeError(
+                "REGRESSION_MAIL_TO is required for Jenkins collect jobs"
+            )
+        cc = os.getenv("REGRESSION_MAIL_CC", "").strip()
+        from ngts.scripts.regression_mail import trigger_from_jenkins
+
+        report_excel_path = os.path.realpath(excel_path)
+        if not os.path.isfile(report_excel_path):
+            raise RuntimeError(
+                "regression report Excel does not exist: {}".format(report_excel_path)
+            )
+        logger.info(
+            "Generate regression report from explicit Excel: %s (version=%s)",
+            report_excel_path,
+            self.sonic_version,
+        )
+        exit_code = trigger_from_jenkins(
+            version=self.sonic_version,
+            recipients=recipients,
+            excel_path=report_excel_path,
+            cc=cc,
+        )
+        if exit_code == 6:
+            raise RuntimeError(
+                "regression report delivery failed; exit={}".format(
+                    exit_code
+                )
+            )
+        if exit_code:
+            logger.warning(
+                "Regression report was sent in degraded mode; exit=%s. "
+                "The Jenkins upload step remains successful.",
+                exit_code,
+            )
 
     def load_redmine_issues_to_update(self):
         if not self.redmine_issues_to_update_path:
@@ -284,6 +350,10 @@ class ReleaseResultsUploader:
     def modify_results(self):
         df = pd.read_excel(self.user_excel_table_path, sheet_name=self.sheet_name, index_col=0)
         self.load_redmine_issues_to_update()
+        if self.generate_upload_mail and not self.redmine_issues_to_update:
+            logger.info(
+                "modify: generate_upload_mail is set and skip.json was not provided; "
+                "skipping bug URL replacement")
         row_idx_to_remove = []
         host_commercial_name_col = []
         for i in range(len(df)):
@@ -302,10 +372,10 @@ class ReleaseResultsUploader:
             commercial_name = re.search(r"(?:x86_64|arm64)-\w*_(\w+\d{4}\w*)-.*", platform).group(1)
             new_hostname = self.get_new_hostname(old_hostname, commercial_name)
             df = self.update_commercials_in_columns(df, i, old_hostname, new_hostname)
-            message = df.loc[i, "message"]
             host_commercial_name_col.append(new_hostname)
             junit_xml_path = self.handle_sanitize_data(df, i, junit_xml_path, session_id,
                                                        old_hostname, new_hostname, test_name, result)
+            message = df.loc[i, "message"]
             junit_xml_path = self.handle_redmine_url_update(df, i, junit_xml_path, session_id, result, message)
             self.handle_remove_failures(row_idx_to_remove, i, session_id, junit_xml_path, test_name, modify_xml, commercial_name)
             self.update_xml_path_if_modified(df, i)
@@ -320,12 +390,18 @@ class ReleaseResultsUploader:
         df.to_excel(self.user_modified_excel_table_path, sheet_name=self.sheet_name)
         logger.info(f'Modified excel results table is at : {self.user_modified_excel_table_path}')
         self.compose_modify_results_mail(self.user_modified_excel_table_path)
+        if self.generate_upload_mail:
+            self.send_regression_report(self.user_modified_excel_table_path)
 
     def get_new_hostname(self, old_hostname, commercial_name):
         new_hostname = old_hostname
         internal_name = self.get_internal_name(old_hostname)
         if internal_name:
             new_hostname = old_hostname.replace(internal_name, commercial_name)
+        elif re.fullmatch(r"slm-\d+(?:-.*)?", old_hostname):
+            # SLM hostnames use a generic lab prefix instead of the platform
+            # codename, so derive the replacement from the platform column.
+            new_hostname = old_hostname.replace("slm", commercial_name, 1)
         return new_hostname
 
     @staticmethod
@@ -347,49 +423,73 @@ class ReleaseResultsUploader:
             df.loc[row_idx, "was_xml_updated"] = True
 
     def handle_redmine_url_update(self, df, row_idx, junit_xml_path, session_id, result, message):
-        updated_junit_xml_path, redmine_issue, updated_info = self.update_redmine_url(junit_xml_path,
-                                                                                      session_id,
-                                                                                      result, message)
+        # generate_upload_mail produces skip.json after modify; without that file
+        # there is nothing to replace, so do not look up internal issues/GitHub issues.
+        if self.generate_upload_mail and not self.redmine_issues_to_update:
+            return junit_xml_path
+        updated_junit_xml_path, replacements = self.update_redmine_url(junit_xml_path,
+                                                                       session_id,
+                                                                       result, message)
         if updated_junit_xml_path:
             df.loc[row_idx, "xml_path"] = updated_junit_xml_path
             df.loc[row_idx, "was_xml_updated"] = True
-            if redmine_issue and updated_info:
-                updated_message = message.replace(redmine_issue, updated_info)
+            updated_message = str(message) if message is not None else ""
+            for redmine_issue, updated_info in replacements:
+                updated_message = updated_message.replace(redmine_issue, updated_info)
+            if replacements:
                 df.loc[row_idx, "message"] = updated_message
             return updated_junit_xml_path
         return junit_xml_path
 
+    @staticmethod
+    def iter_redmine_issues(message):
+        seen = set()
+        for match in REDMINE_ISSUE_RE.finditer(str(message)):
+            redmine_issue = match.group(0)
+            if redmine_issue in seen:
+                continue
+            seen.add(redmine_issue)
+            yield redmine_issue, match.group(1)
+
+    def resolve_redmine_replacement(self, redmine_issue, redmine_id):
+        if self.community_issues_redmine_bugs.get(redmine_issue):
+            return self.community_issues_redmine_bugs[redmine_issue]
+        community_issue_url = self.get_redmine_community_issue(redmine_id)
+        if community_issue_url:
+            self.community_issues_redmine_bugs[redmine_issue] = community_issue_url
+            return community_issue_url
+        if redmine_issue in self.redmine_issues_to_update:
+            return self.redmine_issues_to_update[redmine_issue]
+        self.redmine_bugs.add(redmine_issue)
+        return None
+
     def update_redmine_url(self, junit_xml_path, session_id, result, message):
-        updated_junit_xml_path, redmine_issue, updated_info = None, None, None
-        redmine_issue, community_issue_url = self.review_result(result, message)
-        if redmine_issue and community_issue_url:
-            updated_junit_xml_path = self.update_redmine_issue_in_xml(junit_xml_path, session_id,
-                                                                      redmine_issue, community_issue_url)
-            updated_info = community_issue_url
-        elif redmine_issue in self.redmine_issues_to_update.keys():
-            updated_info = self.redmine_issues_to_update[redmine_issue]
-            updated_junit_xml_path = self.update_redmine_issue_in_xml(junit_xml_path, session_id,
-                                                                      redmine_issue,
-                                                                      updated_info)
-        return updated_junit_xml_path, redmine_issue, updated_info
+        if result not in ("skipped", "fail"):
+            return None, []
+        updated_junit_xml_path = None
+        replacements = []
+        current_path = junit_xml_path
+        for redmine_issue, redmine_id in self.iter_redmine_issues(message):
+            updated_info = self.resolve_redmine_replacement(redmine_issue, redmine_id)
+            if not updated_info:
+                continue
+            current_path = self.update_redmine_issue_in_xml(current_path, session_id,
+                                                            redmine_issue, updated_info)
+            updated_junit_xml_path = current_path
+            replacements.append((redmine_issue, updated_info))
+        return updated_junit_xml_path, replacements
 
     def review_result(self, result, message):
-        redmine_issue = None
-        community_issue_url = None
-        if result == "skipped" or result == "fail":
-            redmine_issue = re.search(r"https:\/\/redmine\.mellanox\.com\/issues\/(\d+)", str(message))
-            if redmine_issue:
-                redmine_id = redmine_issue.group(1)
-                redmine_issue = redmine_issue.group()
-                if self.community_issues_redmine_bugs.get(redmine_issue):
-                    community_issue_url = self.community_issues_redmine_bugs[redmine_issue]
-                else:
-                    community_issue_url = self.get_redmine_community_issue(redmine_id)
-                    if community_issue_url:
-                        self.community_issues_redmine_bugs[redmine_issue] = community_issue_url
-                if not community_issue_url:
-                    self.redmine_bugs.add(redmine_issue)
-        return redmine_issue, community_issue_url
+        if result not in ("skipped", "fail"):
+            return None, None
+        for redmine_issue, redmine_id in self.iter_redmine_issues(message):
+            updated_info = self.resolve_redmine_replacement(redmine_issue, redmine_id)
+            return redmine_issue, updated_info
+        return None, None
+
+    def collect_redmine_bugs_from_message(self, message):
+        for redmine_issue, _redmine_id in self.iter_redmine_issues(message):
+            self.redmine_bugs.add(redmine_issue)
 
     @staticmethod
     def get_redmine_community_issue(redmine_id):
@@ -481,24 +581,51 @@ class ReleaseResultsUploader:
                 logger.debug(f"Create: new updated xml at {updated_junit_xml_path}")
         return updated_junit_xml_path
 
+    @staticmethod
+    def node_has_redmine_issue(node):
+        message = node.attrib.get("message", "") or ""
+        text = node.text or ""
+        return bool(REDMINE_ISSUE_RE.search(message) or REDMINE_ISSUE_RE.search(text))
+
     def handle_sanitize_error_message(self, df, row_idx, session, junit_xml_path, test_name_to_update, result):
         updated_junit_xml_path = junit_xml_path
-        if result == 'fail':
-            mytree = ET.parse(junit_xml_path)
-            myroot = mytree.getroot()
-            for idx, testsuite in enumerate(myroot.findall('testsuite')):
-                for testcase in testsuite.findall('testcase'):
-                    classname_path = self.parse_classname(testcase.attrib['classname'])
-                    test_name = f"{classname_path}::{testcase.attrib['name']}"
-                    if test_name == test_name_to_update:
-                        error = testcase.findall('error')
-                        if error:
-                            error[0].attrib['message'] = 'error logs were found during the test run'
-                            df.loc[row_idx, "message"] = error[0].attrib['message']
-                        break
+        if result != "fail":
+            return updated_junit_xml_path
+        mytree = ET.parse(junit_xml_path)
+        myroot = mytree.getroot()
+        sanitized = False
+        for idx, testsuite in enumerate(myroot.findall("testsuite")):
+            for testcase in testsuite.findall("testcase"):
+                classname_path = self.parse_classname(testcase.attrib["classname"])
+                test_name = f"{classname_path}::{testcase.attrib['name']}"
+                if test_name != test_name_to_update:
+                    continue
+                for tag in ("error", "failure"):
+                    nodes = testcase.findall(tag)
+                    if not nodes:
+                        continue
+                    node = nodes[0]
+                    if tag == "error" or self.node_has_redmine_issue(node):
+                        node.attrib["message"] = GENERIC_FAIL_ERROR_MSG
+                        node.text = None
+                        df.loc[row_idx, "message"] = GENERIC_FAIL_ERROR_MSG
+                        sanitized = True
+                break
+        excel_message = df.loc[row_idx, "message"]
+        if isinstance(excel_message, str) and REDMINE_ISSUE_RE.search(excel_message):
+            df.loc[row_idx, "message"] = GENERIC_FAIL_ERROR_MSG
+            sanitized = True
+        if sanitized:
+            for testsuite in myroot.findall("testsuite"):
+                for testcase in testsuite.findall("testcase"):
+                    for tag in ("error", "failure"):
+                        for node in testcase.findall(tag):
+                            if tag == "error" or self.node_has_redmine_issue(node):
+                                node.attrib["message"] = GENERIC_FAIL_ERROR_MSG
+                                node.text = None
             updated_junit_xml_path = self.get_updated_junit_xml_path(junit_xml_path, session)
             mytree.write(updated_junit_xml_path)
-            logger.debug(f"Updated: {test_name_to_update} message")
+            logger.debug(f"Updated: {test_name_to_update} fail/error message")
             logger.debug(f"Create: new updated xml at {updated_junit_xml_path}")
         return updated_junit_xml_path
 
@@ -836,13 +963,11 @@ class ReleaseResultsUploader:
                 testcase_properties['message'] = error[0].attrib['message']
             if failure:
                 testcase_properties['message'] = failure[0].attrib['message']
+            self.collect_redmine_bugs_from_message(testcase_properties.get('message', ''))
         elif skipped:
             testcase_properties['result'] = 'skipped'
             testcase_properties['message'] = skipped[0].attrib['message']
-            redmine_issue = re.search(r"https:\/\/redmine\.mellanox\.com\/issues\/(\d+)",
-                                      testcase_properties['message'])
-            if redmine_issue:
-                self.redmine_bugs.add(redmine_issue.group())
+            self.collect_redmine_bugs_from_message(testcase_properties['message'])
         else:
             testcase_properties['result'] = 'pass'
             testcase_properties['message'] = ""
@@ -904,6 +1029,7 @@ class ReleaseResultsUploader:
             session = df.loc[i, "session_id"]
             hwsku = df.loc[i, "hwsku"]
             topology = df.loc[i, "topology"]
+            self.exported_hwsku_topologies[hwsku] = topology
             xml_path = df.loc[i, "xml_path"]
             if xml_path not in copied_xmls:
                 folder_name = f"{hwsku}_{topology}"
@@ -1061,14 +1187,7 @@ class ReleaseResultsUploader:
         self.compose_build_tables_content(build_table_dict_content)
 
     def get_exported_hwsku_topologies(self):
-        report_id_dirs = [x[0] for x in os.walk(self.result_folder)]
-        report_id_dirs.remove(self.result_folder)
-        report_id_dir_names = [os.path.basename(os.path.normpath(report_id_dir)) for report_id_dir in report_id_dirs]
-        exported_hwsku_topologies = {}
-        for report_id_dir_name in report_id_dir_names:
-            hwsku, topology = report_id_dir_name.split("_")
-            exported_hwsku_topologies[hwsku] = topology
-        return exported_hwsku_topologies
+        return self.exported_hwsku_topologies
 
     def compose_export_results_mail(self, excel_path):
         build_table_dict_content = {

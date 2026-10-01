@@ -6,6 +6,7 @@ from retry.api import retry_call
 
 from ngts.cli_wrappers.linux.linux_dhcp_clis import LinuxDhcpCli
 from devts.infra.tools.validations.traffic_validations.scapy.scapy_runner import ScapyChecker
+from ngts.helpers.general_helper import is_smartswitch_platform
 from ngts.helpers.network import get_bpf_filter_for_ipv6_address
 
 
@@ -206,11 +207,15 @@ class TestDHCP6Relay:
         dhcp_v4_removed = False
         main_dhcp_v6_removed = False
 
+        skip_v4 = is_smartswitch_platform(self.topology)
+
         try:
-            with allure.step('Remove DHCP relay setting from DUT for VLAN {} IPv4'.format(self.dhclient_main_vlan)):
-                self.dut_cli_object.dhcp_relay.del_dhcp_relay(self.dhclient_main_vlan, '69.0.0.2',
-                                                              topology_ojb=self.topology)
-                dhcp_v4_removed = True
+            if not skip_v4:
+                with allure.step('Remove DHCP relay setting from DUT for VLAN {} IPv4'.format(
+                        self.dhclient_main_vlan)):
+                    self.dut_cli_object.dhcp_relay.del_dhcp_relay(self.dhclient_main_vlan, '69.0.0.2',
+                                                                  topology_ojb=self.topology)
+                    dhcp_v4_removed = True
 
             with allure.step('Validate that IPv6 address provided by the DHCP server, iface: {}'.format(
                     self.dhclient_main_iface)):
@@ -237,7 +242,7 @@ class TestDHCP6Relay:
         except BaseException as err:
             raise AssertionError(err)
         finally:
-            if dhcp_v4_removed:
+            if dhcp_v4_removed and not skip_v4:
                 self.dut_cli_object.dhcp_relay.add_dhcp_relay(self.dhclient_main_vlan, '69.0.0.2',
                                                               topology_obj=self.topology)
             if main_dhcp_v6_removed:

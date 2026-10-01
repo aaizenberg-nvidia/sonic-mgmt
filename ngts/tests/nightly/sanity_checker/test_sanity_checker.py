@@ -14,10 +14,12 @@ from ngts.helpers.secure_boot_helper import SonicSecureBootHelper
 from ngts.tests.conftest import get_dut_loopbacks
 from ngts.constants.constants import FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE, CliType
 from ngts.tests.nightly.sanity_checker.analyze_sanity_checker_result_and_take_action import write_failed_sanity_checker_cases_to_file
+from ngts.tools.sysdumps import copy_dump_file
 from tests.common.helpers.firmware_helper import (
     parse_firmware_status, get_bmc_version_from_firmware_data,
     get_bmc_info_from_firmware_data, resolve_bmc_flavor, load_bmc_creds
 )
+from tests.common.helpers.sonic_image_readme import resolve_sonic_image_readme_path
 
 pytestmark = [
     pytest.mark.disable_loganalyzer,
@@ -52,6 +54,7 @@ ALL_COMMANDS_FOR_ACTUAL = {**COMMANDS_FOR_ACTUAL, **OPTIONAL_COMMANDS_FOR_ACTUAL
 # missing versions are components that aren't available on the current setup, like fw versions on simx setups.
 NON_EXISTENT_VERSION = '-'
 UNEXPECTED_MISSING_VERSION = 'N/A'
+VAR_CORE_DIR = '/var/core'
 
 
 @pytest.fixture(scope='module')
@@ -411,18 +414,32 @@ def test_psu_status_check(platform_params, topology_obj, platform_json_data, req
     write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
 
 
+def _copy_core_dumps_to_nfs(engine, dumps_folder, core_files):
+    collected_paths = []
+    for name in core_files:
+        if ".core" not in name:
+            continue
+        dest = os.path.join(dumps_folder, name)
+        copy_dump_file(engine, os.path.join(VAR_CORE_DIR, name), dest)
+        collected_paths.append(dest)
+    return collected_paths
+
+
 @pytest.mark.sanity_checker_common
 @pytest.mark.sanity_checker_airspin
-def test_core_dump_file_in_var_core_check(engines, request, is_in_deploy_image_flow):
+def test_core_dump_file_in_var_core_check(engines, request, is_in_deploy_image_flow, dumps_folder):
     """
     This test is verify if the folder of /var/core has the core dump file, if yes fail case
     If case fail, we will raise the failed case information in the allure report and disable bug handler tool
     """
     is_test_failed = False
-    var_core_data = engines.dut.run_cmd("ls /var/core")
+    raw = engines.dut.run_cmd(f"ls -1 {VAR_CORE_DIR} 2>/dev/null")
+    var_core_files = [line.strip() for line in (raw or "").splitlines() if line.strip()]
 
-    if var_core_data:
-        err_msg = f"/var/core folder has core dump file: {var_core_data}"
+    if var_core_files:
+        collected_paths = _copy_core_dumps_to_nfs(engines.dut, dumps_folder, var_core_files)
+        collected_msg = f", copied to: {collected_paths}" if collected_paths else ""
+        err_msg = f"{VAR_CORE_DIR} folder has core dump file: {var_core_files}{collected_msg}"
         assert_failure_or_just_print_err(err_msg, is_in_deploy_image_flow)
         is_test_failed = True
 
@@ -582,9 +599,12 @@ def parse_readme_versions(sonic_image):
     :param sonic_image: the current sonic image deployed on the dut
     :return: A dictionary, stating for each component what is the readme version of it, example - {"SDK", "4.6.2202"}
     """
-    readme_path = os.path.realpath(f"/auto/sw_system_release/sonic/{sonic_image}/dev/README")
-    if not os.path.exists(readme_path):
-        raise Exception(f"Sonic image path: {readme_path} doesn't include a README file")
+    readme_path = resolve_sonic_image_readme_path(sonic_image)
+    if not readme_path:
+        raise Exception(
+            f"Sonic image path: /auto/sw_system_release/sonic/{sonic_image}/dev/README "
+            f"doesn't include a README file"
+        )
     logger.info(f"Parsing versions according to readme file: {readme_path}")
     with open(readme_path) as f:
         image_readme_content = f.read()

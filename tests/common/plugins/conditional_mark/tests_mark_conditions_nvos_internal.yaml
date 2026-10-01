@@ -8,9 +8,9 @@ tests_nvos/interfaces/lldp/test_lldp.py::test_lldp_disable_dhcp:
 
 tests_nvos/system/test_system_log.py::test_log_idle:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after DHCP renew/disable)'
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5180780 (mgmt port left permanently down after DHCP renew races with ifplugd)'
     conditions:
-    - https://redmine.mellanox.com/issues/5100996
+    - https://redmine.mellanox.com/issues/5180780
 
 tests_nvos/interfaces/test_response_mgmt_ip_inband.py::test_configure_feature_state:
   skip:
@@ -57,6 +57,24 @@ tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_interface_eth0_dhcp_leas
 tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_mgmt_interface_dhcp_option_60:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after DHCP renew/disable)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_ib0_interface_mtu.py::test_interface_ib0_mtu_disabled_sm:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_ib_interface_configuration.py::test_ib_interface_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
+    conditions:
+    - https://redmine.mellanox.com/issues/5100996
+
+tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_interface_eth0_mtu:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100996 (port stays down after MTU unset)'
     conditions:
     - https://redmine.mellanox.com/issues/5100996
 
@@ -145,7 +163,6 @@ tests_nvos/platform/test_platform_environment.py::test_show_platform_environment
     - https://redmine.mellanox.com/issues/5098668
     - '''juliet'' in testbed or ''q3400'' in testbed'
 
-
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:
     reason: Testcase skipped on Juliet systems, Juliet Does not have PSU
@@ -202,6 +219,18 @@ tests_nvos/interfaces/nvl_port/test_nvl_port.py:
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
       in testbed'
+
+tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_link_health_attention_and_toggle_stress:
+  skip:
+    reason: link-health is supported on NVL6 Rosalind only (skip_if_link_health_not_supported); skip before the mloop setup on Portia
+    conditions:
+    - '''portia'' in testbed'
+
+tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_time_to_link_up:
+  skip:
+    reason: fec-measure-mode link training is QTM4/NVL6 Rosalind only (skip_if_fec_measure_not_supported); skip before the mloop setup on Portia
+    conditions:
+    - '''portia'' in testbed'
 
 tests_nvos/platform/test_platform_environment.py::test_platform_environment_fan_shared_led:
   skip:
@@ -567,14 +596,6 @@ ngts/tests_nvos/checklist/test_firmware_install_same_version.py:
     - '''juliet-146'' in testbed'
     - '''juliet-160'' in testbed'
 
-ngts/tests_nvos/platform/test_platform_firmware.py::test_show_platform_firmware:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'
-    conditions_logical_operator: and
-    conditions:
-    - https://redmine.mellanox.com/issues/4543350
-    - '''juliet'' in testbed'
-
 ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'
@@ -582,13 +603,6 @@ ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
     conditions:
     - https://redmine.mellanox.com/issues/4543350
     - '''juliet'' in testbed'
-
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_phy_recovery_attributes:
-  skip:
-    reason: 'Feature in not fully supported, remove ignore once support is applied.
-      (If Rosalind-Surrogate: test will not be supported for QTM3)'
-    conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
 
 tests_nvos/platform/test_platform_asic_power_telemetry.py::test_platform_asic_power_telemetry_default_fields_values:
   skip:
@@ -646,12 +660,6 @@ tests_nvos/multi_asic/test_fatal_mode.py:
     conditions:
     - https://redmine.mellanox.com/issues/4780661
 
-tests_nvos/system/issu/test_system_issu.py:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5049077'
-    conditions:
-    - https://redmine.mellanox.com/issues/5049077
-
 tests_nvos/system/gnmi/test_gnmi_server.py::test_simulate_gnmi_server_failure:
   skip:
     reason: '[NVOS - Design] Bug SW #4841879: [nv-gNMI] No system health events when
@@ -667,7 +675,7 @@ tests_nvos/cluster/nmx_simulator_tests/test_simulated_cluster_partition.py:
       - "('juliet' not in testbed and 'rosalind' not in testbed)"
       - "'juliet-148' in testbed"
       - "'sws-rtf2-rosalind-198' in testbed"
-      - https://redmine.mellanox.com/issues/5149287
+      - ('juliet' in testbed and https://redmine.mellanox.com/issues/5170528)
 
 tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
   skip:
@@ -680,12 +688,6 @@ tests_nvos/cluster/nmx_simulator_tests/test_sdn_maintenance_state.py:
     - '''juliet-52'' not in testbed'
 
 tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_trunk_ports:
-  skip:
-    reason: serdes-eq-mode is not supported on Rosalind systems
-    conditions:
-    - '''rosalind'' in testbed'
-
-tests_nvos/interfaces/nvl_port/test_interface_phy_recovery.py::test_set_fae_phy_recovery_access_ports:
   skip:
     reason: serdes-eq-mode is not supported on Rosalind systems
     conditions:
@@ -712,21 +714,29 @@ tests_nvos/cluster/test_nmx_t_distributed.py:
 tests_nvos/system/test_system_health.py::test_show_system_health:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
+    - '''simx'' in testbed'
 
 tests_nvos/system/test_system_log.py::test_show_log(_files)?$:
   regex: true
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4969519'
+    conditions_logical_operator: and
     conditions:
     - https://redmine.mellanox.com/issues/4969519
 
+
 tests_nvos/cluster/test_start_stop_cluster.py::test_cluster_app_start_stop:
   skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4975521'
+    reason: 'Testcase skipped due to RM issues: https://redmine.mellanox.com/issues/4975521,
+      https://redmine.mellanox.com/issues/5158907 (rosalind only) - nmx-telemetry show
+      exposes controller-only log-stream and otlp fields'
+    conditions_logical_operator: or
     conditions:
       - https://redmine.mellanox.com/issues/4975521
+      - "https://redmine.mellanox.com/issues/5158907 and 'rosalind' in testbed"
 
 tests_nvos/cluster/test_sdn_cmd_run.py::test_sdn_get_cmd:
   skip:
@@ -783,4 +793,23 @@ tests_nvos/cluster/tray_admin_state/test_tray_admin_state.py::test_tray_rejected
     reason: "Tray admin state is only supported on VR200/Rosalind and later"
     conditions:
       - "'rosalind' not in testbed"
+
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_set_unset_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
+tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_recovery_forced_values:
+  skip:
+    reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
+    conditions:
+      - "'rtf' in testbed"
+
+ngts/tests_nvos/general/config_commands/test_config_verify.py::test_verify_empty_applied:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5305123'
+    conditions:
+    - https://redmine.mellanox.com/issues/5305123
+
 ########################## NVOS IGNORE END ##########################

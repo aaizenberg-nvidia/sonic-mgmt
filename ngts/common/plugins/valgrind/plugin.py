@@ -77,7 +77,10 @@ class ValgrindLogFilesSnapshot:
 
             quoted_out = shlex.quote(output_file)
             result: str = self._engine_dut.run_cmd(f'python3 /tmp/vg_scan.py -o {quoted_out}', validate=True)
-            result_file_loc = Path(result.split(':')[-1].strip())
+            match = re.search(r'^Snapshot saved to:\s*(.+)$', result, re.MULTILINE)
+            if not match:
+                raise ValueError(f"Could not find 'Snapshot saved to:' line in vg_scan.py output: {result!r}")
+            result_file_loc = Path(match.group(1).strip())
 
             dest_file = Path(output_file)
             if not result_file_loc.is_absolute():
@@ -181,9 +184,17 @@ def pytest_addoption(parser: pytest.Parser):
     valgrind.addoption('--vg-poc-mocks-r5-artifacts', action='store_true', default=False, help='Enable valgrind POC mocks for R5 artifacts')
 
 
+def _scale_timeout_option(config: pytest.Config, name: str, multiplier: float) -> None:
+    value = config.getoption(name, default=None)
+    if value is not None:
+        setattr(config.option, name, float(value) * multiplier)
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: pytest.Config):
-    if valgrind_multiplier := config.getoption('--valgrind-multiplier', None):
+    if (valgrind_multiplier := config.getoption('--valgrind-multiplier', None)) is not None:
+        _scale_timeout_option(config, "timeout", valgrind_multiplier)
+        _scale_timeout_option(config, "session_timeout", valgrind_multiplier)
         patches.patch_ssh_engine(valgrind_multiplier)
 
     # the valgrind build installation can take more time than other builds.
@@ -204,6 +215,27 @@ def pytest_configure(config: pytest.Config):
                 return
 
             patches.maybe_patch_deploy_memverif_install_wait_timeout(int(pytest_timeout))
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if (multiplier := config.getoption("--valgrind-multiplier", default=None)) is None:
+        return
+
+    for item in items:
+        if (marker := item.get_closest_marker("timeout")) is None:
+            continue
+
+        args = list(marker.args)
+        kwargs = dict(marker.kwargs)
+
+        if args:
+            args[0] = float(args[0]) * multiplier
+        elif "timeout" in kwargs:
+            kwargs["timeout"] = float(kwargs["timeout"]) * multiplier
+        else:
+            continue
+
+        item.add_marker(pytest.mark.timeout(*args, **kwargs), append=False)
 
 
 @pytest.fixture

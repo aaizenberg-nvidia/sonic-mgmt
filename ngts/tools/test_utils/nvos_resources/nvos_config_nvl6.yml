@@ -53,7 +53,7 @@
       ssh-server:
         authentication-retries: 55
         login-timeout: 555
-        max-sessions: 3
+        max-sessions: 4
       syslog:
         selector:
           selector-1:

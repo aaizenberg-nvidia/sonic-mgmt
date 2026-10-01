@@ -20,6 +20,9 @@ from ngts.tests_nvos.general.security.password_hardening.PwhTools import PwhTool
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 
 
+cumulus_owner = "gosaini"
+
+
 @pytest.mark.cumulus
 @pytest.mark.system
 @pytest.mark.security
@@ -816,6 +819,7 @@ def test_password_hardening_max_password_len(disable_password_hardening):
             case_flow(test_flow)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.reboot
 @pytest.mark.system
 @pytest.mark.security

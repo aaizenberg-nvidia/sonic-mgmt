@@ -348,6 +348,17 @@ class OtelCollectorConst:
     SECONDARY_FILE_EXPORT_MAX_MB = 600
     SECONDARY_FILE_EXPORT_MAX_BACKUPS = 1
 
+    # Per-label file-exporter rotation knobs, so a config built for a given collector always
+    # follows that collector's PRIMARY_*/SECONDARY_* values instead of hard-coding one label.
+    FILE_EXPORT_MAX_MB_BY_LABEL: Dict[OtelCollectorLabel, int] = {
+        OtelCollectorLabel.PRIMARY: PRIMARY_FILE_EXPORT_MAX_MB,
+        OtelCollectorLabel.SECONDARY: SECONDARY_FILE_EXPORT_MAX_MB,
+    }
+    FILE_EXPORT_MAX_BACKUPS_BY_LABEL: Dict[OtelCollectorLabel, int] = {
+        OtelCollectorLabel.PRIMARY: PRIMARY_FILE_EXPORT_MAX_BACKUPS,
+        OtelCollectorLabel.SECONDARY: SECONDARY_FILE_EXPORT_MAX_BACKUPS,
+    }
+
     PRIMARY_CONFIG_YAML = _otel_collector_config_yaml(
         OTLP_GRPC_PORT,
         PRIMARY_OUTPUT_JSON_PATH,
@@ -436,28 +447,37 @@ class OtelCollectorConst:
     AGENT_MAPPINGS_CANDIDATE_PATHS = (AGENT_MAPPINGS_PATH_ON_SWITCH,)
 
     # `metrics-classes.yaml` group-name prefixes used for ``startswith`` matching.
-    # For most NVUE subtrees the YAML group name *is* the NVUE name (or starts with
-    # it), so we can reuse ``TelemetryConsts.*`` directly:
-    #   - ``interface-stats`` covers ``interface-stats`` and ``interface-stats-phy``
-    #   - ``platform-stats``  covers all ``platform-stats-*`` subgroups
-    #     (cpu / disk / memory / health-info / asic-power / platform-info /
-    #     environment-sensor / transceiver-info)
-    #   - ``ib-router-stats`` covers ``ib-router-stats``
-    # The peer-port subtree is asymmetric: the YAML splits it into two sibling
-    # groups, ``peer-port-stats`` AND ``peer-port-phy-stats``. ``peer-port-phy-stats``
-    # does NOT start with ``peer-port-stats`` (it diverges at the 11th character),
-    # so we must use the shorter shared prefix ``peer-port`` to capture both groups.
-    # Using ``TelemetryConsts.PEER_PORT_STATS`` here would silently drop every
-    # ``nvswitch_peer_port_phy_*`` metric from the expected set.
-    _PEER_PORT_METRICS_GROUP_PREFIX = "peer-port"
-
+    # Every family name is also the prefix of its subgroups: ``interface-stats`` covers
+    # ``interface-stats-phy``, ``peer-port-stats`` covers ``peer-port-stats-phy``, and
+    # ``platform-stats`` covers all ``platform-stats-*`` subgroups (cpu / disk / memory /
+    # health-info / asic-power / platform-info / environment-sensor / transceiver-info).
     METRICS_CLASSES_PLATFORM_STATS_GROUP_PREFIXES = (TelemetryConsts.PLATFORM_STATS,)
     METRICS_CLASSES_FULL_EXPORT_GROUP_PREFIXES = (
         TelemetryConsts.INTERFACE_STATS,
-        _PEER_PORT_METRICS_GROUP_PREFIX,
+        TelemetryConsts.PEER_PORT_STATS,
         TelemetryConsts.PLATFORM_STATS,
         TelemetryConsts.IB_ROUTER_STATS,
     )
+
+    # --- Class-aware expected-set derivation (test-declared enablement model) ----
+    # Sentinel for the always-on "base" class of a family (the non-phy / non-
+    # categorized metrics emitted whenever that family's export is enabled).
+    TELEMETRY_BASE_CLASS = "__base__"
+
+    # Exact ``metrics-classes.yaml`` group name(s) per (family, class-token), where
+    # class-token is ``TELEMETRY_BASE_CLASS`` or ``TelemetryConsts.PHY``. Platform-stats
+    # classes are resolved dynamically via ``METRICS_CLASSES_PLATFORM_GROUP_FMT`` below.
+    METRICS_CLASSES_GROUP_BY_FAMILY_CLASS: Dict[Tuple[str, str], Tuple[str, ...]] = {
+        (TelemetryConsts.INTERFACE_STATS, TELEMETRY_BASE_CLASS): ("interface-stats",),
+        (TelemetryConsts.INTERFACE_STATS, TelemetryConsts.PHY): ("interface-stats-phy",),
+        (TelemetryConsts.PEER_PORT_STATS, TELEMETRY_BASE_CLASS): ("peer-port-stats",),
+        (TelemetryConsts.PEER_PORT_STATS, TelemetryConsts.PHY): ("peer-port-stats-phy",),
+        (TelemetryConsts.IB_ROUTER_STATS, TELEMETRY_BASE_CLASS): ("ib-router-stats",),
+    }
+
+    # platform-stats class category -> exact YAML group name (e.g. ``cpu`` ->
+    # ``platform-stats-cpu``).
+    METRICS_CLASSES_PLATFORM_GROUP_FMT = "platform-stats-{cls}"
 
     # When the capability is ABSENT on the DUT, expected names starting with any of the listed
     # prefixes are removed from the *expected* set before strict equality.
@@ -496,3 +516,20 @@ class OtelCollectorConst:
             "nvswitch_platform_environment_leak_sensor_status",
         ),
     }
+
+
+class OtelSanityTestConst:
+    """Inputs for the OTEL sanity test (``test_otel_sanity``).
+    """
+    COLLECTION_LABEL = "sanity"
+    COLLECTOR_LABEL = "primary (sanity)"
+    # Three interface-stats samples plus the collector warm-up.
+    COLLECTION_WINDOW_SEC = (
+        OtelCollectorConst.INTERFACE_STATS_SAMPLE_INTERVAL_SEC *
+        OtelFunctionalTestConst.MIN_SAMPLE_INTERVALS +
+        OtelCollectorConst.OTEL_COLLECTION_WARM_UP_SEC
+    )
+
+    # The one family the suite bring-up enables, and the OTLP prefix its metrics carry.
+    BASELINE_FAMILY = TelemetryConsts.INTERFACE_STATS
+    BASELINE_METRIC_PREFIX = "nvswitch_interface_"

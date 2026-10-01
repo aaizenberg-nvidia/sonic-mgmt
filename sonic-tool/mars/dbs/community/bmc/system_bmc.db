@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DBDEF>
+    <global>
+        <!-- parameters passed to setup steps commands-->
+        <default_params_type> basic_setup_step_params </default_params_type>
+        <DB>
+            <info> System BMC </info>
+            <owner> SONiC </owner>
+            <group> SONiC </group>
+
+            <!-- OPTIONAL TAGS -->
+            <tags> SYSTEM, BMC </tags>
+
+            <!-- pre db commands - executed once before DB run -->
+            <pre>
+            </pre>
+
+            <!-- post db commands - executed once after DB run -->
+            <post>
+            </post>
+        </DB>
+        <Case>
+        </Case>
+    </global>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/ntp_bmc.cases </cases>
+    </test>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/dns_bmc.cases </cases>
+    </test>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/scp_bmc.cases </cases>
+    </test>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/ssh_bmc.cases </cases>
+    </test>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/tacacs_bmc.cases </cases>
+    </test>
+
+</DBDEF>

@@ -6,6 +6,7 @@ from enum import StrEnum
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 REGRESSION_TYPE_ENV_VAR = "REGRESSION_TYPE"
+CLI_TYPE_CACHE_PATH = "/tmp/CLI_TYPE"
 
 
 class RegressionType(StrEnum):
@@ -76,8 +77,10 @@ class PytestConst:
 class SonicConst:
     PORT_SPLIT_NUM_1 = 1
     PORT_SPLIT_NUM_2 = 2
+    PORT_SPLIT_NUM_3 = 3
     PORT_SPLIT_NUM_4 = 4
     PORT_SPLIT_NUM_8 = 8
+    UNEVEN_PORT_SPLIT_NUMS = [PORT_SPLIT_NUM_3]
     PORT_LANE_NUM_1 = 1
     PORT_LANE_NUM_2 = 2
     PORT_LANE_NUM_4 = 4
@@ -282,6 +285,7 @@ class InfraConst:
     ALLURE_SERVER_PORT = ''
     ALLURE_SERVER_URL = 'https://{}'.format(ALLURE_SERVER_IP)
     ALLURE_REPORT_DIR = '/tmp/allure-results'
+    CASE_INCLUDE_EMPTY_ALLURE_STEPS_TMPL = '/tmp/case_include_empty_allure_steps_{}.txt'
     ENV_SESSION_ID = 'SESSION_ID'
     ENV_LOG_FOLDER = 'LOG_FOLDER'
     CASES_DUMPS_DIR = 'cases_dumps'
@@ -487,6 +491,7 @@ class InterfacesTypeConstants:
 
 
 class FecConstants:
+    FEC_MODES_SPEED_SUPPORT_NOT_AVAILABLE = {}
     FEC_MODES_SPC_SPEED_SUPPORT = {
         SonicConst.FEC_FC_MODE: {
             SonicConst.PORT_SPLIT_NUM_1: {'10G': ['CR'],
@@ -1345,7 +1350,7 @@ class MarsConstants:
         "dualtor-aa-64-breakout", "t0-88-o8c80", "ptp-256", "ptp-130", "t1-isolated-d28u1", 't1-isolated-d28u4',
         "t1-isolated-d56u2", "t0-isolated-d32u32s2", "t0-isolated-v6-d32u32s2", "t0-isolated-d2u254s2", "t0-isolated-d32u32s2-mix",
         "t1-isolated-v6-d56u1-lag", "t1-48-lag", "t1-isolated-d56u1-lag", "t0-isolated-d128u128s2", "t0-isolated-d2u510s2", "t1-isolated-d510u2",
-        "bmc-dual-mgmt", "t1-isolated-d32u1s2", "t2-isolated-d128s2"
+        "bmc-dual-mgmt", "t1-isolated-d32u1s2", "t2-isolated-d128s2", "t0-d96-u30s2", "ptp-126", "t1-d118u8s2", "t1-d96u4"
     )
     TOPO_ARRAY_DUALTOR = ("dualtor", "dualtor-64", "dualtor-aa", "dualtor-64-breakout", "dualtor-aa-64-breakout")
     TOPO_ARRAY_HA = ("t1-smartswitch-ha",)
@@ -1390,7 +1395,9 @@ class AppExtensionInstallationConstants:
 class PlayersAliases:
     Aliases_list = ['sl']
     SL = 'sl'
-    duts_list = ['dut', 'dut-b', 'left-tg', 'right-tg', 'dpu0', 'dpu1', 'dpu2', 'dpu3']
+    # Multi-DUT setups name their extra switches dut2..dut9 in Noga (an NVLink full rack holds 9 switches)
+    multi_duts_list = [f'dut{index}' for index in range(2, 10)]
+    duts_list = ['dut', 'dut-b'] + multi_duts_list + ['left-tg', 'right-tg', 'dpu0', 'dpu1', 'dpu2', 'dpu3']
     fanouts_list = ['fanout']
 
 
@@ -1424,10 +1431,6 @@ class BluefieldConstants:
                              "Nvidia-9009d3b600SVAA-C2"]
     BLUEFIELD_PORTS_LIST = ['Ethernet0', 'Ethernet4']
     DPU_SETUP_LIST = [
-        "r-r740-03-bf3-sonic-01_setup",
-        "r-r740-05-bf3-sonic-01_setup",
-        "r-r740-07-bf3-sonic-01_setup",
-        "r-r740-08-bf3-sonic-01_setup",
         "CI_sonic_BF3_1",
     ]
 
@@ -1451,11 +1454,18 @@ class SonicDeployConstants:
                              't0-isolated-d2u510s2', 't1-isolated-d510u2', 't1-isolated-v6-d56u1-lag',
                              't0-isolated-d256u256s2', 't1-isolated-d508u1s2', 't2-isolated-d128s2']
     BGP_SCALE_TOPOLOGIES_LIST = ['t0-isolated-d2u510s2']
-    # 'slm-' DUTs are excluded from gen-mg in start_community_background_threads by default.
-    # BMC setups (e.g. bmc-dual-mgmt) still need their minigraph generated, so list the
-    # 'slm-' DUT names that must run gen-mg here. Value is the DUT name used to build the
-    # gen-mg command (the switch dut_name, e.g. 'slm-chipless-2700a1-146'), not the '-bmc' host.
     SLM_GEN_MG_ALLOWLIST = ['slm-chipless-2700a1-146']
+    CHIPLESS_SETUPS = ['sonic_salamandra_r-salamandra-01', 'sonic_slm-chipless-2700a1-146']
+
+    # Top-to-bottom order of the ONIE grub sub-entries, confirmed on real HW
+    ONIE_GRUB_ENTRY_DOWN_COUNT_FROM_TOP = {
+        'install': 0,
+        'rescue': 1,
+        'uninstall': 2,
+        'update_onie': 3,
+        'embed_onie': 4,
+    }
+    CLEANUP_SCRIPT_TIMEOUT = 1200
 
 
 class BmcDeployConstants:
@@ -1464,11 +1474,15 @@ class BmcDeployConstants:
 
     Reference: https://nvidia.atlassian.net/wiki/spaces/SW/pages/3239673921/BMC+SONiC#2.-Image-installation
     """
-    # TFTP + HTTP server
-    BMC_TFTP_SERVER_IP = "10.228.227.54"
-    BMC_HTTP_SERVER_URL = f"http://{BMC_TFTP_SERVER_IP}:8080"
+    # Create TFTP + HTTP file server on the sonic-mgmt container
+    BMC_TFTP_ROOT = "/srv/tftp"
+    BMC_TFTP_PORT = 69
+    BMC_HTTP_PORT = 8080
+    BMC_TFTP_SERVER_SCRIPT = "bmc_tftp_server.py"  # bundled under ngts/common/
+    FILE_SERVER_PROC_RETRIES = 10
+    FILE_SERVER_PROC_INTERVAL = 1
 
-    # File parameters
+    # File parameters (staged into BMC_TFTP_ROOT from the --base-version-bmc tar)
     BMC_FIT_FILE_NAME = "sonic_tftp_install.fit"
     BMC_EMMC_IMG_FILE_NAME = "sonic-aspeed-arm64-emmc.img.gz"
 
@@ -1476,9 +1490,11 @@ class BmcDeployConstants:
     UBOOT_PROMPT = "=> "
     UBOOT_AUTOBOOT_HINT = "Hit any key to stop autoboot"
     UBOOT_LOAD_ADDR = "0x432000000"
+    UBOOT_ENV_DEFAULT_CMD = "env default -f -a"
+    UBOOT_DHCP_BOUND_MARKER = "DHCP client bound to address"
     UBOOT_BOOTCONF_DEFAULT = "sonic-ast2700-nvidia-spc6-bmc"
     UBOOT_BOOTARGS_TAILS = (
-        'console=ttyS12,115200n8 earlycon=uart8250,mmio32,0x14c33b00 ',
+        'console=ttyS12,${{baudrate}}n8 earlycon=uart8250,mmio32,0x14c33b00 ',
         'root=/dev/ram0 rw ',
         'sonic_install.tftp_server=${{serverip}} ',
         'sonic_install.bmc_image={http_server}/{emmc_img} ',
@@ -1519,6 +1535,17 @@ class BmcDeployConstants:
 
     # BMC HWSKU
     BMC_HWSKU = "NVIDIA-AST2700-BMC"
+
+    # Switch topo when deploy bmc setup
+    SWITCH_DUAL_DEPLOY_TOPO = "ptp-64"
+
+    # BMC UART
+    BMC_UART_SEL_PATH = "/var/run/hw-management/system/uart_sel"
+    BMC_UART_SEL_HOST = 2   # serial console connected to the host switch CPU
+    BMC_UART_SEL_BMC = 0    # serial console connected to the BMC (default)
+    BMC_POWERCTRL_SCRIPT = "/usr/bin/hw-management-bmc-powerctrl.sh"
+    BMC_HOST_POWER_OFF_SETTLE = 30   # wait after power_off before power_on
+    BMC_HOST_POWER_ON_SETTLE = 10    # wait after power_on before watching the host serial console
 
     # Timeouts (seconds).
     UBOOT_PROMPT_TIMEOUT = 120         # time to interrupt autoboot and reach U-Boot prompt
@@ -1957,7 +1984,7 @@ class WJHConsts:
 
 class FanoutVersionConsts:
     EXPECTED_MLNX_VERSION = ["3.10.4206", "3.10.4302", "3.10.4602"]
-    EXPECTED_SONIC_VERSION_LIST = ["202511_RC.119-8bde1a082_Internal", "202511_RC.129-48da86131_Internal", "202605_RC.48-89ab9327d9_Internal"]
+    EXPECTED_SONIC_VERSION_LIST = ["202511_RC.129-48da86131_Internal", "202511_RC.150-cf87140a93_Internal", "202605_RC.76-88000f5c8c_Internal"]
 
 
 class SerialConsts:
@@ -2023,3 +2050,8 @@ class TxSquelchConsts:
         TX_SQUELCH_MODE_DISABLE: "disabled",
         TX_SQUELCH_MODE_AUTO: "enabled"
     }
+
+
+class SonicMgmtChangeConstants:
+    BRANCH_PREFIX = "branch_"
+    TAG_PREFIX = "tag_"

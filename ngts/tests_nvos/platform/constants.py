@@ -93,11 +93,11 @@ class TransceiversConsts:
             transceiver_type='Wolverine_sian3',
             last_release_path=f"{TRANSCEIVERS_FIRMWARES_PATH}110_Wolverine2_s3/{TRANSCEIVERS_RELEASE}",
             test_versions_path=f"{TRANSCEIVERS_APPROVED_FIRMWARES_PATH}Wolverine_sian3/",
-            upgrade_version_name="fw_110_030_00086_dev_signed.bin",
-            downgrade_version_name="fw_110_030_00083_dev_signed.bin",
-            upgrade_version_number="110.30.86",
-            downgrade_version_number="110.30.83",
-            installation_time=300
+            upgrade_version_name="fw_110_030_00102_dev_signed.bin",
+            downgrade_version_name="fw_110_030_00086_dev_signed.bin",
+            upgrade_version_number="110.30.102",
+            downgrade_version_number="110.30.86",
+            installation_time=350
         ),
         '130': Transceiver(
             transceiver_type='Sian2',
@@ -142,11 +142,11 @@ class TransceiversConsts:
         '44': Transceiver(
             transceiver_type='Wolverine2-Arcus2',
             last_release_path=f"{TRANSCEIVERS_FIRMWARES_PATH}44_Wolverine2_arcus2/{TRANSCEIVERS_RELEASE}",
-            test_versions_path=f"{TRANSCEIVERS_APPROVED_FIRMWARES_PATH}Wolverine2_arcus2/",
-            upgrade_version_name="fw_44_040_02009_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
-            downgrade_version_name="fw_44_040_00012_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
-            upgrade_version_number="44.40.2009",
-            downgrade_version_number="44.40.12",
+            test_versions_path="/auto/sw_system_project/NVOS_INFRA/verification_files/module_fw/Wolverine2_arcus2/",
+            upgrade_version_name="fw_44_040_02035_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
+            downgrade_version_name="fw_44_040_02030_dev_signed_WOLVERINE2-ARCUS2_DK.bin",
+            upgrade_version_number="44.40.2035",
+            downgrade_version_number="44.40.2030",
             installation_time=285
         )
     }

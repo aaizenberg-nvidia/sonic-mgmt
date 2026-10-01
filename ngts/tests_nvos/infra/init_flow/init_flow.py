@@ -11,6 +11,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from ngts.tools.test_utils.nvos_general_utils import check_partitions_capacity
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger()
 
 

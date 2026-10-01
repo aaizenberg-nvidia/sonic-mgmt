@@ -1,5 +1,6 @@
 import logging
 import logging.config
+import time
 import allure
 import os
 import json
@@ -13,6 +14,7 @@ from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, Vali
 from ngts.helpers.thread_log_filter import redirect_thread_stdout
 from ngts.helpers.custom_catch_exception_thread import CatchExceptionThread, parse_threads_exceptions_at_join
 from devts.infra.tools.exceptions.test_issue import TestIssue
+from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.helpers.performance.performance_db_helpers import add_test_mongo_metadata, get_perf_test_name
 from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_utilization_fairness, validate_tc,
                                                       validate_counters, validate_no_drops_on_tg_ports,
@@ -20,15 +22,24 @@ from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_u
 from ngts.helpers.performance.performance_counter_helpers import validate_performance_counters
 from ngts.helpers.performance.topology_helpers import get_dvs_topology_obj, get_nvue_sonic_topology_obj
 from ngts.helpers.performance.power_temp_helpers import validate_temperature, validate_power
+from ngts.helpers.performance.port_selection import clear_resolved_excluded_ports
+from ngts.helpers.performance.performance_recovery import (
+    get_performance_session_state, restore_session_baseline,
+    run_guarded_operation, save_session_baseline)
 from ngts.cli_wrappers.dvs.dvs_cli import DvsCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.sonic.sonic_cli import SonicCli
 from ngts.tools.infra import get_chip_type
 
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional, List, Dict, Any, Callable
 
 logger = logging.getLogger()
+
+DVS_LEAF_SCENARIO_REDMINE_ISSUE = 5308120
+# Bug #5308120: the leaf scenarios fail on DVS SPC6. While the issue is open they are skipped on
+# that NOS and chip only; once it is closed they run again without a code change.
+DVS_LEAF_SCENARIO_SKIPPED_CHIP = "SPC6"
 
 
 def get_is_simx(players):
@@ -114,6 +125,10 @@ class ValidationConfig:
 
     def __post_init__(self):
         self.max_tc_occ_variance_per_port_group = OccupancyVarianceConfig.from_tc_occ_threshold(self.tc_occ_threshold)
+        # Copy so per-test overrides (and auto-enable below) do not mutate PerfConsts.SAMPLES_PARAMS.
+        self.samples_params_dict = dict(self.samples_params_dict)
+        if self.run_validate_performance_counters:
+            self.samples_params_dict[PerfConsts.COLLECT_SDK_DUMP_ENV_VAR] = "True"
 
     def get_validations(self) -> Dict[str, Validation]:
         """
@@ -199,9 +214,11 @@ class ValidationConfig:
 
 def unsplit_all_ports(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
                       step="basic_test_configuration - unsplit_all_ports", parallel_run=True):
-    """
-    Unsplit all ports on SPC5/SPC6 before applying test configuration.
-    This is needed because SPC5/SPC6 comes up with ports already split after dvs_start.sh
+    """Bring ports to a known baseline before performance templates render.
+
+    - DVS: SPC5 only (SPC6 DVS keeps its default breakout).
+    - NVUE/Cumulus: SPC4/SPC5 run ``initialize_physical_ports`` (breakout 1x);
+      SPC6 keeps the platform default 2x and disables WJH.
 
     Args:
         players (dict): Dictionary containing player information and CLI interfaces
@@ -209,29 +226,63 @@ def unsplit_all_ports(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALI
         step (str): Description of the current setup step
         parallel_run (bool): If True, unsplits in parallel. If False, unsplits sequentially. Defaults to True
     """
-    spc5_6_aliases = []
+    aliases_to_unsplit = []
     try:
         for player_alias in players_aliases:
             switch_attributes = players[player_alias]['attributes'].noga_query_data['attributes']
             chip_type = get_chip_type(switch_attributes)
-            if chip_type in ["SPC5", "SPC6"]:
-                spc5_6_aliases.append(player_alias)
+            cli_obj = players[player_alias]['cli']
+            if isinstance(cli_obj, (SonicCli, NvueCli)) and chip_type in ("SPC5", "SPC6"):
+                aliases_to_unsplit.append(player_alias)
+            elif chip_type == "SPC5":
+                aliases_to_unsplit.append(player_alias)
     except (KeyError, AttributeError) as e:
         raise TestIssue(f"Could not determine chip_type from topology: {e}")
 
-    if not spc5_6_aliases:
+    if not aliases_to_unsplit:
         return
 
-    logger.info(f"Detected SPC5/SPC6 - unsplitting all ports on all players: {spc5_6_aliases}")
+    logger.info(f"Unsplitting / initializing ports on players: {aliases_to_unsplit}")
 
     if parallel_run:
-        call_performance_function_with_threads(players, players_aliases=spc5_6_aliases,
+        call_performance_function_with_threads(players, players_aliases=aliases_to_unsplit,
                                                action="unsplit all ports",
                                                performance_clis_function_name="unsplit_all_ports",
                                                performance_clis_function_args=(), step=step)
     else:
-        for player_alias in spc5_6_aliases:
+        for player_alias in aliases_to_unsplit:
             players[player_alias]['cli'].performance.unsplit_all_ports()
+
+
+def _prime_dut_port_selection_cascade(dut_performance, tries=12, interval=10):
+    """Compute the DUT port-selection cascade on the main thread before the parallel apply.
+
+    Retries so transient empty LLDP (ports still converging) does not leave the cascade
+    empty. TG threads only read the resulting cached ``excluded_port_names`` (read-only,
+    in-process) to skip oper-down ports in their readiness waits; they must not call the DUT
+    engine themselves. Fails open with a warning.
+
+    Args:
+        dut_performance: The DUT performance CLI object.
+        tries: Max attempts.
+        interval: Seconds between attempts.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            ports = dut_performance.get_right_left_ports_dict()
+        except Exception as e:
+            logging.warning(f"Priming DUT port-selection cascade attempt {attempt}/{tries} failed: {e}")
+            ports = None
+        if dut_performance.excluded_port_names:
+            logging.info(f"DUT port-selection cascade primed: excluded "
+                         f"{sorted(dut_performance.excluded_port_names)}")
+            return
+        if ports is not None and not ports.get("left_ports") and not ports.get("right_ports"):
+            logging.info(f"Priming DUT cascade: LLDP left/right still empty "
+                         f"(attempt {attempt}/{tries}), retrying in {interval}s")
+        time.sleep(interval)
+    logging.warning("DUT port-selection cascade is empty after priming; exclusion may not "
+                    "apply. Check DUT LLDP and the config-file entry for this setup/scenario.")
 
 
 def apply_test_configuration(players, scenario, conf_args,
@@ -252,6 +303,21 @@ def apply_test_configuration(players, scenario, conf_args,
     - In debug mode (parallel_run=False): Sequentially applies configuration to each player
     - In normal mode (parallel_run=True): Uses threading to apply configuration to all players in parallel
     """
+    # Resolve port selection (exclude/include) for the running scenario before rendering the
+    # config templates, so get_right_left_ports_dict()/get_player_ports() see the selection.
+    # No-op unless --perf-exclude-ports / --perf-include-ports was supplied.
+    for player_alias in players_aliases:
+        players[player_alias]['cli'].performance.resolve_port_selection(scenario)
+    # Clear previously-published exclusion (memory + file) so a no-flag scenario cannot inherit
+    # stale exclusions from an earlier test in this session. Then, when selection is active,
+    # pre-compute the DUT cascade on the MAIN thread (with retry for LLDP readiness) so TGs can
+    # read the republished names. TGs must never call the DUT engine themselves (that corrupts
+    # the DUT's shared SSH session). Fail open.
+    clear_resolved_excluded_ports()
+    dut_player = players.get(PerfConsts.DUT_ALIAS)
+    if dut_player and dut_player['cli'].performance.port_selection.is_active():
+        _prime_dut_port_selection_cascade(dut_player['cli'].performance)
+
     if parallel_run:
         call_performance_function_with_threads(players, players_aliases=players_aliases,
                                                action="apply test configuration",
@@ -268,6 +334,14 @@ def validate_perf_dut_ingress_buffer_mode(players):
     if not isinstance(cli_obj, NvueCli):
         return
     cli_obj.performance.validate_ingress_buffer_mode_active()
+
+
+def validate_perf_dut_rebalancer_buffer_mode(players):
+    """Cumulus (NVUE) DUT only: assert automatic/rebalancer buffer mode is active."""
+    cli_obj = players[PerfConsts.DUT_ALIAS]["cli"]
+    if not isinstance(cli_obj, NvueCli):
+        return
+    cli_obj.performance.validate_rebalancer_buffer_mode_active()
 
 
 def allure_attach_performance_conf_context(players, conf_args, attach_dut_applied_yaml=True):
@@ -303,23 +377,65 @@ def allure_attach_performance_conf_context(players, conf_args, attach_dut_applie
         logger.info("allure_attach_performance_conf_context: skip DUT tmp.yaml (%s)", exc)
 
 
-def configure_mloops(players, validate_mloops=True, is_simx=False,
+def deploy_burst_config(players, burst_config, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+                        step="basic_test_configuration - deploy_burst_config", parallel_run=False):
+    """Copy the burst configuration to the traffic generators.
+
+    Runs before configure_mloops, which only exports the path of the file that this deploys, so that the
+    SDK finds the configuration already in place when the mloop configuration reads it.
+
+    Args:
+        players: The setup players.
+        burst_config: BurstConfig of the running test scenario.
+        players_aliases: Player aliases to deploy the burst configuration to. The scenario supplies them so
+            it can burst on its own set of traffic generators (default the setup's traffic generators).
+        step: Allure step name.
+        parallel_run: Deploy to all players concurrently when True.
+    """
+    if parallel_run:
+        call_performance_function_with_threads(players, players_aliases=players_aliases,
+                                               action="deploy burst configuration",
+                                               performance_clis_function_name="deploy_burst_config",
+                                               performance_clis_function_args=(burst_config,), step=step)
+    else:
+        for player_alias in players_aliases:
+            players[player_alias]['cli'].performance.deploy_burst_config(burst_config)
+
+
+def configure_mloops(players, validate_mloops=True, is_simx=False, burst_config=None,
                      step="basic_test_configuration - configure_mloops", parallel_run=True):
     if parallel_run:
         call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
                                                action="configure mloops",
                                                performance_clis_function_name="configure_mloops",
-                                               performance_clis_function_args=(validate_mloops, is_simx), step=step)
+                                               performance_clis_function_args=(validate_mloops, is_simx, burst_config),
+                                               step=step)
     else:
         for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
-            players[player_alias]['cli'].performance.configure_mloops(validate_mloops, is_simx)
+            players[player_alias]['cli'].performance.configure_mloops(validate_mloops, is_simx, burst_config)
 
 
-def save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+def _save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
     call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
                                            action="save base configuration",
                                            performance_clis_function_name="save_basic_configuration",
                                            performance_clis_function_args=(players,), step=step)
+
+
+def save_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+    """Save configuration without overwriting an active session baseline.
+
+    Args:
+        players: Performance players mapping.
+        step: Allure step text forwarded to the save operation.
+
+    Returns:
+        The underlying save result, or False when a session baseline already exists.
+    """
+    if get_performance_session_state().recovery_enabled:
+        return save_session_baseline(
+            players, lambda: _save_base_configuration(players, step=step))
+    return _save_base_configuration(players, step=step)
 
 
 def restore_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
@@ -328,6 +444,57 @@ def restore_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_P
                                            action="restore base configuration",
                                            performance_clis_function_name="restore_basic_configuration",
                                            performance_clis_function_args=(), step=step)
+
+
+def save_session_base_configuration(players, step="basic_test_configuration - save_base_configuration"):
+    """Save the shared performance baseline once for the pytest session.
+
+    Args:
+        players: Performance players mapping.
+        step: Allure step text forwarded to the existing save helper.
+
+    Returns:
+        bool: True when saved, False when the session baseline already exists.
+    """
+    return save_session_baseline(
+        players, lambda: _save_base_configuration(players, step=step))
+
+
+def restore_session_basic_configuration(players, players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
+                                        step="Tear down - restore_base_configuration", nodeid=None,
+                                        health_checker=None, diagnostics_collector=None):
+    """Restore and health-gate the shared session baseline.
+
+    Args:
+        players: Performance players mapping.
+        players_aliases: Player aliases restored by the existing helper.
+        step: Allure step text forwarded to the existing restore helper.
+        nodeid: Pytest node identifier associated with the restore.
+        health_checker: Optional injectable health gate.
+        diagnostics_collector: Optional injectable diagnostic collector.
+
+    Returns:
+        The existing restore helper result.
+    """
+    return restore_session_baseline(
+        players,
+        lambda: restore_basic_configuration(
+            players, players_aliases=players_aliases, step=step),
+        nodeid=nodeid, health_checker=health_checker,
+        diagnostics_collector=diagnostics_collector)
+
+
+def apply_test_configuration_guarded(players, scenario, conf_args,
+                                     players_aliases=PerfConsts.PERF_SETUP_PLAYERS_ALIASES,
+                                     step="basic_test_configuration - apply_test_configuration",
+                                     parallel_run=True, nodeid=None):
+    """Apply report-path configuration while detecting exact SDK fatal signatures."""
+    return run_guarded_operation(
+        players,
+        lambda: apply_test_configuration(
+            players, scenario, conf_args, players_aliases=players_aliases,
+            step=step, parallel_run=parallel_run),
+        nodeid=nodeid)
 
 
 def dynamic_configuration_helper(players, scenario, performance_parameters, step="basic_test_configuration - dynamic_configuration_helper"):
@@ -361,11 +528,11 @@ def attach_json_traffic_to_allure(players, tg_players_aliases, traffic_jsons):
         attach_json_to_allure(traffic_json_path, f'Traffic JSON configuration on {alias} - {hostname}')
 
 
-def stop_traffic(players, step="Stopping Traffic - Tear down"):
+def stop_traffic(players, burst_config=None, step="Stopping Traffic - Tear down"):
     call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
                                            action="stop traffic",
                                            performance_clis_function_name="stop_traffic",
-                                           performance_clis_function_args=(),
+                                           performance_clis_function_args=(burst_config,),
                                            step=step)
 
 
@@ -383,11 +550,16 @@ def validate_traffic_results(players, test_name, scenario, samples_params_dict,
                                  "traffic_validation_json_files",
                                  scenario, f"{hour_str}_{player_alias}_{hostname}_{test_name}_TrafficValidator.json")
         os.environ[PerfConsts.TRAFFIC_VALIDATION_JSON_PATH] = full_path
-        call_performance_function_with_threads(players, players_aliases=[player_alias],
-                                               action="run traffic validator",
-                                               performance_clis_function_name="validate_traffic",
-                                               performance_clis_function_args=(full_path, samples_params_dict),
-                                               step="Traffic Validation - Test Body")
+        run_guarded_operation(
+            players,
+            lambda: call_performance_function_with_threads(
+                players, players_aliases=[player_alias],
+                action="run traffic validator",
+                performance_clis_function_name="validate_traffic",
+                performance_clis_function_args=(full_path, samples_params_dict),
+                step="Traffic Validation - Test Body"),
+            nodeid=test_name)
+        add_run_identity_to_validator_json(full_path, test_name, scenario, player_alias, hostname)
         traffic_json = attach_json_to_allure(full_path,
                                              f'Traffic Validation JSON results on {player_alias} - {hostname}',
                                              attach_to_allure)
@@ -399,6 +571,85 @@ def validate_traffic_results(players, test_name, scenario, samples_params_dict,
         if add_validator_results_to_mongo_db:
             add_test_mongo_metadata(test_name, {MongoDbConsts.VALIDATOR_RESULTS: traffic_json})
     return traffic_validation_results
+
+
+@dataclass
+class ValidatorRunIdentity:
+    """
+    The run identity sonic-mgmt owns, merged into the validator JSON's metadata block.
+
+    TrafficValidator fills that block with what the DUT can see - speed, chip type, SDK
+    version and the collectors list. The fields below are known only to the orchestration.
+    The attribute names are the JSON keys, so adding a field here adds it to the block.
+
+    Attributes:
+        test_name (str): Scenario-qualified test name, i.e, TestSrv6_test_srv6_leaf
+        scenario (str): The performance scenario, i.e, "srv6"
+        player_alias (str): The player the validator ran on, i.e, "dut"
+        hostname (str): The player's hostname, i.e, "mtvr-moose-02"
+        setup_name (str, optional): The Noga setup name, from the mongo db template file
+        mars_session_id (str, optional): MARS session id, from the mongo db template file
+        os_version (str, optional): The DUT's OS version (SONiC/Cumulus/DVS), from the mongo db template file
+    """
+    test_name: str
+    scenario: str
+    player_alias: str
+    hostname: str
+    setup_name: str = None
+    mars_session_id: str = None
+    os_version: str = None
+
+    def to_json(self):
+        """
+        Returns:
+            dict: the identity keyed by attribute name, ready to merge into the
+            validator JSON's metadata block
+        """
+        return asdict(self)
+
+
+def add_run_identity_to_validator_json(json_path, test_name, scenario, player_alias, hostname):
+    """Merge the run identity sonic-mgmt owns into the validator JSON's metadata block.
+
+    TrafficValidator fills the block with what the DUT can see - speed, chip type, SDK
+    version and the collectors list. The test, scenario, player, setup and MARS session
+    are known only to the orchestration, so they are merged into the same block here,
+    before the JSON is attached to Allure and stored in mongo. Both halves then travel
+    together and each saved TrafficValidator.json describes the run that produced it.
+
+    The setup name and MARS session id are read from the mongo db template file, written
+    once per session by create_performance_db_template, so they do not have to be
+    threaded through every caller.
+
+    Args:
+        json_path (str): path to the validator JSON pulled from the DUT
+        test_name (str): scenario-qualified test name, i.e, TestSrv6_test_srv6_leaf
+        scenario (str): the performance scenario, i.e, "srv6"
+        player_alias (str): the player the validator ran on, i.e, "dut"
+        hostname (str): the player's hostname
+
+    Returns:
+        None
+    """
+    with open(json_path) as f:
+        validator_json = json.load(f)
+    dut_system_information = {}
+    if os.path.exists(MongoDbConsts.PERF_MONGO_DB_RESULTS_PATH):
+        with open(MongoDbConsts.PERF_MONGO_DB_RESULTS_PATH) as f:
+            dut_system_information = json.load(f).get(MongoDbConsts.DUT_SYSTEM_INFORMATION, {})
+    run_identity = ValidatorRunIdentity(
+        test_name=test_name,
+        scenario=scenario,
+        player_alias=player_alias,
+        hostname=hostname,
+        setup_name=dut_system_information.get(MongoDbConsts.SETUP_NAME),
+        mars_session_id=dut_system_information.get(MongoDbConsts.MARS_SESSION_ID),
+        os_version=dut_system_information.get(MongoDbConsts.OS_VERSION),
+    )
+    run_identity_json = run_identity.to_json()
+    validator_json.setdefault(ValidationConsts.METADATA, {}).update(run_identity_json)
+    with open(json_path, "w") as f:
+        json.dump(validator_json, f, indent=4)
 
 
 def attach_json_to_allure(json_path, attachment_name, attach_to_allure=True):
@@ -515,9 +766,11 @@ def run_validation(config: ValidationConfig, ignore_violations=False, attach_to_
                     logger.info(f"Running validation: {name}")
                     violations_before = len(player_violations)
                     t_start = time.monotonic()
-                    validation.func(traffic_json, **(validation.extra_args or {}), violations_list=player_violations)
+                    validation.func(traffic_json, **(validation.extra_args or {}),
+                                    violations_list=player_violations)
                     elapsed = time.monotonic() - t_start
-                    logger.info(f"Running validation: {name}: finished in {elapsed:.3f}s, violations found: {len(player_violations) - violations_before}")
+                    logger.info(f"Running validation: {name}: finished in {elapsed:.3f}s, "
+                                f"violations found: {len(player_violations) - violations_before}")
                 except Exception as e:
                     player_violations.append(f"Validation '{name}' raised an unexpected error: {e}")
 
@@ -615,9 +868,50 @@ def skip_test_on_unsupported_os(cli_obj, unsupported_os):
             pytest.skip(f"This test is not supported in {CliType.SONIC}")
 
 
+def skip_dvs_leaf_scenario_on_active_bug(cli_obj: object, chip_type: str) -> None:
+    """
+    Skips a leaf scenario on DVS SPC6 while the DVS leaf scenario Redmine issue is active.
+
+    The NOS and chip are checked before Redmine is queried, so every other NOS and chip
+    returns without a Redmine request. A Redmine failure reports the issue as inactive,
+    so the test runs.
+
+    Args:
+        cli_obj (object): DUT CLI object (players['dut']['cli']).
+        chip_type (str): Chip type of the DUT, e.g. "SPC6".
+
+    Raises:
+        pytest.skip.Exception: When the DUT is DVS on the skipped chip and the issue is active.
+    """
+    if not isinstance(cli_obj, DvsCli) or chip_type != DVS_LEAF_SCENARIO_SKIPPED_CHIP:
+        return
+    is_issue_active, issue_id = is_redmine_issue_active([DVS_LEAF_SCENARIO_REDMINE_ISSUE])
+    if is_issue_active:
+        pytest.skip(f"Leaf scenario is skipped on {CliType.DVS} {chip_type} "
+                    f"while Redmine issue {issue_id} is active")
+
+
 def skip_test_on_unsupported_chip_type(current_chip_type, unsupported_chip_type):
     if current_chip_type == unsupported_chip_type:
         pytest.skip(f"This test is not supported in {unsupported_chip_type}")
+
+
+def get_ar_congestion_thresholds(chip_type):
+    """Return the AR congestion_thresh_lo/med/hi conf_args for the given chip type.
+
+    Args:
+        chip_type (str): Chip type as returned by get_chip_type (e.g. "SPC6").
+
+    Returns:
+        dict: congestion_thresh_lo/med/hi values, satisfying the SDK's
+            required lo <= med <= hi ordering for sx_api_ar_congestion_threshold_set.
+    """
+    is_spc6 = chip_type == "SPC6"
+    return {
+        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.LOW_AR_THRESHOLD,
+        "congestion_thresh_med": PerfConsts.MED_AR_THRESHOLD_SPC6 if is_spc6 else PerfConsts.MED_AR_THRESHOLD,
+        "congestion_thresh_hi": PerfConsts.get_high_ar_threshold(chip_type),
+    }
 
 
 def skip_performance_test_conditionally(condition, skip_message):
@@ -744,8 +1038,9 @@ def copy_sdk_dump_to_shared_storage(local_dump_path, players, test_name, scenari
     return dest_path
 
 
-def configure_incremental_dips_on_tg(players, step="basic_test_configuration - configure_incremental_dips_on_tg"):
-    call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+def configure_incremental_dips_on_tg(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+                                     step="basic_test_configuration - configure_incremental_dips_on_tg"):
+    call_performance_function_with_threads(players, players_aliases=players_aliases,
                                            action="create incremental dips",
                                            performance_clis_function_name="configure_incremental_dips_on_tg",
                                            performance_clis_function_args=(), step=step)
@@ -804,3 +1099,45 @@ def update_port_group_in_df(port_group_df, port_group_name, port_list):
     for port in port_list:
         port_group_df.append({ValidationConsts.PORT: port, MongoDbConsts.PORT_GROUP_NAME: port_group_name})
     return port_group_df
+
+
+def _build_default_port_group_df(dut_performance):
+    """Build the default DUT port-group dataframe (left_ports / right_ports).
+
+    Prefers cached ``port_groups`` on the performance CLI and falls back to
+    ``get_right_left_ports_dict()`` when groups are empty.
+
+    Args:
+        dut_performance: DUT performance CLI wrapper.
+
+    Returns:
+        list: Port group entries for ``update_port_group_df_on_dut``.
+    """
+    port_group_df = []
+    port_groups = dut_performance.port_groups
+    if not port_groups or not any(port_groups.values()):
+        port_groups = dut_performance.get_right_left_ports_dict()
+    for port_group_name, port_list in port_groups.items():
+        if not port_list:
+            continue
+        sdk_port_list = dut_performance.get_sdk_ports(port_list)
+        for port in sdk_port_list:
+            port_group_df.append({ValidationConsts.PORT: port,
+                                  MongoDbConsts.PORT_GROUP_NAME: port_group_name})
+    return port_group_df
+
+
+def restore_default_port_group_df_on_dut(dut_performance):
+    """Push default left/right port groups to DUT ``/tmp/conf.json``.
+
+    SRv6 and other scenarios write custom groups (``ingress_ports``, etc.) that must
+    not leak into later SPCX-RA TrafficValidator runs.
+
+    Args:
+        dut_performance: DUT performance CLI wrapper.
+    """
+    port_group_df = _build_default_port_group_df(dut_performance)
+    if not port_group_df:
+        logging.warning("Skipping restore of default port groups: no SDK ports resolved")
+        return
+    dut_performance.update_port_group_df_on_dut(port_group_df)

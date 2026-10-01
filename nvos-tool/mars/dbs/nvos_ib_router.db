@@ -15,7 +15,18 @@
 		</Test>
 		<Case>
             <pre>
-			</pre>
+                <type> reg_exec_func </type>
+                <name> set_environment_variables </name>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <tout> 60 </tout>
+                <params>
+                    <env> MARS_CASE_NAME=[[run_time:mars_last_case_name]] </env>
+                    <env> MARS_TEST_NAME=[[run_time:test_name]] </env>
+                    <env> MARS_DB_NAME=[[run_time:db_name]] </env>
+                </params>
+</pre>
 			<post>
 			</post>
             <on_not_success>
@@ -29,7 +40,7 @@
                     <name> on_failures_post_checker </name>
                     <tout> 900 </tout>
                     <params>
-                        <exec> PYTHONPATH=/devts/ /ngts_venv/bin/pytest /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/post_checker/test_post_checker.py  --setup_name=[[conf:extra_info.setup_name]]  --timeout 600 --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --session_id=[[run_time:session_id]]  --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini     --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --skip_clear_config</exec>
+                        <exec> PYTHONPATH=/devts/ /ngts_venv/bin/pytest /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/post_checker/test_post_checker.py  --setup_name=[[conf:extra_info.setup_name]]  --timeout 600 --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --session_id=[[run_time:session_id]]  --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini     --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --skip_clear_config --ib_router </exec>
                     </params>
                 </cmd>
                 <on_return_code>

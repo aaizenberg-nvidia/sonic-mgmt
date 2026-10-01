@@ -44,8 +44,10 @@ class TestSRv6LeafCalibration(TestSRv6Base):
         self.vlan_interface_configuration_dict = self.tg_cli_object.performance.get_tg_interfaces_vlan_configuration()
         self.cli_object.performance.configure_interfaces_mac_neighbor(self.vlan_interface_configuration_dict)
         self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
-        self.opt_ts = os.getenv(MRCConsts.OPT_TS, default=MRCConsts.OPT_TS_DEFAULT)
-        self.cli_object.trimming.configure_custom_dwrr_weights()
+        self.opt_ts = os.getenv(MRCConsts.OPT_TS,
+                                default=MRCConsts.get_opt_ts_default(self.chip_type))
+        if MRCConsts.DWRR_WEIGHTS_CONFIG != "DEFAULT":
+            self.cli_object.trimming.configure_custom_dwrr_weights()
         self.shaper_value = shaper_value
 
     @pytest.mark.parametrize("workload", MRCConsts.MRC_REGRESSION_WORKLOADS_LIST)

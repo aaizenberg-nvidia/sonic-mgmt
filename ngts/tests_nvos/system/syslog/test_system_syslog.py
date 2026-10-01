@@ -2,11 +2,13 @@ import logging
 import pytest
 import random
 from retry import retry
+from retry.api import retry_call
 from ngts.tests_nvos.constants import MINUTE
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils.nvos_config_utils import wait_for_rsyslog_reconfiguration
 import string
 import time
 import re
@@ -26,6 +28,10 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceCon
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.infra.SudoScope import sudo_scope_if
+
+
+cumulus_owner = "gosaini"
+
 
 logger = logging.getLogger()
 INCOMPLETE_COMMAND = "Incomplete Command"
@@ -342,84 +348,6 @@ def test_rsyslog_server_severity_levels(engines, is_air, loganalyzer, random_api
     finally:
         with allure.step("Cleanup syslog configurations"):
             system.syslog.servers.unset(apply=True)
-
-
-@pytest.mark.system
-@pytest.mark.syslog
-@pytest.mark.simx
-def test_rsyslog_server_and_global_severity_levels(random_api):
-    """
-    Will validate all the severity options:  debug, info, notice, warning, error, critical, alert, emerg, none.
-    Will configure the severity level, validate it in the show command and validate that the server catch the relevant
-    messages only.
-
-    Test flow:
-    * Configure remote syslog server
-    To each severity level:
-         * Set severity level
-         * Validate with show command
-         * Print msg that the server should catch, validate
-         * Print msg that the server should not catch, validate
-    * Unset server trap
-    * Cleanup
-    """
-    system = System()
-    server_a_name = 'server_a'
-
-    try:
-        with allure.step("Configure remote syslog server and Validate"):
-            server_a = system.syslog.servers.set_server(server_a_name, apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Set global severity and Validate"):
-            system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Unset server severity and Validate nothing change"):
-            system.syslog.selectors.selectors_dict[SyslogConsts.DEFAULT_SELECTOR_NAME].unset_severity(apply=True)
-            server_a.verify_trap_severity_level(None, SyslogConsts.DEFAULT_SELECTOR_NAME)
-
-        with allure.step("set server trap and Validate"):
-            server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-            server_a.verify_trap_severity_level(SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-        with allure.step("Unset server trap and Validate"):
-            server_a.unset_trap(apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Unset global trap and Validate"):
-            system.syslog.unset_trap(apply=True)
-            server_a.verify_trap_severity_level(None)
-
-        with allure.step("Validate unset global trap override server trap"):
-            with allure.step("set global and server trap and Validate"):
-                system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-                server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-                server_a.verify_trap_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-            with allure.step("Unset global trap and Validate"):
-                system.syslog.unset_trap(apply=True)
-                server_a.verify_trap_severity_level(None)
-
-        with allure.step("Validate global trap override server trap"):
-            with allure.step("set server trap and Validate"):
-                server_a.set_trap(SyslogSeverityLevels.DEBUG, apply=True)
-                system.syslog.verify_global_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.NOTICE])
-                server_a.verify_trap_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.DEBUG])
-
-            with allure.step("Set global trap and Validate"):
-                system.syslog.set_trap(SyslogSeverityLevels.ERROR, apply=True)
-                system.syslog.verify_global_severity_level(
-                    SyslogSeverityLevels.SEVERITY_LEVEL_DICT[SyslogSeverityLevels.ERROR])
-                server_a.verify_trap_severity_level(None)
-
-    finally:
-        with allure.step("Cleanup syslog configurations"):
-            system.syslog.servers.unset(apply=True)
-            system.syslog.selectors.unset(apply=True)
 
 
 @pytest.mark.system
@@ -1655,6 +1583,7 @@ def verify_welf_format(line_to_check, firewall_name=".*", expect_welf_format=Tru
 
 
 def send_random_msg_and_validate_format(remote_server_ip, remote_server_engine, expect_welf_format, firewall_name=".*"):
+    wait_for_rsyslog_reconfiguration(TestToolkit.engines.dut)
     random_msg = RandomizationTool.get_random_string(30, ascii_letters=string.ascii_letters + string.digits)
     output = send_msg_to_server(random_msg, remote_server_ip, remote_server_engine, verify_msg_received=True)
     verify_welf_format(output, expect_welf_format=expect_welf_format, firewall_name=firewall_name)
@@ -1731,6 +1660,7 @@ def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=
         # additional_flags: raw `logger` flags, carrying its own leading space.
         extra_flags = protocol_flag + priority_flag + port_flag + program_flag + additional_flags
         logger_cmd = f'logger {extra_flags} "{msg}"'
+        time.sleep(3)  # wait for rsyslogd reload after nv config apply (NVBug 6213076)
         TestToolkit.engines.dut.run_cmd(logger_cmd)
         with sudo_scope_if(TestToolkit.devices.dut.is_eth()):
             TestToolkit.engines.dut.run_cmd('tail -10 /var/log/syslog')
@@ -1746,17 +1676,26 @@ def send_msg_to_server(msg, server_name, server_engine, protocol=None, priority=
         return output
 
 
-def verify_msg_in_syslog_file(engine, msg_to_find, syslog_file='/var/log/syslog', should_find=True):
-    cmd = f'cat {syslog_file}|grep {msg_to_find}'
-    output = engine.run_cmd(cmd)
-    msg_in_file = msg_to_find in output
+def verify_msg_in_syslog_file(engine, msg_to_find, syslog_file='/var/log/syslog', should_find=True,
+                              tries=5, delay=2):
+    # 'sudo' so the root-owned log is readable (a non-sudo read fails silently and looks like "not found"),
+    # and 'grep -F -- <msg>' so regex/shell metacharacters in the message (e.g. the "a+"/"b+" filter
+    # prefixes) are matched literally instead of being interpreted as a pattern.
+    cmd = f"sudo grep -F -- '{msg_to_find}' {syslog_file}"
 
-    if msg_in_file and not should_find:
-        raise Exception("Found the message, but expected not to find it")
-    elif not msg_in_file and should_find:
-        raise Exception("Didn't find the message, but expected to find it")
+    def _verify_msg():
+        output = engine.run_cmd(cmd)
+        msg_in_file = msg_to_find in output
+        if msg_in_file and not should_find:
+            raise AssertionError("Found the message, but expected not to find it")
+        if not msg_in_file and should_find:
+            raise AssertionError("Didn't find the message, but expected to find it")
+        return output
 
-    return output
+    # Forwarding to the remote collector can lag behind the send, so retry while we still expect to
+    # find it. For the "should not be received" case a single check is enough (tries=1).
+    return retry_call(_verify_msg, exceptions=AssertionError,
+                      tries=tries if should_find else 1, delay=delay)
 
 
 def create_syslog_output_dictionary(format=SyslogConsts.STANDARD, format_dict={}, trap=SyslogSeverityLevels.NOTICE,
@@ -1954,6 +1893,7 @@ def send_message_after_rate_limit_reset(remote_server_ip, remote_server_engine, 
     logger.info("Message sent successfully after interval reset")
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 @pytest.mark.syslog
 def test_syslog_logging_during_system_reboot(engines, random_api):

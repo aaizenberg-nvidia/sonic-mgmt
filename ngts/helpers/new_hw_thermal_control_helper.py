@@ -945,12 +945,7 @@ def get_sensor_read_error_test_data(cli_objects):
     if SENSOR_DATA["cpu_pack"]["total_number"] > 0:
         sensor_read_error_test_sensors.append("cpu_pack")
     if SENSOR_DATA["module"]["index supporting sensor"]:
-        # For IM enabled setup, 'module' sensor test are need be skipped as it created by kernel sysfs and
-        # from user space we don't have permission to write it
-        if cli_objects.dut.im.is_im_enabled():
-            logger.info("skip module test due to IM is enabled")
-        else:
-            sensor_read_error_test_sensors.append("module")
+        sensor_read_error_test_sensors.append("module")
     platform = cli_objects.dut.chassis.get_platform()
     if platform in TC_CONST.JULIET_PLATFORMS:
         for sensor in ["ambient", "module"]:

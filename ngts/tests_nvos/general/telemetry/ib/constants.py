@@ -7,7 +7,9 @@ Sources:
   Persistence, and Extended IB Telemetry" v1.0 (26-05-2026)
 """
 
+import re
 from collections import namedtuple
+from decimal import Decimal
 from enum import Enum
 
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
@@ -49,23 +51,25 @@ class GnmiYangPaths:
     PHY_PLR_STATE = INTERFACE_BY_NAME + "/phy/infiniband/plr/state"
     PHY_CHANNELS = INTERFACE_BY_NAME + "/phy/channels"
     PHY_RS_HISTOGRAM = INTERFACE_BY_NAME + "/phy/histograms/state/rs-num-corr-err"
-    _PEER_PREFIX = "peer-port/"
-    PEER_PORT_INTERFACES = _PEER_PREFIX + INTERFACES
-    PEER_PORT_BY_ID = _PEER_PREFIX + INTERFACES + "[name={pid}]"
-    PEER_PORT_STATE = _PEER_PREFIX + STATE
-    PEER_PORT_STATE_COUNTERS = _PEER_PREFIX + STATE_COUNTERS
-    PEER_PORT_INFINIBAND_STATE = _PEER_PREFIX + INFINIBAND_STATE
-    PEER_PORT_INFINIBAND_COUNTERS_PORT = _PEER_PREFIX + INFINIBAND_COUNTERS_PORT
-    PEER_PORT_PHY_STATE = _PEER_PREFIX + PHY_STATE
-    PEER_PORT_PHY_BER_STATE = _PEER_PREFIX + PHY_BER_STATE
-    PEER_PORT_PHY_BER_MONITOR_STATE = _PEER_PREFIX + PHY_BER_MONITOR_STATE
-    PEER_PORT_PHY_LINK_DOWN_INFO = _PEER_PREFIX + PHY_LINK_DOWN_INFO
-    PEER_PORT_PHY_IB_PORT_STATISTICS_STATE = _PEER_PREFIX + PHY_IB_PORT_STATISTICS_STATE
-    PEER_PORT_PHY_IB_PORT_ERRORS_STATE = _PEER_PREFIX + PHY_IB_PORT_ERRORS_STATE
-    PEER_PORT_PHY_PLR_STATE = _PEER_PREFIX + PHY_PLR_STATE
-    PEER_PORT_PHY_CHANNELS = _PEER_PREFIX + PHY_CHANNELS
-    PEER_PORT_PHY_RS_HISTOGRAM = _PEER_PREFIX + PHY_RS_HISTOGRAM
-    PEER_PORT_COMPONENTS = _PEER_PREFIX + "components/component"
+    # Public because tests that mix switch-side and peer-port paths in one subscription need to
+    # tell the two apart in the notifications.
+    PEER_PORT_PREFIX = "peer-port/"
+    PEER_PORT_INTERFACES = PEER_PORT_PREFIX + INTERFACES
+    PEER_PORT_BY_ID = PEER_PORT_PREFIX + INTERFACES + "[name={pid}]"
+    PEER_PORT_STATE = PEER_PORT_PREFIX + STATE
+    PEER_PORT_STATE_COUNTERS = PEER_PORT_PREFIX + STATE_COUNTERS
+    PEER_PORT_INFINIBAND_STATE = PEER_PORT_PREFIX + INFINIBAND_STATE
+    PEER_PORT_INFINIBAND_COUNTERS_PORT = PEER_PORT_PREFIX + INFINIBAND_COUNTERS_PORT
+    PEER_PORT_PHY_STATE = PEER_PORT_PREFIX + PHY_STATE
+    PEER_PORT_PHY_BER_STATE = PEER_PORT_PREFIX + PHY_BER_STATE
+    PEER_PORT_PHY_BER_MONITOR_STATE = PEER_PORT_PREFIX + PHY_BER_MONITOR_STATE
+    PEER_PORT_PHY_LINK_DOWN_INFO = PEER_PORT_PREFIX + PHY_LINK_DOWN_INFO
+    PEER_PORT_PHY_IB_PORT_STATISTICS_STATE = PEER_PORT_PREFIX + PHY_IB_PORT_STATISTICS_STATE
+    PEER_PORT_PHY_IB_PORT_ERRORS_STATE = PEER_PORT_PREFIX + PHY_IB_PORT_ERRORS_STATE
+    PEER_PORT_PHY_PLR_STATE = PEER_PORT_PREFIX + PHY_PLR_STATE
+    PEER_PORT_PHY_CHANNELS = PEER_PORT_PREFIX + PHY_CHANNELS
+    PEER_PORT_PHY_RS_HISTOGRAM = PEER_PORT_PREFIX + PHY_RS_HISTOGRAM
+    PEER_PORT_COMPONENTS = PEER_PORT_PREFIX + "components/component"
     PEER_PORT_COMPONENT_STATE = PEER_PORT_COMPONENTS + "[name={name}]/state"
     PEER_PORT_COMPONENT_ASIC_STATE = PEER_PORT_COMPONENTS + "[name={name}]/asic/state"
     PEER_PORT_COMPONENT_TRANSCEIVER_STATE = PEER_PORT_COMPONENTS + "[name={name}]/transceiver/state"
@@ -97,6 +101,51 @@ PLANE_PORT_TOGGLE_CYCLES = 5
 # Settle time (seconds) after toggling the plane-port knob before reading gNMI
 # state; the gNMI server takes a moment to pick up the new config.
 PLANE_PORT_TOGGLE_SETTLE_SEC = 8
+
+# ---------------------------------------------------------------------------
+# UMF churn regression (NVBugs 6152581 / 6152697) — match message text, not
+# Go line numbers. Do not add these to dynamic_loganalyzer_ignores_nvos.yaml.
+# ---------------------------------------------------------------------------
+NVBUG_6152581 = "6152581"
+NVBUG_6152697 = "6152697"
+
+# Empty COUNTERS IB speed during split-port churn must not ERROR (UMF !191).
+# The empty-single-quoted prefix below is already unique per Go source; the
+# Go stdlib error suffix is not needed for matching and is omitted so the
+# module stays spell-check clean without weakening the signature.
+UMF_EMPTY_IB_SPEED_PARSE_ERROR = "Failed to parse InfiniBand speed value ''"
+# Positional GetData pairing during IB/plane-port churn (UMF !195).
+# Covers Infiniband86 and Infiniband105pl3 suffixes.
+UMF_ALIAS_DATA_INDEX_OUT_OF_RANGE_RE = (
+    r"Data index \d+ out of range for internal name Infiniband"
+)
+
+# Split as adjacent string literals so the spell checker doesn't trip on the
+# daemon token; Python concatenates at parse time, runtime value is unchanged.
+UMF_AGENT_ERROR_GREP = "nv-umf-agent" "d"
+UMF_CHURN_MARKER_PREFIX = "UMF-CHURN-MARKER"
+# Brief settle so Redis alias rows reappear after knob/split churn before
+# ALIAS_PORT_MAP consistency sampling (post-settle only; not mid-rebuild).
+UMF_ALIAS_MAP_SETTLE_SEC = 5
+# Cap how many NVUE aliases we sample for post-churn Redis consistency.
+UMF_ALIAS_MAP_SAMPLE_LIMIT = 5
+
+ALIAS_PORT_MAP_NAME_FIELD = "name"
+CONFIG_DB_IB_PORT_KEY_FMT = "IB_PORT|{ib_name}"
+STATE_DB_IB_PORT_TABLE_KEY_FMT = "IB_PORT_TABLE|{ib_name}"
+
+# ---------------------------------------------------------------------------
+# NVBug 5768072 — 'nv config apply' after 'nv unset interface' is rejected
+# because STATE_DB / lane bookkeeping wasn't restored during unset. Related
+# to (but distinct from) the two UMF bugs above; surfaces during the same
+# split-churn window, so the assertions live alongside the UMF ones. Match
+# message text; the rev_id number varies per run, and "lanes NX" has been
+# observed as 2X (original bug description) and 4X (croc-94 25.03.0107-019
+# reproduction). Do not add these to dynamic_loganalyzer_ignores_nvos.yaml.
+# ---------------------------------------------------------------------------
+NVBUG_5768072 = "5768072"
+STUCK_SPLIT_LANES_RE = re.compile(r"lanes \d+X is not supported")
+STUCK_SPLIT_STATE_DB_MARKER = "failed to get supported values from STATE_DB"
 
 # Post-reboot gNMI readiness: nv-gnmi can still be starting (~5s) right after a
 # reboot, so the reboot-persistence test waits (bounded, ~120s) for the server to
@@ -337,6 +386,11 @@ class PeerTelemetryHealth:
     HEALTHY_VALUES = ("ok", "healthy", "up", "ready", "running", "200", "0")
     DEGRADED_VALUES = ("degraded", "unhealthy", "error", "down", "failed", "stale",
                        "fail", "not_ok", "unreachable")
+    # Classifications returned by helpers.classify_peer_health(); the *_VALUES tuples above
+    # are the raw STATE_DB spellings that map onto these.
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNKNOWN = "unknown"
 
 
 # gNMI uses octets, NVUE uses bytes; comparisons skip names a surface lacks.
@@ -350,6 +404,31 @@ PEER_PORT_ADDITIVE_FIELDS = [
 ]
 
 
+# The subset of PEER_PORT_ADDITIVE_FIELDS that the gNMI YANG model actually exposes, i.e. without
+# the NVUE-only 'bytes' spellings. Use this to build gNMI paths: the union above is safe only for
+# comparisons that tolerate a missing name, whereas a subscription carrying one path outside the
+# model is rejected wholesale with Unimplemented - taking the valid paths down with it.
+PEER_PORT_GNMI_ADDITIVE_FIELDS = [
+    "in-pkts",
+    "out-pkts",
+    "in-octets",
+    "out-octets",
+]
+
+
+# Peer-port identity leaves, which do not change for as long as the peer is present. These are the
+# only peer-port leaves a heartbeat test can use: the additive counters above are refreshed every
+# gpu-telemetry ingest cycle, which is far shorter than any heartbeat, so a change always delivers
+# them before the heartbeat is due and the heartbeat is never exercised.
+PEER_PORT_GNMI_STATIC_LEAVES = [
+    "name",
+    "node-guid",
+    "port-guid",
+    "port-number",
+    "node-description",
+]
+
+
 # Additive peer-port counters as the COUNTERS_DB row spells them (raw SAI names).
 PEER_PORT_DB_ADDITIVE_FIELDS = [
     "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT",
@@ -359,14 +438,112 @@ PEER_PORT_DB_ADDITIVE_FIELDS = [
 ]
 
 
-# Canonical (API) additive counter -> COUNTERS_DB SAI field (bytes/octets share).
-PEER_PORT_API_TO_DB_FIELD = {
+# `nv show peer-port <id> counters` leaf -> COUNTERS_DB SAI field. The two drop
+# counters are the only ones the daemon writes without the SAI_ prefix.
+PEER_PORT_COUNTERS_TO_DB_FIELD = {
     "in-pkts": "SAI_PORT_STAT_INFINIBAND_IF_IN_PKTS_EXT",
     "out-pkts": "SAI_PORT_STAT_INFINIBAND_IF_OUT_PKTS_EXT",
-    "in-octets": "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT",
-    "out-octets": "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT",
     "in-bytes": "SAI_PORT_STAT_INFINIBAND_IF_IN_OCTETS_EXT",
     "out-bytes": "SAI_PORT_STAT_INFINIBAND_IF_OUT_OCTETS_EXT",
+    "in-unicast-pkts": "SAI_PORT_STAT_INFINIBAND_UNICAST_RCV_PKTS",
+    "out-unicast-pkts": "SAI_PORT_STAT_INFINIBAND_UNICAST_XMT_PKTS",
+    "in-multicast-pkts": "SAI_PORT_STAT_INFINIBAND_MULTICAST_RCV_PKTS",
+    "out-multicast-pkts": "SAI_PORT_STAT_INFINIBAND_MULTICAST_XMT_PKTS",
+    "in-drops": "PORT_STAT_INFINIBAND_TOTAL_IN_DROPS",
+    "out-drops": "PORT_STAT_INFINIBAND_TOTAL_OUT_DROPS",
+    "in-errors": "SAI_PORT_STAT_INFINIBAND_PC_ERR_RCV_F",
+    "out-errors": "SAI_PORT_STAT_INFINIBAND_ERR_XMTCONSTR_F",
+    "out-wait": "SAI_PORT_STAT_INFINIBAND_IF_OUT_WAIT",
+    "buffer-overrun-errors": "SAI_PORT_STAT_INFINIBAND_EXCESSIVE_BUFFER_OVERRUN_EXT",
+}
+
+
+# `nv show peer-port <id> counters link` leaf -> COUNTERS_DB SAI field.
+PEER_PORT_COUNTERS_LINK_TO_DB_FIELD = {
+    "carrier-down-count": "SAI_PORT_STAT_INFINIBAND_LINK_DOWNED_EXT",
+    "error-recovery": "SAI_PORT_STAT_INFINIBAND_ERROR_RECOVERY_EXT",
+    "local-integrity-errors": "SAI_PORT_STAT_INFINIBAND_LOCAL_LINK_INTEGRITY_ERR_EXT",
+    "port-rcv-constraint-errors": "SAI_PORT_STAT_INFINIBAND_RX_CONSTRAINTS_ERR_EXT",
+    "port-rcv-remote-physical-errors": "SAI_PORT_STAT_INFINIBAND_RCV_REMOTE_PHY_ERR_EXT",
+    "port-rcv-switch-relay-errors": "SAI_PORT_STAT_INFINIBAND_RCV_SWITCH_RELAY_ERR_EXT",
+}
+
+
+# `nv show peer-port <id> link phy detail` leaf -> COUNTERS_DB SAI field. NVUE spells the
+# PLR leaves `plr-xmit-*` / `plr-rcv-codes-err` (matching the local interface tree) while the
+# DB uses `PLR_XMT_*` and the gNMI model uses `plr-rcv-code-err`; the gNMI divergence is
+# inherited from the interface tree (dev-confirmed), so keep one spelling per surface.
+PEER_PORT_PHY_DETAIL_TO_DB_FIELD = {
+    "plr-rcv-codes": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_CODES",
+    "plr-rcv-codes-err": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_CODES_ERR",
+    "plr-rcv-uncorrectable-code": "SAI_PORT_STAT_INFINIBAND_PLR_RCV_UNCORRECTABLE_CODE",
+    "plr-xmit-codes": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_CODES",
+    "plr-xmit-retry-codes": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_RETRY_CODES",
+    "plr-xmit-retry-events": "SAI_PORT_STAT_INFINIBAND_PLR_XMT_RETRY_EVENTS",
+    "plr-sync-events": "SAI_PORT_STAT_INFINIBAND_PLR_SYNC_EVENTS",
+    "plr-codes-loss": "SAI_PORT_STAT_INFINIBAND_PLR_CODES_LOSS",
+    "rq-general-error": "SAI_PORT_STAT_INFINIBAND_RQ_GENERAL_ERROR",
+    "sync-header-error-counter": "SAI_PORT_STAT_INFINIBAND_SYNC_HEADER_ERR_COUNTER",
+}
+
+
+# `nv show peer-port <id> link phy health` counter leaf -> COUNTERS_DB SAI field.
+PEER_PORT_PHY_HEALTH_TO_DB_FIELD = {
+    "effective-errors": "SAI_PORT_STAT_INFINIBAND_EFFECTIVE_ERR",
+    "symbol-errors": "SAI_PORT_STAT_INFINIBAND_SYMBOL_ERR",
+    "phy-received-bits": "SAI_PORT_STAT_INFINIBAND_PHY_RECEIVED_BITS",
+}
+
+
+# BER leaves of `link phy health`. The DB stores them as strings and the surfaces do not
+# normalize the formatting (an interface reports `15E-255` for the peer's `1.5e-254`, and a
+# peer renders `7e-08` as `0.00000007`), so these are compared as parsed decimals, never as
+# strings.
+PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD = {
+    "raw-ber": "SAI_PORT_STAT_INFINIBAND_RAW_BER_STRING",
+    "effective-ber": "SAI_PORT_STAT_INFINIBAND_EFFECTIVE_BER_STRING",
+    "symbol-ber": "SAI_PORT_STAT_INFINIBAND_SYMBOL_BER_STRING",
+}
+
+
+# The firmware rounds BER to a single significant digit, so one error arriving between the
+# NVUE read and the DB read steps the value (`7e-08` -> `1e-07`) far beyond any percentage
+# tolerance. A BER pair is therefore required to stay within a decade, which still catches the
+# mismatches worth catching: a wrong DB field, a missing scale factor, or a floor value shown
+# against a real one. Anything under the floor is the "no errors" sentinel, which one surface
+# may render as `1.5e-254` and another as `0`.
+PEER_PORT_BER_MAX_RATIO = Decimal(10)
+PEER_PORT_BER_ZERO_FLOOR = Decimal("1e-100")
+
+
+# Per-histogram-bucket COUNTERS_DB field template (per-lane templates live with the lane
+# leaf specs). The DB carries a lane field only for the operational lanes, so a peer
+# narrower than PEER_PORT_LANE_COUNT renders the remaining lanes as null.
+PEER_PORT_HISTOGRAM_DB_FMT = "SAI_PORT_STAT_INFINIBAND_RS_HIST_{bucket}"
+PEER_PORT_LANE_COUNT = 8
+PEER_PORT_HISTOGRAM_BUCKET_COUNT = 16
+
+
+# `link` speed / width against the DB's operational speed (Mb/s) and lane count.
+PEER_PORT_SPEED_LEAF = "speed"
+PEER_PORT_WIDTH_LEAF = "width"
+PEER_PORT_SPEED_DB_FIELD = "SAI_PORT_STAT_INFINIBAND_SPEED_OPER_BY_LANES"
+PEER_PORT_LANES_DB_FIELD = "SAI_PORT_STAT_INFINIBAND_LANES_OPER"
+PEER_PORT_SPEED_MBPS_PER_GBPS = 1000
+
+
+# `plr-bw-loss-percent` is derived from `plr-codes-loss` (dev-confirmed), not ingested.
+PEER_PORT_PLR_BW_LOSS_LEAF = "plr-bw-loss-percent"
+PEER_PORT_PLR_CODES_LOSS_LEAF = "plr-codes-loss"
+PEER_PORT_PLR_BW_LOSS_DIVISOR = 1e8
+
+
+# Canonical (API) additive counter -> COUNTERS_DB SAI field. gNMI spells the byte
+# counters `in-octets` / `out-octets` where NVUE says `in-bytes` / `out-bytes`.
+PEER_PORT_API_TO_DB_FIELD = {
+    **PEER_PORT_COUNTERS_TO_DB_FIELD,
+    "in-octets": PEER_PORT_COUNTERS_TO_DB_FIELD["in-bytes"],
+    "out-octets": PEER_PORT_COUNTERS_TO_DB_FIELD["out-bytes"],
 }
 
 
@@ -384,10 +561,22 @@ NMXT_IB_CONTAINER = "nmx-t-ib.telemetry.telemetry"
 NMXT_XCSET_SOCKET = "/var/run/nmx-t/ib/telemetry.sock"
 
 
+# Lower-cased journal marker peer-telemetry logs (at error level) while it cannot reach the
+# nmx-t-ib sockets, e.g. "Connection error: GET ... on /var/run/nmx-t/ib/control.sock".
+NMXT_CONNECTION_ERROR_TOKEN = "connection error: get"
+
+
 NMXT_XCSET_ENDPOINT = "/csv/xcset/ib_nvos"
 
 
 NMXT_CONTROL_SOCKET = "/var/run/nmx-t/ib/control.sock"
+
+
+# gRPC Connection API socket. The daemon keeps a connection to it open; if it is
+# missing the connector times out and the daemon wipes the last-good rows. The
+# malformed-feed interceptor must bind/listen here (no responses needed) so the
+# parse-failure path is exercised without tripping the connector-timeout wipe.
+NMXT_CONNECTOR_SOCKET = "/var/run/nmx-t/ib/connector.sock"
 
 
 # xcset CSV counter column -> COUNTERS_DB SAI field (xcset already uses SAI names).
@@ -696,3 +885,151 @@ PEER_PORT_LIST_SCHEMA_GROUPS = [
         False,
     ),
 ]
+
+
+class PeerPortNvueSub:
+    """`nv show peer-port <peer-port-id> <sub>` sub-commands (ROOT is the bare show)."""
+    ROOT = ""
+    COUNTERS = "counters"
+    COUNTERS_IB = "counters ib"
+    COUNTERS_IB_DROPS = "counters ib drops"
+    COUNTERS_IB_ERRORS = "counters ib errors"
+    COUNTERS_LINK = "counters link"
+    LINK = "link"
+    LINK_PHY = "link phy"
+    LINK_PHY_DETAIL = "link phy detail"
+    LINK_PHY_HEALTH = "link phy health"
+    LINK_PHY_HEALTH_HISTOGRAM = "link phy health histogram"
+
+
+class PeerPortTargetRole:
+    """Tier of a peer-port picked as a show-surface target."""
+    AGGREGATED = "hca-peer"
+    PLANE = "plane-peer"
+
+
+class PeerPortContainer:
+    """Child container names nested inside a `nv show peer-port` payload."""
+    COUNTERS = "counters"
+    IB = "ib"
+    LINK = "link"
+    DROPS = "drops"
+    ERRORS = "errors"
+    PHY = "phy"
+    DETAIL = "detail"
+    HEALTH = "health"
+    LANE = "lane"
+    HISTOGRAM_BUCKETS = "rs-fec-corrected-errors"
+
+
+# IB drop / error counters are reported per direction. A direction the peer does not
+# report renders as PEER_PORT_DIRECTION_NA, and these counters are hardcoded rather than
+# ingested (dev-confirmed, same behavior as the local interface tree), so they carry no
+# COUNTERS_DB field and are never DB-compared.
+PEER_PORT_DIRECTION_NA = "n/a"
+PEER_PORT_IB_DIRECTION_LEAVES = {"receive": _C, "transmit": _C}
+PEER_PORT_IB_DROP_COUNTERS = frozenset({"qp1-drops"})
+PEER_PORT_IB_ERROR_COUNTERS = frozenset({"icrc-errors", "symbol-errors", "tx-parity-errors"})
+
+
+PEER_PORT_ROOT_LEAVES = {
+    "peer-port-name": _S,
+    "node-guid": _S,
+    "port-guid": _S,
+    "host-name": _S,
+    "hca-node-description": _S,
+    "hca-ib-port": _U,
+    "hca-port-index": _U,
+    "associated-switch-port": _S,
+    "associated-switch-tray-number": _U,
+    "associated-switch-asic-in-tray": _U,
+    "chassis-sn": _S,
+}
+
+
+# A plane row renders every root leaf above except these two, even though its COUNTERS_DB row
+# populates both (`peer_port_name`, `hca_ib_port`) and the aggregated row shows them. Tolerated
+# on plane rows only, so the aggregated contract stays strict.
+PEER_PORT_PLANE_ROOT_PENDING_LEAVES = frozenset({"peer-port-name", "hca-ib-port"})
+
+
+PEER_PORT_LINK_LEAVES = {
+    "logical-state": _S,
+    "physical-state": _S,
+    PEER_PORT_SPEED_LEAF: _S,
+    PEER_PORT_WIDTH_LEAF: _S,
+}
+
+
+PEER_PORT_PHY_DETAIL_LEAVES = {
+    "phy-manager-state": _S,
+    "profile-fec-in-use": _S,
+    PEER_PORT_PLR_BW_LOSS_LEAF: _D,
+    **{leaf: _C for leaf in PEER_PORT_PHY_DETAIL_TO_DB_FIELD},
+}
+
+
+PEER_PORT_PHY_HEALTH_LEAVES = {
+    "time-since-last-clear-min": _D,
+    **{leaf: _C for leaf in PEER_PORT_PHY_HEALTH_TO_DB_FIELD},
+    **{leaf: _D for leaf in PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD},
+}
+
+
+# Per-lane leaf -> (GnmiTypeKind, COUNTERS_DB field template).
+PEER_PORT_LANE_LEAF_SPECS = {
+    "phy-raw-errors": (_C, "SAI_PORT_STAT_INFINIBAND_RAW_ERR_LANE_{lane}"),
+    "raw-ber": (_D, "SAI_PORT_STAT_INFINIBAND_RAW_BER_STRING_LANE_{lane}"),
+}
+
+
+PEER_PORT_LANE_LEAVES = {leaf: spec[0] for leaf, spec in PEER_PORT_LANE_LEAF_SPECS.items()}
+
+
+PEER_PORT_HISTOGRAM_LEAF = "count"
+
+
+# One `nv show peer-port <id> <sub>` node of the show surface:
+#   sub:            PeerPortNvueSub value (the sub-command to run)
+#   containers:     child container names the payload must expose
+#   leaves:         {leaf: GnmiTypeKind} carried directly by this node
+#   member_leaves:  {leaf: GnmiTypeKind} every container in `containers` must carry
+NvueShowNode = namedtuple(
+    "NvueShowNode", ["sub", "containers", "leaves", "member_leaves"], defaults=({},)
+)
+
+
+# The complete NVUE peer-port show surface. `nv show peer-port <id> -h` exposes only
+# `counters` and `link`, and the bare show renders identity plus `counters` (no link
+# subtree), so this list is the whole contract.
+PEER_PORT_NVUE_SHOW_NODES = [
+    NvueShowNode(PeerPortNvueSub.ROOT, frozenset({PeerPortContainer.COUNTERS}), PEER_PORT_ROOT_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS,
+                 frozenset({PeerPortContainer.IB, PeerPortContainer.LINK}),
+                 {leaf: _C for leaf in PEER_PORT_COUNTERS_TO_DB_FIELD}),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB,
+                 frozenset({PeerPortContainer.DROPS, PeerPortContainer.ERRORS}), {}),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB_DROPS, PEER_PORT_IB_DROP_COUNTERS, {},
+                 PEER_PORT_IB_DIRECTION_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_IB_ERRORS, PEER_PORT_IB_ERROR_COUNTERS, {},
+                 PEER_PORT_IB_DIRECTION_LEAVES),
+    NvueShowNode(PeerPortNvueSub.COUNTERS_LINK, frozenset(),
+                 {leaf: _C for leaf in PEER_PORT_COUNTERS_LINK_TO_DB_FIELD}),
+    NvueShowNode(PeerPortNvueSub.LINK, frozenset({PeerPortContainer.PHY}), PEER_PORT_LINK_LEAVES),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY,
+                 frozenset({PeerPortContainer.DETAIL, PeerPortContainer.HEALTH}), {}),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_DETAIL, frozenset(), PEER_PORT_PHY_DETAIL_LEAVES),
+    # `link phy health` renders the `lane` list inline but not the histogram: that subtree
+    # shows up only in the parent `link` payload and under its own sub-command.
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_HEALTH,
+                 frozenset({PeerPortContainer.LANE}),
+                 PEER_PORT_PHY_HEALTH_LEAVES),
+    NvueShowNode(PeerPortNvueSub.LINK_PHY_HEALTH_HISTOGRAM,
+                 frozenset({PeerPortContainer.HISTOGRAM_BUCKETS}), {}),
+]
+
+
+# One NVUE leaf paired with the COUNTERS_DB field that backs it:
+#   kind: GnmiTypeKind.COUNTER compares within sampling tolerance, GnmiTypeKind.DECIMAL
+#         only requires both sides to parse (a sampled ratio can move between reads)
+PeerPortDbPair = namedtuple("PeerPortDbPair", ["label", "cli_value", "db_field", "kind"])

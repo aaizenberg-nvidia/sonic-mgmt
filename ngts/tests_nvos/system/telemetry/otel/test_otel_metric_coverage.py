@@ -112,7 +112,7 @@ def test_otel_platform_stats_metrics_present(engines, devices, otel_suite_dual, 
 def test_otel_all_metrics_present(
     engines, devices, otel_suite_single, is_ib_router, tmp_path, random_api
 ):
-    """Section 5.1 - OTLP export works, the payload is valid, and the inventory matches.
+    """Section 5.1 — OTLP export works, the payload is valid, and the inventory matches.
 
     Enables every telemetry family against a single destination, collects a window
     long enough for two samples of the slowest class, and asserts the payload

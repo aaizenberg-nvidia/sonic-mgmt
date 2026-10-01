@@ -100,13 +100,14 @@ if os.environ.get("REGRESSION_TYPE") == "regression":
             return
 
         if is_test_deploy_and_upgrade():
-            # BMC-only deploy: switch image is not installed, DUT has no SONiC and is unreachable.
-            # Skip CLI coverage to avoid SSH retry timeouts on the dead DUT.
-            base_version = request.config.getoption('--base-version', default='') or ''
-            target_version = request.config.getoption('--target-version', default='') or ''
+            # A deploy that installs a BMC image power-cycles the whole board, so the
+            # host-switch is rebooted into ONIE and is not reachable in SONiC until it
+            # is re-installed. CLI coverage needs to SSH the switch to read its SONiC
+            # version, so skip it whenever a BMC image is being deployed (BMC-only or
+            # dual BMC + switch) to avoid SSH timeouts on the unreachable DUT.
             base_version_bmc = request.config.getoption('--base-version-bmc', default='') or ''
-            if not base_version and not target_version and base_version_bmc:
-                logger.info("BMC-only deploy detected, skipping CLI coverage plugin.")
+            if base_version_bmc:
+                logger.info("BMC image deploy detected, skipping CLI coverage plugin.")
                 yield None
                 return
             if is_dut_in_onie(request):
@@ -145,6 +146,7 @@ if os.environ.get("REGRESSION_TYPE") == "regression":
         session_metadata = SessionName()
         setup_name = request.config.option.ansible_host_pattern
         full_json['end time'] = time.time()
+        commands_list.sort(key=lambda x: x["command executed"])
         full_json["commands hit"] = commands_list
         full_json["test result"] = shared_data["status"]
         session_name = session_metadata.get_session_name()

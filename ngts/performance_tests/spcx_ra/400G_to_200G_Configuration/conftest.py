@@ -10,50 +10,72 @@ import logging
 import allure
 import copy
 import os
-from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
-                                                                restore_basic_configuration,
-                                                                apply_test_configuration)
+from ngts.helpers.performance.performance_setup_helpers import (
+    apply_test_configuration_guarded, restore_session_basic_configuration,
+    save_session_base_configuration, get_ar_congestion_thresholds)
+from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
+from ngts.performance_tests.spcx_ra.conftest import resolve_ar_algorithm
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.constants.constants import CliType
-from ngts.helpers.performance.performance_setup_helpers import skip_test_on_unsupported_os
+from ngts.helpers.performance.performance_setup_helpers import (skip_test_on_unsupported_os,
+                                                                skip_dvs_leaf_scenario_on_active_bug)
 
 logger = logging.getLogger()
 TESTS_SCENARIO = "spcx_ra"
 
 
 @pytest.fixture(scope='module', autouse=True)
-def skip_test_conditionally(players):
+def skip_test_conditionally(players, chip_type):
     skip_test_on_unsupported_os(players['dut']['cli'], CliType.NVUE)
+    skip_dvs_leaf_scenario_on_active_bug(players['dut']['cli'], chip_type)
     yield
 
 
 @pytest.fixture(scope='class', autouse=True)
-def basic_setup_configuration(players, conf_args):
+def basic_setup_configuration(request, players, conf_args):
+    baseline_available = False
+    primary_error = None
     try:
         with allure.step('Save Players initial Configuration'):
             # Relevant mostly for CL/Sonic- Save config for later cleanup
-            save_base_configuration(players)
+            save_session_base_configuration(players)
+            baseline_available = True
         with allure.step("Apply Test configuration on all Players"):
             # Apply the configuration from all of the jinja files and run the test.
-            apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+            apply_test_configuration_guarded(
+                players, scenario=TESTS_SCENARIO, conf_args=conf_args,
+                nodeid=request.node.nodeid)
         yield
-    except Exception as e:
-        raise e
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        with allure.step('Restore Base Configuration on all Players'):
-            # In DVS- dvs_stop & start. CL/Sonic- Reload base config file
-            restore_basic_configuration(players)
+        if baseline_available:
+            try:
+                with allure.step('Restore Base Configuration on all Players'):
+                    # In DVS- dvs_stop & start. CL/Sonic- Reload base config file
+                    restore_session_basic_configuration(
+                        players, nodeid=request.node.nodeid)
+            except Exception:
+                if not has_primary_test_failure(primary_error, request.node):
+                    raise
+                logger.exception(
+                    "Baseline restore failed while preserving the primary setup/test failure")
 
 
 @pytest.fixture(scope='class', autouse=True)
-def conf_args():
+def conf_args(chip_type):
     """
     This function alters all of the jinja template files.
     """
-    conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {"auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+                 **get_ar_congestion_thresholds(chip_type),
+                 PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+                 # Pass thresholds 4-7 here to run SPC6 extended grading.
+                 **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
                  "is_ipv6": False,
+                 "is_ipv4": True,
                  "split_right": 4,
                  "split_left": 2,
                  "host": PerfConsts.RIGHT_TG_ALIAS,
@@ -61,9 +83,12 @@ def conf_args():
                  "shaper_value": 0.975,
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "left_num_packets": 1,
-                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,
+                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],
                  "two_sided_ar": False,
-                 "scenario": TESTS_SCENARIO
+                 "scenario": TESTS_SCENARIO,
+                 "use_incremental_dips": False,
+                 "dip_left_to_right_start_ipv4_list": ["10.0.1.0"],
+                 "dip_left_to_right_start_ipv6_list": [],
                  }
     return conf_args
 

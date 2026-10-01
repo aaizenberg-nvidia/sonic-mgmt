@@ -1,0 +1,39 @@
+# Traffic-generator ports that must be treated as UNCONNECTED regardless of transceiver state.
+#
+# Why this file exists
+# --------------------
+# Performance code classifies every TG port as either:
+#   connected   - cabled to the DUT, used as the MLOOP egress port
+#   unconnected - no cable, used as the MLOOP physical-loopback traffic generator
+#
+# DVS and Cumulus infer that from transceiver presence (module_state == PLUGGED in
+# sx_api_ports_dump.py); SONiC infers it from HWSKU port ordering. Both inferences assume a
+# plugged port is cabled to the DUT. A TG port cabled to an external generator (Ixia) breaks
+# that assumption: it reports PLUGGED but is not DUT-facing, so it would be misfiled as
+# connected and lost as an MLOOP generator.
+#
+# Listing a port here forces it back to the unconnected role, restoring the port sets the
+# switch had before the Ixia cable was installed.
+#
+# Structure
+# ---------
+#   <hostname>: [<label_port>, <label_port>, ...]
+#
+# - <hostname> is the switch hostname exactly as Noga reports it in Common.Name
+#   (e.g. r-bison-13). Keyed by switch, not by setup: the cable is physically in the switch,
+#   so it follows the switch into whatever setup and whatever left_tg/right_tg alias it gets.
+# - <label_port> is the FRONT-PANEL cage number, unsplit parent (43 means the whole cage, and
+#   automatically covers swp43s0 / swp43s1 / ... when the port is split). Label port is used
+#   because it is the only identity that survives a redeploy to a different NOS - the same cage
+#   is an SDK logical port on DVS, swpN on Cumulus and EthernetN on SONiC.
+#
+# Always on: unlike port_selection_config.yaml there is no enabling flag, because cabling is a
+# physical fact rather than a per-run test choice. Switches absent from this file, and a missing
+# file entirely, are a complete no-op.
+#
+# A listed port that is NOT actually plugged fails the run - that means the cabling described
+# here no longer matches the lab.
+
+# Setup nv_performance_r-bison-14 (SPC5, site MTR): both TGs have Ixia on some cages.
+r-bison-13: [43, 44]
+r-bison-15: [21, 22]

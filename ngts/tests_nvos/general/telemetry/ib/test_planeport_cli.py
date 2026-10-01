@@ -25,6 +25,7 @@ from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
+from ngts.tests_nvos.general.telemetry.ib import umf_churn_helpers as umf_churn
 from ngts.tests_nvos.general.telemetry.ib.constants import (
     ALL_APIS,
     API_GNMIC,
@@ -33,6 +34,7 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     GNMI_PACKET_OCTET_LEAVES,
     GnmiYangPaths,
     IfaceType,
+    NVBUG_6152697,
     PlanePortState,
     PLANE_PORT_TOGGLE_CYCLES,
     PLANE_PORT_TOGGLE_SETTLE_SEC,
@@ -176,8 +178,13 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
     Toggling the plane-port knob must immediately change the visibility of
     plane-port interfaces, and the toggle must be stable across the
     enable/disable stress cycles (test plan section 5.2 step 8).
+
+    Also asserts NVBug 6152697 / UMF !195: no alias Data-index-out-of-range
+    ERROR during plane-port enable/disable churn, and post-settle Aport
+    ALIAS_PORT_MAP rows stay consistent.
     """
     general_cli = GeneralCliCommon(engines.dut)
+    umf_marker = umf_churn.place_umf_churn_marker(engines, f"planeport-enable-disable-{api}")
     # sym-mgr / gpu-telemetry only exist on cluster-telemetry platforms
     # (Crocodile / DGX). On a plain multi-planar switch they are absent, so
     # monitor only the containers actually present and skip the restart check
@@ -269,6 +276,19 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
                     f"{name} restarted during plane-port toggle stress: "
                     f"RestartCount {before} -> {after}"
                 )
+
+    with allure.step(
+        f"NVBug {NVBUG_6152697} / UMF !195: no alias Data-index-out-of-range ERROR during plane-port churn"
+    ):
+        umf_churn.assert_no_alias_data_index_errors(engines, umf_marker)
+        # Sample steady Aports (always present); plane aliases disappear when the
+        # knob ends disabled after the stress loop.
+        aport_names = [
+            ibh.connectivity_label_to_nvue(n)
+            for n in setup_topology.all_planarized_ports()
+        ]
+        aport_sample = umf_churn.sample_port_names(aport_names or [aport.name])
+        umf_churn.assert_alias_port_map_consistent(engines, aport_sample)
 
 
 # ---------------------------------------------------------------------------

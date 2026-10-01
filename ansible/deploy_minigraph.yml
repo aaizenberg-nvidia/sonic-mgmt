@@ -46,12 +46,6 @@
             path: "/usr/local/bin/enable-dynamic-buffer.py"
             mode: "0755"
 
-        - name: Deploy specific device configuration files
-          include: deploy_device_configs.yml
-          vars:
-            dut_hwsku: "{{ sonic_hwsku }}"
-            dut_hostname: "{{ ansible_ssh_host }}"
-
         - name: Reload minigraph.
           shell: config load_minigraph -y
 

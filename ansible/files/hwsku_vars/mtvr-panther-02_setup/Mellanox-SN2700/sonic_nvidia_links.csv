@@ -23,12 +23,12 @@ mtvr-panther-02,Ethernet80,mtvr-anaconda-01,ethernet 1/21,100000,121,Access
 mtvr-panther-02,Ethernet84,mtvr-anaconda-01,ethernet 1/22,100000,122,Access
 mtvr-panther-02,Ethernet88,mtvr-anaconda-01,ethernet 1/23,100000,123,Access
 mtvr-panther-02,Ethernet92,mtvr-anaconda-01,ethernet 1/24,100000,124,Access
-mtvr-panther-02,Ethernet96,mtvr-anaconda-01,ethernet 1/25,100000,125,Access
-mtvr-panther-02,Ethernet100,mtvr-anaconda-01,ethernet 1/26,100000,126,Access
+mtvr-panther-02,Ethernet96,mtvr-anaconda-01,ethernet 1/25/1,50000,125,Access
+mtvr-panther-02,Ethernet100,mtvr-anaconda-01,ethernet 1/25/2,50000,126,Access
 mtvr-panther-02,Ethernet104,mtvr-anaconda-01,ethernet 1/27,100000,127,Access
 mtvr-panther-02,Ethernet108,mtvr-anaconda-01,ethernet 1/28,100000,128,Access
 mtvr-panther-02,Ethernet112,mtvr-anaconda-01,ethernet 1/29,100000,129,Access
 mtvr-panther-02,Ethernet116,mtvr-anaconda-01,ethernet 1/30,100000,130,Access
-mtvr-panther-02,Ethernet120,mtvr-anaconda-01,ethernet 1/31/1,50000,131,Access
-mtvr-panther-02,Ethernet124,mtvr-anaconda-01,ethernet 1/31/2,50000,132,Access
-mtvr-anaconda-01,ethernet 1/32,mtvr-r740-07,p4p1,100000,101-132,Trunk
+mtvr-panther-02,Ethernet120,mtvr-anaconda-01,ethernet 1/31,100000,131,Access
+mtvr-panther-02,Ethernet124,mtvr-anaconda-01,ethernet 1/32,100000,132,Access
+mtvr-anaconda-01,ethernet 1/26,mtvr-r740-07,p4p1,100000,101-132,Trunk

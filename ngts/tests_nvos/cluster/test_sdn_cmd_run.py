@@ -30,6 +30,7 @@ ROTATION_POLICY_MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MiB
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_sdn_cmd_rejection(engines, devices, has_loopbox, random_api):
     """
@@ -73,6 +74,7 @@ def test_sdn_cmd_rejection(engines, devices, has_loopbox, random_api):
 
 
 @disabled_access_ports
+@pytest.mark.dut_reboot
 @pytest.mark.nmx
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 def test_sdn_get_cmd(
@@ -206,6 +208,7 @@ def test_sdn_get_cmd(
 
 @disabled_access_ports
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_sdn_set_cmd(engines, devices, has_loopbox, setup_name, standalone_system, random_api):
     """
@@ -340,6 +343,7 @@ def test_sdn_set_cmd(engines, devices, has_loopbox, setup_name, standalone_syste
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.disable_loganalyzer
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_sdn_invalid_cmd(engines, devices, has_loopbox, setup_name, random_api):
@@ -401,6 +405,7 @@ def test_sdn_invalid_cmd(engines, devices, has_loopbox, setup_name, random_api):
 
 @disabled_access_ports
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 def test_sdn_cmd_rotation_policy(
     engines, devices, has_loopbox, setup_name, standalone_system, random_api,

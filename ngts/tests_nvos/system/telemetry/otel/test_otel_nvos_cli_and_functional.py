@@ -3,18 +3,18 @@
 Implements the NVOS ``OTEL_TP`` plan items owned by the NVOS verification suite,
 kept separate from the ported Cumulus modules in this folder:
 
-* Section 4.1 :func:`test_otel_cli_base_export_config` - base OTLP export subtree.
-* Section 4.2 :func:`test_otel_cli_destinations` - destination lifecycle + overrides.
-* Section 4.3 :func:`test_otel_cli_labels_and_metric_classes` - labels, classes, intervals.
-* Section 4.4 :func:`test_otel_cli_stats_groups` - stats-group lifecycle.
-* Section 5.2 :func:`test_otel_metric_class_disable_during_capture` - class and
+* Section 4.1 :func:`test_otel_cli_base_export_config` — base OTLP export subtree.
+* Section 4.2 :func:`test_otel_cli_destinations` — destination lifecycle + overrides.
+* Section 4.3 :func:`test_otel_cli_labels_and_metric_classes` — labels, classes, intervals.
+* Section 4.4 :func:`test_otel_cli_stats_groups` — stats-group lifecycle.
+* Section 5.2 :func:`test_otel_metric_class_disable_during_capture` — class and
   sub-class disable mid-capture.
-* Section 5.3 :func:`test_otel_plus_gnmi_parallel` - OTEL and gNMI coexistence.
+* Section 5.3 :func:`test_otel_plus_gnmi_parallel` — OTEL and gNMI coexistence.
 
 Explicit coverage row that skips with a precise blocker:
 
 * Section 4.2 client-certificate leg :func:`test_otel_cli_destination_client_certificate`
-  - needs a DUT client certificate the OTEL harness does not stage today.
+  — needs a DUT client certificate the OTEL harness does not stage today.
 
 The two groups differ in what they need from the setup. Every Section 4 item is
 CLI-only: the DUT is configured and read back through the ``applied`` datastore,
@@ -161,7 +161,7 @@ def otel_cli_ca_certificate(engines) -> str:
 
 
 # =============================================================================
-# Section 4.1 - base OTLP export configuration
+# Section 4.1 — base OTLP export configuration
 # =============================================================================
 
 
@@ -169,7 +169,7 @@ def otel_cli_ca_certificate(engines) -> str:
 def test_otel_cli_base_export_config(
     engines, otel_cli_clean_telemetry, transport, random_api
 ):
-    """Section 4.1 - default visibility, base enablement, and leaf/subtree/root unset.
+    """Section 4.1 — default visibility, base enablement, and leaf/subtree/root unset.
 
     Runs once per OTLP transport (``grpc``, ``http``); the ``encoding`` steps exist
     only on ``http``.
@@ -256,7 +256,7 @@ def test_otel_cli_base_export_config(
 
 
 # =============================================================================
-# Section 4.2 - destinations
+# Section 4.2 — destinations
 # =============================================================================
 
 
@@ -264,7 +264,7 @@ def test_otel_cli_base_export_config(
 def test_otel_cli_destinations(
     engines, otel_cli_export_enabled, otel_cli_ca_certificate, transport, random_api
 ):
-    """Section 4.2 - destination create/show/remove plus per-destination overrides.
+    """Section 4.2 — destination create/show/remove plus per-destination overrides.
 
     Runs once per OTLP transport (``grpc``, ``http``); the destination address
     family is selected at random, as the plan specifies.
@@ -375,7 +375,7 @@ def test_otel_cli_destinations(
 
 
 def test_otel_cli_destination_client_certificate():
-    """Section 4.2 (client-certificate leg) - per-destination mutual-TLS override.
+    """Section 4.2 (client-certificate leg) — per-destination mutual-TLS override.
 
     Intended flow (plan Section 4.2 step 3): stage a destination with
     ``client-certificate <id>``, apply, and verify the override in the
@@ -395,7 +395,7 @@ def test_otel_cli_destination_client_certificate():
 
 
 # =============================================================================
-# Section 4.3 - labels, metric classes and sample intervals
+# Section 4.3 — labels, metric classes and sample intervals
 # =============================================================================
 
 
@@ -403,7 +403,7 @@ def test_otel_cli_destination_client_certificate():
 def test_otel_cli_labels_and_metric_classes(
     engines, otel_cli_export_enabled, metric_class, random_api
 ):
-    """Section 4.3 - labels, metric-class enablement, sample intervals and their unsets.
+    """Section 4.3 — labels, metric-class enablement, sample intervals and their unsets.
 
     Runs once per metric family. The ``class phy`` steps apply only to the families
     that expose one; the two closing steps cover the family-level ``export`` and
@@ -552,12 +552,12 @@ def test_otel_cli_labels_and_metric_classes(
 
 
 # =============================================================================
-# Section 4.4 - stats groups
+# Section 4.4 — stats groups
 # =============================================================================
 
 
 def test_otel_cli_stats_groups(engines, otel_cli_export_enabled, random_api):
-    """Section 4.4 - stats-group creation, show, update and unset across two groups."""
+    """Section 4.4 — stats-group creation, show, update and unset across two groups."""
     dut = engines.dut
     system = System()
     groups = system.telemetry.stats_group
@@ -673,7 +673,7 @@ def test_otel_cli_stats_groups(engines, otel_cli_export_enabled, random_api):
 
 
 # =============================================================================
-# Section 5.2 - metric-class and sub-class disable during capture
+# Section 5.2 — metric-class and sub-class disable during capture
 # =============================================================================
 
 
@@ -696,12 +696,12 @@ def test_otel_metric_class_disable_during_capture(
     engines, devices, otel_suite_single, is_ib_router, tmp_path, random_api,
     data_path_transport
 ):
-    """Section 5.2 steps 4-5 - disable a class, then a sub-class of another class.
+    """Section 5.2 steps 4-5 — disable a class, then a sub-class of another class.
 
     Steps 1-3 (OTEL values against the matching CLI fields) stay with the ported
     suite, which on NVOS means ``test05_otel_platform_stats_validation`` for the
     platform sensors and ``test_interface_qos_05_interface_in_broadcast_pkts`` for
-    the interface counters - neither is ``cumulus_only``, so both run on NVOS. The
+    the interface counters — neither is ``cumulus_only``, so both run on NVOS. The
     remaining ported per-counter validators are ungated too but skip themselves
     here: they resolve Cumulus ``ether_stats``/``tc_tx`` metric names, of which NVOS
     exports none (``coexistence.INTERFACE_GNMI_TO_OTEL_METRIC_NVOS`` holds
@@ -835,7 +835,7 @@ def test_otel_metric_class_disable_during_capture(
 
 
 # =============================================================================
-# Section 5.3 - OTEL and gNMI in parallel
+# Section 5.3 — OTEL and gNMI in parallel
 # =============================================================================
 
 
@@ -843,7 +843,7 @@ def test_otel_metric_class_disable_during_capture(
 def test_otel_plus_gnmi_parallel(
     engines, devices, otel_suite_single, tmp_path, random_api
 ):
-    """Section 5.3 - OTEL export and a gNMI subscription coexist without interfering.
+    """Section 5.3 — OTEL export and a gNMI subscription coexist without interfering.
 
     On NVOS both paths are served by the same telemetry core (UMF), so the risk this
     covers is one path disturbing the other. The test keeps a gNMI subscription live

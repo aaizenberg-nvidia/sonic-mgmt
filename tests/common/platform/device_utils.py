@@ -85,6 +85,45 @@ def fanout_switch_port_lookup(fanout_switches, dut_name, dut_port):
     return None, None
 
 
+def get_primary_fanout(dut, fanouthosts):
+    """
+    The ports of a DUT may be spread over several fanouts.
+
+    Return the fanout holding most of the links of the DUT, None when the DUT has no fanout.
+    """
+    dut_port_prefix = encode_dut_port_name(dut.hostname, '')
+    link_counts = {}
+    for fanout_name, fanout in fanouthosts.items():
+        # Map may list each DUT port twice (name + alias); count unique peers.
+        peer_ports = {peer_port for dut_port, peer_port in fanout.host_to_fanout_port_map.items()
+                      if dut_port.startswith(dut_port_prefix)}
+        if peer_ports:
+            link_counts[fanout_name] = len(peer_ports)
+
+    logging.info("Number of links per fanout of {}: {}".format(dut.hostname, link_counts))
+    if not link_counts:
+        return None
+
+    return fanouthosts[max(link_counts, key=link_counts.get)]
+
+
+def get_primary_fanout_peer(dut, interface, fanouthosts):
+    """
+    Return the (fanout, fanout_port) peer of an interface on the primary fanout.
+
+    Returns (None, None) when the interface is wired to any other fanout.
+    """
+    primary_fanout = get_primary_fanout(dut, fanouthosts)
+    primary_fanouthosts = {primary_fanout.hostname: primary_fanout} if primary_fanout else {}
+
+    fanout, fanout_port = fanout_switch_port_lookup(primary_fanouthosts, dut.hostname, interface)
+    # The connection graph may hold the port alias, sfputil needs the SONiC name
+    if fanout:
+        fanout_port = fanout.fanout_port_alias_to_name.get(fanout_port, fanout_port)
+
+    return fanout, fanout_port
+
+
 def get_dut_psu_line_pattern(dut):
     if "201811" in dut.os_version or "201911" in dut.os_version:
         psu_line_pattern = re.compile(r"PSU\s+(\d)+\s+(OK|NOT OK|NOT PRESENT)")
@@ -463,14 +502,20 @@ def verify_yang(duthost):
         raise RebootHealthError("Yang validation failed")
 
 
-@pytest.fixture
-def verify_dut_health(request, duthosts, rand_one_dut_hostname, tbinfo):
+def _verify_dut_health_for_host(request, duthost, tbinfo):
     """
-    Performs health check on single DUT defined by rand_one_dut_hostname before and after a test
+    Perform health checks on a DUT before and after a test.
+
+    Args:
+        request: Pytest request object.
+        duthost: DUT host to check.
+        tbinfo: Testbed information.
+
+    Returns:
+        Iterator that performs post-test checks during fixture teardown.
     """
     global test_report
     test_report = {}
-    duthost = duthosts[rand_one_dut_hostname]
     check_services(duthost)
     check_interfaces_and_transceivers(duthost, request)
     check_neighbors(duthost, tbinfo)
@@ -493,6 +538,46 @@ def verify_dut_health(request, duthosts, rand_one_dut_hostname, tbinfo):
     check_all = all([check is True for check in list(test_report.values())])
     pytest_assert(check_all, "Health check failed after reboot: {}"
                   .format(test_report))
+
+
+@pytest.fixture
+def verify_dut_health(request, duthosts, rand_one_dut_hostname, tbinfo):
+    """
+    Perform health checks on the randomly selected DUT.
+
+    Args:
+        request: Pytest request object.
+        duthosts: Available DUT hosts.
+        rand_one_dut_hostname: Randomly selected DUT hostname.
+        tbinfo: Testbed information.
+
+    Returns:
+        Iterator that performs post-test checks during fixture teardown.
+    """
+    duthost = duthosts[rand_one_dut_hostname]
+    yield from _verify_dut_health_for_host(request, duthost, tbinfo)
+
+
+@pytest.fixture
+def verify_dut_health_enum_frontend(
+        request, duthosts, enum_rand_one_per_hwsku_frontend_hostname,
+        tbinfo, setup_dualtor_mux_ports):
+    """
+    Perform health checks on the enumerated frontend DUT.
+
+    Args:
+        request: Pytest request object.
+        duthosts: Available DUT hosts.
+        enum_rand_one_per_hwsku_frontend_hostname: Enumerated frontend DUT hostname.
+        tbinfo: Testbed information.
+        setup_dualtor_mux_ports: Keeps the dual-ToR mux setup active
+            throughout the health checks.
+
+    Returns:
+        Iterator that performs post-test checks during fixture teardown.
+    """
+    duthost = duthosts[enum_rand_one_per_hwsku_frontend_hostname]
+    yield from _verify_dut_health_for_host(request, duthost, tbinfo)
 
 
 @pytest.fixture
@@ -1326,24 +1411,37 @@ def get_dpu_ip(duthost, dpu_index):
 
 
 def get_dpu_port(duthost, dpu_index):
+    """Return the gNMI port for a DPU index from the CONFIG_DB 'DPU' table.
+
+    gnmi_port is a 'DPU' table attribute; 'DPUS' is only the name-to-midplane
+    mapping and never carries gnmi_port. So gNMI-port lookup uses 'DPU'
+    exclusively, kept separate from inventory discovery.
+    """
     config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
     if not config_facts:
         logger.error("Failed to retrieve config_facts from DUT")
         return None
 
-    dpu_section = config_facts.get('DPU', {})
+    # gnmi_port lives only in the 'DPU' table; do not fall back to 'DPUS'.
+    dpu_section = config_facts.get('DPU') or {}
     if not dpu_section:
-        logger.error("DPU section not found in config_facts")
+        logger.error("DPU table not found in config_facts (gnmi_port needs 'DPU')")
         return None
 
-    dpu_key = 'dpu{}'.format(dpu_index)
-    # Check if the DPU exists in the configuration
-    if dpu_key not in dpu_section:
-        logger.error("DPU '{}' not found in config_facts. Available DPUs: {}".format(
-            dpu_key, list(dpu_section.keys())))
+    # DPU keys may be plain (dpu0) or hostname-prefixed (<host>-dpu0) -> match trailing index.
+    dpu_config = None
+    for name, cfg in dpu_section.items():
+        # Grab the trailing number of the key (dpu3 / <host>-dpu3 -> 3).
+        m = re.search(r'(\d+)$', str(name))
+        if m and int(m.group(1)) == int(dpu_index):
+            dpu_config = cfg
+            break
+    if dpu_config is None:
+        logger.error("DPU index %s not found in DPU table. Available: %s",
+                     dpu_index, list(dpu_section.keys()))
         return None
 
-    dpu_config = dpu_section[dpu_key]
+    # Extract the gNMI port for this DPU.
     port = dpu_config.get('gnmi_port', None)
     if port is None:
         logger.error("gnmi_port not found in config_facts for dpu_index {}".format(dpu_index))
@@ -1364,7 +1462,9 @@ def get_configured_dpu_names(duthost):
         logger.error("Failed to retrieve config_facts from DUT")
         return []
 
-    dpu_section = config_facts.get('DPU', {})
+    # DPU names may live under the singular 'DPU' table or the plural 'DPUS'
+    # table depending on the platform/config schema (e.g. Cisco 8102 uses 'DPUS').
+    dpu_section = config_facts.get('DPU') or config_facts.get('DPUS') or {}
     if not dpu_section:
         return []
 
@@ -1375,6 +1475,76 @@ def get_configured_dpu_names(duthost):
 
     names = [str(k) for k in dpu_section.keys()]
     return sorted(names, key=_dpu_sort_key)
+
+
+def get_configured_dpu_indices(duthost, include_admin_down=False):
+    """
+    Return the actual DPU indices configured on the DUT (e.g. dpu3 -> 3).
+
+    Indices are parsed from the real DPU identities, not a positional count,
+    so a non-contiguous table (dpu1, dpu3) yields [1, 3] rather than [0, 1].
+    By default only DPUs whose CHASSIS_MODULE admin_status is affirmatively
+    'up' are returned (fail closed): entries that are admin-down, missing
+    from CHASSIS_MODULE, or missing admin_status are skipped so unverified
+    DPUs are never selected implicitly. Pass include_admin_down=True to
+    return every configured index regardless of admin state.
+    """
+    # Reuse the DPU/DPUS table selection + ordering from get_configured_dpu_names.
+    names = get_configured_dpu_names(duthost)
+    if not names:
+        return []
+
+    # Admin state lives in the CHASSIS_MODULE table, keyed by 'DPU<index>'.
+    config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
+    chassis_modules = (config_facts or {}).get('CHASSIS_MODULE') or {}
+
+    indices = []
+    for name in names:
+        # Parse the trailing number so dpu3 / <host>-dpu3 both map to 3.
+        m = re.search(r'(\d+)$', str(name))
+        if not m:
+            logger.warning("Skipping DPU entry without a numeric index: %r", name)
+            continue
+        idx = int(m.group(1))
+        if include_admin_down:
+            # Caller explicitly asked for every configured index.
+            indices.append(idx)
+            continue
+        # Fail closed: only an affirmative admin_status == 'up' selects a DPU
+        # for discovery. A missing CHASSIS_MODULE entry or missing/unexpected
+        # admin_status means the DPU's state cannot be verified, and it must
+        # not be picked up implicitly (e.g. for a firmware upgrade); use
+        # include_admin_down=True or explicit target indices to override.
+        admin_status = chassis_modules.get('DPU{}'.format(idx), {}).get('admin_status')
+        if admin_status is None:
+            logger.warning("Skipping DPU%d: no admin_status in CHASSIS_MODULE; state cannot be verified", idx)
+            continue
+        if str(admin_status).lower() != 'up':
+            logger.info("Skipping DPU%d with admin_status=%r", idx, admin_status)
+            continue
+        indices.append(idx)
+
+    # Deduplicate and keep deterministic ascending order.
+    return sorted(set(indices))
+
+
+def resolve_upgrade_dpu_indices(duthost, ss_target_indices=None):
+    """
+    Resolve which DPU indices a SmartSwitch upgrade should target.
+
+    Precedence: an explicit --ss_target_indices selection always wins and is
+    honored exactly as given; only when it is absent do we fall back to the
+    admin-up DPUs auto-discovered from CONFIG_DB.
+
+    ss_target_indices is the raw option value (comma-separated string such as
+    "0,3,5"); returns a list of ints. Kept as a standalone helper so this
+    precedence is unit-testable without importing the pytest test module.
+    """
+    # Operator explicitly selected DPUs -> honor exactly that selection, never override.
+    if ss_target_indices:
+        return [int(x.strip()) for x in ss_target_indices.split(",") if x.strip()]
+    # No explicit selection -> upgrade the actual admin-up DPUs discovered from CONFIG_DB.
+    return get_configured_dpu_indices(duthost)
 
 
 def check_dpu_reachable_from_npu(duthost, dpuhost_name, dpu_index):

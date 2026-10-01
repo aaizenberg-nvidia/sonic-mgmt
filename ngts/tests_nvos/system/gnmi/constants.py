@@ -5,6 +5,37 @@ class GnmiMode:
     ALL_MODES = [ONCE, POLL, STREAM]
 
 
+class GnmiStreamMode:
+    """
+    gnmic ``--stream-mode`` values (gNMI SubscriptionMode).
+
+    gnmic defaults to TARGET_DEFINED, so a STREAM subscription that does not pass this flag
+    lets the server pick the mode. Tests that assert SAMPLE or ON_CHANGE semantics must
+    request the mode explicitly.
+    """
+    SAMPLE = 'sample'
+    ON_CHANGE = 'on-change'
+    TARGET_DEFINED = 'target-defined'
+    ALL_MODES = [SAMPLE, ON_CHANGE, TARGET_DEFINED]
+
+
+class GnmiPaths:
+    """gNMI paths used by the system gnmi tests. Format with .format(name=..., leaf=...)."""
+    INTERFACES = 'interfaces/interface'
+    INTERFACE_BY_NAME = INTERFACES + '[name={name}]'
+    INTERFACE_WILDCARD = INTERFACES + '[name=*]'
+    INTERFACE_LEAF = INTERFACE_BY_NAME + '/{leaf}'
+    INTERFACE_WILDCARD_LEAF = INTERFACE_WILDCARD + '/{leaf}'
+
+    STATE_COUNTERS = 'state/counters'
+    STATE_COUNTER_LEAF = STATE_COUNTERS + '/{leaf}'
+
+    # Firmware-register-backed diagnostics, subscribed as a subtree so the server enumerates the
+    # leaves. More expensive to sample than the cached state families, and read only via ONCE
+    # elsewhere in the suite (Redmine 5230671 item 4).
+    PHY_DIAG_STATE = 'phy-diag/state'
+
+
 GNMI_INSTALLED = 'gnmi-server'
 
 DUT_HOSTNAME_FOR_CERT = 'nvos-dut'
@@ -22,11 +53,109 @@ MAX_GNMI_SUBSCRIBERS = 10
 MAX_GNMI_CONNECTIVITY_TIME = 6
 MAX_GNMI_BAD_SUBSCRIBERS = 100
 
+# Notification timestamps are nanoseconds since the epoch (gNMI spec section 2.2.1), so every
+# per-leaf timing check converts through this.
+NANOSEC_PER_SEC = 1_000_000_000
+
 # Seconds a STREAM subscription flows before SIGINT.
 STREAM_SUBSCRIBE_WINDOW_SEC = 8
 
 # gnmic SAMPLE stream-mode interval (one result-set per interval).
 STREAM_SUBSCRIBE_SAMPLE_INTERVAL = '1s'
+
+# Wider than STREAM_SUBSCRIBE_WINDOW_SEC: the window starts at launch and the server registers
+# subscriptions serially, so the last subscriber starts streaming seconds in.
+STREAM_SUBSCRIBE_LOAD_WINDOW_SEC = 20
+
+# Per-leaf continuity tolerance for the load tests, as a multiple of the sample interval. Much
+# looser than HEARTBEAT_TOLERANCE_FACTOR because those subscriptions run MAX_GNMI_SUBSCRIBERS deep
+# over hundreds of paths, where sample jitter is expected; the check is there to catch a leaf that
+# goes silent, not to measure cadence precision.
+STREAM_SUBSCRIBE_LOAD_TOLERANCE_FACTOR = 5
+
+
+# ---------------------------------------------------------------------------
+# suppress-redundant / heartbeat subscriptions (gNMI spec 3.5.1.5.1, 3.5.1.5.2)
+# ---------------------------------------------------------------------------
+
+# nv-gnmi accepts sub-second sample intervals, so the sample interval stays short and the
+# heartbeat is the long timer actually under test. Some other gNMI agents enforce a 30s floor and
+# answer SAMPLE_INTERVAL_TOO_LOW; because nv-gnmi does not, the tests fail on such a refusal
+# instead of skipping, so a regression in what the agent accepts cannot pass unnoticed.
+HEARTBEAT_SAMPLE_INTERVAL = '2s'
+HEARTBEAT_INTERVAL_SHORT = '10s'
+HEARTBEAT_INTERVAL = '20s'
+HEARTBEAT_INTERVAL_LONG = '30s'
+
+# Swept by the core suppress-redundant heartbeat test: a server can honor one timer value and
+# not another (e.g. rounding a heartbeat down onto the sample grid), so the contract is only
+# proven across a range.
+HEARTBEAT_INTERVALS = (HEARTBEAT_INTERVAL_SHORT, HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL_LONG)
+
+# Heartbeat epochs a test observes before asserting continuity. Two epochs prove the resend
+# repeats rather than being a one-off, so three gives one epoch of margin.
+HEARTBEAT_EPOCHS_TO_OBSERVE = 3
+
+# gNMI does not promise exact resend timing, so a resend counts as on-time when it lands within
+# this factor of the heartbeat interval.
+HEARTBEAT_TOLERANCE_FACTOR = 1.5
+
+# Added to every heartbeat window: the server registers subscriptions serially, so the last
+# subscriber of a concurrent batch starts its first epoch seconds after launch.
+HEARTBEAT_WINDOW_SLACK_SEC = 15
+
+# Seconds into a heartbeat window at which a perturbation (link down, feature toggle, ...) is
+# injected, so there are heartbeat epochs both before and after it.
+HEARTBEAT_PERTURBATION_AT_SEC = 20
+
+# Share of leaves that must arrive on heartbeat cadence rather than on every sample, for the
+# subscriptions where a minority may legitimately move and cannot be named up front: a
+# firmware-backed subtree's analog readings (temperature, power, ...) change every sample and
+# differ per platform, and a wildcard spans interfaces whose link state can genuinely change
+# mid-window. A majority still catches the regression this guards - suppression is per
+# subscription, so if it stopped engaging, every leaf would be sample-paced, not a minority.
+HEARTBEAT_PACED_SHARE_MIN = 0.5
+
+# Per-command timeout for the heartbeat module's shared client. Well above the rate-limit suite's
+# PER_REQUEST_TIMEOUT_SEC because this client also runs the ONCE enumerations that expand a
+# wildcard or a phy-diag subtree, which return far more than a capabilities probe does.
+HEARTBEAT_CLIENT_CMD_TIME_SEC = 60
+
+# The cheapest interface leaf to subscribe to, and the only static one a test can drive: it is
+# used to expand a wildcard into its interfaces, and as the leaf the ON_CHANGE control changes
+# mid-window.
+HEARTBEAT_LIGHT_INTERFACE_LEAF = 'state/description'
+
+# Leaves under ``interfaces/interface[name=<port>]`` that stay constant on an idle link, so
+# suppress-redundant actually engages and any resend observed must have come from the heartbeat.
+# Counter leaves are unsuitable: live traffic changes them, so they are never suppressed.
+HEARTBEAT_STATIC_INTERFACE_LEAVES = (
+    HEARTBEAT_LIGHT_INTERFACE_LEAF,
+    'state/admin-status',
+    'state/oper-status',
+    'state/ifindex',
+    'state/enabled',
+)
+
+# Leaves the "large leaf count" subscription must reach, per Redmine 5230671 item 4 ("18+
+# phy-diag/state leaves"). Well short of the ~2,826 the customer subscribed to, which that item
+# notes needs a fully populated Q3400-RA to represent.
+HEARTBEAT_LARGE_LEAF_COUNT_MIN = 18
+
+# The customer's subscription size from Redmine 5230671 item 4. Used as the reference the
+# wildcard phy-diag test reports its observed leaf count against, not as a pass/fail threshold:
+# how close a DUT gets is a property of how many of its ports are populated, so gating on it
+# would turn every smaller switch into noise while still saying nothing about the heartbeat.
+HEARTBEAT_CUSTOMER_SCALE_LEAF_COUNT = 2826
+
+# Single-leaf subscriptions opened alongside the heavy one in the mixed-cost test. Per Redmine
+# 5230671 item 7 the customer's ten light subscriptions passed and only the mix containing
+# phy-diag failed, so the asymmetry is the point: ten identical cheap ones do not reproduce it.
+HEARTBEAT_MIXED_LIGHT_SUBSCRIBERS = MAX_GNMI_SUBSCRIBERS - 1
+
+# How much raw gnmic stdout to report when a subscription delivered nothing. Enough to show the
+# opening lines (or a non-JSON banner), short enough to stay readable in a report.
+RAW_STREAM_EXCERPT_CHARS = 2000
 
 
 # PAM / load tests: wrong credentials for background ``gnmic`` clients (must not match a real user)
@@ -42,8 +171,14 @@ GNMI_PAM_BAD_PLAIN_LAUNCH_JOIN_SLACK_SEC = 90
 GNMI_PAM_BAD_PLAIN_THREAD_MIN_BEFORE_GOOD = 10
 # Timeout waiting for that readiness gate in ``_plain_bad_gnmi_background_start_and_wait_ready``.
 GNMI_PAM_BAD_PLAIN_READY_WAIT_SEC = 30.0
-# Delay between transient-error retries in ``_gnmic_capabilities_mtls_spiffe_success``.
+# ``_gnmic_capabilities_mtls_spiffe_success`` (DDoS/PAM-saturation tests): independent of
+# ``RECONNECT_CAPABILITIES_*`` so tuning post-restart reconnect does not retime these probes.
+GNMI_PAM_SPIFFE_CAPABILITIES_MAX_WAIT_SEC = 15
+GNMI_PAM_SPIFFE_CAPABILITIES_RETRY_INTERVAL_SEC = 2
+GNMI_PAM_SPIFFE_CAPABILITIES_MAX_ATTEMPTS = 5
 GNMI_PAM_SPIFFE_CAPABILITIES_TRANSIENT_RETRY_SLEEP_SEC = 1.0
+# Bounded SIGTERM→SIGKILL wait when tearing down test-owned gnmic processes.
+GNMI_PAM_GNMIC_TERMINATE_TIMEOUT_SEC = 5.0
 
 # gNMI server DDoS/rate-limit: requests per minute threshold; exceeding it yields local_rate_limited
 GNMI_RATE_LIMIT_REQ_PER_MIN = 60
@@ -79,6 +214,9 @@ class GnmiServerStatus:
 class GnmicErr:
     GNMIC_NOT_INSTALLED = 'gnmic: command not found'
     AUTH_FAIL = 'Authentication failed'
+    # Returned when the account itself is refused rather than the credentials being wrong - an
+    # expired password is rejected by PAM's account stage even though SSH still admits the user.
+    UNAUTHENTICATED = 'Unauthenticated'
     CERT_VERIFY_FAIL = 'failed to verify certificate'
     HANDSHAKE_FAIL = 'authentication handshake failed'
     AUTH_SERVICE_UNAVAILABLE = 'authentication service is unavailable'
@@ -88,15 +226,32 @@ class GnmicErr:
     DEADLINE_EXCEEDED = 'context deadline exceeded'
     RCV_ERROR = 'rcv error'
     RPC_ERROR = 'rpc error'
+    # A subscription naming even one path outside the YANG model is rejected wholesale, taking the
+    # valid paths in the same request down with it.
+    UNIMPLEMENTED = 'Unimplemented'
+    PATH_NOT_IN_YANG = 'does not exist in Yang Models'
+    # Some gNMI agents enforce a minimum SAMPLE interval and reject the subscription outright.
+    SAMPLE_INTERVAL_TOO_LOW = 'sample interval is set too low'
+    # gRPC UNAVAILABLE: the server accepted the connection and then dropped it without serving the RPC.
+    # Under authentication load the gNMI server does this at the handshake, before any gNMI-level reply.
+    SERVER_UNAVAILABLE = 'code = Unavailable'
 
     # Transient back-pressure errors the server returns while overloaded (e.g. Envoy rate limiting or
     # requests timing out under load). Safe to retry since the server recovers once load drops, so
     # reachability/recovery checks tolerate and retry them. Add new overload markers here.
     OVERLOAD_ERRS = [LOCAL_RATE_LIMITED, DEADLINE_EXCEEDED]
 
-    ALL_ERRS = [GNMIC_NOT_INSTALLED, AUTH_FAIL, HANDSHAKE_FAIL, AUTH_SERVICE_UNAVAILABLE,
-                REQUEST_FAILED, NO_SUBSCRIBER_SLOT_AVAILABLE, RCV_ERROR, RPC_ERROR,
-                CERT_VERIFY_FAIL] + OVERLOAD_ERRS
+    # How a client learns the server is too busy to authenticate it: the server names the cause, or it drops
+    # the connection at the handshake (``SERVER_UNAVAILABLE``, which is what the gNMI server was observed to
+    # do under failing-auth load), or it stops answering and the request hits its deadline.
+    # ``LOCAL_RATE_LIMITED`` is deliberately excluded - that is the request-per-minute limiter, which a test
+    # can trip by itself regardless of any other load.
+    SERVER_TOO_BUSY_ERRS = [AUTH_SERVICE_UNAVAILABLE, SERVER_UNAVAILABLE, DEADLINE_EXCEEDED]
+
+    ALL_ERRS = [GNMIC_NOT_INSTALLED, AUTH_FAIL, UNAUTHENTICATED, HANDSHAKE_FAIL,
+                AUTH_SERVICE_UNAVAILABLE, REQUEST_FAILED, NO_SUBSCRIBER_SLOT_AVAILABLE, RCV_ERROR,
+                RPC_ERROR, UNIMPLEMENTED, PATH_NOT_IN_YANG, CERT_VERIFY_FAIL,
+                SAMPLE_INTERVAL_TOO_LOW, SERVER_UNAVAILABLE] + OVERLOAD_ERRS
 
 
 class GrpcMsg:

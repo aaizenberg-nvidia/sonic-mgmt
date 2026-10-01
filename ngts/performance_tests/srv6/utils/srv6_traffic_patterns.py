@@ -1,7 +1,7 @@
 import os
 from collections import deque
 from ngts.constants.constants import BugHandlerConst
-from ngts.constants.performance_constants import PerfConsts, PortMappingOptionsConsts
+from ngts.constants.performance_constants import PerfConsts, PortMappingOptionsConsts, MRCConsts
 from ngts.helpers.performance.traffic_helpers import create_json_traffic_file_with_stream_list
 from ngts.performance_tests.srv6.utils.srv6_workloads import create_round_robin_stream
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
@@ -136,7 +136,9 @@ def get_ingress_ports_by_tg(ingress_ports, src_ports):
 
 def get_many_to_one_traffic(players, conf_args, traffic_type, dut_interfaces_ipv6_configuration_dict,
                             egress_ports, ingress_ports, create_workload_stream, congestion=False,
-                            template_suite="traffic_packets_json_files"):
+                            template_suite="traffic_packets_json_files", mrc_num_packets=None):
+    if mrc_num_packets is None:
+        mrc_num_packets = MRCConsts.get_many_to_one_mrc_num_packets(conf_args.get("chip_type"))
     traffic_jsons = {}
     ports = players['dut']['cli'].performance.get_right_left_ports_dict()
     left_ports, right_ports = ports["left_ports"], ports["right_ports"]
@@ -147,17 +149,20 @@ def get_many_to_one_traffic(players, conf_args, traffic_type, dut_interfaces_ipv
                                           traffic_type, template_suite, create_workload_stream,
                                           dut_interfaces_ipv6_configuration_dict, traffic_jsons,
                                           egress_ports, ingress_ports, src_ports=src_ports,
-                                          congestion=congestion)
+                                          congestion=congestion, mrc_num_packets=mrc_num_packets)
     return traffic_jsons
 
 
 def get_tg_many_to_one_traffic_params(players, player_alias, conf_args,
                                       traffic_type, template_suite, create_workload_stream,
                                       dut_interfaces_ipv6_configuration_dict, traffic_jsons,
-                                      egress_ports, ingress_ports, src_ports, congestion):
+                                      egress_ports, ingress_ports, src_ports, congestion,
+                                      mrc_num_packets=None):
     player_cli_obj = players[player_alias]['cli']
     traffic_parameters = player_cli_obj.performance.get_traffic_parameters(scenario=conf_args["scenario"],
                                                                            conf_args=conf_args)
+    if mrc_num_packets is not None:
+        traffic_parameters["mrc_num_packets"] = mrc_num_packets
     json_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests", template_suite,
                              conf_args["scenario"], f"{player_alias}_{conf_args['scenario']}_many_to_one.json")
     mloops_dict = dict(player_cli_obj.performance.mloops)

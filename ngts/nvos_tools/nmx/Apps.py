@@ -13,6 +13,7 @@ from ngts.nvos_tools.nmx.ClusterInternal import ClusterInternal
 from ngts.nvos_tools.nmx.Loglevel import Loglevel
 from ngts.nvos_tools.nmx.Logstream import Logstream
 from ngts.nvos_tools.nmx.Manager import Manager
+from ngts.nvos_tools.nmx.Otlp import Otlp
 from ngts.nvos_tools.nmx.RbacCluster import RbacApp
 from ngts.nvos_tools.nmx.Type import Type
 
@@ -39,6 +40,7 @@ class ClusterApp(BaseComponent):
         self.type = Type(self)
         self.rbac = RbacApp(self)
         self.internal = ClusterInternal(self)
+        self.otlp = Otlp(self)
         self.app_name = app_name
 
     def action_start_cluster_app(self, engine=None):

@@ -12,6 +12,12 @@ from .nasa_debug_utils import (  # noqa: F401 - re-exported public API
     nasa_debuggability_enable_all,
     nasa_debuggability_disable_all,
     get_file_size,
+    nasa_ct_dump_set,
+    get_nasa_ct_dump_enabled,
+    NASA_CT_DUMP_SENTINEL,
+    NASA_CT_DUMP_FILES,
+    NASA_MST_DUMP_PATTERNS,
+    get_techsupport_file_list,
 )
 
 logger = logging.getLogger(__name__)

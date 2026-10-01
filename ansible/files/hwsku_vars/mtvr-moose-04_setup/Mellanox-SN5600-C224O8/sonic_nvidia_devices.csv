@@ -1,6 +1,0 @@
-Hostname,ManagementIp,HwSku,Type,Protocol,Os,PortConfigIni
-mtvr-moose-04,10.245.20.42/22,Mellanox-SN5600-C224O8,DevSonic,,sonic
-mtvr-moose-15,10.245.20.45/22,Mellanox-SN5600-C224O8,FanoutLeaf,,sonic,files/hwsku_vars/mtvr-moose-04_setup/Mellanox-SN5600-C224O8/port_config.ini
-mtvr-r740-01,10.245.20.60,TestServ,Server,,
-pdu-10-245-2-23,10.245.2.23,Vertiv,Pdu,snmp,
-rcon-mtvr-rack-2-6,10.245.2.8,,ConsoleServer,ssh,sonic

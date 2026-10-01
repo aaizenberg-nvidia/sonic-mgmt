@@ -108,6 +108,28 @@ class LLDPTool:
         return bool(LLDPTool._ifconfig_running_re.search(ifconfig_output))
 
     @staticmethod
+    def wait_mgmt_port_carrier_up(engine, interface, timeout=60, poll_interval=5):
+        """
+        Poll is_mgmt_port_carrier_up until carrier is present or `timeout` seconds
+        elapse; return the final carrier state.
+
+        Any mgmt config apply (e.g. dhcp-client set/unset on another mgmt port)
+        re-runs interfaces-config, which bounces ALL mgmt ports with a 9-18s
+        carrier outage each. A one-shot carrier check right after such an apply
+        races that window, so callers asserting carrier as a precondition must
+        poll past it; 60s covers the observed recovery with margin while still
+        failing fast on a genuinely disconnected port.
+        """
+        end_time = time.time() + timeout
+        while True:
+            if LLDPTool.is_mgmt_port_carrier_up(engine, interface):
+                return True
+            if time.time() >= end_time:
+                return False
+            logging.info("No carrier on %s yet, rechecking in %ss", interface, poll_interval)
+            time.sleep(poll_interval)
+
+    @staticmethod
     def finish_dump_lldp_packets(engine: LinuxSshEngine):
         with allure.step("Kill tcpdump instances"):
             # `|| true` so a "no process found" exit from killall does not propagate

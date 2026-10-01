@@ -7,13 +7,7 @@ logic without import cycles (e.g. ``nvue`` → ``sonic`` → ``srv6`` → ``nvue
 import re
 
 from infra.tools.exceptions.test_issue import TestIssue
-from ngts.constants.performance_constants import PowerConsts
-
-
-SPC6_RAIL_LABEL_REGEX = (
-    r"\b(?P<label>swb_mps29816_\d+_STRESS_[A-Za-z0-9_]+_rail(?P<rail>\d+))_"
-    r"(?P<metric>[VIP]OUT)\s*:"
-)
+from ngts.constants.performance_constants import PowerConsts, RailModel
 
 
 def get_controllers_info_str_list(sensors_output):
@@ -40,16 +34,80 @@ def normalized_i2c_address(controller_name):
     return str(hex(int(address_match.group(1), 16)))
 
 
+def parse_i2c_bus_and_address(controller_name):
+    """Return ``(bus, address)`` from an lm-sensors chip name (``*-i2c-<bus>-<addr>``).
+
+    Unlike :func:`normalized_i2c_address`, this keeps the i2c bus so callers can
+    tell branches apart and separate ASIC buses from board buses that reuse the
+    same address (e.g. ``0x60`` on i2c-16 is VDD_main, on i2c-6/7 it is a board
+    PDB converter).
+
+    Args:
+        controller_name (str): lm-sensors chip name (e.g. ``mp29816-i2c-16-60``).
+
+    Returns:
+        Tuple[Optional[int], Optional[str]]: ``(bus, '0x..')``, or ``(None, None)``
+        when the name has no ``-i2c-<bus>-<addr>`` suffix.
+    """
+    if not controller_name:
+        return None, None
+    # Bus is decimal, address hex without "0x": "mp29816-i2c-16-61" -> bus 16, 0x61.
+    # Anchored to the end because driver names carry their own digits and hyphens
+    # (e.g. "raa228004-i2c-7-60"), so only the trailing pair identifies the controller.
+    match = re.search(r'-i2c-(\d+)-([0-9a-fA-F]+)\s*$', controller_name.strip())
+    if not match:
+        return None, None
+    bus = int(match.group(1))
+    address = str(hex(int(match.group(2), 16)))
+    return bus, address
+
+
+def _match_rail_by_label(chip_type, block_text):
+    """Return the first rail of ``chip_type`` whose ``label_regex`` matches text.
+
+    Fallback for descriptive/bench ``sensors`` dumps that expose rail tokens
+    instead of an i2c chip name.
+
+    Args:
+        chip_type (str): Chip identifier such as ``"SPC6"``.
+        block_text (str): Text chunk for one chip block.
+
+    Returns:
+        Optional[RailDef]: Matching rail definition, or ``None`` when no labeled
+        rail matches.
+    """
+    for rail in RailModel.rails_for_chip_type(chip_type):
+        if rail.label_regex and re.search(rail.label_regex, block_text):
+            return rail
+    return None
+
+
+def resolve_rail_name(chip_type, controller_name, block_text=None):
+    """Resolve a controller to its canonical rail name via the RailModel table.
+
+    Chip-agnostic. The primary key is the ``(i2c bus, address)`` pair (with
+    address-only matching for single-bank legacy chips whose rails set
+    ``buses=()``). When that misses, an optional label-regex fallback covers
+    descriptive/bench dumps.
+
+    Args:
+        chip_type (str): Chip identifier such as ``"SPC6"``.
+        controller_name (str): lm-sensors chip name (e.g. ``mp29816-i2c-16-60``).
+        block_text (Optional[str]): Chip block text used for the label fallback.
+
+    Returns:
+        Optional[str]: Canonical rail name, or ``None`` when nothing matches (the
+        caller decides the fallback display name).
+    """
+    bus, address = parse_i2c_bus_and_address(controller_name)
+    rail = RailModel.get_rail_def(chip_type, bus, address)
+    if rail is None and block_text:
+        rail = _match_rail_by_label(chip_type, block_text)
+    return rail.canonical_name if rail else None
+
+
 def parse_sensor_line(line):
     """Parse one line of sensor output into ``(channel, value_str, unit_str)`` or ``None``."""
-    spc6_rail_match = re.search(
-        SPC6_RAIL_LABEL_REGEX + r"\s+(-?\d*\.?\d+)\s+(m?[VAW])\b", line, re.I)
-    if spc6_rail_match:
-        channel = f"out{spc6_rail_match.group('rail')}"
-        value = spc6_rail_match.group(4)
-        unit = spc6_rail_match.group(5)
-        return channel, value, unit
-
     # Compact lm-sensors line: ``vout1: 12.0 V`` / ``iin: 500 mA`` / ``pout2: 1.2 W``
     # Group 1: measure prefix (v/i/p), group 2: channel (outN or in),
     # Group 3: numeric value, group 4: unit (V/A/W or mV/mA/mW).
@@ -62,8 +120,7 @@ def parse_sensor_line(line):
         if channel == "in":
             # lm-sensors uses ``in`` for the primary rail; power helpers expect ``out1``.
             channel = "out1"
-        measure_unit = unit if len(unit) == 1 else unit
-        return channel, value, measure_unit
+        return channel, value, unit
 
     # Parenthesized voltage line: ``Volt (out1): 1200 mV`` or ``Volt (in): 12.0 V``
     # Group 1: channel (in/out/outN), group 2: value, group 3: unit (V or mV).
@@ -124,77 +181,6 @@ def get_sensors_output_key(key, measure_unit):
     if unit_lower in ('mw', 'w'):
         return f"p{key}"
     raise TestIssue(f"Unrecognized measure unit {measure_unit} in sensors output parsing")
-
-
-def infer_spc6_supply_label(block_text):
-    """Map a full ``sensors`` chip block to a supply name matching ``POWER_TH_PER_ASIC`` regexes.
-
-    SPC6 SN5600-class switches expose many ``mp29816-i2c-<bus>-<addr>`` rails; labels live in
-    the block text (``ASIC_HVDD``, ``ASIC_VDD_TILE4``, ``DDR PMIC``, …).
-
-    Args:
-        block_text: Text chunk for one chip (from ``re.split(CONTROLLER_REGEX, ...)``).
-
-    Returns:
-        Canonical supply string used in power tables and threshold regexes.
-    """
-    text = " ".join(block_text.split())
-
-    if PowerConsts.SPC6_MARKER_DDR_PMIC in text:
-        return PowerConsts.SPC6_SUPPLY_DDR_PMIC
-
-    if (PowerConsts.SPC6_MARKER_CPU_PMIC in text
-            and PowerConsts.SPC6_MARKER_VDDCR in text):
-        return PowerConsts.SPC6_SUPPLY_VCORE_MAIN
-
-    if (re.search(PowerConsts.SPC6_REGEX_ASIC_VDD_MAIN, text)
-            and PowerConsts.SPC6_MARKER_TILE not in text):
-        return PowerConsts.SPC6_SUPPLY_VCORE_MAIN
-
-    if re.search(PowerConsts.SPC6_REGEX_ASIC_HVDD, text, re.I):
-        return PowerConsts.SPC6_SUPPLY_HVDD_TILES
-
-    dvdd_tile_match = re.search(PowerConsts.SPC6_REGEX_ASIC_DVDD_TILE, text)
-    if dvdd_tile_match:
-        tile = int(dvdd_tile_match.group(1))
-        tile_low, tile_high = (tile // 2) * 2, (tile // 2) * 2 + 1
-        return PowerConsts.SPC6_SUPPLY_DVDD_TILES_FMT.format(low=tile_low, high=tile_high)
-
-    vdd_tile_match = re.search(PowerConsts.SPC6_REGEX_ASIC_VDD_TILE, text)
-    if vdd_tile_match:
-        tile = int(vdd_tile_match.group(1))
-        tile_low, tile_high = (tile // 2) * 2, (tile // 2) * 2 + 1
-        return PowerConsts.SPC6_SUPPLY_VCORE_TILES_FMT.format(low=tile_low, high=tile_high)
-
-    if re.search(PowerConsts.SPC6_REGEX_ASIC_AVDD_TILE, text):
-        return PowerConsts.SPC6_SUPPLY_VDDSCC
-
-    if (PowerConsts.SPC6_MARKER_ASIC_HBID in text
-            or PowerConsts.SPC6_MARKER_HBID_TILE in text):
-        hbid_tile_match = re.search(PowerConsts.SPC6_REGEX_ASIC_HBID_TILE, text)
-        if hbid_tile_match:
-            tile = int(hbid_tile_match.group(1))
-            tile_low, tile_high = (tile // 2) * 2, (tile // 2) * 2 + 1
-            return PowerConsts.SPC6_SUPPLY_VCORE_TILES_FMT.format(low=tile_low, high=tile_high)
-        return PowerConsts.SPC6_SUPPLY_VCORE_TILES_45
-
-    if (PowerConsts.SPC6_MARKER_ASIC_OSFP in text
-            or PowerConsts.SPC6_MARKER_OSFPX in text):
-        return PowerConsts.SPC6_SUPPLY_OSFP_PHY
-
-    if re.search(PowerConsts.SPC6_REGEX_PDB, text):
-        return PowerConsts.SPC6_SUPPLY_PDB_CONVERTER
-
-    return PowerConsts.SPC6_SUPPLY_MISC_PMIC
-
-
-def get_spc6_rail_labels_by_channel(block_text):
-    """Return SPC6 raw rail labels keyed by ``outN`` channel from one ``sensors`` chip block."""
-    labels_by_channel = {}
-    for match in re.finditer(SPC6_RAIL_LABEL_REGEX, block_text, re.I):
-        channel = f"out{match.group('rail')}"
-        labels_by_channel[channel] = match.group('label')
-    return labels_by_channel
 
 
 def build_controllers_info_dicts_list(sensors_output):

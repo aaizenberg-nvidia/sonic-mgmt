@@ -27,8 +27,18 @@ from ngts.performance_tests.alibaba_performance.alibaba_leaf_scenarios.conftest 
     TEST_ID_ALI_PWS_SPINE_AR_ENABLED_ASYM_SPLIT,
     ALI_PWS_TESTS_LIST)
 from ngts.constants.constants import BugHandlerConst
+from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 logger = logging.getLogger(__name__)
+
+
+def _get_traffic_jsons(test_params, players, conf_args, chip_type):
+    """Build traffic JSONs, forwarding incremental_dip_num_packets for leaf traffic only."""
+    if test_params.is_leaf_scenario:
+        return get_alibaba_leaf_traffic(
+            players, conf_args,
+            incremental_dip_num_packets=SPCXRAConsts.PACKET_NUM_400G_x2[chip_type])
+    return test_params.traffic_function(players, conf_args)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +149,7 @@ class TestAlibabaLeafScenario:
                 configure_incremental_dips_on_tg(self.players)
 
         with allure.step("Get Alibaba traffic"):
-            traffic_jsons = test_params.traffic_function(self.players, conf_args)
+            traffic_jsons = _get_traffic_jsons(test_params, self.players, conf_args, self.chip_type)
 
         with allure.step("Run Traffic on all the ports"):
             run_traffic(self.players, self.scenario, traffic_jsons)
@@ -165,6 +175,10 @@ class TestAlibabaLeafScenario:
                 ignore_counter_list = ['tx_ecn_marked_tc_3']
             elif test_params.test_id in ALI_PWS_TESTS_LIST:
                 ignore_counter_list = ['egress_vlan_membership']
+
+            if is_redmine_issue_active([5145920])[0]:
+                self.players[PerfConsts.DUT_ALIAS]['cli'].performance.clear_syslog()
+
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=expected_bw,
@@ -206,7 +220,7 @@ class TestAlibabaLeafScenario:
 
             with allure.step(f"Testing packet size: {packet_size}"):
                 with allure.step(f"Get Alibaba traffic with packet size {packet_size}"):
-                    traffic_jsons = test_params.traffic_function(self.players, modified_conf_args)
+                    traffic_jsons = _get_traffic_jsons(test_params, self.players, modified_conf_args, self.chip_type)
 
                 with allure.step(f"Run Traffic on all the ports with packet size {packet_size}"):
                     run_traffic(self.players, self.scenario, traffic_jsons)

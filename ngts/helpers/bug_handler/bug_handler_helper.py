@@ -10,6 +10,7 @@ import logging
 import allure
 import math
 import pathlib
+import time
 
 from ansible.utils.unsafe_proxy import AnsibleUnsafeText
 from collections.abc import Mapping, Iterable
@@ -20,10 +21,10 @@ from datetime import datetime, timedelta
 from ngts.constants.constants import BugHandlerConst, InfraConst, FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE
 from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.nvos_tools.infra import ExceptionTool
-from devts.infra.tools.redmine.redmine_api import get_issue_fixed_in_version_value
+from devts.infra.tools.redmine.redmine_api import get_issue_fixed_in_version_value, get_issues_status
+from ngts.scripts.collect_air_simulation_logs import collect_air_simulation_logs
 from ngts.scripts.collect_simx_logs_on_not_success import collect_hypervisor_logs, dump_simx_data
 from devts.infra.tools.topology_tools.topology_setup_utils import get_topology_by_setup_name
-from ngts.helpers.redmine_cache_helper import access_redmine_cache
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +274,9 @@ def run_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, u
     return bug_handler_file_result
 
 
-def bug_handler_wrapper_err_msg(conf_path, redmine_project, branch, yaml_parsed_file, user,
-                                bug_handler_path, bug_handler_action={}, bug_handler_params={}):
+def bug_handler_wrapper_err_msg(conf_path: str, redmine_project: str, branch: str, yaml_parsed_file: str,
+                                user: str, bug_handler_path: str, bug_handler_action: dict = {},
+                                bug_handler_params: dict = {}) -> tuple[dict, float]:
     """
     call bug handler on sanitizer or log analyzer file and return results as dictionary
     :param conf_path: i.e, /tmp/sonic_bug_handler.conf
@@ -285,27 +287,66 @@ def bug_handler_wrapper_err_msg(conf_path, redmine_project, branch, yaml_parsed_
     :param bug_handler_path: i.e /auto/sw_tools/Internal/BugHandling/bin/handle_bug.py
     :param bug_handler_action: a dictionary that defined the actions for the bughandler
     :param bug_handler_params: a dictionary to define the params of the bughandler
-    :return: dictionary with bug handler results,
+    :return: tuple of (bug handler result dict, runtime in seconds),
     i.e,
-    {'file_name': '2022-06-21_23-24-07_orchagent-asan.log.40',
+    ({'file_name': '2022-06-21_23-24-07_orchagent-asan.log.40',
     'messages': ['INFO:handle_bug:reading configuration from', ...],
     'rc': 0,
     'action': 'update',
-    'bug_id': '1122554'}
+    'bug_id': '1122554'}, 1.23)
     """
 
-    bug_handler_file_result = run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, user,
-                                                           bug_handler_path, bug_handler_action, bug_handler_params)
+    bug_handler_file_result, runtime_secs = run_err_msg_bug_handler_tool(
+        conf_path, redmine_project, branch, yaml_parsed_file, user,
+        bug_handler_path, bug_handler_action, bug_handler_params)
 
     logger.info(f"Bug Handler RC: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_RC]}")
     logger.info(f"Bug Handler Status: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_STATUS]}")
     logger.info(f"Bug Handler Action: {bug_handler_file_result[BugHandlerConst.BUG_HANDLER_ACTION]}")
-    return bug_handler_file_result
+    return bug_handler_file_result, runtime_secs
 
 
-def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed_file, user, bug_handler_path,
-                                 bug_handler_action={}, bug_handler_params={}):
+def _collect_tech_support_for_ticket(bug_handler_params):
+    """Collect techsupport and enforce Redmine size limits. Raises on failure."""
+    tar_file_path_list = get_tech_support_from_switch(bug_handler_params)
+    # Note: Executed commands are now included directly in the ticket description via get_nvue_additional_info
+    # No longer attaching the commands file separately
+    return [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
 
+
+def _upload_tech_support_attachments(redmine_project, ticket_id, tar_file_path_list):
+    """Upload techsupport attachments to an existing ticket. Raises on failure."""
+    upload_script = BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT.get(
+        redmine_project, BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT["default"])
+    upload_cmd = (f"env LOG_FORMAT_JSON=1 {upload_script} --bug_id {ticket_id} "
+                  f"--attachments {' '.join(tar_file_path_list)}")
+    logger.info(f"Running uploading attachment command: {upload_cmd}")
+    upload_attachment_output = subprocess.run(upload_cmd, shell=True, capture_output=True)
+    upload_stdout, upload_error = upload_attachment_output.stdout, upload_attachment_output.stderr
+    logger.info(upload_stdout)
+
+    if not upload_error:
+        try:
+            upload_attachment_result = json.loads(upload_stdout)
+            if "error" in upload_attachment_result:
+                upload_error = str(upload_attachment_result)
+        except Exception as e:
+            upload_error = ExceptionTool.format_exception(e)
+    if upload_error:
+        err_msg = f"Failed to upload dump to ticket {ticket_id}: {upload_error}"
+        logger.error(err_msg)
+        raise RuntimeError(err_msg)
+
+
+def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: str, yaml_parsed_file: str,
+                                 user: str, bug_handler_path: str, bug_handler_action: dict = {},
+                                 bug_handler_params: dict = {}) -> tuple[dict, float]:
+    """
+    Run the bug handler tool for an error-message yaml file.
+
+    :return: tuple of (bug handler result dict, runtime in seconds)
+    """
+    runtime_secs = 0.0
     bug_handler_create_action = bug_handler_action.get("create", False)
     bug_handler_update_action = bug_handler_action.get("update", False)
     bug_handler_no_action = not bug_handler_create_action and not bug_handler_update_action
@@ -315,10 +356,14 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
     update_only = not bug_handler_action["create"] and bug_handler_action["update"]
     update_only_mode = '--update_only' if update_only else ''
     cli_type = bug_handler_params.get("cli_type", '')
+    # Initialized here so NVUE (and Sonic skip/no-action) still have a defined list for upload below.
+    tar_file_path_list = []
     if cli_type == "Sonic":
 
+        start_time = time.perf_counter()
         bug_handler_file_result = run_bug_handler_with_no_action(
             conf_path, redmine_project, branch, yaml_parsed_file, user, bug_handler_path)
+        runtime_secs = time.perf_counter() - start_time
         if not bug_handler_no_action:
             action_mode = get_action_based_on_no_action_results(
                 bug_handler_file_result, branch, bug_handler_params, bug_handler_update_action)
@@ -335,12 +380,22 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
                 if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
                     bug_handler_file_result["status"] = "done"
 
+        if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
+            try:
+                tar_file_path_list = _collect_tech_support_for_ticket(bug_handler_params)
+            except Exception as e:
+                err_msg = f"Techsupport collection failed; refusing to open/update ticket: {e}"
+                logger.error(err_msg)
+                raise RuntimeError(err_msg) from e
+
     if not bug_handler_no_action or cli_type != "Sonic":
         bug_handler_cmd = f"env LOG_FORMAT_JSON=1 {bug_handler_path} --cfg {conf_path} --project {redmine_project} " \
             f"--user {user} --branch {branch} --debug_level 2 " \
             f"--parsed_data '{yaml_parsed_file}' {no_action} {update_only_mode}"
 
+        start_time = time.perf_counter()
         bug_handler_output = _run_bug_handler_command(bug_handler_cmd)
+        runtime_secs = time.perf_counter() - start_time
         logger.info(f"Bug Handler Output: {bug_handler_output}")
         try:
             bug_handler_file_result = json.loads(bug_handler_output.message)
@@ -359,42 +414,24 @@ def run_err_msg_bug_handler_tool(conf_path, redmine_project, branch, yaml_parsed
     if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
         ticket_id = get_ticket_id(bug_handler_file_result)
         logger.info(f"the RM ticket id is: {ticket_id}")
-        tar_file_path_list = get_tech_support_from_switch(bug_handler_params)
-        # Note: Executed commands are now included directly in the ticket description via get_nvue_additional_info
-        # No longer attaching the commands file separately
-        tar_file_path_list = [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
-        upload_script = BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_UPLOAD_ATTACHMENT_SCRIPT["default"])
-        upload_cmd = f"env LOG_FORMAT_JSON=1 {upload_script} --bug_id {ticket_id}  --attachments {' '.join(tar_file_path_list)}"
-        logger.info(f"Running uploading attachment command: {upload_cmd}")
-        upload_attachment_output = subprocess.run(upload_cmd, shell=True, capture_output=True)
-        upload_attachment_output, upload_error = upload_attachment_output.stdout, upload_attachment_output.stderr
-        logger.info(upload_attachment_output)
-
-        if not upload_error:
+        if not tar_file_path_list:
             try:
-                upload_attachment_result = json.loads(upload_attachment_output)
-                if "error" in upload_attachment_result:
-                    upload_error = str(upload_attachment_result)
+                tar_file_path_list = _collect_tech_support_for_ticket(bug_handler_params)
             except Exception as e:
-                upload_error = ExceptionTool.format_exception(e)
-        if upload_error:
-            logger.error(f"Failed to upload the file: {upload_error}")
-
+                err_msg = (f"Techsupport collection failed after ticket {ticket_id} was opened: {e}")
+                logger.error(err_msg)
+                raise RuntimeError(err_msg) from e
+        _upload_tech_support_attachments(redmine_project, ticket_id, tar_file_path_list)
         bug_handler_file_result["file_name"] = ",".join(tar_file_path_list)
-    return bug_handler_file_result
+    return bug_handler_file_result, runtime_secs
 
 
 def handle_file_size_exceedance(tar_file_path):
-    # add double quotes to the tar_file_path to avoid whitespace characters
-    # in the file name to be interpreted as command line arguments
-    result = subprocess.run(f'stat -c%s "{tar_file_path}"', shell=True, capture_output=True)
-    if result.returncode != 0:
-        logger.error(f"Failed to get the sysdump size of {tar_file_path} "
-                     f"with error: {result.stderr.decode('utf-8')}")
-        raise Exception(f"Failed to get the sysdump size of {tar_file_path}")
-    decoded_output = result.stdout.decode('utf-8')
-    cleaned_output = decoded_output.strip()
-    tar_file_size = int(cleaned_output)
+    try:
+        tar_file_size = os.path.getsize(tar_file_path)
+    except OSError as err:
+        logger.error(f"Failed to get the sysdump size of {tar_file_path} with error: {err}")
+        raise Exception(f"Failed to get the sysdump size of {tar_file_path}") from err
 
     if tar_file_size < BugHandlerConst.TAR_FILE_SIZE_RM_LIMIT:
         return tar_file_path
@@ -439,7 +476,12 @@ def get_action_based_on_no_action_results(bug_handler_file_result, branch, bug_h
     if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
         cur_version = bug_handler_params["duthost"].os_version
         ticket_id = get_ticket_id(bug_handler_file_result)
-        ticket_status = access_redmine_cache([ticket_id], use_active_status=False)
+        try:
+            ticket_status = get_issues_status([ticket_id])[str(ticket_id)]
+        except Exception as err:
+            logger.error(f"Failed to get the status of ticket {ticket_id} from Redmine: {err}. "
+                         "Keeping no action so the ticket is not updated or reopened")
+            return "no action"
 
         if ticket_status == "Closed":
             # When the script for getting fixed image is ready for RC image,
@@ -535,7 +577,19 @@ def get_tech_support_from_switch(bug_handler_params):
     dumps_files = []
     if cli_type == "Sonic":
         platform = duthost.shell("show platform summary | grep Platform | awk '{print $2}'")['stdout']
-        if "_simx" in platform:
+        if 'air' in testbed.lower():
+            try:
+                air_log_file = collect_air_simulation_logs(
+                    setup_name=testbed,
+                    dumps_folder=dumps_folder,
+                    test_name=test_name,
+                    duration_seconds=get_test_duration(duthost),
+                )
+                if air_log_file:
+                    dumps_files.append(air_log_file)
+            except Exception as e:
+                logger.error(f"Exception while collecting AIR simulation logs via Loki proxy: {e}")
+        elif "_simx" in platform:
             try:
                 topology_obj = get_topology_by_setup_name(setup_name=testbed, slow_cli=True)
                 dumps_files.extend(dump_simx_data(topology_obj, dumps_folder))
@@ -596,7 +650,7 @@ def get_test_duration(duthost):
     return duration
 
 
-@retry(Exception, tries=5, delay=20)
+@retry(Exception, tries=13, delay=30)
 def _generate_sonic_techsupport(duthost):
     # required by design team to always collect the dump for the past 5 hrs.
     duration = 5 * 3600

@@ -15,8 +15,6 @@ from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurat
 from ngts.tests_nvos.general.security.centralized_tests.upgrade import test_upgrade  # TODO: we should't import stuff from other test files directly
 from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ImageConsts
 from ngts.scripts.sonic_deploy.nvos_only_methods import NvosInstallationSteps
-from devts.infra.tools.general_constants.constants import DefaultConnectionValues
-from ngts.tests_nvos.general.security import conftest as security_conftest  # TODO: we should't import stuff from conftest directly
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
 from ngts.ngts_types import DevicesT
@@ -37,7 +35,6 @@ from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.nvos_tools.Devices.BaseDevice import BaseDevice
 from ngts.tests_nvos.system.gnmi.mapping.helpers import parse_gnmic_flat_output, run_gnmic_once_flat
 from ngts.tests_nvos.system.reboot_telemetry_helpers import gnmi_client_for_dut
-from ngts.tests_nvos.general.security.conftest import create_ssh_login_engine
 from ngts.tools.test_utils.nvos_general_utils import check_partitions_capacity
 from ngts.tests_nvos.general.security.centralized_tests.upgrade.test_upgrade import fetch_install_img
 from ngts.tests_nvos.checklist.test_checklist_ipv6 import send_open_api_request
@@ -48,9 +45,18 @@ from ngts.tests_nvos.system.helpers import (
     verify_control_plane_acl_bindings,
 )
 from ngts.nvos_constants.constants_nvos import OperationTimeConsts
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_upgrade,
+    recover_nvl_link_health_prep,
+    verify_nvl_link_health_after_upgrade,
+)
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.RemoteAaaServerInfo import ping_server
 
 from ngts.tests_nvos.constants import MINUTE
+
+
+cumulus_owner = "bsrinivas"
+
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +186,14 @@ def test_show_system_image(original_version, engines, devices):
                                                                                                              'path'])
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.checklist
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
-@pytest.mark.timeout(30 * MINUTE, func_only=True)
+@pytest.mark.timeout(40 * MINUTE, func_only=True)
 def test_downgrade_upgrade(release_name, random_api, original_version, devices, engines, downgrade_version_realpath,
-                           target_version_realpath, dut_ipv6_addr, ib_router, topology_obj):
+                           target_version_realpath, dut_ipv6_addr, ib_router, topology_obj, test_name):
     """
     Check the image rename cmd.
     Validate that install and delete commands will success with the new name
@@ -198,12 +205,14 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
     5. Install new image name , success
     6. Uninstall image
     7. Delete the new image name , success
+    8. REL-05/REL-06: link-health returns to healthy after upgrade
     """
     config_file_path = ''
     mtu_info = None
     json_acl_rules = None
     cp_acl_bindings = None
     acl_persist_mangle_state = None
+    link_health_context = None
     include_mtu_testing = getattr(devices.dut, 'supports_mtu_testing', False)
 
     if not downgrade_version_realpath:
@@ -239,13 +248,14 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
         with allure.step('install the fetched image (after renamed back to original name)'):
             install_image_and_verify(orig_engine=orig_engine, image_name=fetched_image,
                                      original_images=original_images, system=system, release_name=release_name,
-                                     test_name='test_downgrade_upgrade',
+                                     test_name=test_name,
                                      devices=devices,
                                      operation_label=OperationTimeConsts.IMAGE_DOWNGRADE)
             verify_system_image_gnmi_matches_nvue(engines, devices, system)
 
             with allure.step('uninstall orig version'):
                 system.image.action_uninstall('force')
+                time.sleep(3)
             verify_system_image_gnmi_matches_nvue(engines, devices, system)
 
             with allure.step('run curl via ipv6, customer bug #4318552'):
@@ -274,13 +284,17 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
         with allure.step("Save control-plane ACL bindings baseline (nv show system control-plane acl)"):
             cp_acl_bindings = system_helpers.extract_control_plane_acl_bindings(
                 dut_engine=engines.dut, mangle_state=acl_persist_mangle_state)
-            logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
+            logger.info("Control-plane ACL bindings baseline: %s", cp_acl_bindings)
 
         logger.info("After replacing configuration file, system may ask for new password. Restoring password:")
         engines.dut.disconnect()
         engines.dut.run_cmd("true")
 
         run_pre_upgrade_steps(topology_obj, engines, ib_router)
+
+        link_health_context = prepare_nvl_link_health_before_upgrade(
+            devices, engines.dut, test_name
+        )
 
     finally:
         target_fetched_image = None
@@ -293,14 +307,24 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                                          image_name=target_fetched_image,
                                          original_images=original_images, system=system,
                                          release_name=release_name,
-                                         test_name='test_downgrade_upgrade',
+                                         test_name=test_name,
                                          devices=devices,
                                          operation_label=OperationTimeConsts.IMAGE_UPGRADE)
                 upgrade_succeeded = True
 
+            with allure.step('Verify image boot next multiple changes'):
+                verify_image_boot_next_multiple_changes(system)
+
             with allure.step('Verify configuration preserved after upgrade'):
                 run_post_upgrade_cheks(topology_obj, engines, ib_router)
+
+            if upgrade_succeeded:
+                verify_nvl_link_health_after_upgrade(
+                    link_health_context, devices, engines.dut
+                )
         finally:
+            recover_nvl_link_health_prep(link_health_context, devices, test_name)
+
             with allure.step('cleanup test'):
                 cleanup_test(
                     system, original_images, original_image_partition,
@@ -309,7 +333,7 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                     orig_engine=orig_engine,
                     target_version_realpath=target_version_realpath,
                     release_name=release_name,
-                    test_name='test_downgrade_upgrade',
+                    test_name=test_name,
                     devices=devices,
                 )
 
@@ -317,15 +341,17 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
                 with allure.step('Verify MTU preserved after upgrade'):
                     InterfaceConfigurationTool.verify_and_cleanup_mtu(mtu_info)
 
-            if json_acl_rules is not None:
-                with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
-                    system_helpers.verify_acl_rules_preserved(
-                        json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
-            if cp_acl_bindings is not None:
-                with allure.independent_step(
-                    'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
-                ):
-                    system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
+            if upgrade_succeeded and (json_acl_rules is not None or cp_acl_bindings is not None):
+                with allure.step('Verify ACL JSON and control-plane ACL bindings preserved after upgrade'):
+                    if json_acl_rules is not None:
+                        with allure.independent_step('Verify default ACL JSON preserved after upgrade (nv show acl)'):
+                            system_helpers.verify_acl_rules_preserved(
+                                json_acl_rules, mangle_state=acl_persist_mangle_state, dut_engine=engines.dut)
+                    if cp_acl_bindings is not None:
+                        with allure.independent_step(
+                            'Verify control-plane ACL bindings + loopback defaults on interface lo after upgrade'
+                        ):
+                            system_helpers.verify_control_plane_acl_bindings(cp_acl_bindings, dut_engine=engines.dut)
 
         with allure.step('Clear ACL persistence mangle state (if any)'):
             system_helpers.clear_acl_configs(acl_persist_mangle_state, dut_engine=engines.dut)
@@ -336,7 +362,8 @@ def test_downgrade_upgrade(release_name, random_api, original_version, devices, 
 @pytest.mark.image
 @pytest.mark.system
 @pytest.mark.cumulus
-def test_system_image_upload(engines, release_name, random_api, original_version, devices, downgrade_version_realpath):
+def test_system_image_upload(engines, release_name, random_api, original_version, devices, downgrade_version_realpath,
+                             test_name):
     """
     Uploading image file to player and validate.
     1. Fetch random image
@@ -363,7 +390,12 @@ def test_system_image_upload(engines, release_name, random_api, original_version
             for protocol in upload_protocols:
                 with allure.step("Upload image to player with {} protocol".format(protocol)):
                     upload_path = uri_builders[protocol](player, f'/tmp/{image_name}')
-                    image_file.action_upload(upload_path).verify_result()
+                    upload_start = time.time()
+                    try:
+                        image_file.action_upload(upload_path, timeout=5 * MINUTE).verify_result()
+                    finally:
+                        OperationTime.save_manual_operation_duration_to_db(
+                            f'image_upload_{protocol}', time.time() - upload_start, test_name)
 
                 with allure.step("Validate file was uploaded to player and delete it"):
                     assert player.run_cmd(
@@ -375,10 +407,42 @@ def test_system_image_upload(engines, release_name, random_api, original_version
             system.image.files.verify_show_files_output(unexpected_files=[image_name])
 
 
+def verify_image_boot_next_multiple_changes(system):
+    """Verify rapid boot-next changes take effect without changing the current image."""
+    with allure.step("Read the image state after the install"):
+        before_boot_next = system.image.get_image_field_values()
+        current_partition_num = before_boot_next[ImageConsts.CURRENT_IMG]
+        current_partition = ImageConsts.PARTITION + current_partition_num
+        other_partition = get_next_partition_id(current_partition)
+        other_partition_num = other_partition.replace(ImageConsts.PARTITION, '')
+
+    with allure.step(f"Verify that boot next image is the current image {current_partition} after the install"):
+        assert before_boot_next[ImageConsts.NEXT_IMG] == current_partition_num, \
+            f"Boot next is expected to be the current image {current_partition_num} after install, " \
+            f"but it is {before_boot_next[ImageConsts.NEXT_IMG]}"
+
+    boot_next_sequence = [other_partition, current_partition, other_partition, current_partition]
+    for change_index, partition in enumerate(boot_next_sequence, start=1):
+        expected_next_num = other_partition_num if partition == other_partition else current_partition_num
+
+        with allure.step(f"Boot next change {change_index}: set boot next to {partition}"):
+            system.image.action_boot_next(partition).verify_result()
+            after_boot_next = system.image.get_image_field_values()
+
+        with allure.step(f"Verify that boot next change {change_index} moved the next image to {partition}"):
+            assert after_boot_next[ImageConsts.NEXT_IMG] == expected_next_num, \
+                f"Failed to set {partition} to boot next on change {change_index}, " \
+                f"current boot-next {after_boot_next[ImageConsts.NEXT_IMG]}"
+            assert after_boot_next[ImageConsts.CURRENT_IMG] == current_partition_num, \
+                f"Current image is expected to stay {current_partition_num} on change {change_index}, " \
+                f"but it is {after_boot_next[ImageConsts.CURRENT_IMG]}"
+
+
 @pytest.mark.checklist
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_image_uninstall(release_name, random_api, original_version, test_name, devices, downgrade_version_realpath):
     """
@@ -399,6 +463,7 @@ def test_image_uninstall(release_name, random_api, original_version, test_name, 
 @pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.system
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_image_uninstall_force(release_name, original_version, test_name, devices, downgrade_version_realpath):
     """
@@ -508,6 +573,7 @@ def test_system_image_bad_flow(engines, release_name, random_api, original_versi
 
 
 @pytest.mark.checklist
+@pytest.mark.dut_reboot
 @pytest.mark.image
 @pytest.mark.system
 def test_install_multiple_images(release_name, test_name, random_api, original_version, devices, engines):
@@ -623,10 +689,9 @@ def image_uninstall_test(release_name, original_version, devices, uninstall_forc
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_smallcase_n(engines, original_version, devices):
+def test_system_image_install_reject_with_smallcase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'n'
     Validate that install image command will be aborted when the prompt is rejected.
@@ -636,14 +701,13 @@ def test_system_image_install_reject_with_smallcase_n(engines, original_version,
     """
     system = System()
     prompt_response = 'n'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_uppercase_n(engines, original_version, devices):
+def test_system_image_install_reject_with_uppercase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'N'
     Validate that install image command will be aborted when the prompt is rejected.
@@ -653,14 +717,13 @@ def test_system_image_install_reject_with_uppercase_n(engines, original_version,
     """
     system = System()
     prompt_response = 'N'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.image
 @pytest.mark.cumulus
-def test_system_image_install_reject_with_random_char(engines, original_version, devices):
+def test_system_image_install_reject_with_random_char(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with random character
     Validate that install image command will be aborted when the prompt is rejected.
@@ -670,61 +733,41 @@ def test_system_image_install_reject_with_random_char(engines, original_version,
     """
     system = System()
     prompt_response = 't'
-    system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices)
+    system_image_install_reject_with_prompt(system, prompt_response, original_version, devices)
 
 
-def system_image_install_reject_with_prompt(engines, system, prompt_response, original_version, devices):
+def system_image_install_reject_with_prompt(system, prompt_response, original_version, devices):
     verify_current_version(original_version, system, devices.dut)
 
-    action_job_id = 0
-    try:
-        with allure.step("Create SSH Engine to login to the switch"):
-            child = security_conftest.create_ssh_login_engine(engines.dut.ip, SystemConsts.DEFAULT_USER_ADMIN)
-            assert isinstance(child.pid, int), "SSH login process failed to be spawned"
-            respond = child.expect([DefaultConnectionValues.PASSWORD_REGEX, '~'])
-            assert respond == 0, "SSH Connection to switch failed"
-            child.sendline(engines.dut.password)
-            respond = child.expect(DefaultConnectionValues.DEFAULT_PROMPTS[0])
-            output = child.after.decode('utf-8')
-            assert respond == 0, "Password prompt did not come up {out}".format(out=output)
+    with allure.step("Extract Image name before attempting installing new image"):
+        image_name = system.version.get_nvos_image_version()
 
-        with allure.step("Extract Image name before attempting installing new image"):
-            image_name = system.version.get_nvos_image_version()
+    with allure.step("Attempt install image and reject the prompt"):
+        # Capture existing jobs to verify that rejecting the prompt does not start an action.
+        exempted_err_msgs = ['action_error', 'File not found', 'Failed to install', 'Action failed']
+        action = Action()
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            action.show(exempted_err_msgs=exempted_err_msgs)
+        ).get_returned_value()
+        action_job_ids_before = set(output or ())
 
-        with allure.step("Attempt install image and reject the prompt"):
-            # Get the last action-job-id
-            exempted_err_msgs = ['action_error', 'File not found', 'Failed to install', 'Action failed']
-            action = Action()
-            output = OutputParsingTool.parse_json_str_to_dictionary(action.show(exempted_err_msgs=exempted_err_msgs)). \
-                get_returned_value()
-            if output:
-                action_job_id = max([int(id_no) for id_no in list(output)])
+        # The rejected action has no CLI output; the absence of a new action job is verified below.
+        system.image.files.file_name['nvos.bin'].action_install(
+            reboot_params=False,
+            force=False,
+            send_user_confirmation=prompt_response,
+            expected_output=('',),
+        ).verify_result()
 
-            # Since the install is to be aborted, using a dummy image name nvos.bin
-            child.sendline('nv action install system image files nvos.bin')
-            respond = child.expect('.*continue.*')
-            assert respond == 0, "Install image confirmation prompt did not come up"
-            child.sendline(prompt_response)
-            respond = child.expect('.*abort.*')
-            assert respond == 0, "Image install abort message did not appear"
+    with allure.step("Verify rejected install did not start an action"):
+        output = OutputParsingTool.parse_json_str_to_dictionary(
+            action.show(exempted_err_msgs=exempted_err_msgs)
+        ).get_returned_value()
+        assert set(output or ()) == action_job_ids_before, "Rejected image install unexpectedly created an action"
 
-        with allure.step("Verify install command was executed successfully"):
-            # Increment action-job-id for latest command status
-            action_job_id_str = str(action_job_id + 1)
-            # extract last command execution status
-            output = OutputParsingTool.parse_json_str_to_dictionary(action.show(action_job_id_str)). \
-                get_returned_value()
-            assert output['detail'] == 'Image install aborted by user' and \
-                output['http_status'] == 200 and \
-                output['state'] == 'action_success', "Image install command failed:{out}".format(out=output)
-
-        with allure.step("Verify image is unchanged"):
-            image_name_post = system.version.get_nvos_image_version()
-            assert image_name == image_name_post, "Image name changed even though image install command was aborted"
-
-    finally:
-        # close connection
-        child.close()
+    with allure.step("Verify image is unchanged"):
+        image_name_post = system.version.get_nvos_image_version()
+        assert image_name == image_name_post, "Image name changed even though image install command was aborted"
 
 
 @pytest.mark.checklist
@@ -964,14 +1007,13 @@ def verify_system_image_gnmi_matches_nvue(engines, devices, system=None):
                     )
 
 
-def normalize_image_name(image_name):
+def normalize_image_name(image_name) -> str:
     return image_name.replace("-amd64", "").replace(".bin", "")
 
 
 def install_image_and_verify(
     orig_engine: ProxySshEngine,
     image_name: str,
-    partition_id: str,
     original_images: dict,
     system: System,
     release_name: str,
@@ -979,6 +1021,7 @@ def install_image_and_verify(
     devices: DevicesT | None = None,
     *,
     operation_label: str = OperationTimeConsts.IMAGE_INSTALL,
+    strict_partition_check: bool = True,
 ) -> None:
     with allure.step("Installing image {}".format(image_name)):
         new_engine = LinuxSshEngine(
@@ -1013,29 +1056,51 @@ def install_image_and_verify(
 
     with allure.step("Verify installed image"):
         time.sleep(5)
+        verify_installed_image(system, image_name, strict_partition_check=strict_partition_check)
 
-        image_output = system.image.get_image_field_values()
-        image_name = normalize_image_name(image_name)
-        res_obj = ValidationTool.verify_expected_output(system.image.show(), ImageConsts.BUILD_ID)
-        res_obj.ignore_result()
-        _, _, partition_id, _ = get_image_data(system)
-        if res_obj.result:  # temp solution until 3000 GA
-            with allure.step(f"Verify image was installed properly on {partition_id}"):
-                assert image_output[partition_id][ImageConsts.BUILD_ID] == image_name, \
-                    f"{image_name} was expected to be installed on {partition_id} but it failed"
 
-            with allure.step("Verify current and next fields point to new image"):
-                num = "1" if partition_id == ImageConsts.PARTITION1_IMG else "2"
-                assert image_output[ImageConsts.NEXT_IMG] == image_output[ImageConsts.CURRENT_IMG] == num, \
-                    "Next image is not the current as expected in default settings."
-        else:
-            with allure.step(f"Verify image was installed properly on {partition_id}"):
-                assert image_output[partition_id] == image_name, \
-                    f"{image_name} was expected to be installed on {partition_id} but it failed"
+def verify_installed_image(system, image_name, strict_partition_check=True):
+    """Verify a freshly installed image is reflected correctly in 'nv show system image'.
 
-            with allure.step("Verify current and next fields point to new image"):
-                assert image_output[ImageConsts.CURRENT_IMG] == image_name, \
-                    "Current image is not as expected in default settings."
+    Expected post-install state (regardless of which partition the install ran from):
+    the new image always lands on partition2, the previous image is kept on partition1,
+    and both 'current' and 'next' point to partition 2.
+
+    :param strict_partition_check: when True (primary install path), a newly installed image
+        that did not land on partition2 fails the test. When False (restore/cleanup path,
+        where a raise would interrupt the remaining cleanup), the violation is only logged
+        as a possible bug and reported as a failed Allure step.
+    """
+    image_output = system.image.get_image_field_values()
+    image_name = normalize_image_name(image_name)
+    _, _, partition_id, _ = get_image_data(system)
+
+    with allure.step(f"Verify image was installed properly on {partition_id}"):
+        ValidationTool.verify_field_value_in_output(
+            image_output[partition_id], ImageConsts.BUILD_ID, image_name).verify_result()
+
+    with allure.step("Verify current and next fields point to new image"):
+        num = "1" if partition_id == ImageConsts.PARTITION1_IMG else "2"
+        ValidationTool.verify_field_value_in_output(image_output, ImageConsts.CURRENT_IMG, num).verify_result()
+        ValidationTool.verify_field_value_in_output(image_output, ImageConsts.NEXT_IMG, num).verify_result()
+
+    # A newly installed image must always land on partition2 (current/next = 2).
+    # On the primary install path this fails the test so a wrong-partition product bug is
+    # not silently missed on an otherwise-green run. On the restore/cleanup path
+    # (strict_partition_check=False) a raise here would interrupt the remaining cleanup, so
+    # the violation is only logged as a possible bug and reported as a failed Allure step.
+    if strict_partition_check:
+        with allure.step("Verify newly installed image landed on partition2"):
+            ValidationTool.compare_values(partition_id, ImageConsts.PARTITION2_IMG).verify_result()
+    else:
+        try:
+            with allure.step("Verify newly installed image landed on partition2 (non-fatal)"):
+                ValidationTool.compare_values(partition_id, ImageConsts.PARTITION2_IMG).verify_result()
+        except AssertionError:
+            logger.error(
+                f"*** POSSIBLE BUG *** A newly installed image must always land on "
+                f"{ImageConsts.PARTITION2_IMG} (current/next = 2), but the active partition "
+                f"after install is {partition_id}. Full image output: {image_output}")
 
 
 def get_list_of_directories(current_installed_img, starts_with=None):
@@ -1116,10 +1181,18 @@ def _restore_original_image(
     test_name='',
     devices=None,
 ):
-    expected_image = normalize_image_name(original_images[original_image_partition][ImageConsts.BUILD_ID])
-    if _get_running_image(system) == expected_image:
-        logger.info("DUT already running original image (%s), skipping restore", expected_image)
+    # Restore installs target_version_realpath when it is given, so the "nothing to do"
+    # check must compare against that image and not against the pre-test one.
+    if target_version_realpath:
+        expected_image = normalize_image_name(target_version_realpath.split("/")[-1])
+    else:
+        expected_image = normalize_image_name(original_images[original_image_partition][ImageConsts.BUILD_ID])
+
+    running_image = _get_running_image(system)
+    if running_image == expected_image:
+        logger.info("DUT already running expected image (%s), skipping restore", expected_image)
         return
+    logger.info("DUT running image %s, restoring %s", running_image, expected_image)
 
     if target_version_realpath:
         image_name = target_version_realpath.split("/")[-1]
@@ -1136,6 +1209,7 @@ def _restore_original_image(
                 test_name=test_name,
                 devices=devices,
                 operation_label=OperationTimeConsts.IMAGE_UPGRADE,
+                strict_partition_check=False,  # restore path: don't abort remaining cleanup
             )
         return
 
@@ -1143,10 +1217,14 @@ def _restore_original_image(
         system.image.boot_next_and_verify(original_image_partition)
 
     with allure.step("Reboot the system"):
-        system.action_reboot(reboot_params=RebootParams(recovery_engine=orig_engine))
+        system.action_reboot(reboot_params=RebootParams(recovery_engine=orig_engine, topology_obj=TestToolkit.topology_obj))
 
     with allure.step('restore original dut engine'):
         TestToolkit.engines.dut = orig_engine or TestToolkit.engines.dut
+
+    with allure.step("Verify original image is running after boot-next restore"):
+        running_image = _get_running_image(system)
+        ValidationTool.compare_values(running_image, expected_image).verify_result()
 
 
 def cleanup_test(
@@ -1237,12 +1315,12 @@ def get_image_data_and_fetch_random_image_files(release_name, system, images_amo
     return original_images, original_image, original_image_partition, partition_id_for_new_image, images_name
 
 
-def get_image_data_and_fetch_base_image(system, base_version):
+def get_image_data_and_fetch_base_image(system, base_version, timeout=None):
     original_images, original_image, original_image_partition, partition_id_for_new_image = get_image_data(system)
 
     with allure.step(f"Fetch image {base_version}"):
         _ = TestToolkit.engines['sonic_mgmt']
-        system.image.action_fetch(path=base_version).verify_result()
+        system.image.action_fetch(path=base_version, timeout=timeout).verify_result()
     image_name = base_version.split("/")[-1]
     return original_images, original_image, original_image_partition, partition_id_for_new_image, image_name
 

@@ -5,6 +5,9 @@ from ngts.tests_nvos.general.security.constants import SSN_OPTIONS
 from ngts.tests_nvos.general.security.ssh_hardening.ssh_hardening_test_utils import *
 
 
+cumulus_owner = "yleibovichwe"
+
+
 @pytest.mark.cumulus
 @pytest.mark.security
 def test_ssh_protocol(engines):

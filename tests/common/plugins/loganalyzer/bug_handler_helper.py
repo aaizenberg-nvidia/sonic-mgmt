@@ -14,7 +14,6 @@ from tests.common.helpers.parallel import parallel_run
 from devts.infra.tools.redmine.redmine_api import REDMINE_ISSUES_URL
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from ngts.constants.constants import BugHandlerConst, InfraConst, NvosCliTypes, REGRESSION_TYPE_ENV_VAR, RegressionType
-from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.helpers.bug_handler.bug_handler_helper import create_session_tmp_folder, clear_files, bug_handler_wrapper_err_msg, \
     create_log_analyzer_yaml_file, deduplicate_log_errors, group_log_errors_by_timestamp, summarize_la_bug_handler
 from ngts.scripts.allure_reporter import predict_allure_report_link
@@ -26,6 +25,7 @@ PI_LINK = "https://app.powerbi.com/groups/9b79a1d8-7408-4848-90c5-9dd5dab8493d/r
 
 # inject dut hostname into log file name to avoid collision
 LOG_ANALYZER_LOG_FILE = '/tmp/loganalyzer-[{0}].log'
+LOG_ANALYZER_BH_RESULTS_FILE = '/tmp/loganalyzer-bh-results-[{0}].jsonl'
 KEY_IS_TEST_FUNCTION_FAILED = "is_test_function_failed"
 PRIVATE_BRANCHES_TO_ENABLE_BUG_HANDLER_LIST = ["smart-switch-master",
                                                "master_rc",
@@ -37,6 +37,7 @@ PRIVATE_BRANCHES_TO_ENABLE_BUG_HANDLER_LIST = ["smart-switch-master",
                                                "multi-asic",
                                                "master_rc_chameleon6",
                                                "master_ha_nv"]
+
 
 class BugHandler(ABC):
     @abstractmethod
@@ -65,6 +66,7 @@ def get_bughandler_instance(kwargs: dict) -> BugHandler:
         if bh_type in {"consolidated", "default"}:
             return ConsolidatedBugHandler()
     return NoOpBugHandler()
+
 
 def handle_log_analyzer_errors(cli_type, branch, test_name, duthost, log_analyzer_bug_metadata, testbed,
                                bug_handler_action, log_errors_dir_path=None, is_serial_log=False, logger=None):
@@ -143,36 +145,62 @@ def handle_log_analyzer_errors(cli_type, branch, test_name, duthost, log_analyze
                 for trace_number, error_group in enumerate(error_groups, 1):
                     with allure.step(f"Handling trace number {trace_number} of {len(error_groups)}"):
                         yaml_file_path = create_log_analyzer_yaml_file(error_group, session_tmp_folder, redmine_project,
-                                                                    test_name, hostname,
-                                                                    log_analyzer_bug_metadata, bug_handler_params,
-                                                                    bug_handler_dumps_results, is_serial_log)
+                                                                       test_name, hostname, log_analyzer_bug_metadata,
+                                                                       bug_handler_params, bug_handler_dumps_results, is_serial_log)
                         logger.info(f"yaml_file_path: {yaml_file_path}")
                         logger.info(f"{yaml_file_path} exists?: {os.path.exists(yaml_file_path)}")
                         if yaml_file_path:
                             with allure.step("Run Bug Handler on Log Analyzer error"):
-                                start_time = time.perf_counter()
-                                # logger.info(f"Run Bug Handler on Log Analyzer error: {error_group}")
                                 error_dict = {BugHandlerConst.LA_ERROR: error_group}
-                                error_dict.update(
-                                    bug_handler_wrapper_err_msg(
-                                        conf_path,
-                                        redmine_project,
-                                        branch,
-                                        yaml_file_path,
-                                        BugHandlerConst.BUG_HANDLER_LOG_ANALYZER_USER,
-                                        BugHandlerConst.BUG_HANDLER_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_SCRIPT["default"]),
-                                        bug_handler_action,
-                                        bug_handler_params
-                                    )
+                                bug_handler_file_result, bug_handler_runtime_secs = bug_handler_wrapper_err_msg(
+                                    conf_path,
+                                    redmine_project,
+                                    branch,
+                                    yaml_file_path,
+                                    BugHandlerConst.BUG_HANDLER_LOG_ANALYZER_USER,
+                                    BugHandlerConst.BUG_HANDLER_SCRIPT.get(redmine_project, BugHandlerConst.BUG_HANDLER_SCRIPT["default"]),
+                                    bug_handler_action,
+                                    bug_handler_params
                                 )
+                                error_dict.update(bug_handler_file_result)
                                 bug_handler_dumps_results.append(error_dict)
                                 list_of_bugs_ids.append(error_dict.get(BugHandlerConst.BUG_HANDLER_BUG_ID, ''))
-                                logger.info(f"Bug handler took {timedelta(seconds=time.perf_counter() - start_time)} seconds for trace number {trace_number}")
+                                logger.info(f"Bug handler took {timedelta(seconds=bug_handler_runtime_secs)} seconds for trace number {trace_number}")
+                                _record_la_bug_handler_result(hostname, error_dict, bug_handler_runtime_secs)
         except Exception as err:
             logger.error("Bug handler failed")
             raise err
         logger.info(f"List of bugs ids: {list_of_bugs_ids}")
         return summarize_la_bug_handler(bug_handler_dumps_results, bug_handler_action), la_errors
+
+
+def _record_la_bug_handler_result(hostname: str, error_dict: dict, runtime_secs: float) -> None:
+    bug_id = str(error_dict.get(BugHandlerConst.BUG_HANDLER_BUG_ID, "") or "").strip()
+    payload = {
+        "bug_id": bug_id,
+        "runtime_mins": round(runtime_secs / 60, 2),
+    }
+    results_file = LOG_ANALYZER_BH_RESULTS_FILE.format(hostname)
+    with open(results_file, "a") as f:
+        f.write(json.dumps(payload) + "\n")
+
+
+def _attach_la_bug_handler_results(hostname: str) -> None:
+    results_file = Path(LOG_ANALYZER_BH_RESULTS_FILE.format(hostname))
+    if not results_file.exists():
+        return
+    for trace_number, line in enumerate(results_file.read_text().splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        bug_id = str(payload.get("bug_id", "") or "").strip()
+        suffix = bug_id or str(trace_number)
+        name = f"{BugHandlerConst.LA_BUG_HANDLER_ATTACHMENT_PREFIX}{suffix}-{trace_number}.json"
+        raw_allure.attach(line, name=name, attachment_type=raw_allure.attachment_type.JSON)
 
 
 def skip_bug_handler(duthost, request, logger=logger):
@@ -189,7 +217,7 @@ def skip_bug_handler(duthost, request, logger=logger):
             return True
 
         if not (log_errors_dir_path.exists() and len(list(log_errors_dir_path.iterdir())) > 0):
-            logger.warning(f"Skip the loganalyzer bug handler: No err msg detected")
+            logger.warning("Skip the loganalyzer bug handler: No err msg detected")
             return True
 
         log_analyzer_handler_info = get_log_analyzer_handler_info(duthost)
@@ -263,8 +291,8 @@ def log_analyzer_bug_handler(duthost, request, log_errors_dir_path=None,
     if cli_type == 'NVUE':
         bug_handler_dict.update(get_nvue_additional_info(duthost, request))
     log_analyzer_res, la_error_messages = handle_log_analyzer_errors(cli_type, log_analyzer_handler_info['branch'], test_name, duthost,
-                                                  bug_handler_dict, setup_name, bug_handler_actions,
-                                                  log_errors_dir_path, is_serial_log, logger=logger)
+                                                                     bug_handler_dict, setup_name, bug_handler_actions,
+                                                                     log_errors_dir_path, is_serial_log, logger=logger)
     logger.info(f"Log Analyzer result: {json.dumps(log_analyzer_res, indent=2)}")
     error_msg = ''
     ci_mode = bug_handler_actions.get('ci_mode', False)
@@ -371,7 +399,7 @@ def get_pytest_cmd(request, cli_type):
             cmd = "****************Please run the deployment script before the pytest command****************\n" + cmd
         return cmd
     else:
-       return " ".join(request.node.config.invocation_params.args)
+        return " ".join(request.node.config.invocation_params.args)
 
 
 def get_log_analyzer_handler_info(duthost):
@@ -558,9 +586,10 @@ def get_nvue_additional_info(duthost, request):
         logging.error(f"Failed to retrieve NVUE information from {duthost}: {e}")
         nvue_info['show_system'] = "Error: Unable to fetch 'nv show system reboot history' output"
         nvue_info['show_platform_firmware'] = "Error: Unable to fetch 'nv show platform firmware' output"
-        nvue_info['executed_commands'] = f"Error: Unable to read executed commands from local file"
+        nvue_info['executed_commands'] = "Error: Unable to read executed commands from local file"
 
     return nvue_info
+
 
 def _set_dice_coefficient_threshold(config_file: str, dice_coefficient_threshold: float = 1.0) -> None:
     """Set the dice coefficient threshold in the config json file.
@@ -585,6 +614,7 @@ def _set_dice_coefficient_threshold(config_file: str, dice_coefficient_threshold
                 )
             f.write(line)
 
+
 def bug_handler_wrapper(analyzers, duthosts, la_results):
     """
     The wrapper function for log_analyzer_bug_handler.
@@ -598,28 +628,30 @@ def bug_handler_wrapper(analyzers, duthosts, la_results):
         if "failed" in la_result:
             logging.error(f'Failed to run log analyzer on {node}')
             return
+    original_handlers = logging.getLogger().handlers[:]
+    original_level = logging.getLogger().level
     try:
         # clear files from previous run
         clear_files(os.environ.get(InfraConst.ENV_SESSION_ID, 'unknown_session_id'))
         # run bug handler in seperated step to decouple from analyze_logs
-        # save original logging handlers and level
-        original_handlers = logging.getLogger().handlers[:]
-        original_level = logging.getLogger().level
         logging.getLogger().handlers = []
-        bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1080)
+        bh_results = parallel_run(bug_handler_processing, [analyzers, la_results], {}, duthosts, timeout=1440)
+        failed_nodes = [node for node, result in bh_results.items()
+                        if isinstance(result, dict) and 'failed' in result]
+        if failed_nodes:
+            raise RuntimeError(f"Bug handler failed or timed out on: {failed_nodes}")
+    finally:
         # restore original logging handlers and level
         logging.getLogger().handlers = original_handlers
         logging.getLogger().setLevel(original_level)
-        for node in bh_results.keys():
-            if 'failed' in bh_results[node]:
-                logging.error(f'Failed to run bug handler on {node}')
-    finally:
         # always attach allure log for bug handler results
         for duthost in duthosts:
             log_file = LOG_ANALYZER_LOG_FILE.format(duthost.hostname)
             if os.path.exists(log_file):
                 raw_allure.attach.file(log_file, name=os.path.basename(log_file),
-                                   attachment_type=raw_allure.attachment_type.TEXT)
+                                       attachment_type=raw_allure.attachment_type.TEXT)
+            _attach_la_bug_handler_results(duthost.hostname)
+
 
 @reset_ansible_local_tmp
 def bug_handler_processing(analyzers, la_results: dict, node=None, results=None):
@@ -629,8 +661,11 @@ def bug_handler_processing(analyzers, la_results: dict, node=None, results=None)
     """
     file_handler = None
     log_file = LOG_ANALYZER_LOG_FILE.format(node.hostname)
+    results_file = LOG_ANALYZER_BH_RESULTS_FILE.format(node.hostname)
     if os.path.exists(log_file):
         os.remove(log_file)
+    if os.path.exists(results_file):
+        os.remove(results_file)
     file_handler = logging.FileHandler(log_file)
     formatter = logging.Formatter('[%(asctime)s][%(levelname)s] %(message)s')
     formatter.datefmt = '%Y-%m-%d %H:%M:%S'
@@ -662,7 +697,8 @@ def bug_handler_processing(analyzers, la_results: dict, node=None, results=None)
             bh_logger.removeHandler(file_handler)
             file_handler.close()
 
+
 def _is_test_function_failed(request: pytest.FixtureRequest) -> bool:
     if "rep_setup" in request.node.__dict__ and request.node.rep_setup.failed:
-            return True
+        return True
     return "rep_call" in request.node.__dict__ and request.node.rep_call.failed

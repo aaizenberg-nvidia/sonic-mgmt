@@ -12,7 +12,9 @@ import allure
 import copy
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration, skip_test_on_unsupported_os)
+                                                                apply_test_configuration, skip_test_on_unsupported_os,
+                                                                skip_dvs_leaf_scenario_on_active_bug,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 logger = logging.getLogger()
@@ -25,15 +27,16 @@ RIGHT_PORTS_LEAF_TO_HOST = "right_ports_leaf_to_host"
 
 
 @pytest.fixture(scope='module', autouse=True)
-def skip_test_conditionally(players):
+def skip_test_conditionally(players, chip_type):
     skip_test_on_unsupported_os(players['dut']['cli'], CliType.NVUE)
+    skip_dvs_leaf_scenario_on_active_bug(players['dut']['cli'], chip_type)
     yield
 
 
 @pytest.fixture(scope='function', autouse=True)
-def conf_args(bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
+def conf_args(chip_type, bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
     conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+                 **get_ar_congestion_thresholds(chip_type),
                  "two_sided_ar": False,
                  "is_ipv6": False,
                  "split_right": 2,
@@ -44,7 +47,7 @@ def conf_args(bisection_traffic, ecmp_type_ar, one_to_one_leaf_scenario):
                  "scenario": TESTS_SCENARIO,
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "left_num_packets": 2,
-                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,
+                 "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],
                  "speed": "400000000",
                  "ecmp_type_ar": ecmp_type_ar,
                  "bisection_traffic": bisection_traffic,

@@ -22,8 +22,6 @@ from . import tacacs_test_utils
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 
 @pytest.fixture(scope='session', autouse=True)
 def prepare_scp_test(prepare_scp: None) -> None:
@@ -236,7 +234,6 @@ def test_tacacs_priority(test_flow: str, test_api: str, engines: EnginesT, topol
 
 
 @pytest.mark.security
-@pytest.mark.simx_security
 @pytest.mark.parametrize('test_flow', TestFlowType.ALL_TYPES)
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_tacacs_server_unreachable(
@@ -507,9 +504,14 @@ def test_tacacs_accounting_local_first(
 
 @pytest.mark.timeout(security_constants.MAX_TEST_TIMEOUT, func_only=True)
 @pytest.mark.security
-@pytest.mark.simx_security
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_tacacs_timeout(test_api: str, engines: EnginesT, topology_obj: TopologyT, local_adminuser: UserInfo):
+def test_tacacs_timeout(
+    test_api: str,
+    engines: EnginesT,
+    topology_obj: TopologyT,
+    local_adminuser: UserInfo,
+    cleanup_after_aaa,
+):
     """
     @summary: Verify timeout functionality
 
@@ -568,7 +570,6 @@ def test_tacacs_timeout(test_api: str, engines: EnginesT, topology_obj: Topology
             engines.dut.disconnect()
             _, timestamp1 = authenticator.attempt_login_failure()
             _, timestamp2 = authenticator.attempt_login_success(restart_session_process=False)
-            engines.dut.disconnect()
 
         with allure.step('Verify respond time >= sum of timeouts'):
             assert timestamp2 - timestamp1 >= rand_timeout + rand_timeout2, \

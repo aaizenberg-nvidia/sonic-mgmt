@@ -3,19 +3,19 @@ import re
 import time
 from functools import lru_cache
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.constants.constants import InfraConst
 from ngts.nvos_constants.constants_nvos import LinkDetectionConsts
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
 from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
-from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, MloopConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.Fae import Fae
-from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.nvos_tools.infra.LinuxCmdBuilderTool import LinuxCmdBuilderTool
 from ngts.nvos_tools.infra.MultiPlanarTool import MultiPlanarTool
+from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RegisterTool import RegisterTool
-from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
 from ngts.tools.test_utils import allure_utils as allure
 
@@ -148,18 +148,19 @@ class IbInterfaceTool:
         return get_log_port(table_output, port_number, lane_bmap)
 
     @staticmethod
-    def configure_rosalind_simx_loopback(engines, devices,
-                                         mloop_mode: MloopConsts.Mode = MloopConsts.Mode.LOGICAL):
+    def configure_nvl_simx_loopback(engines, devices,
+                                    mloop_mode: MloopConsts.Mode = MloopConsts.Mode.LOGICAL):
         """
-        Configure RosalindSimx using per-interface MLOOP to enable link simulation.
+        Configure NVL SIMX using per-interface MLOOP to enable link simulation.
 
         Per nvbug 6072833 the FAE mloop knob is per-interface (replacing the old
         system-wide knob). The system toggles affected ports automatically, so no
         manual link state down/up dance is needed.
 
         Steps:
-        1. Set fae mloop=<mloop_mode> on all access ports (system auto-toggles ports)
-        2. Save configuration for persistence across reboots
+        1. Return immediately if all access ports already use <mloop_mode>
+        2. Otherwise, set fae mloop=<mloop_mode> on all access ports
+        3. Save configuration for persistence across reboots
 
         Args:
             engines: Engine objects containing DUT connection
@@ -167,22 +168,33 @@ class IbInterfaceTool:
             mloop_mode: MloopConsts.Mode to apply (default: LOGICAL = LLU2LLU loopback)
 
         Returns:
-            bool: True if configuration was successful, False if skipped
+            bool: True if MLOOP is ready, False if the device or port setup is inapplicable
         """
         if not devices.dut.require_mloop_setup:
             logger.info("Device does not require MLOOP setup, skipping MLOOP configuration")
             return False
 
-        logger.info(f"RosalindSimx detected, configuring per-interface MLOOP (mode={mloop_mode})")
+        logger.info(f"NVL SIMX detected, configuring per-interface MLOOP (mode={mloop_mode})")
 
-        with allure.step(f"RosalindSimx per-interface MLOOP Configuration (mode={mloop_mode})"):
+        with allure.step(f"NVL SIMX per-interface MLOOP Configuration (mode={mloop_mode})"):
             access_ports = devices.dut.nvl_access_ports_list
             if not access_ports:
-                logger.warning("No access ports found, skipping RosalindSimx configuration")
+                logger.warning("No access ports found, skipping NVL SIMX configuration")
                 return False
 
             port_range = summarize_switch_ports(access_ports)
             logger.info(f"Access ports range: {port_range}")
+
+            applied_commands = set(NvueGeneralCli.show_config(
+                engines.dut, revision='applied', output_type='commands', param='--expand'
+            ).splitlines())
+            mloop_is_configured = all(
+                f'nv set fae interface {port} link mloop {mloop_mode}' in applied_commands
+                for port in access_ports
+            )
+            if mloop_is_configured:
+                logger.info(f"MLOOP is already configured as {mloop_mode} on {port_range}, skipping configuration")
+                return True
 
             with allure.step(f"Enable mloop={mloop_mode} on {port_range}"):
                 NvCommand().fae.interfaces[port_range].link.mloop.set(
@@ -196,88 +208,7 @@ class IbInterfaceTool:
                 engines.dut.run_cmd('nv config save')
                 logger.info("Configuration saved")
 
-            with allure.step("Final stabilization wait - 1 minute"):
-                logger.info("Waiting 1 minute for system stabilization...")
-                time.sleep(60)
-                logger.info("RosalindSimx per-interface MLOOP configuration completed")
-
         return True
-
-    @staticmethod
-    def verify_rosalind_simx_links_up(devices, max_retries=2, retry_wait_minutes=3):
-        """
-        Verify that RosalindSimx links are actually up after configuration.
-
-        This function attempts to find any port that is in UP state. It will try different
-        interface types (acp, sw) based on what's available on the device.
-
-        Args:
-            devices: Device objects containing device configuration
-            max_retries: Number of additional retries if no links found (default: 1)
-            retry_wait_minutes: Minutes to wait between retries (default: 3)
-
-        Returns:
-            bool: True if at least one link is found up, False if all attempts fail
-
-        Example:
-            >>> success = IbInterfaceTool.verify_rosalind_simx_links_up(devices)
-            >>> if not success:
-            ...     logger.warning("No UP links found on device")
-        """
-        if not devices.dut.require_mloop_setup:
-            logger.info("Device does not require MLOOP setup, skipping link verification")
-            return True
-
-        with allure.step("Verify RosalindSimx links are up"):
-            for attempt in range(max_retries + 1):
-                attempt_num = attempt + 1
-                logger.info(f"Link verification attempt {attempt_num}/{max_retries + 1}")
-
-                # Try to find any up port using different interface types
-                interface_types_to_try = []
-
-                # Check what's available and build priority list
-                if hasattr(devices.dut, 'nvl_access_ports_list') and devices.dut.nvl_access_ports_list:
-                    interface_types_to_try.append('acp')
-                if hasattr(devices.dut, 'nvl_trunk_ports_list') and devices.dut.nvl_trunk_ports_list:
-                    interface_types_to_try.append('sw')
-
-                if not interface_types_to_try:
-                    logger.warning("No NVL ports found on device, skipping link verification")
-                    return True
-
-                # Try each interface type
-                for interface_type in interface_types_to_try:
-                    try:
-                        with allure.step(f"Checking {interface_type} ports for UP state"):
-                            logger.info(f"Attempting to find UP {interface_type} port")
-
-                            # Try to get any port that is UP
-                            up_port = Tools.RandomizationTool.select_random_port(
-                                requested_ports_state="up",
-                                interface_type=interface_type
-                            ).get_returned_value()
-
-                            if up_port:
-                                logger.info(f"Found UP port: {up_port.name} (type: {interface_type})")
-                                return True
-
-                    except Exception as e:
-                        logger.info(f"No UP {interface_type} ports found: {e}")
-                        continue
-
-                # If we reach here, no UP ports were found in this attempt
-                if attempt < max_retries:
-                    with allure.step(f"No UP links found, waiting {retry_wait_minutes} minutes before retry"):
-                        logger.warning(f"No UP links found on attempt {attempt_num}. "
-                                       f"Waiting {retry_wait_minutes} minutes before retry {attempt_num + 1}")
-                        time.sleep(retry_wait_minutes * 60)  # Convert minutes to seconds
-                else:
-                    # Final attempt failed
-                    logger.error(f"No UP links found after {max_retries + 1} attempts.")
-                    return False
-
-        return False
 
     @staticmethod
     def get_connected_transceivers_dict(engine, transceivers_list):

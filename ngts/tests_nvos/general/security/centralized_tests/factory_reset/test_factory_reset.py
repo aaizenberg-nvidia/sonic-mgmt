@@ -26,6 +26,10 @@ from ngts.tests_nvos.general.security.certificate.test_cert_cacert_mgmt import (
 )
 from ngts.tests_nvos.general.security.crl.test_crl import crl_factory_reset_keep_only_files_check
 from ngts.tests_nvos.general.security.nv_bridge.helpers import nv_bridge_internal_factory_reset_no_params_check
+from ngts.tests_nvos.general.security.ima.ima_factory_reset import (
+    ima_factory_reset_keep_all_config_check,
+    ima_factory_reset_reset_to_default_check,
+)
 from ngts.tests_nvos.general.security.gnmi_server.mtls.spiffe_id.test_gnmi_server_spiffe_id import (
     gnmi_spiffe_factory_reset_keep_basic_check,
     gnmi_spiffe_factory_reset_no_params_check,
@@ -83,6 +87,7 @@ GNMI_SPIFFE_ID = "GNMI SPIFFE ID + CRL"
 NMX_CONTROLLER_RBAC = "NMX Controller RBAC"
 NMX_TELEMETRY_RBAC = "NMX Telemetry RBAC"
 NV_BRIDGE_INTERNAL = "NV Bridge Internal"
+IMA = "IMA"
 
 CHECKERS_SKIP_RULES: dict[str, CheckerSkipRule] = {
     # NMX checkers only run on Juliet and Rosalind
@@ -93,6 +98,11 @@ CHECKERS_SKIP_RULES: dict[str, CheckerSkipRule] = {
     TPM_ATTESTATION: SkipCheckerBySetup(["gorilla"]),
     # SSH CERT AUTH not supported on juliet and rosalind
     SSH_CERT_AUTH: SkipCheckerBySetup(["juliet", "rosalind"], True),
+    # NV Bridge internal encryption is an NMX/cluster feature; standalone IB
+    # switches (croc QM3400, mamba QM3000) have no `system internal`, so
+    # system.internal is absent and the checker raises AttributeError. Skip it
+    # on those setups.
+    NV_BRIDGE_INTERNAL: SkipCheckerBySetup(["croc", "mamba"]),
 }
 
 NO_PARAMS_CHECKERS: dict[str, Generator[None, None, None]] = {
@@ -111,6 +121,8 @@ NO_PARAMS_CHECKERS: dict[str, Generator[None, None, None]] = {
     SSH_CERT_AUTH: ssh_cert_auth_factory_reset_no_params_check(),
     # NV Bridge internal encryption
     NV_BRIDGE_INTERNAL: nv_bridge_internal_factory_reset_no_params_check(),
+    # IMA - no-params wipes config -> state back to default (disabled)
+    IMA: ima_factory_reset_reset_to_default_check(),
 }
 
 KEEP_BASIC_CHECKERS: dict[str, Generator[None, None, None]] = {
@@ -124,6 +136,8 @@ KEEP_BASIC_CHECKERS: dict[str, Generator[None, None, None]] = {
     # NMX RBAC checkers - config not kept in keep-basic
     NMX_CONTROLLER_RBAC: nmx_controller_rbac_factory_reset_no_params_check(),
     NMX_TELEMETRY_RBAC: nmx_telemetry_rbac_factory_reset_no_params_check(),
+    # IMA - keep-basic resets config -> state back to default (disabled)
+    IMA: ima_factory_reset_reset_to_default_check(),
 }
 
 KEEP_ONLY_FILES_CHECKERS: dict[str, Generator[None, None, None]] = {
@@ -140,6 +154,8 @@ KEEP_ONLY_FILES_CHECKERS: dict[str, Generator[None, None, None]] = {
     SSH_CERT_AUTH: ssh_cert_auth_factory_reset_keep_only_files_check(),
     # CRL - verify CRL files preserved but config reset
     CRL: crl_factory_reset_keep_only_files_check(),
+    # IMA - keep-only-files resets config -> state back to default (disabled)
+    IMA: ima_factory_reset_reset_to_default_check(),
 }
 
 KEEP_ALL_CONFIG_CHECKERS: dict[str, Generator[None, None, None]] = {
@@ -151,6 +167,8 @@ KEEP_ALL_CONFIG_CHECKERS: dict[str, Generator[None, None, None]] = {
     GNMI_SPIFFE_ID: _wrap_feature_checker(_check_gnmi_mtls_spiffe_id_and_crl),
     NMX_CONTROLLER_RBAC: _wrap_feature_checker(_check_nmx_controller_rbac),
     NMX_TELEMETRY_RBAC: _wrap_feature_checker(_check_nmx_telemetry_rbac),
+    # IMA - keep-all-config preserves the setting (enabled)
+    IMA: ima_factory_reset_keep_all_config_check(),
 }
 
 FACTORY_RESET_TYPE_TO_CHECKER_FUNCTIONS: dict[str, dict[str, Generator[None, None, None]]] = {
@@ -161,6 +179,7 @@ FACTORY_RESET_TYPE_TO_CHECKER_FUNCTIONS: dict[str, dict[str, Generator[None, Non
 }
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.security
 @pytest.mark.reset_factory

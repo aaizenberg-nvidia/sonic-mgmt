@@ -1,4 +1,3 @@
-import ansible
 import datetime
 import logging
 import math
@@ -9,12 +8,13 @@ import tempfile
 import threading
 import time
 import traceback
-from multiprocessing import Process, Manager, Pipe, TimeoutError
+from multiprocessing import Manager, Pipe, Process, TimeoutError
 from multiprocessing.pool import ThreadPool
-from ansible.executor.process.worker import WorkerProcess
 
+from ansible.executor.process.worker import WorkerProcess
 from psutil import wait_procs
 
+import ansible
 from tests.common.helpers.assertions import pytest_assert as pt_assert
 
 logger = logging.getLogger(__name__)
@@ -97,33 +97,44 @@ class SonicProcess(Process):
         try:
             Process.run(self)
             self._cconn.send(None)
-        except Exception as e:
-            tb = traceback.format_exc()
-            self._cconn.send((e, tb))
-            raise e
+        except BaseException as e:
+            if isinstance(e, SystemExit) and e.code in (0, None):
+                self._cconn.send(None)
+            else:
+                self._cconn.send((e, traceback.format_exc()))
+            raise
         finally:
             self._cconn.close()  # Close the child-side pipe
 
     # for wait_procs
     def wait(self, timeout):
+        # Pipe() holds ~64KB and the child blocks once it fills, so drain here while it
+        # is still writing. Reading only after join() would deadlock a child sending a
+        # larger payload, and the parent would wait out its whole timeout.
+        self._read_exception()
         return self.join(timeout=timeout)
 
     # for wait_procs
     def is_running(self):
         return self.is_alive()
 
+    def _read_exception(self, final=False):
+        """Read exception data once and close parent-side pipe."""
+        if self._exception_read:
+            return
+        try:
+            if self._pconn.poll():
+                self._exception = self._pconn.recv()
+            elif not final:
+                return  # nothing sent yet, retry on the next wait()
+        except (EOFError, OSError):
+            pass
+        self._pconn.close()
+        self._exception_read = True
+
     @property
     def exception(self):
-        """Read exception data once and close parent-side pipe."""
-        if not self._exception_read:
-            try:
-                if self._pconn.poll():
-                    self._exception = self._pconn.recv()
-            except (EOFError, OSError):
-                pass
-            finally:
-                self._pconn.close()
-                self._exception_read = True
+        self._read_exception(final=True)
         return self._exception
 
 
@@ -251,6 +262,13 @@ def parallel_run(
                     'exit_code': worker.exitcode,
                     'exception': worker_exception
                 }
+            elif worker.exitcode not in (0, None):
+                logger.error(f"Process {worker.name} exited with code {worker.exitcode} "
+                             f"without reporting an exception.")
+                failed_processes[worker.name] = {
+                    'exit_code': worker.exitcode,
+                    'exception': None
+                }
 
         if len(gone) == 0:
             logger.debug("all processes have timedout")
@@ -287,13 +305,12 @@ def parallel_run(
     # of each Process and fail
     if len(list(failed_processes.keys())):
         for process_name, process in list(failed_processes.items()):
-            p_exitcode = ""
+            p_exitcode = process.get('exit_code', "")
             p_exception = ""
             p_traceback = ""
             if 'exception' in process and process['exception']:
                 p_exception = process['exception'][0]
                 p_traceback = process['exception'][1]
-                p_exitcode = process['exit_code']
             # For analyzed matched syslog, don't need to log the traceback
             if "analyze_logs" in process_name and "Match Messages" in str(p_exception):
                 failure_message = 'Got matched syslog in processes "{}" exit code:"{}"\n{}'.format(

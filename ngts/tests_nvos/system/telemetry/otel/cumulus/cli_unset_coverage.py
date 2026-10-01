@@ -105,8 +105,39 @@ def require_cumulus_equal(dut, version: str) -> None:
         )
 
 
+def require_cumulus_at_most(dut, max_version: str) -> None:
+    """Skip when DUT Cumulus version is above ``max_version``."""
+    current = get_cumulus_version_tuple(dut)
+    if current == (0, 0):
+        return
+    maximum = tuple(int(part) for part in max_version.split(".")[:2])
+    if current > maximum:
+        pytest.skip(
+            f"Cumulus {current[0]}.{current[1]} > supported {max_version} for this unset test"
+        )
+
+
+def require_cumulus_exactly(dut, version: str) -> None:
+    """Skip when DUT Cumulus major.minor does not match ``version`` (SSIM ``==`` gate).
+
+    No-op on non-Cumulus platforms (version parses to ``(0, 0)``).
+    """
+    current = get_cumulus_version_tuple(dut)
+    if current == (0, 0):
+        return
+    required = tuple(int(part) for part in version.split(".")[:2])
+    if current != required:
+        pytest.skip(
+            f"Cumulus {current[0]}.{current[1]} != required {version} for this unset test"
+        )
+
+
 def _nv_apply(dut) -> None:
-    dut.run_cmd("nv config apply -y", validate=True)
+    from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+
+    NvueGeneralCli.apply_config(
+        dut, ask_for_confirmation=True, verify_execution=True
+    )
 
 
 def _system_telemetry_node(path: str) -> BaseComponent:
@@ -143,12 +174,30 @@ def _nvos_ib_interfaces_for_unset(dut) -> List[str]:
     return sorted(port.name for port in Port.get_list_of_ports(dut, reqs))
 
 
+def _stage_nv_set(dut, cmd: str) -> None:
+    """Stage one ``nv set`` without probing the shell exit status.
+
+    ``validate=True`` makes the engine run ``echo "$?"`` and scrape the first digits
+    out of the reply. On mlx DUT shells every command can carry ``/tmp/cen<N>:
+    Permission denied`` bash noise (see ``cleanup_stale_nvue_censor_files``), so that
+    scrape can return the digits of the tempfile name instead of the real status and
+    fail a command that actually succeeded. ``nv config apply`` is the real gate: it
+    rejects the whole staged revision if any of these sets was invalid.
+    """
+    dut.run_cmd(cmd, validate=False, print_output=False)
+
+
 def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -> None:
     """SSIM ``OtelMgmtVrfNoTLSConfig.configure_topo`` spine ``swp`` loop (lines 62-128).
 
     Per interface: full histogram (PG/TC 0-7, rx-byte + crc) then labels l1-l10.
     NVOS has no per-interface histogram, so it configures labels only.
     """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
+        cleanup_stale_nvue_censor_files,
+    )
+
+    cleanup_stale_nvue_censor_files(dut)
     ifaces = swp_interfaces_for_unset(dut, is_nvos=is_nvos)
     label_pairs = _interface_label_pairs()
     with allure.step(
@@ -158,33 +207,33 @@ def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -
         for iface in ifaces:
             if not is_nvos:
                 for pg in range(8):
-                    dut.run_cmd(
+                    _stage_nv_set(
+                        dut,
                         f"nv set interface {iface} telemetry histogram "
                         f"ingress-buffer priority-group {pg}",
-                        validate=True,
                     )
                 for tc in range(8):
-                    dut.run_cmd(
+                    _stage_nv_set(
+                        dut,
                         f"nv set interface {iface} telemetry histogram "
                         f"egress-buffer traffic-class {tc}",
-                        validate=True,
                     )
-                    dut.run_cmd(
+                    _stage_nv_set(
+                        dut,
                         f"nv set interface {iface} telemetry histogram "
                         f"latency traffic-class {tc}",
-                        validate=True,
                     )
                 for counter_type in ("rx-byte", "crc"):
-                    dut.run_cmd(
+                    _stage_nv_set(
+                        dut,
                         f"nv set interface {iface} telemetry histogram "
                         f"counter counter-type {counter_type}",
-                        validate=True,
                     )
             for label_id, description in label_pairs:
-                dut.run_cmd(
+                _stage_nv_set(
+                    dut,
                     f"nv set interface {iface} telemetry label {label_id} "
                     f'description "{description}"',
-                    validate=True,
                 )
         _nv_apply(dut)
 
@@ -193,10 +242,10 @@ def _set_device_labels(dut) -> None:
     """SSIM ``OtelMgmtVrfNoTLSConfig`` system telemetry device labels (lines 339-359)."""
     with allure.step("Configure system telemetry device labels (CLI coverage)"):
         for label_id, description in CumulusOtelConst.DEVICE_LABELS:
-            dut.run_cmd(
+            _stage_nv_set(
+                dut,
                 f"nv set system telemetry label {label_id} "
                 f'description "{description}"',
-                validate=True,
             )
         _nv_apply(dut)
 
@@ -297,6 +346,7 @@ def apply_otel_cli_coverage_baseline(
     collector_ips: Iterable[str],
     *,
     suite=None,
+    include_interface_baseline: bool = True,
 ) -> None:
     """``OtelMgmtVrfNoTLSConfig`` baseline for unset CLI tests (mlx lab, no BGP/leaves).
 
@@ -310,9 +360,14 @@ def apply_otel_cli_coverage_baseline(
     On NVOS (``suite.is_nvos``) the histogram and mgmt-VRF steps don't apply: only
     labels are configured, then all telemetry families are enabled over the default
     export VRF via :func:`enable_nvos_telemetry_families`.
+
+    Step 1 costs 36 ``nv set`` calls per front-panel port, which dominates the runtime
+    of a full restore. Pass ``include_interface_baseline=False`` to restore the system
+    tree only — correct for any test that never reads per-interface telemetry.
     """
     is_nvos = bool(suite and suite.is_nvos)
-    _configure_interface_telemetry_cli_baseline(dut, is_nvos=is_nvos)
+    if include_interface_baseline:
+        _configure_interface_telemetry_cli_baseline(dut, is_nvos=is_nvos)
     _set_device_labels(dut)
     if is_nvos:
         from ngts.tests_nvos.system.telemetry.otel.helpers import (
@@ -367,6 +422,57 @@ def unset_interface_label(dut, iface: str, label_id: str, *, key: str = "") -> N
 
 def get_interface_telemetry_labels_applied(dut, iface: str) -> Dict[str, Any]:
     return _iface_telemetry_applied_show(dut, iface, '/label')
+
+
+def get_interface_histogram_ingress_pg_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(
+        dut, iface, '/histogram/ingress-buffer/priority-group'
+    )
+
+
+def get_interface_histogram_egress_tc_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(
+        dut, iface, '/histogram/egress-buffer/traffic-class'
+    )
+
+
+def get_interface_histogram_latency_tc_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(dut, iface, '/histogram/latency/traffic-class')
+
+
+def get_interface_histogram_counter_applied(dut, iface: str) -> Dict[str, Any]:
+    return _iface_telemetry_applied_show(dut, iface, '/histogram/counter/counter-type')
+
+
+def applied_ids(applied_show: Dict[str, Any]) -> set:
+    """List-keyed node ids as strings (``priority-group``, ``traffic-class``, ...)."""
+    return {str(node_id) for node_id in applied_show}
+
+
+def expected_interface_labels_after_unset(unset_label_ids: Iterable[str]) -> Dict[str, Any]:
+    """Applied ``interface <iface> telemetry label`` tree once ``unset_label_ids`` are gone.
+
+    Derived from the same ``CumulusOtelConst.INTF_LABELS`` the baseline configures.
+    """
+    removed = set(unset_label_ids)
+    return {
+        label_id: {"description": description}
+        for label_id, description in _interface_label_pairs()
+        if label_id not in removed
+    }
+
+
+def expected_system_labels_after_unset(unset_label_ids: Iterable[str]) -> Dict[str, Any]:
+    """Applied ``system telemetry label`` tree once ``unset_label_ids`` are gone.
+
+    Derived from the same ``CumulusOtelConst.DEVICE_LABELS`` the baseline configures.
+    """
+    removed = set(unset_label_ids)
+    return {
+        label_id: {"description": description}
+        for label_id, description in CumulusOtelConst.DEVICE_LABELS
+        if label_id not in removed
+    }
 
 
 def unset_system_telemetry_interface_stats_egress_tc(dut, tc: str) -> None:
@@ -690,6 +796,12 @@ def get_system_interface_stats_egress_tc_applied(dut) -> Dict[str, Any]:
     )
 
 
+def get_system_interface_stats_ingress_pg_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(
+        dut, '/interface-stats/ingress-buffer/priority-group'
+    )
+
+
 def unset_system_telemetry_interface_stats_export(
     dut, *, key: str = "", value: str = ""
 ) -> None:
@@ -864,6 +976,48 @@ def get_system_telemetry_histogram_export_applied(dut) -> Dict[str, Any]:
     return _telemetry_applied_show(dut, '/histogram/export')
 
 
+def unset_system_telemetry_lldp(dut, *, key: str = "", value: str = "") -> None:
+    """``nv unset system telemetry lldp [<key> <value>]``."""
+    _unset_system_telemetry_stats(dut, 'lldp', key=key, value=value)
+
+
+def get_system_telemetry_lldp_applied(dut) -> Dict[str, Any]:
+    return _get_system_telemetry_stats_applied(dut, 'lldp')
+
+
+def unset_system_telemetry_lldp_export(dut, *, key: str = "", value: str = "") -> None:
+    """``nv unset system telemetry lldp export [<key> <value>]``."""
+    _unset_system_telemetry_stats_export(dut, 'lldp', key=key, value=value)
+
+
+def get_system_telemetry_lldp_export_applied(dut) -> Dict[str, Any]:
+    return _get_system_telemetry_stats_export_applied(dut, 'lldp')
+
+
+def unset_system_telemetry_adaptive_routing_stats(
+    dut, *, key: str = "", value: str = ""
+) -> None:
+    """``nv unset system telemetry adaptive-routing-stats [<key> <value>]``."""
+    _unset_system_telemetry_stats(dut, 'adaptive-routing-stats', key=key, value=value)
+
+
+def get_system_telemetry_adaptive_routing_stats_applied(dut) -> Dict[str, Any]:
+    return _get_system_telemetry_stats_applied(dut, 'adaptive-routing-stats')
+
+
+def unset_system_telemetry_adaptive_routing_stats_export(
+    dut, *, key: str = "", value: str = ""
+) -> None:
+    """``nv unset system telemetry adaptive-routing-stats export [<key> <value>]``."""
+    _unset_system_telemetry_stats_export(
+        dut, 'adaptive-routing-stats', key=key, value=value
+    )
+
+
+def get_system_telemetry_adaptive_routing_stats_export_applied(dut) -> Dict[str, Any]:
+    return _get_system_telemetry_stats_export_applied(dut, 'adaptive-routing-stats')
+
+
 def unset_system_telemetry_software_stats_systemd(dut, *, key: str = "") -> None:
     """``nv unset system telemetry software-stats systemd [<key>]``.
 
@@ -945,6 +1099,22 @@ def get_system_platform_stats_class_applied(dut, platform_class: str) -> Dict[st
     return _telemetry_applied_show(dut, f'/platform-stats/class/{platform_class}')
 
 
+def unset_system_platform_stats_export(dut, *, key: str = "") -> None:
+    _system_telemetry_node('/platform-stats/export').unset(key, dut_engine=dut)
+
+
+def get_system_platform_stats_export_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/platform-stats/export')
+
+
+def unset_system_platform_stats_classes(dut) -> None:
+    _system_telemetry_node('/platform-stats/class').unset(dut_engine=dut)
+
+
+def get_system_platform_stats_classes_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/platform-stats/class')
+
+
 def unset_system_platform_stats_class_platform_info(
     dut, *, key: str = "", value: str = ""
 ) -> None:
@@ -975,18 +1145,36 @@ def get_system_platform_stats_class_transceiver_info_applied(dut) -> Dict[str, A
     )
 
 
-def unset_system_telemetry_adaptive_routing_stats(dut, *, key: str = "") -> None:
-    """SSIM test20a/20b: ``nv unset system telemetry adaptive-routing-stats [key]``."""
-    _system_telemetry_node('/adaptive-routing-stats').unset(key, dut_engine=dut)
+def unset_system_interface_stats_ingress_buffer(dut) -> None:
+    _system_telemetry_node('/interface-stats/ingress-buffer').unset(dut_engine=dut)
 
 
-def unset_system_telemetry_adaptive_routing_stats_export(dut) -> None:
-    """SSIM test20b: ``nv unset system telemetry adaptive-routing-stats export``."""
-    _system_telemetry_node('/adaptive-routing-stats/export').unset("", dut_engine=dut)
+def get_system_interface_stats_ingress_buffer_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/interface-stats/ingress-buffer')
 
 
-def get_system_telemetry_adaptive_routing_stats_applied(dut) -> Dict[str, Any]:
-    return _telemetry_applied_show(dut, '/adaptive-routing-stats')
+def unset_system_interface_stats_egress_buffer(dut) -> None:
+    _system_telemetry_node('/interface-stats/egress-buffer').unset(dut_engine=dut)
+
+
+def get_system_interface_stats_egress_buffer_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/interface-stats/egress-buffer')
+
+
+def unset_system_interface_stats_switch_priority(dut) -> None:
+    _system_telemetry_node('/interface-stats/switch-priority').unset(dut_engine=dut)
+
+
+def get_system_interface_stats_switch_priority_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/interface-stats/switch-priority')
+
+
+def unset_system_interface_stats_classes(dut) -> None:
+    _system_telemetry_node('/interface-stats/class').unset(dut_engine=dut)
+
+
+def get_system_interface_stats_classes_applied(dut) -> Dict[str, Any]:
+    return _telemetry_applied_show(dut, '/interface-stats/class')
 
 
 def apply_unset_changes(dut) -> None:

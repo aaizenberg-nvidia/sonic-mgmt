@@ -17,7 +17,18 @@
 		</Test>
 		<Case>
             <pre>
-			</pre>
+                <type> reg_exec_func </type>
+                <name> set_environment_variables </name>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <tout> 60 </tout>
+                <params>
+                    <env> MARS_CASE_NAME=[[run_time:mars_last_case_name]] </env>
+                    <env> MARS_TEST_NAME=[[run_time:test_name]] </env>
+                    <env> MARS_DB_NAME=[[run_time:db_name]] </env>
+                </params>
+</pre>
 			<post>
 			</post>
             <on_not_success>
@@ -60,6 +71,9 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_tpm_attestation.cases </cases>
         <ignore><condition> <key>dut_type</key> <op> in </op> <value>[gorilla]</value> </condition></ignore>
 	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_ima.cases </cases>
+	</test>
     <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_bmc.cases </cases>
         <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[juliet, rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>
@@ -82,6 +96,9 @@
 	</test>
     <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_certificates.cases </cases>
+    </test>
+    <test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_cert_expiry_alert.cases </cases>
     </test>
     <test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_api.cases </cases>
@@ -125,5 +142,9 @@
 	</test>
 	<test>
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_centralized_flows.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_usb_front_panel.cases </cases>
+        <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>
 	</test>
 </DBDEF>

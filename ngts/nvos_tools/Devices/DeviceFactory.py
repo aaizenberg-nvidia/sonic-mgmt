@@ -16,9 +16,11 @@ from ngts.nvos_tools.Devices.IbDevice import (GorillaSwitch, GorillaSwitchBF3, C
                                               JulietNonScaleoutSwitchGB300QS, JulietNonScaleoutSwitchGB300PS,
                                               RosalindSimx, RosalindSwitch, RosalindSurrogateSwitch,
                                               RosalindStackedSwitch, RosalindStackedSimx, RosalindChipless,
-                                              TaipanSwitch, TaipanSingleAsicSwitch, PortiaSwitch, PortiaSimx,
-                                              PortiaSimxNso, PortiaSA,
-                                              PortiaCpoSwitch, PortiaCpo4Asic, PortiaCpoSimx, PortiaCpoSA,
+                                              TaipanSwitch, PortiaSwitch, PortiaSimx,
+                                              PortiaSwitchN7170, PortiaSimxN7170,
+                                              PortiaCpoSwitch, PortiaCpoSimx, PortiaCpoTASimx,
+                                              PortiaNpoSwitch, PortiaNpoSimx, PortiaNpoTASimx,
+                                              PortiaSurrogateNex, PortiaSurrogateNpo,
                                               RosalindSA, RosalindRTF)
 
 logger = logging.getLogger()
@@ -68,7 +70,6 @@ class DeviceFactory:
             'N5112_LD - JulietArielPS': JulietArielPS,
             'N5600_LD - JulietNonScaleoutSwitchNoNCI': JulietNonScaleoutSwitchNoNCI5600,
             'Q3450_LD - Taipan': TaipanSwitch,
-            'Q3451_LD - TaipanSingleAsic': TaipanSingleAsicSwitch,
             'N5500_LD - JulietNonScaleoutSwitchGB300': JulietNonScaleoutSwitchGB300,
             'N5500_LD - JulietNonScaleoutSwitchGB300QS': JulietNonScaleoutSwitchGB300QS,
             'N5500_LD - JulietNonScaleoutSwitchGB300PS': JulietNonScaleoutSwitchGB300PS,
@@ -80,17 +81,18 @@ class DeviceFactory:
             "N6100_LD_simx - Rosalind_SA": RosalindSA,
             "N6300_LD - RosalindStacked": RosalindStackedSwitch,
             "N6300_LD_simx - RosalindStacked": RosalindStackedSimx,
-            "N7100_LD - Portia": PortiaSwitch,
+            "N7200_LD - Portia": PortiaSwitch,
             "N7200_LD_simx - Portia": PortiaSimx,
-            "N7100_LD_NSO_simx - Portia": PortiaSimxNso,
-            "N7200_LD_simx - Portia_SA": PortiaSA,
-            # Gen2 CPO Portia tray, N7220_LD. Production HW = 8-ASIC (2 SWB floors,
-            # default) or 4-ASIC (de-populated); simx is a reduced 2-ASIC profile.
-            # Noga switch_type strings must match these keys.
-            "N7220_LD - Portia_CPO": PortiaCpoSwitch,
-            "N7220_LD - Portia_CPO_4ASIC": PortiaCpo4Asic,
-            "N7220_LD_simx - Portia_CPO": PortiaCpoSimx,
-            "N7220_LD - Portia_CPO_SA": PortiaCpoSA
+            "N7170_LD - Portia": PortiaSwitchN7170,
+            "N7170_LD_simx - Portia": PortiaSimxN7170,
+            "N7300_LD - Portia": PortiaCpoSwitch,
+            "N7300_LD_simx - Portia": PortiaCpoSimx,
+            "N7300_LD_TA_simx - Portia": PortiaCpoTASimx,
+            "N7400_LD - Portia": PortiaNpoSwitch,
+            "N7400_LD_simx - Portia": PortiaNpoSimx,
+            "N7400_LD_TA_simx - Portia": PortiaNpoTASimx,
+            "N7210_LD - PortiaSurrogateNex": PortiaSurrogateNex,
+            "N7410_LD - PortiaSurrogateNpo": PortiaSurrogateNpo,
         }
 
     @staticmethod

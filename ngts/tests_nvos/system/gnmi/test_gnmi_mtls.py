@@ -247,6 +247,7 @@ def test_gnmi_mtls_stress(engines, gnmi_certs):
 gnmi_mtls_factory_reset_no_params_check = generic_mtls_factory_reset_no_params_check(setup_gnmi_mtls_checker,
                                                                                      cleanup_gnmi_cert_tests,
                                                                                      System().gnmi_server,
+                                                                                     GNMI_INSTALLED,
                                                                                      run_gnmi_client_and_verify, False)
 
 gnmi_mtls_factory_reset_keep_all_config_check = generic_mtls_factory_reset_keep_all_config_check(setup_gnmi_mtls_checker,

@@ -471,7 +471,7 @@ def set_value_for_docker_and_verify(engines: EnginesT, limit: str, docker: str) 
     with allure.step(f"Set {limit} to {new_value} in config_db"):
         db_config = f"CPU_MEMORY_MONITOR|{docker}"
         Tools.DatabaseTool.sonic_db_cli_hset(engine=engines.dut, asic="", db_name=DatabaseConst.CONFIG_DB_NAME,
-                                             db_config=db_config, param=limit, value=new_value, force=True)
+                                             db_config=db_config, param=limit, value=new_value, allow_create=True)
 
     with allure.step(f"Verify {limit} changed only for {docker}"):
         verify_resource_value_in_db(engines, output_dict, limit, docker, new_value)

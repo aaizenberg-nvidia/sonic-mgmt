@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DBDEF>
+    <global>
+        <default_params_type> basic_setup_step_params </default_params_type>
+        <DB>
+            <info> VOQ Test </info>
+            <owner> SONiC </owner>
+            <group> SONiC </group>
+            <tags> T2 VOQ </tags>
+            <pre>
+            </pre>
+            <post></post>
+        </DB>
+        <Test>
+            <pre>
+                <type> reg_exec_func </type>
+                <name> reset dynamic ignore tags </name>
+                <mars_cmd_func> reset_dynamic_tags </mars_cmd_func>
+                <tout> 60 </tout>
+                <params>
+                    <tags_type> ignore_tags </tags_type>
+                </params>
+            </pre>
+            <post>
+            </post>
+        </Test>
+        <Case>
+        </Case>
+    </global>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/voq.cases </cases>
+    </test>
+
+</DBDEF>

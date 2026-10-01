@@ -9,6 +9,10 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 
+
+cumulus_owner = "yleibovichwe"
+
+
 logger = logging.getLogger()
 
 

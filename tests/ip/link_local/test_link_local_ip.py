@@ -61,7 +61,15 @@ class TestLinkLocalIPacket:
         hwsku = duthost.facts['hwsku']
         sai_settings = {}
         sai_profile = "/usr/share/sonic/device/{}/{}/sai.profile".format(platform, hwsku)
-        for line in duthost.command("cat %s" % sai_profile)["stdout_lines"]:
+        sai_profile_template = "{}.j2".format(sai_profile)
+        if duthost.stat(path=sai_profile)["stat"]["exists"]:
+            sai_profile_cmd = "cat {}".format(sai_profile)
+        elif duthost.stat(path=sai_profile_template)["stat"]["exists"]:
+            sai_profile_cmd = "sonic-cfggen -d -t {}".format(sai_profile_template)
+        else:
+            pytest.skip("Unable to determine link-local support: sai.profile or sai.profile.j2 is not present")
+            return
+        for line in duthost.command(sai_profile_cmd)["stdout_lines"]:
             if (not re.match("^[ \t]*#", line)) and re.search("=", line):
                 # line should not a comment, and must contain the "=".
                 key, value = line.split("=")
@@ -172,9 +180,10 @@ class TestLinkLocalIPacket:
     def get_downlink_router_mac(duthost, member_iface, default_router_mac):
         config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
         vlan_member = config_facts.get('VLAN_MEMBER') or {}
+        vlan_facts = config_facts.get('VLAN') or {}
         for vlan_interface, vlan_members in vlan_member.items():
             if member_iface in vlan_members:
-                vlan = config_facts['VLAN'][vlan_interface]
+                vlan = vlan_facts.get(vlan_interface) or {}
                 return vlan.get('mac', default_router_mac)
         return default_router_mac
 
@@ -306,7 +315,7 @@ class TestLinkLocalIPacket:
          link_local_dst, downlink_uplink_rx_info, rif_support) = common_params
 
         self.remove_ips_form_downlink_ifaces(duthost, mg_facts, rx_iface, tx_iface)
-        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo)
+        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list)
 
         link_local_src, link_local_dst = self.add_link_local_address_to_ptf(ptfhost, ptf_rx_idx,
                                                                             ptf_tx_idx, cleanup_list)
@@ -333,7 +342,7 @@ class TestLinkLocalIPacket:
          link_local_dst, downlink_uplink_rx_info, rif_support) = common_params
 
         self.remove_ips_form_downlink_ifaces(duthost, mg_facts, rx_iface, tx_iface)
-        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo)
+        self.add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list)
 
         logger.info("Sending IPV6 Packet from {} to {}".format(rx_iface, tx_iface))
         pkt = testutils.simple_ipv6ip_packet(eth_dst=ptf_tx_mac,
@@ -351,12 +360,13 @@ class TestLinkLocalIPacket:
                                out_ptf_indices, out_ifaces, out_rif_ifaces, rif_support)
 
     @staticmethod
-    def add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list, tbinfo):
+    def add_vlan_configuration(duthost, rx_iface, tx_iface, cleanup_list):
         duthost.command("config vlan add {}".format(VLAN_ID))
         config_facts = duthost.config_facts(host=duthost.hostname, source="running")['ansible_facts']
 
         vlan_member = config_facts.get('VLAN_MEMBER')
-        if vlan_member and "t1" not in tbinfo["topo"]["name"]:
+        ports_added = False
+        if vlan_member:
             for vlan_interface, vlan_members in vlan_member.items():
                 vlan_id = re.search(r"Vlan(\d+)", vlan_interface).group(1)
                 if vlan_members.get(rx_iface):
@@ -369,7 +379,9 @@ class TestLinkLocalIPacket:
                         cleanup_list.append((duthost.command,
                                              ("config vlan member add {} {} {}".format(vlan_id,
                                                                                        iface, tagging_mode), ), {}))
-        else:
+                    ports_added = True
+                    break
+        if not ports_added:
             for iface in [rx_iface, tx_iface]:
                 duthost.command("config vlan member add {} {} -u".format(VLAN_ID, iface))
                 cleanup_list.append((duthost.command,
@@ -441,7 +453,7 @@ class TestLinkLocalIPacket:
         rx_err = int(rif_counter_out[rif_rx_ifaces]["rx_err"].replace(",", "")) \
             if rif_support and rif_rx_ifaces else 0
         pytest_assert(max(rx_drp, rx_err) <= PKT_NUM_ZERO,
-                      f"Dropped packets in rx: rx_drp={rx_drp}, rx_err={rx_err}; expected both <= {PKT_NUM_ZERO}")
+                      f"Dropped packets in rx: rx_drp={rx_drp}, rx_err={rx_err}, expected both <= {PKT_NUM_ZERO}")
 
         # Match packets by PTF Validation
         match_cnt = testutils.count_matched_packets_all_ports(ptfadapter, exp_pkt, ports=list(out_ptf_indices))

@@ -1,3 +1,0 @@
-Hostname,ManagementIp,HwSku,Type,Protocol,Os
-r-anaconda-77,10.210.25.199,ACS-MSN3700,DevSonic,,sonic
-pdu-10-208-0-137,10.208.0.137,Raritan,Pdu,snmp,

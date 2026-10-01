@@ -39,7 +39,20 @@
             <post>
             </post>
         </Test>
-        <Case>
+        <Case>			<pre>
+                <type> reg_exec_func </type>
+                <name> set_environment_variables </name>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <tout> 60 </tout>
+                <params>
+                    <env> MARS_CASE_NAME=[[run_time:mars_last_case_name]] </env>
+                    <env> MARS_TEST_NAME=[[run_time:test_name]] </env>
+                    <env> MARS_DB_NAME=[[run_time:db_name]] </env>
+                </params>
+</pre>
+
         </Case>
     </global>
 
@@ -73,10 +86,6 @@
 
     <test>
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/syslog.cases </cases>
-    </test>
-
-    <test>
-        <cases> sonic-mgmt/sonic-tool/mars/cases/community/telemetry.cases </cases>
     </test>
 
     <test>

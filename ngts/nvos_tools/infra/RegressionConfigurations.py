@@ -39,10 +39,12 @@ class Configurations:
         # Black Mamba
         "10.7.148.248": ['sw61p1', 'sw67p1'],
         "10.7.148.249": ['sw61p1', 'sw67p1'],
+        "10.7.148.150": ['sw17p1', 'sw47p1'],
+        "10.7.148.151": ['sw17p1', 'sw47p1'],
 
         # Black Mamba DGX
-        "10.7.145.81": ['sw1p1', 'sw2p1'],
-        "10.7.145.82": ['sw1p1', 'sw2p1'],
+        "10.7.145.81": ['sw5p1', 'sw21p1'],
+        "10.7.145.82": ['sw5p1', 'sw21p1'],
 
         # Crocodile
         "10.7.148.94": ['swA1p1', 'swA2p1'],
@@ -60,18 +62,15 @@ class Configurations:
         "10.7.145.39": ['sw14p1', 'sw43p1'],
     }
 
-    juliet_systems_with_loopbox = ["NVOS_juliet_10_7_148_136", "NVOS_juliet_10_7_148_184",
-                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_surrogate_10_7_145_54", "NVOS_rosalind_spil_1",
-                                   "NVOS_rosalind_skt_1", "NVOS_rosalind_eb1_10", "NVOS_rosalind_eb2_2102", "NVOS_juliet_10_7_148_126",
-                                   "NVOS_rosalind_eb1_2152", "NVOS_rosalind_eb2_164", "NVOS_rosalind_eb2_2124"]
     juliet_systems_with_loopbox = ["NVOS_surrogate_10_7_145_41", "NVOS_juliet_10_7_148_136", "NVOS_juliet_10_7_148_184",
-                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_juliet_10_7_148_126"]
+                                   "NVOS_juliet_10_7_145_85", "NVOS_juliet_10_7_148_142", "NVOS_surrogate_10_7_145_54",
+                                   "NVOS_rosalind_spil_1", "NVOS_rosalind_skt_1", "NVOS_rosalind_eb1_10",
+                                   "NVOS_rosalind_eb2_2102", "NVOS_juliet_10_7_148_126", "NVOS_rosalind_eb1_2152",
+                                   "NVOS_rosalind_eb2_164", "NVOS_rosalind_eb2_2124"]
 
     non_standalone_systems = ['NVOS_juliet_10_7_148_148', 'NVOS_sws_rtf2_rosalind_198']
 
     doca_traffic_systems = ['NVOS_taipan_10_7_145_34', 'NVOS_bm_10_220_12_132']
-
-    systems_with_wrong_shunt_resistor = ['NVOS_juliet_10_7_148_128', 'NVOS_juliet_10_7_148_144']
 
     systems_with_wrong_shunt_resistor = ['NVOS_juliet_10_7_148_128', 'NVOS_juliet_10_7_148_144']
 
@@ -83,10 +82,15 @@ class Configurations:
 
     # Per-setup tray model for SDN tray admin-state tests (RegressionConfigurations.tray_topology).
     # Keys must match Noga/pytest setup_name exactly.
-    # switch_nodes / compute_nodes: expected tray counts for test_tray_show_cmd only.
-    # Maintenance-state tests use this to choose safe trays and whether to parse NMX topology:
-    #   - switch_nodes==1 (e.g. RTF): never toggle the lone switch tray; use compute trays only.
-    #   - compute_nodes==0 (e.g. simx): no gpuTopoInfo expected; skip topology file for acp mapping.
+    # switch_nodes / compute_nodes: expected 'nv show sdn trays' split — since the 6623822
+    # fix (0.8 >= 25.03.0722) the view lists ALL trays: switch trays with a real
+    # maintenance-state, compute trays with 'N/A'.
+    # Maintenance-state tests use SWITCH trays only — compute-tray admin state is not
+    # released to customers (product decision 2026-08-05; update/restore on a compute tray
+    # are rejected with 'Tray admin state is not supported for tray N'):
+    #   - compute_nodes>0: only the local switch tray is used.
+    #   - compute_nodes==0: every tray is a switch tray; any may be used (note: the only
+    #     such setup today, rosalind-simx, is standalone and skips the suite entirely).
     tray_topology = {
         'NVOS_sws_rtf2_rosalind_198': {'switch_nodes': 1, 'compute_nodes': 2},
         'NVOS_2_rosalind-simx': {'switch_nodes': 2, 'compute_nodes': 0},

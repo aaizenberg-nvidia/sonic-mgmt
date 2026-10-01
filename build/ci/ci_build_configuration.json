@@ -1,6 +1,6 @@
 {
   "author": "system-sw-dev-ops-support@mellanox.com",
-  "notify": "GERRIT_PATCHSET_UPLOADER_EMAIL,GERRIT_CHANGE_OWNER_EMAIL,NBU-sw-ci-sonic@nvidia.com,bcc:NBU-system-sw-dev-ops-support@exchange.nvidia.com",
+  "notify": "GERRIT_PATCHSET_UPLOADER_EMAIL,GERRIT_CHANGE_OWNER_EMAIL,bcc:NBU-system-sw-dev-ops-support@exchange.nvidia.com",
   "timeout": "7",
   "control_file": "/auto/sw_system_project/devops/sw-r2d2-bot/ngci_control_files/sonic_mgmt_control_file.yaml",
   "properties": [
@@ -181,6 +181,23 @@
     },
     {
       "phase_3": [
+        {
+          "name": "Allocate setup AIR SPC6 COMM T1",
+          "module": "com.mellanox.jenkins.generic_modules.AllocateSetups",
+          "category": "Allocate setups",
+          "container": "mini-mars:POD_MARS_AIR@AIR_SPC6_COMM",
+          "parameters": {
+            "queue_id": "devops_sonic_ci_air_spc6_comm_t1",
+            "priority": "${PRIORITY_NUMBER}",
+            "with_labels": "CI_SONIC_AIR_SPC6_COMM",
+            "device_var": "SWITCH_SALAMANDRA",
+            "setup_var": "CI_SONIC_AIR_SPC6_COMM_SETUP",
+            "setup_requirements": "group_name:Sagi,sub_group:SONiC_AIR_CI,setup_status:enable"
+          },
+          "skip": "${SKIP_AIR}",
+          "on_failure": "ignore",
+          "out_of_mail": true
+        },
         {
           "name": "Allocate setup SPC Community",
           "module": "com.mellanox.jenkins.generic_modules.AllocateSetups",
@@ -463,6 +480,28 @@
           "out_of_mail": false
         },
         {
+          "name": "Deploy AIR SPC6 COMM T1",
+          "module": "/auto/sw_system_release/ci/sonic_devops/build/ci/bat.groovy",
+          "category": "BAT",
+          "container": "mini-mars:POD_MARS_AIR@AIR_SPC6_COMM",
+          "parameters": {
+            "row": "AIR_COMMUNITY_T1",
+            "column": "SPC6",
+            "global_conf": "${MARS_AIR_GLOBAL_CONF}",
+            "local_conf": "${MARS_AIR_LOCAL_CONF}",
+            "setup_id": "${CI_SONIC_AIR_SPC6_COMM_SETUP}",
+            "setup_conf_file_path": "/auto/sw_regression/system/SONIC/MARS/conf/setups/${CI_SONIC_AIR_SPC6_COMM_SETUP}/",
+            "base_version": "${SONIC_BIN}",
+            "test_type" : "CI",
+            "mars_release_version": "${MARS_RELEASE_VERSION}",
+            "test_name": "deploy",
+            "run_in_container": true
+          },
+          "skip": "${SKIP_AIR}",
+          "on_failure": "ignore",
+          "out_of_mail": false
+        },
+        {
           "name": "Deploy SmartSwitch",
           "module": "/auto/sw_system_release/ci/sonic_devops/build/ci/bat.groovy",
           "category": "BAT",
@@ -624,6 +663,19 @@
           "out_of_mail": true
         },
         {
+          "name": "Free AIR SPC6 COMM T1 setup",
+          "module": "com.mellanox.jenkins.generic_modules.FreeSetup",
+          "category": "Clean",
+          "container": "mini-mars:POD_MARS_AIR@AIR_SPC6_COMM",
+          "parameters": {
+            "setup_name": "${CI_SONIC_AIR_SPC6_COMM_SETUP}"
+          },
+          "skip": "${SKIP_AIR}",
+          "finally": true,
+          "on_failure": "ignore",
+          "out_of_mail": true
+        },
+        {
           "name": "Free SmartSwitch setup",
           "module": "com.mellanox.jenkins.generic_modules.FreeSetup",
           "category": "Clean",
@@ -707,6 +759,13 @@
                     ]
                   }
                 ]
+              },
+              {
+                "AIR_COMMUNITY_T1": [{
+                  "SPC6": [
+                    "deploy"
+                  ]
+                }]
               }
             ]
           },

@@ -25,6 +25,11 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
 )
+from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
+    prepare_nvl_link_health_before_trigger,
+    recover_nvl_link_health_prep,
+    verify_nvl_link_health_after_reboot,
+)
 from ngts.tools.test_utils import allure_utils as allure
 from retry.api import retry_call
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
@@ -43,6 +48,7 @@ def _verify_exact_reboot_fields(output, output_name):
     )
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 def test_system_reset_bit(engines, devices, topology_obj, test_name):
@@ -59,11 +65,16 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
         pytest.skip("System reset bit trigger not supported on this platform")
 
     system = System(None)
-    expected_reason, expected_user = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    expected_reason, expected_user, expected_reason_type = devices.dut.reboot_reason_dict[RebootConsts.RESET_BIT]
+    link_health_context = None
 
     try:
         with allure.step('Clear system events to remove older reboot system events'):
             system.events.action(ActionConsts.CLEAR)
+
+        link_health_context = prepare_nvl_link_health_before_trigger(
+            devices, engines.dut, test_name
+        )
 
         start_time = time.perf_counter()
 
@@ -84,18 +95,21 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
             with allure.independent_step("Check system reboot reason output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
-                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output, ["gentime", "reason", "user"]).verify_result()
+                ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                    output, ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check system reboot history output"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.history.show()).get_returned_value()
                 if output and len(output.keys()) > 0:
-                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(output[list(output.keys())[0]],
-                                                                                      ["gentime", "reason", "user"]).verify_result()
+                    ValidationTool.verify_all_fields_value_exist_in_output_dictionary(
+                        output[list(output.keys())[0]], ["gentime", "reason", "reason-type", "user"]).verify_result()
 
             with allure.independent_step("Check reboot cause"):
                 output = OutputParsingTool.parse_json_str_to_dictionary(system.reboot.reason.show()).get_returned_value()
                 assert expected_reason in output["reason"], f"{expected_reason} not found in show reboot output"
                 assert expected_user in output["user"], f"Reboot user is {output['user']} instead of '{expected_user}'"
+                assert expected_reason_type == output["reason-type"], (
+                    f"Reboot reason-type is {output['reason-type']} instead of '{expected_reason_type}'")
 
             with allure.independent_step("Validate reboot reason and user"):
                 ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
@@ -103,7 +117,12 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
             with allure.independent_step("Verify reboot time is within expected range"):
                 OperationTime.verify_operation_time(duration, "reset bit", devices).verify_result()
 
+            verify_nvl_link_health_after_reboot(
+                link_health_context, devices, engines.dut, test_name
+            )
+
     finally:
+        recover_nvl_link_health_prep(link_health_context, devices, test_name)
         if not ping_device(engines.dut.ip):
             logger.info("system is off and will now remote reboot the switch")
             NvueGeneralCli(TestToolkit.engines.dut).remote_reboot_nvue(topology_obj)
@@ -111,6 +130,7 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.check_log_size
+@pytest.mark.dut_reboot
 @pytest.mark.check_disk_usage
 @pytest.mark.system
 @pytest.mark.nvos_build
@@ -175,6 +195,7 @@ def test_reboot_command(engines, devices, test_name, topology_obj):
             OperationTime.verify_operation_time(duration, devices.dut.reboot_type, devices).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 def test_reboot_command_force(engines, devices, test_name, random_api, topology_obj):
@@ -191,6 +212,7 @@ def test_reboot_command_force(engines, devices, test_name, random_api, topology_
 
 
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_reboot_command_bad_flow(engines, devices):
     """
     Test flow:
@@ -229,6 +251,7 @@ def test_reboot_command_bad_flow(engines, devices):
             ValidationTool.verify_expected_output(output, RebootConsts.POWER_CYCLE_NOT_SUPPORTED_ERR_MSG, True)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 @pytest.mark.parametrize('mode', RebootConsts.DEFAULT_MODES)
@@ -278,6 +301,7 @@ def test_reboot_mode(engines, devices, topology_obj, mode, random_api, test_name
             NvueGeneralCli(TestToolkit.engines.dut).remote_reboot_nvue(topology_obj)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.usefixtures("disable_els_init_state_for_taipan")
 @pytest.mark.system
 @pytest.mark.timeout(10 * MINUTE)

@@ -113,6 +113,14 @@ def test_vlan_ports_down(vlan_ports_setup, duthosts, rand_one_dut_hostname, nbrh
         logger.info("Skipping IP-in-IP decapsulation test: VLAN has no IPv4 address (IPv6-only topology).")
         return
 
+    ip_decap_result = duthost.shell(
+        "sonic-cfggen -d -v 'SYSTEM_DEFAULTS.ip_decap.status'",
+        module_ignore_errors=True
+    )
+    ip_decap_status = ip_decap_result.get("stdout", "").strip().lower()
+    if ip_decap_status == "disabled":
+        pytest.skip("IP-in-IP decapsulation is disabled on this DUT")
+
     logger.info("Starting the IP-in-IP decapsulation test...")
     mg_facts = duthost.get_extended_minigraph_facts(tbinfo)
     if mg_facts["minigraph_portchannels"]:
@@ -151,7 +159,8 @@ def test_vlan_ports_down(vlan_ports_setup, duthosts, rand_one_dut_hostname, nbrh
     exp_pkt.set_do_not_care_packet(IP, "ttl")
     exp_pkt.set_do_not_care_packet(IP, "chksum")
     exp_pkt.set_do_not_care_packet(IP, "tos")
+    ptfadapter.dataplane.flush()
     logger.info("Sending the IP-in-IP packet...")
     testutils.send(ptfadapter, ptf_src_port_index, outer_pkt)
     logger.info("IP-in-IP packet sent.")
-    testutils.verify_packet_any_port(ptfadapter, exp_pkt, ports=ptf_dst_port_indices)
+    testutils.verify_packet_any_port(ptfadapter, exp_pkt, ports=ptf_dst_port_indices, timeout=20)

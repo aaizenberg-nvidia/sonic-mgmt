@@ -6,6 +6,10 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 
+
+cumulus_owner = "hiept"
+
+
 logger = logging.getLogger(__name__)
 
 

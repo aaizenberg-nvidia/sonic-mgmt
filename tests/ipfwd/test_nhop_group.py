@@ -23,7 +23,7 @@ CISCO_NHOP_GROUP_FILL_PERCENTAGE = 0.92
 PTF_QUEUE_LEN = 100000
 
 pytestmark = [
-    pytest.mark.topology('t1', 't2', 'lrh', 'urh', 'm1', "lt2", "ft2")
+    pytest.mark.topology('t1', 't2', 'lrh', 'urh', 'm1', 'uma', 'lma', "lt2", "ft2")
 ]
 
 logger = logging.getLogger(__name__)
@@ -456,26 +456,22 @@ def test_nhop_group_member_count(duthost, tbinfo, loganalyzer):
             "crm config polling interval {}".format(crm_before["polling"])
         )
 
-    # verify the test used up all the NHOP group resources
-    # skip this check on Mellanox as ASIC resources are shared
-    if is_cisco_device(duthost) or is_high_scale_platform(duthost):
-        pytest_assert(
-            crm_after["available_nhop_grp"] + nhop_group_count == crm_before["available_nhop_grp"],
-            "Unused NHOP group resource:{}, used:{}, nhop_group_count:{}, Unused NHOP group resource before:{}".format(
-                crm_after["available_nhop_grp"], crm_after["used_nhop_grp"], nhop_group_count,
-                crm_before["available_nhop_grp"]
-
-            )
-        )
-    elif is_mellanox_device(duthost):
+    # verify the test used the expected NHOP group resources
+    if is_mellanox_device(duthost):
         logger.info("skip this check on Mellanox as ASIC resources are shared")
     elif is_vs_device(duthost):
         logger.info("skip this check on VS as no real ASIC")
     else:
+        expected_available_nhop_grp = max(
+            crm_before["available_nhop_grp"] - nhop_group_count, 0
+        )
         pytest_assert(
-            crm_after["available_nhop_grp"] == 0,
-            "Unused NHOP group resource:{}, used_nhop_grp:{}".format(
-                crm_after["available_nhop_grp"], crm_after["used_nhop_grp"]
+            crm_after["available_nhop_grp"] == expected_available_nhop_grp,
+            "Unexpected available NHOP group resources:{}, expected:{}, used:{}, "
+            "nhop_group_count:{}, available before:{}".format(
+                crm_after["available_nhop_grp"], expected_available_nhop_grp,
+                crm_after["used_nhop_grp"], nhop_group_count,
+                crm_before["available_nhop_grp"]
             )
         )
 
@@ -598,7 +594,8 @@ def test_nhop_group_member_order_capability(duthost, tbinfo, ptfadapter, gather_
             asic.start_service("bgp")
             config_facts = duthost.config_facts(host=duthost.hostname, source="running")["ansible_facts"]
             bgp_neighbors = config_facts.get("BGP_NEIGHBOR", {}).keys()
-            pytest_assert(wait_until(60, 5, 0, duthost.check_bgp_session_state, bgp_neighbors),
+            bgp_timeout = max(60, len(bgp_neighbors) * 3)
+            pytest_assert(wait_until(bgp_timeout, 5, 0, duthost.check_bgp_session_state, bgp_neighbors),
                           "bgp did not come up in expected time")
             nhop.delete_routes()
             pytest_assert(wait_until(60, 5, 0, validate_asic_route, duthost, ip_prefix, False),

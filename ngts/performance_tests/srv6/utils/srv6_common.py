@@ -12,7 +12,8 @@ from collections import defaultdict
 from ngts.helpers.performance.traffic_helpers import (pick_random_non_consecutive_ports,
                                                       pick_random_consecutive_ports,
                                                       validate_per_tc, compare_tc_occ_to_reference,
-                                                      compare_latency_to_reference, compare_pg_to_reference)
+                                                      compare_latency_to_reference, compare_pg_to_reference,
+                                                      compare_pg_total_occ_to_reference)
 from ngts.helpers.performance.performance_setup_helpers import (Validation, ValidationConfig, run_traffic,
                                                                 stop_traffic, run_validation, configure_mloops,
                                                                 skip_test_on_unsupported_os, add_test_mongo_metadata,
@@ -95,7 +96,8 @@ class TestSRv6Base:
         self.ip = InfraConst.IPV6 if is_ipv6 else InfraConst.IPV4
         self.chip_type = chip_type
         self.scenario = "srv6"
-        self.opt_ts = os.getenv(MRCConsts.OPT_TS, default=MRCConsts.OPT_TS_DEFAULT)
+        self.opt_ts = os.getenv(MRCConsts.OPT_TS,
+                                default=MRCConsts.get_opt_ts_default(self.chip_type))
         self.conf_args = conf_args
         self.hwsku = conf_args["hwsku"]
         self.power_thresholds_by_chip_type = power_thresholds_by_chip_type
@@ -332,7 +334,26 @@ class TestSRv6Base:
                 MRCConsts.INGRESS_PORT_GROUP_NAME: {}}
 
     def get_additional_validations(self, traffic_type, tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION,
-                                   drop_over_max_sample_port=None):
+                                   drop_over_max_sample_port=None, tc_occ_reference_offset=0,
+                                   validate_pg_total_occ=False):
+        """
+        Build the SRv6 specific validations that compare this run against the IPv6 reference run.
+
+        Args:
+            traffic_type (str): MRCConsts.TRAFFIC_TYPE_IPV6 or MRCConsts.TRAFFIC_TYPE_SRV6.
+            tc_occ_allowed_deviation: Allowed deviation from the reference TC occupancy. A float
+                between 0 and 1 is a percentage, anything else is an absolute cell count.
+            drop_over_max_sample_port (str): Port to sample for the Drop Over Max validation.
+                When set, the reference comparisons are skipped and only that validation runs.
+            tc_occ_reference_offset: Expected offset of the SRv6 TC occupancy from the IPv6
+                reference, in buffer cells. Defaults to 0 for callers with no known overhead.
+            validate_pg_total_occ (bool): Also compare the total ingress PG occupancy, summed
+                over the headroom and the shared pool, against the reference. Defaults to
+                False for callers with no measured baseline for that metric.
+
+        Returns:
+            dict: Validation name to Validation, ready for ValidationConfig.
+        """
         additional_validations = {}
         if traffic_type == MRCConsts.TRAFFIC_TYPE_SRV6:
             ipv6_validation_json_path = os.getenv(PerfConsts.TRAFFIC_VALIDATION_JSON_PATH)
@@ -340,21 +361,35 @@ class TestSRv6Base:
                 with open(ipv6_validation_json_path, 'r') as f:
                     ipv6_validation_json = json.load(f)
                 if drop_over_max_sample_port is None:
-                    additional_validations['compare_tc_occ_to_reference'] = Validation(compare_tc_occ_to_reference, {'reference_json': ipv6_validation_json,
-                                                                                                                     'tc_keys': [ValidationConsts.OCC_AVG],
-                                                                                                                     'tc_to_validate': MRCConsts.TRIMMING_DATA_QUEUE_NUM,
-                                                                                                                     'allowed_deviation': tc_occ_allowed_deviation})
+                    additional_validations['compare_tc_occ_to_reference'] = Validation(
+                        compare_tc_occ_to_reference,
+                        {'reference_json': ipv6_validation_json,
+                         'tc_keys': [ValidationConsts.OCC_AVG],
+                         'tc_to_validate': MRCConsts.TRIMMING_DATA_QUEUE_NUM,
+                         'allowed_deviation': tc_occ_allowed_deviation,
+                         'reference_offset': tc_occ_reference_offset})
                 tc3_occ_threshold = {ValidationConsts.OCC_AVG: MRCConsts.MRC_RETRANSMISSION_TC_OCC_AVG_THRESHOLD}
                 additional_validations['validate_tc3_occ_below_threshold'] = Validation(validate_per_tc, {'tc_occ_threshold': tc3_occ_threshold,
                                                                                                           'tc_to_validate': MRCConsts.MRC_RETRANSMISSION_TC_NUM,
                                                                                                           'tolerance': None,
                                                                                                           'port_group_name_to_validate_list': []})
                 if drop_over_max_sample_port is None:
-                    additional_validations['compare_pg_to_reference'] = Validation(compare_pg_to_reference, {'reference_json': ipv6_validation_json,
-                                                                                                             'pg_keys': [ValidationConsts.OCC_AVG],
-                                                                                                             'pg_to_validate': MRCConsts.PG_LIST,
-                                                                                                             'allowed_deviation': MRCConsts.HEADROOM_ALLOWED_DEVIATION,
-                                                                                                             'pg_buffer_type': ValidationConsts.PG_BUFFER_DATAFRAME})
+                    additional_validations['compare_pg_to_reference'] = Validation(
+                        compare_pg_to_reference,
+                        {'reference_json': ipv6_validation_json,
+                         'pg_keys': [ValidationConsts.OCC_AVG],
+                         'pg_to_validate': MRCConsts.PG_LIST,
+                         'allowed_deviation': MRCConsts.HEADROOM_ALLOWED_DEVIATION,
+                         'pg_buffer_type': ValidationConsts.PG_BUFFER_DATAFRAME,
+                         'min_band_cells': MRCConsts.MIN_PG_OCC_BAND_CELLS})
+                if drop_over_max_sample_port is None and validate_pg_total_occ:
+                    additional_validations['compare_pg_total_occ_to_reference'] = Validation(
+                        compare_pg_total_occ_to_reference,
+                        {'reference_json': ipv6_validation_json,
+                         'pg_keys': [ValidationConsts.OCC_AVG],
+                         'pg_to_validate': MRCConsts.PG_LIST,
+                         'allowed_deviation': MRCConsts.PG_TOTAL_OCC_ALLOWED_DEVIATION,
+                         'pg_buffer_types': MRCConsts.PG_TOTAL_OCC_FRAMES})
 
                 if not is_redmine_issue_active([4743477])[0]:
                     additional_validations['compare_latency_to_reference'] = Validation(compare_latency_to_reference, {'reference_json': ipv6_validation_json,
@@ -403,6 +438,7 @@ class TestSRv6Base:
         return bw_threshold
 
     def validate_trimmed_untrimmed_dropped_percentages(self, test_name, egress_ports, trimming_queue, drop_queues, violations_list, pairing_df=None, duration=None):
+        time.sleep(10)
         trimmed_untrimmed_dropped_percentages = self.cli_object.trimming.validate_trimmed_untrimmed_dropped_percentages(egress_ports, trimming_queue=trimming_queue,
                                                                                                                         drop_queues=drop_queues,
                                                                                                                         violations_list=violations_list,
@@ -414,5 +450,5 @@ class TestSRv6Base:
     def get_many_to_one_tc_occ_threshold(self):
         tc_occ_threshold = None
         if not is_redmine_issue_active([4668758])[0] and isinstance(self.cli_object, NvueCli):
-            tc_occ_threshold = MRCConsts.MANY_TO_ONE_TRAFFIC_TC_OCC_TH
+            tc_occ_threshold = MRCConsts.MANY_TO_ONE_TRAFFIC_TC_OCC_TH_BY_CHIP_TYPE[self.chip_type]
         return tc_occ_threshold

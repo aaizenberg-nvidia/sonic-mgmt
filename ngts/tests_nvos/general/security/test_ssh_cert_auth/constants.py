@@ -25,3 +25,4 @@ TEST_PRINCIPALS = [
 ]
 
 BAD_PRINCIPAL = 'bad-principal'
+CA_KEY_TYPE_MISMATCH_ERRS = ['does not match key data', 'Invalid config']

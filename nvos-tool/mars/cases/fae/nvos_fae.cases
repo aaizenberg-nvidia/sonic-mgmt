@@ -72,4 +72,15 @@
     </cmd>
   </case>
 
+  <case>
+    <name> NVOS - FAE MLID event snapshot </name>
+    <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[rosalind, rosalind-surrogate, rosalind-chipless, portia]</value> </condition></ignore>
+    <info> </info>
+    <cmd>
+      <params>
+          <static_args>  --setup_name [[conf:extra_info.setup_name]]  --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/fae/test_mlid_counters.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --ansible_inventory_file=[[conf:extra_info.ansible_inventory_file:False]] --clean-alluredir --alluredir=/tmp/allure-results  --showlocals  [[conf:extra_info.additional_options]]  --timeout 900    \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
 </CASEDEF>

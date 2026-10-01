@@ -75,18 +75,20 @@ class CurlTool:
                                         path='/Managers/BMC_0/Actions/Manager.ResetToDefaults',
                                         username=username, password=password)
 
-    def change_root_password(self, username='', password='', dut_engine=None, new_password='ABYX12#14artb'):
+    def change_root_password(self, username='', password='', dut_engine=None, new_password='ABYX12#14artb',
+                             validate=False):
         return self.run_redfish_command(
             rest_op='PATCH',
             data=f'{{"Password": "{new_password}"}}',
             path='/AccountService/Accounts/root',
             username=username,
             password=password,
-            dut_engine=dut_engine
+            dut_engine=dut_engine,
+            validate=validate,
         )
 
     def run_redfish_command(self, rest_op: str, data: str = '', username: str = '',
-                            password: str = '', path: str = '', dut_engine=None):
+                            password: str = '', path: str = '', dut_engine=None, validate=False):
         dut_engine: LinuxSshEngine = dut_engine or TestToolkit.get_engine()
         with allure.step('compose the curl command'):
             username = username or self.username
@@ -95,7 +97,7 @@ class CurlTool:
         if data:
             data = f'-d \'{data}\''
         curl_cmd = f"curl -k -w '\\n' -u {username}:{password} -H 'Content-Type:application/json' -X {rest_op} {data} https://{self.server_host}/redfish/v1{path}"
-        return dut_engine.run_cmd(curl_cmd)
+        return dut_engine.run_cmd(curl_cmd, validate=validate)
 
     def wait_for_bmc_available(self, username: str = '', password: str = '',
                                timeout: int = 3 * 60, retry_interval: int = 10,

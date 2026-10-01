@@ -3,20 +3,22 @@ import math
 import os
 import time
 from collections import namedtuple
-from typing import List
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from devts.infra.tools.linux_tools.linux_tools import scp_file
+
 from ngts.nvos_constants.constants_nvos import (
     ActionConsts,
     CableCartridgeConsts,
     ChassisLocationConsts,
     DatabaseConst,
+    DateTimeConsts,
     DocumentsConsts,
     FansConsts,
     HealthConsts,
     IbConsts,
     ImageConsts,
+    LogComponentsConsts,
     MultiPlanarConsts,
     NvosConst,
     OperationTimeConsts,
@@ -28,9 +30,20 @@ from ngts.nvos_constants.constants_nvos import (
     TcpDumpConsts,
 )
 from ngts.nvos_tools.Devices.BaseDevice import BaseSwitch
-from ngts.nvos_tools.Devices.SwitchCapabilities import CpoCapability, NoPSUCapability, PortiaCpoCapability, \
-    SwitchCapabilityHandler
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, InternalNvosConsts, PhyRecoveryConsts
+from ngts.nvos_tools.Devices.SwitchCapabilities import (
+    CpoCapability,
+    NoAsicPowerCapability,
+    NoFanCapability,
+    NoLeakageCapability,
+    NoPSUCapability,
+    PortiaCpoCapability,
+    SwitchCapabilityHandler,
+)
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import (
+    IbInterfaceConsts,
+    InternalNvosConsts,
+    PhyRecoveryConsts,
+)
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.FilesTool import FilesTool
@@ -55,18 +68,21 @@ from ngts.tests_nvos.constants import (
     MINUTE,
 )
 from ngts.tests_nvos.general.post_upgrade_switch.constants import InstallSteps
-from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.tests_nvos.general.security.nmx_cert.constants import (
     ALTERNATE_CERTIFICATE,
     CA_CERTIFICATE,
     CERTIFICATE,
     CRL,
     ENCRYPTION,
+    ENDPOINT,
+    PROTOCOL,
+    REMOTE_URL,
     Defaults,
 )
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.system.gnmi.constants import GnmiConstants
+from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_config_utils import clear_conf
 from ngts.tools.test_utils.nvos_general_utils import get_version_info
@@ -82,6 +98,7 @@ class IbSwitch(BaseSwitch):
         super().__init__(switch_type=switch_type, asic_amount=asic_amount, switch_class=switch_class)
         self.port_type = self.switch_type.lower()
         self.supports_mtu_testing = True
+        self.single_fw_pkg_supported = False
         self.documents_path = None
         self.documents_files = None
         self._init_sensors_dict()
@@ -164,11 +181,7 @@ class IbSwitch(BaseSwitch):
         return lldp_dict[TcpDumpConsts.LLDP_PORT_ID]
 
     def get_upload_prefix(self):
-        return "://{}:{}@{}/tmp/".format(
-            NvosConst.ROOT_USER,
-            NvosConst.ROOT_PASSWORD,
-            NvosConst.FIT70,
-        )
+        return f"://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/"
 
     def get_default_password_by_version(self, version: str):
         version_num, _ = get_version_info(version)
@@ -185,11 +198,9 @@ class IbSwitch(BaseSwitch):
                                                  subfiles_pattern=PlatformConsts.VOLTAGE_FILES_PATTERN)
 
     def get_default_nvue_config(self, dut_engine=None):
-        default_conf = NvosConst.DEFAULT_CONFIG
-        default_conf["interface"] = NvosConst.DEFAULT_NVOS_IFACE_CONFIG
-        return default_conf
+        return {**NvosConst.DEFAULT_CONFIG, "interface": NvosConst.DEFAULT_NVOS_IFACE_CONFIG}
 
-    def show_setup_versions(self, dut_engine: LinuxSshEngine = None):
+    def show_setup_versions(self, dut_engine: LinuxSshEngine):
         outputs = {
             'system version': dut_engine.run_cmd('nv show system version', timeout=30),
             'platform firmware': dut_engine.run_cmd('nv show platform firmware', timeout=30),
@@ -306,7 +317,9 @@ class IbSwitch(BaseSwitch):
         self.led_list = ['FAN1', 'FAN2', 'FAN3', 'FAN4', 'FAN5', 'FAN6', "PSU_STATUS", "STATUS", "UID"]
 
     def _init_system_lists(self):
+        super()._init_system_lists()
         self.user_fields = ['admin', 'monitor']
+        self.log_components_list = LogComponentsConsts.COMPONENTS_LIST
 
     def _init_security_lists(self):
         super()._init_security_lists()
@@ -392,7 +405,7 @@ class IbSwitch(BaseSwitch):
     def _init_services(self):
         super()._init_services()
         self.available_services.extend((
-            'docker.service', 'database.service', 'hw-management.service', 'hw-management-tc.service', 'config-setup.service', 'ntpsec.service', 'hostname-config.service', 'ntp-config.service',
+            'docker.service', 'database.service', 'hw-management.service', 'hw-management-tc.service', 'config-setup.service', 'chrony.service', 'hostname-config.service',
             'rsyslog-config.service', 'procdockerstatsd.service',
             'configmgrd.service', 'countermgrd.service', 'portsyncmgrd.service'
         ))
@@ -432,6 +445,7 @@ class IbSwitch(BaseSwitch):
         self.primary_ipoib_interface = IbConsts.IPOIB_INT.format(self.asic_amount - 1)
         self.multi_asic_system = False
         self.multi_planar = False
+        self.port_range_group_separator = ''
         self.login_pattern = NvosConst.INSTALL_SUCCESS_PATTERN
         self.install_patterns = {self.login_pattern: 0, "NOS install successful": 1}
         self.ib_host_player = 'ha'
@@ -439,6 +453,7 @@ class IbSwitch(BaseSwitch):
         self.mst_dev_name = ('/dev/mst/mt54002_pciconf0')
         self.category_list = ['temperature', 'cpu', 'disk', 'power', 'fan', 'mgmt-interface', 'voltage']
         self.category_disk_interval_default = '30'
+        self.category_temperature_interval_default = '1'
         self.system_profile_default_values = ['enabled', '2048', 'disabled', 'disabled', '1']
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/crocodile_versions.json"
         self.erot_fw_image_info = self.ErotFirmwareImagesTestConsts(
@@ -468,11 +483,11 @@ class IbSwitch(BaseSwitch):
                                                        'system.profile']
         self.techsupport_etc_empty_files_to_ignore = ['ifstatelock', '.lock', 'base', 'tail', 'installed', 'rules.v4',
                                                       'rules.v6', 'gnmi-server_reconcile', 'lsb_release', 'usr.sbin.haveged',
-                                                      'nvidia_modprobe', '.placeholder', 'installed', '.pwd.lock',
+                                                      'nvidia_modprobe', '.placeholder', '.pwd.lock',
                                                       'verification_test', 'opasswd.old', 'opasswd', 'sbin.dhclient', 'reload.lock',
                                                       'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable',
                                                       'peer_telemetry_enable', '10-ztp-log-forwarding.conf',
-                                                      'event_db.json']
+                                                      'event_db.json', 'accept_eula_version']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
         self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
@@ -481,8 +496,7 @@ class IbSwitch(BaseSwitch):
         self.default_user_name = SystemConsts.DEFAULT_USER_ADMIN
         # System image constants for IB devices
         self.nfs_server = SystemConsts.NBU_NFS_SERVER
-        self.upload_path = '://{}:{}@{}/tmp/'.format(
-            NvosConst.ROOT_USER, NvosConst.ROOT_PASSWORD, NvosConst.FIT70)
+        self.upload_path = f'://{NvosConst.ROOT_USER}:{NvosConst.ROOT_PASSWORD}@{NvosConst.FIT70}/tmp/'
         self.default_username = SystemConsts.DEFAULT_USER_ADMIN
         self.release_name = ImageConsts.NVOS_RELEASE_25_02_1000
         self.list_of_leakages = []
@@ -496,7 +510,8 @@ class IbSwitch(BaseSwitch):
             RebootConsts.PSU_OFF: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (SystemConsts.REBOOT_REASON_POWER_LOSS, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
         # Reset-bit reboot trigger, shared by all IB switches (Taipan, Crocodile, ...).
         # Subclasses can override or clear it if their platform doesn't support it.
@@ -522,8 +537,18 @@ class IbSwitch(BaseSwitch):
             StatsConsts.INTERVAL: self.category_disk_interval_default,
             StatsConsts.STATE: StatsConsts.State.DISABLED.value
         }
+        self.category_temperature_default_dict = {
+            StatsConsts.HISTORY_DURATION: StatsConsts.HISTORY_DURATION_DEFAULT,
+            StatsConsts.INTERVAL: self.category_temperature_interval_default,
+            StatsConsts.STATE: StatsConsts.STATE_DEFAULT
+        }
+        self.category_temperature_default_disable_dict = {
+            StatsConsts.HISTORY_DURATION: StatsConsts.HISTORY_DURATION_DEFAULT,
+            StatsConsts.INTERVAL: self.category_temperature_interval_default,
+            StatsConsts.STATE: StatsConsts.State.DISABLED.value
+        }
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -532,13 +557,26 @@ class IbSwitch(BaseSwitch):
             self.category_list[6]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
             self.category_list[4]: self.category_default_dict,
             self.category_list[5]: self.category_default_dict,
             self.category_list[6]: self.category_default_dict
+        }
+
+        # Counters Historical Analysis new categories (interface / peer-port /
+        # transceivers), shared by all IB and NVL switches. Kept in a separate list
+        # so the existing stats suite (which iterates category_list) is unaffected;
+        # the new suite discovers the categories actually present at runtime and
+        # skips the ones a given platform prunes.
+        self.new_category_list = [StatsConsts.INTERFACE, StatsConsts.PEER_PORT, StatsConsts.TRANSCEIVERS]
+        self.new_category_list_default_dict = {
+            name: StatsConsts.NEW_CATEGORY_DEFAULT_DICT for name in self.new_category_list
+        }
+        self.new_category_disabled_dict = {
+            name: StatsConsts.NEW_CATEGORY_DEFAULT_DISABLED_DICT for name in self.new_category_list
         }
 
         # NVUE logic-relock defaults (override per switch class, e.g. BlackMamba)
@@ -681,12 +719,21 @@ class IbSwitch(BaseSwitch):
             SystemConsts.LOCATION: None
         }
         self.expected_selector_dictionary = NvosConst.EXPECTED_SELECTOR_DICTIONARY
+        # WELF (WebTrends Enhanced Log Format) firewall line as emitted by NVOS syslog.
+        # NVOS differs from Cumulus: it uses a numeric pri field, e.g.
+        # id=firewall time="..." fw="<name>" pri=6 msg="...". {} is filled with the
+        # firewall-name in verify_welf_format(). See EthDevice for the Cumulus form.
         self.welf_format_regex = "id=firewall time=\".*\" fw=\"{}\" pri=\\d msg=\".*\""
         self.vrf_mgmt = SyslogConsts.DEFAULT_VRF
+        self.link_mac = IbInterfaceConsts.LINK_MAC
 
         # Initialize link error counters for traffic validation
         self.system_log_value = "part-number"
         self.system_log_timestamp_regex = NvosConst.DATE_TIME_REGEX[0]
+        # NVOS syslog stamps in local wall-clock time (BSD syslog format, no offset), so log
+        # timestamps must reflect the configured local timezone. verify_show_and_log_times()
+        # asserts against this reference only, instead of accepting either local or UTC.
+        self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
 
     def _init_link_error_counters(self):
         """
@@ -936,6 +983,7 @@ class GorillaSwitch(IbSwitch):
         self.transceivers_tables_name = "TRANSCEIVER_FIRMWARE_INFO"
         self.transceiver_list = [f'sw{a + 1}' for a in range(32)]
         self.supports_tpm_testing = False
+        self.supports_ima_testing = False
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
@@ -1061,7 +1109,7 @@ class BlackMambaSwitch(IbSwitch):
             "Install BIOS": 550,
             'install cpld': 1000,
             'install ssd': 20,
-            self.generate_tech_support: 105,
+            self.generate_tech_support: 165,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 14.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
             'ISSU CPU max downtime': 135,
@@ -1207,7 +1255,8 @@ class BlackMambaDGXSwitch(BlackMambaSwitch):
 
     def _init_fan_list(self):
         super()._init_fan_list()
-        self.fan_list = list(set(self.fan_list) - {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"})
+        remove = {"FAN9/1", "FAN9/2", "FAN10/1", "FAN10/2"}
+        self.fan_list = [f for f in self.fan_list if f not in remove]
 
     def _init_led_list(self):
         super()._init_led_list()
@@ -1275,6 +1324,7 @@ class BlackMambaDGXSwitch(BlackMambaSwitch):
 
 
 class TaipanSwitch(IbSwitch):
+    els_index_to_ga: dict[int, int]
 
     def __init__(self, switch_class=NvosConst.TAIPAN_SWITCH):
         super().__init__(asic_amount=4, switch_class=switch_class)
@@ -1343,14 +1393,14 @@ class TaipanSwitch(IbSwitch):
             "Install BIOS": 550,
             'install cpld': 1000,
             'install ssd': 20,
-            self.generate_tech_support: 105,
+            self.generate_tech_support: 165,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 14.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
             'ISSU CPU max downtime': 135,
         })
         self.memory_speed = 2667  # in MT/s
-        self.memory_size: List[float] = [30.73]
-        self.supported_disk_list: List[SSDConsts.SSDType] = [SSDConsts.VIRTIUM_VTPM24CEXI08_BM110006]
+        self.memory_size: list[float] = [30.73]
+        self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.VIRTIUM_VTPM24CEXI08_BM110006]
         # Taipan-specific constants
         self.number_of_transceivers = 18
         self.transceivers_tables_name = "TRANSCEIVER_INFO"
@@ -1400,7 +1450,7 @@ class TaipanSwitch(IbSwitch):
         self.fnm_link_speed = '800G'
         self.fnm_internal_link_speed = '50G'
 
-    def get_mgmt_ports(self) -> List[str]:
+    def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
 
     def _init_eth0_speeds(self):
@@ -1519,22 +1569,6 @@ class TaipanSwitch(IbSwitch):
             DutUtilsTool.wait_on_system_reboot(engine, device=self)
 
 
-# -------------------------- Taipan Single Asic Switch ----------------------------
-class TaipanSingleAsicSwitch(TaipanSwitch):
-
-    def __init__(self):
-        super().__init__(switch_class=NvosConst.TAIPAN_SINGLE_ASIC_SWITCH)
-
-    def _init_constants(self):
-        super()._init_constants()
-        self.number_of_transceivers = 4
-        self.transceivers_tables_name = "TRANSCEIVER_INFO"
-        self.transceiver_list = [f'els{a + 1}' for a in range(4)] + ['fnm1'] + [f'oe{b + 18}' for b in range(18)]
-
-    def _init_psu_list(self):
-        self.psu_list = []
-
-
 # -------------------------- Crocodile Switch ----------------------------
 class CrocodileSwitch(IbSwitch):
 
@@ -1589,7 +1623,7 @@ class CrocodileSwitch(IbSwitch):
             "Install BIOS": 500,
             'install cpld': 720,
             'install ssd': 20,
-            self.generate_tech_support: 75,
+            self.generate_tech_support: 180,
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 13.5 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 9 * MINUTE,
             'ISSU CPU max downtime': 120,
@@ -1597,6 +1631,7 @@ class CrocodileSwitch(IbSwitch):
         self.unsupported_commands_list.extend(["nv show ib device ASIC3",
                                                "nv show ib device ASIC4"])
         self.memory_speed = 2667  # in MT/s
+        self.port_range_group_separator = ','
 
     def get_mgmt_ports(self) -> list[str]:
         return self.mgmt_ports
@@ -1753,6 +1788,16 @@ class NvLinkSwitch(IbSwitch):
                          switch_class=NvosConst.JULIET_SWITCH)
         self.supports_mtu_testing = False
 
+    def get_configurable_nvl_speeds(self):
+        """
+        NVL speeds safe to configure in tests.
+
+        Defaults to supported_nvl_speeds (what the DUT advertises). Platforms that
+        advertise a speed but cannot safely configure it without extra setup should
+        override this (see RosalindRTF).
+        """
+        return list(getattr(self, 'supported_nvl_speeds', []))
+
     def _init_interface_lists(self):
         super()._init_interface_lists()
         self.mgmt_ports = ['eth0', 'eth1']
@@ -1849,7 +1894,7 @@ class JulietSwitch(NvLinkSwitch):
         self.supported_nvl_speeds = ['200G', '400G']
         self.category_list = ['temperature', 'cpu', 'disk', 'fan', 'mgmt-interface', 'voltage']
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -1857,7 +1902,7 @@ class JulietSwitch(NvLinkSwitch):
             self.category_list[5]: self.category_default_disabled_dict
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
@@ -1952,7 +1997,8 @@ class JulietSwitch(NvLinkSwitch):
             RebootConsts.POWER_BUTTON: (SystemConsts.REBOOT_REASON_POWER_BUTTON, RebootConsts.REBOOT_USER_NA),
             RebootConsts.REMOTE_REBOOT: (RebootConsts.REBOOT_REASON_POWER_CYCLE, RebootConsts.REBOOT_USER_NA),
             RebootConsts.INSTALL_FW: ("reboot", RebootConsts.REBOOT_USER_ADMIN),
-            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA)
+            RebootConsts.RESET_BIT: (RebootConsts.REBOOT_REASON_RESET_BIT, RebootConsts.REBOOT_USER_NA,
+                                     RebootConsts.REBOOT_REASON_TYPE_CRITICAL_ERROR)
         }
 
         self.power_cycle_type = 'juliet-power-cycle'
@@ -1970,8 +2016,8 @@ class JulietSwitch(NvLinkSwitch):
             "Install BIOS": 600,
             'install cpld': 720,
             'install ssd': 20,
-            self.generate_tech_support: 120,
-            'julietscaleout generate_tech_support': 132,
+            self.generate_tech_support: 180,
+            'julietscaleout generate_tech_support': 192,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED,
         })
         self.num_of_plane_ports = 1
@@ -2484,7 +2530,7 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
-            self.category_list[4]: self.category_default_disabled_dict,
+            self.category_list[4]: self.category_temperature_default_disable_dict,
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
@@ -2492,7 +2538,7 @@ class JulietNonScaleoutSwitchGB300(JulietNonScaleoutSwitch):
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
-            self.category_list[4]: self.category_default_dict,
+            self.category_list[4]: self.category_temperature_default_dict,
             self.category_list[5]: self.category_default_dict,
         }
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/juliet_gb300_versions.json"
@@ -2754,6 +2800,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
+        self.single_fw_pkg_supported = True
 
     def get_spdm_components(self, setup_name: str) -> list[str]:
         """
@@ -2812,7 +2859,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                 FW_COMPONENT_BIOS,
                                 FW_COMPONENT_EROT]
         self.category_disabled_dict = {
-            self.category_list[0]: self.category_default_disabled_dict,
+            self.category_list[0]: self.category_temperature_default_disable_dict,
             self.category_list[1]: self.category_default_disabled_dict,
             self.category_list[2]: self.category_disk_default_disable_dict,
             self.category_list[3]: self.category_default_disabled_dict,
@@ -2820,7 +2867,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
             self.category_list[5]: self.category_default_disabled_dict,
         }
         self.category_list_default_dict = {
-            self.category_list[0]: self.category_default_dict,
+            self.category_list[0]: self.category_temperature_default_dict,
             self.category_list[1]: self.category_default_dict,
             self.category_list[2]: self.category_disk_default_dict,
             self.category_list[3]: self.category_default_dict,
@@ -2911,11 +2958,16 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
         self.leakage_sensors_count = 2
         self.list_of_leakages = [f"LEAKAGE-{i}" for i in range(1, self.leakage_sensors_count + 1)]
         self.expected_operation_durations.update({
-            self.generate_tech_support: 165,
-            'julietscaleout generate_tech_support': 165,
+            self.generate_tech_support: 240,
+            'julietscaleout generate_tech_support': 225,
             'reboot with new user FW': 450 if is_bug_active(4854038) else 390,
             InternalNvosConsts.ACP_PORT_GOES_UP: InternalNvosConsts.NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED,
+
+            # The synchronous "nv action install" portion (before reboot/recovery).
+            # Custom for Rosalind to allow for the longer install time. Based on long install times.
+            OperationTimeConsts.IMAGE_INSTALL_OPERATION_ROW: 180,
         })
+
         if is_bug_active(4694678):
             power_cycle_increase_timeout = 60
             # Make sure all operations that depend on power cycle have a longer timeout because of the bug 4694678.
@@ -2980,14 +3032,10 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                           "nv show platform environment psu",
                                           "nv show system profile",
                                           "nv show sdn transceivers",
-                                          # delayed-recovery only supported on croc+mamba
-                                          "nv set fae interface {port} link delayed-recovery",
                                           "nv set fae interface {port} link phy-recovery logic-relock-mode",
                                           "nv set fae interface {port} link phy-recovery logic-relock-timeout",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-mode",
                                           "nv set fae interface {port} link phy-recovery serdes-eq-timeout",
-                                          # link-training only supported on juliet
-                                          "nv set fae interface {port} link link-training",
                                           "nv set fae interface {port} link low-power state",
                                           "nv unset fae interface {port} link low-power state"]
         # NVL7 CPO trunk-port PHY-recovery leaves + counters debug are pruned on NVL6.
@@ -3191,10 +3239,10 @@ class RosalindSwitch(RosalindSurrogateSwitch):
     def _init_constants(self):
         super()._init_constants()
         self.asic_type = NvosConst.NVL6
-        self.supported_nvl_speeds = ['200G', '328G', '345G', '360G', '378G', '400G']  # Rosalind supports all speeds
+        self.supported_nvl_speeds = ['200G', '328G']  # Only approved speeds.
         # MHz -> NVL link speeds allowed for that FAE core-clock (operational profile).
         self.fae_supported_core_clocks = {
-            755: ['400G', '360G', '328G'],
+            755: ['328G'],
             800: self.supported_nvl_speeds,
         }
         self.default_core_clock = 800
@@ -3205,11 +3253,30 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             ALTERNATE_CERTIFICATE: Defaults.ALTERNATE_CERTIFICATE,
             CA_CERTIFICATE: Defaults.CACERT,
             CERTIFICATE: Defaults.CERT,
-            CRL: "",
+            CRL: Defaults.CRL,
             ENCRYPTION: Defaults.ENCRYPTION,
         }
         for app_name, app_data in self.cluster_app.items():
             self.cluster_app[app_name] = {**app_data, "internal": internal_defaults.copy()}
+
+        # Only nmx-controller exposes log-stream and OTLP configuration in its show output.
+        self.cluster_app[ClusterConsts.NMX_CONTROLLER].update({
+            "log-stream": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                PROTOCOL: Defaults.PROTOCOL,
+                REMOTE_URL: Defaults.REMOTE_URL,
+            },
+            "otlp": {
+                CA_CERTIFICATE: Defaults.CACERT,
+                CERTIFICATE: Defaults.CERT,
+                CRL: Defaults.CRL,
+                ENCRYPTION: Defaults.ENCRYPTION,
+                ENDPOINT: Defaults.ENDPOINT,
+            },
+        })
 
         # Rosalind has nmx-telemetry-agent
         self.has_nmx_telemetry_agent = True
@@ -3257,16 +3324,20 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             "asic-model": self.asic_type,
         })
 
-        # Rosalind does not have fans, PSUs, or transceivers (liquid cooled) - must be set AFTER super()
+        # Rosalind does not have fans or transceivers (liquid cooled) - must be set AFTER super()
         self.fan_list = []
         self.fan_led_list = []
-        self.psu_list = []
         self.psu_fan_list = []
         self.transceiver_list = []
+
+        # Rosalind tech-support timing is tracked under its own operation label, not Juliet's.
+        # Must be set before the durations update below, which keys off this attribute.
+        self.generate_tech_support = 'rosalind generate_tech_support'
 
         self.expected_operation_durations.update({
             InstallSteps.SYSTEM_IS_READY_AFTER_MANUFACTURE: 10 * MINUTE,
             InstallSteps.SYSTEM_IS_READY_AFTER_UPGRADE: 10 * MINUTE,
+            self.generate_tech_support: 220,
         })
 
         self.nvl_access_ports_list = [
@@ -3385,8 +3456,8 @@ class RosalindSwitch(RosalindSurrogateSwitch):
         self.fan_led_list = []
 
     def _init_psu_list(self):
-        """Rosalind does not have PSUs (100% liquid cooled)"""
-        self.psu_list = []
+        """Rosalind has no swappable PSUs (100% liquid cooled); a PDB is shown instead"""
+        self.psu_list = ['PDB1']
         self.psu_fan_list = []
 
     def setup_cluster_for_sdn_config(self, cluster, engine, dut_engines):
@@ -3739,15 +3810,26 @@ class RosalindRTF(RosalindSwitch):
 
     def _init_constants(self):
         super()._init_constants()
-        # RosalindRTF will support 200G - GPU configuration is needed
-        self.supported_nvl_speeds.remove('200G')
+        # 200G is not configurable on RTF, so no core-clock may offer it.
+        self.fae_supported_core_clocks = {
+            core_clock: [speed for speed in speeds if speed != IbInterfaceConsts.XDR_SLOW_SPEED]
+            for core_clock, speeds in self.fae_supported_core_clocks.items()
+        }
+
+    def get_configurable_nvl_speeds(self):
+        # DUT still advertises 200G in supported_nvl_speeds, but configuring it on RTF
+        # needs GPU-side setup — exclude from speed-change tests.
+        return [s for s in self.supported_nvl_speeds if s != IbInterfaceConsts.XDR_SLOW_SPEED]
 
 
 # -------------------------- Portia Switch ----------------------------
 
 
 class PortiaSwitch(RosalindSwitch):
-    """Portia (QM5 / NVL7) platform base - real-HW truth shared by every flavor."""
+    """Four-ASIC non-expandable NVL72 Portia tray (N7200_LD)."""
+
+    ACP_PORTS_PER_ASIC = 144
+    FNM_PORTS_PER_ASIC = 2
 
     def update_show_platform_output(self, platform_output):
         # no per-part-number asic-revision map for Portia yet - the revision
@@ -3756,6 +3838,8 @@ class PortiaSwitch(RosalindSwitch):
 
     def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
+        SwitchCapabilityHandler.apply_capabilities(
+            self, [NoPSUCapability(), NoFanCapability(), NoLeakageCapability()])
 
     def _init_constants(self):
         super()._init_constants()
@@ -3763,6 +3847,7 @@ class PortiaSwitch(RosalindSwitch):
         self.constants.erots.clear()
         self.components_list = [component for component in self.components_list if component != FW_COMPONENT_EROT]
         self.asic_type = NvosConst.NVL7
+        self.mst_dev_name = tuple(f'/dev/mst/mt54010_pciconf{i}' for i in range(self.asic_amount))
         self.core_count = 4
         self.supported_nvl_speeds = ['200G']
         self.fae_supported_core_clocks = {
@@ -3771,9 +3856,9 @@ class PortiaSwitch(RosalindSwitch):
         }
         self.access_port_speed = '200G'
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
-            "x86_64-nvidia_n7100_ld-r0")
+            "x86_64-nvidia_n7200_ld-r0")
         self.show_platform_output.update({
-            PlatformConsts.SYSTEM_TYPE: "N7100_LD",
+            PlatformConsts.SYSTEM_TYPE: "N7200_LD",
             "asic-model": self.asic_type,
             PlatformConsts.ASIC_REVISION: PlatformConsts.FW_ASIC_REVISION_VALUE,
         })
@@ -3797,7 +3882,7 @@ class PortiaSwitch(RosalindSwitch):
     def _init_platform_lists(self):
         super()._init_platform_lists()
         self.platform_inventory_switch_values.update({
-            "model": ExpectedString(regex="920-9K51W-00L7-GS0"),
+            "model": ExpectedString(regex="920-9K51W-02L7-GS0"),
         })
 
     def _init_temperature(self):
@@ -3857,9 +3942,11 @@ class PortiaSwitch(RosalindSwitch):
         super()._init_interface_lists()
         self.mgmt_ports = ['eth0']
         self.network_ports = self.mgmt_ports + ['lo']
-        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, 144 * self.asic_amount + 1)]
+        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = []
-        self.nvl_internal_fnm_ports = [f'fnma{asic}p{port_num}' for asic in range(self.asic_amount) for port_num in range(1, self.asic_amount + 1)]
+        self.nvl_internal_fnm_ports = [f'fnma{asic}p{port_num}'
+                                       for asic in range(self.asic_amount)
+                                       for port_num in range(1, self.FNM_PORTS_PER_ASIC + 1)]
         self.all_nvl_ports_list = self.nvl_access_ports_list + self.nvl_trunk_ports_list + self.network_ports
         self.all_fae_nvl_ports_list = self.all_nvl_ports_list + self.nvl_fnm_ports + self.nvl_internal_fnm_ports
 
@@ -3867,72 +3954,58 @@ class PortiaSwitch(RosalindSwitch):
 # -------------------------- PortiaSimx Switch ----------------------------
 
 
-class PortiaSimx(SimxDevice, PortiaSwitch):
-    def _init_constants(self):
-        super()._init_constants()
-        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
-            "x86_64-nvidia_n7200_ld-r0")
-        self.show_platform_output.update({
-            PlatformConsts.SYSTEM_TYPE: "N7200_LD",
-        })
+class PortiaSimxDevice(SimxDevice):
+    """Emulation gaps shared by all Portia simx flavors: asic-power stats are not emulated."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        SwitchCapabilityHandler.apply_capability(self, NoAsicPowerCapability())
 
 
-# -------------------------- PortiaSimxNso Switch ----------------------------
+class PortiaSimx(PortiaSimxDevice, PortiaSwitch):
+    """Four-ASIC non-expandable NVL72 SIMX tray (N7200_LD)."""
 
 
-class PortiaSimxNso(PortiaSimx):
-
-    def __init__(self):
-        super().__init__(asic_amount=2)
+class PortiaSwitchN7170(PortiaSwitch):
+    """Legacy N7170_LD naming for the same NVL72 Portia tray, kept alongside N7200_LD."""
 
     def _init_constants(self):
         super()._init_constants()
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
-            "x86_64-nvidia_n7100_ld-r0")
+            "x86_64-nvidia_n7170_ld-r0")
         self.show_platform_output.update({
-            PlatformConsts.SYSTEM_TYPE: "N7100_LD",
-        })
-
-    def _init_platform_lists(self):
-        super()._init_platform_lists()
-        self.platform_inventory_switch_values.update({
-            "model": ExpectedString(regex="920-9K51W-00L7-GS0"),
+            PlatformConsts.SYSTEM_TYPE: "N7170_LD",
         })
 
 
-# -------------------------- PortiaSA Switch ----------------------------
-
-
-class PortiaSA(PortiaSimx):
-
-    def __init__(self):
-        super().__init__(asic_amount=1)
+class PortiaSimxN7170(PortiaSimxDevice, PortiaSwitchN7170):
+    """Four-ASIC non-expandable NVL72 SIMX tray, legacy N7170_LD naming."""
 
 
 # -------------------------- Portia CPO Switch ----------------------------
 
 
 class PortiaCpoSwitch(PortiaSwitch):
-    """Portia (QM5 / NVL7) CPO switch tray (N7220_LD) with Gen2 CPO vModule support.
+    """Expandable Portia CPO tray (N7300_LD) with Gen2 CPO vModule support.
 
     Applies PortiaCpoCapability, which attaches a first-class CpoTopology as
     self.cpo (one CPO / vModule per ASIC, 4 OEs + 1 ELS each). One NVOS device
-    spans both SWB floors: fully populated production = 2 SWBs / 8 ASICs
-    (default), de-populated production = 1 SWB / 4 ASICs (PortiaCpo4Asic).
-    Simx uses a reduced 2-ASIC profile (PortiaCpoSimx) - not a hardware SKU.
+    spans both SWB floors. SIMX supports the full 8-ASIC model and the reduced
+    2-ASIC TA model.
 
     Port model: per ASIC, 72 GPU-facing access ports (acp) over the backplane
     and 56 CPO scale-out trunk interfaces exposed as 7 swX groups x 8
-    subports (p1s1-p1s8). The eighth 8-channel optical group is a spare and is
-    not exposed as an interface. swX numbering is global and compact across
-    ASICs (ASIC1: sw1-sw7, ASIC2: sw8-sw14, ...). acp ports are not
-    CPO-associated.
+    subports (p1s1-p1s8). The four Sagittas contribute 16, 16, 16 and 8
+    connected lanes respectively. The last Sagitta's other 8 lanes are not
+    user-facing, so the two ELS lasers serving them remain off. swX numbering
+    is global and compact across ASICs (ASIC1: sw1-sw7, ASIC2: sw8-sw14,
+    ...). acp ports are not CPO-associated.
     """
 
     ACP_PORTS_PER_ASIC = 72
-    SW_GROUPS_PER_ASIC = 7
     SW_SUBPORTS_PER_GROUP = 8
-    SPARE_CHANNELS_PER_ASIC = 8
+    SAGITTA_CONNECTED_LANES = (16, 16, 16, 8)
+    SW_GROUPS_PER_ASIC = sum(SAGITTA_CONNECTED_LANES) // SW_SUBPORTS_PER_GROUP
 
     def __init__(self, asic_amount=8):
         super().__init__(asic_amount=asic_amount)
@@ -3941,21 +4014,14 @@ class PortiaCpoSwitch(PortiaSwitch):
     def _init_constants(self):
         super()._init_constants()
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
-            "x86_64-nvidia_n7220_ld-r0")
+            "x86_64-nvidia_n7300_ld-r0")
         self.show_platform_output.update({
-            PlatformConsts.SYSTEM_TYPE: "N7220_LD",
+            PlatformConsts.SYSTEM_TYPE: "N7300_LD",
         })
-        # sw scale-out ports are 1-lane NVL7 simplex (200G PAM-4 per lane), unlike
-        # the inherited 2-lane 400G trunk ports - confirm exact string on DUT
+        # sw scale-out ports are 1-lane NVL7 simplex (200G PAM-4 per lane)
         self.nvl_trunk_port_speed = '200G'
 
-        # ---- NVL7 CPO trunk-port PHY recovery (HLD_NVOS_CPO_PHY_RECOVERY_NVL7) ----
-        # The 5 new leaves + "counters debug" node are supported ONLY on CPO NVL7 (this class and
-        # its subclasses; is_cpo_capable() True). Non-CPO NVL7 (PortiaSimx/Nso) keep them pruned.
-        # Debug step-counters default to 0 (before any recovery / after clear); source of truth for
-        # the counters-debug default assertion.
         self.default_phy_recovery_debug_counters = dict(PhyRecoveryConsts.NVL7_DEFAULT_DEBUG_COUNTERS)
-        # Un-prune the new leaves + counters debug (they ARE supported on CPO trunk ports).
         for cmd in PhyRecoveryConsts.NVL7_PRUNED_COMMANDS:
             if cmd in self.unsupported_commands_list:
                 self.unsupported_commands_list.remove(cmd)
@@ -3968,7 +4034,6 @@ class PortiaCpoSwitch(PortiaSwitch):
 
     def _init_interface_lists(self):
         super()._init_interface_lists()
-        self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = [f'sw{sw}p1s{subport}'
                                      for sw in range(1, self.SW_GROUPS_PER_ASIC * self.asic_amount + 1)
                                      for subport in range(1, self.SW_SUBPORTS_PER_GROUP + 1)]
@@ -3976,27 +4041,126 @@ class PortiaCpoSwitch(PortiaSwitch):
         self.all_fae_nvl_ports_list = self.all_nvl_ports_list + self.nvl_fnm_ports + self.nvl_internal_fnm_ports
 
 
-class PortiaCpo4Asic(PortiaCpoSwitch):
-    """De-populated production tray: 1 SWB floor / 4 ASICs."""
-
-    def __init__(self):
-        super().__init__(asic_amount=4)
+class PortiaCpoSimx(PortiaSimxDevice, PortiaCpoSwitch):
+    """Full 8-ASIC N7300_LD SIMX profile."""
 
 
-class PortiaCpoSimx(SimxDevice, PortiaCpoSwitch):
-    """Reduced 2-ASIC simx profile - a verification resource decision, not a
-    hardware SKU; test logic must stay topology-driven and never read the
-    2-ASIC layout as a production limit."""
+class PortiaCpoTASimx(PortiaSimxDevice, PortiaCpoSwitch):
+    """Reduced 2-ASIC N7300_LD_TA profile, available only in SIMX."""
 
     def __init__(self):
         super().__init__(asic_amount=2)
 
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7300_ld_ta-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7300_LD_TA",
+        })
 
-class PortiaCpoSA(PortiaCpoSwitch):
-    """Single-ASIC developer/unit profile, not a production topology."""
+
+# -------------------------- Portia NPO Switch ----------------------------
+
+
+class PortiaNpoSwitch(PortiaSwitch):
+    """Expandable Portia NPO tray (N7400_LD): 576 internal and 512 external ports."""
+
+    ACP_PORTS_PER_ASIC = 72
+    SW_GROUPS_PER_ASIC = 8
+    SW_SUBPORTS_PER_GROUP = 8
+
+    def __init__(self, asic_amount=8):
+        super().__init__(asic_amount=asic_amount)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7400_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7400_LD",
+        })
+        self.nvl_trunk_port_speed = '200G'
+
+    def _init_platform_lists(self):
+        super()._init_platform_lists()
+        self.platform_inventory_switch_values.update({
+            "model": ExpectedString(regex="920-9K57E-00L7-GS0"),
+        })
+
+    def _init_interface_lists(self):
+        super()._init_interface_lists()
+        self.nvl_trunk_ports_list = [f'sw{sw}p1s{subport}'
+                                     for sw in range(1, self.SW_GROUPS_PER_ASIC * self.asic_amount + 1)
+                                     for subport in range(1, self.SW_SUBPORTS_PER_GROUP + 1)]
+        self.all_nvl_ports_list = self.nvl_access_ports_list + self.nvl_trunk_ports_list + self.network_ports
+        self.all_fae_nvl_ports_list = self.all_nvl_ports_list + self.nvl_fnm_ports + self.nvl_internal_fnm_ports
+
+
+class PortiaNpoSimx(PortiaSimxDevice, PortiaNpoSwitch):
+    """Full 8-ASIC N7400_LD SIMX profile."""
+
+
+class PortiaNpoTASimx(PortiaSimxDevice, PortiaNpoSwitch):
+    """Reduced 2-ASIC N7400_LD_TA profile, available only in SIMX."""
 
     def __init__(self):
-        super().__init__(asic_amount=1)
+        super().__init__(asic_amount=2)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7400_ld_ta-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7400_LD_TA",
+        })
+
+
+class PortiaSurrogateNex(PortiaSwitch):
+    """Four-ASIC Portia NEX surrogate tray (N7210_LD): no fans."""
+
+    ACP_PORTS_PER_ASIC = 72
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-nex.json"
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7210_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7210_LD",
+        })
+
+    def _init_platform_lists(self):
+        super()._init_platform_lists()
+        self.platform_environment_fan_values = {}
+        self.platform_inventory_switch_values.update({
+            "hardware-version": None,
+            "model": ExpectedString(regex="920-9K51W-02L7-SR0"),
+        })
+
+
+class PortiaSurrogateNpo(PortiaNpoSwitch):
+    """Two-ASIC Portia NPO surrogate tray (N7410_LD): no fans."""
+
+    def __init__(self, asic_amount=2):
+        super().__init__(asic_amount=asic_amount)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-npo.json"
+        self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
+            "x86_64-nvidia_n7410_ld-r0")
+        self.show_platform_output.update({
+            PlatformConsts.SYSTEM_TYPE: "N7410_LD",
+        })
+
+    def _init_platform_lists(self):
+        super()._init_platform_lists()
+        self.platform_environment_fan_values = {}
+        self.platform_inventory_switch_values.update({
+            "hardware-version": None,
+            "model": ExpectedString(regex="920-9K57E-00L7-SR0"),
+        })
 
 
 # -------------------------- Caiman Switch ----------------------------

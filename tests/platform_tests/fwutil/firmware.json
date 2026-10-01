@@ -22,15 +22,15 @@
 				],
 				"ONIE": [
 					{
-						"firmware": "http://nbu-mtr-nfs.nvidia.com//auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0011/9600/onie-updater-x86_64-mlnx_x86-r0",
+						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/dev/9600/onie-updater-x86_64-mlnx_x86-r0",
 						"force_reboot": true,
-						"version": "2023.11-5.3.0011-9600",
+						"version": "2025.05-5.3.0017-9600-dev",
 						"reboot": ["cold"]
 					},
 					{
-						"firmware": "http://nbu-mtr-nfs.nvidia.com//auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010/9600/onie-updater-x86_64-mlnx_x86-r0",
+						"firmware": "http://nbu-mtr-nfs.nvidia.com//auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0011/9600/onie-updater-x86_64-mlnx_x86-r0",
 						"force_reboot": true,
-						"version": "2022.08-5.3.0010-9600",
+						"version": "2023.11-5.3.0011-9600",
 						"reboot": ["cold"]
 					}
 				],
@@ -478,23 +478,23 @@
 						"reboot": ["cold"]
 					}
 				],
-				"CPLD2": [
+				"CPLD1": [
 					{
 						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6600_LD/FUI000627/FUI000627.mpfa",
-						"version": "CPLD000439_REV0206",
+						"version": "CPLD000454_REV0400",
 						"reboot": ["power off", "cold"]
 					},
 					{
 						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6600_LD/FUI000622/FUI000622.mpfa",
-						"version": "CPLD000439_REV0206",
+						"version": "CPLD000454_REV0308",
 						"reboot": ["power off", "cold"]
 					}
 				],
 				"BMC": {
 					"AST2600": [
 						{
-							"firmware": "http://nbu-nfs.mellanox.com/auto/sw_system_release/low_level/openbmc/88.0060.2110/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2110.fwpkg",
-							"version": "88.0060.2110",
+							"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/low_level/openbmc/88.0060.2408/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2408.fwpkg",
+							"version": "88.0060.2408",
 							"reboot": ["power off"]
 						},
 						{
@@ -524,8 +524,8 @@
 				"BIOS": [
 					{
 						"force_reboot": true,
-						"firmware": "http://fit69.mtl.labs.mlnx/auto/sw_system_release/sx_mlnx_bios/V3000/0ACUZ_00.01.004/Release/0ACUZ.cab",
-						"version": "0ACUZ_00.01.004",
+						"firmware": "http://fit69.mtl.labs.mlnx/auto/sw_system_release/sx_mlnx_bios/V3000/0ACUZ_01.00.007/Release/0ACUZ.cab",
+						"version": "0ACUZ_01.00.007",
 						"reboot": ["cold"]
 					}
 				],
@@ -535,22 +535,10 @@
 						"force_reboot": true,
 						"version": "2025.05-5.3.0021-115200-dev",
 						"reboot": ["cold"]
-					},
-					{
-						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0021/dev/115200/onie-updater-x86_64-mlnx_x86-r0",
-						"force_reboot": true,
-						"version": "2025.05-5.3.0021-115200-dev",
-						"reboot": ["cold"]
 					}
 				],
 				"CPLD2": [
 					{
-						"force_reboot": true,
-						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6810_LD/FUI000468/FUI000468.mpfa",
-						"version": "CPLD000467_REV0002",
-						"reboot": ["power off", "cold"]
-					},
-					{"force_reboot": true,
 						"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/hw_cpld/Approved_CPLDs/SN6810_LD/FUI000468/FUI000468.mpfa",
 						"version": "CPLD000467_REV0002",
 						"reboot": ["power off", "cold"]
@@ -558,13 +546,13 @@
 				],
 				"BMC": [
 					{
-						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0060.1018/SPC6_AST2600_BMC/dev/non_otp/erot_sign_debug/sw_bmc_arm_spc6_ast2600_bmc_88.0060.1018.fwpkg",
-						"version": "88.0060.1018",
+						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0060.2408/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2408.fwpkg",
+						"version": "88.0060.2408",
 						"reboot": ["power off"]
 					},
 					{
-						"firmware": "http://nbu-nfs.mellanox.com/auto/sw_system_release/low_level/openbmc/88.0060.2053/SPC6_AST2600_BMC/dev/non_otp/erot_sign_debug/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2053.fwpkg",
-						"version": "88.0060.2053",
+						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0060.1018/SPC6_AST2600_BMC/dev/non_otp/erot_sign_debug/sw_bmc_arm_spc6_ast2600_bmc_88.0060.1018.fwpkg",
+						"version": "88.0060.1018",
 						"reboot": ["power off"]
 					}
 				]
@@ -590,8 +578,8 @@
 			"component":{
                 "ONIE":[
                     {
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200",
 							"type": "prod"
                     }
 				],
@@ -648,13 +636,13 @@
             "component":{
                 "ONIE":[
                     {
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200",
 							"type": "prod"
                     },
 					{
-                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0010-dev/115200/onie-updater-x86_64-mlnx_x86-r0",
-                            "version": "2022.08-5.3.0010-115200",
+                            "firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/dev/115200/onie-updater-x86_64-mlnx_x86-r0",
+                            "version": "2025.05-5.3.0017-115200-dev",
 							"type": "dev"
                     }
 				],
@@ -727,13 +715,13 @@
 			"component": {
 				"ONIE": [
 				{
-					"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
-					"version": "2025.05-5.3.0017-115200",
+					"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0021/prod/115200/onie-updater-x86_64-mlnx_x86-r0",
+					"version": "2025.05-5.3.0021-115200",
 					"type": "prod"
 				},
 				{
-					"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0017/dev/115200/onie-updater-x86_64-mlnx_x86-r0",
-					"version": "2025.05-5.3.0017-115200-dev",
+					"firmware": "http://nbu-mtr-nfs.nvidia.com/auto/sw_system_release/sx_mlnx_os/onie_release/5.3.0021/dev/115200/onie-updater-x86_64-mlnx_x86-r0",
+					"version": "2025.05-5.3.0021-115200-dev",
 					"type": "dev"
 				}
 				],

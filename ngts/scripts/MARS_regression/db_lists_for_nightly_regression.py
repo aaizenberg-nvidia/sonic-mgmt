@@ -61,6 +61,8 @@ COMMUNITY_SET2_TEST_GROUP_MAP = {
     'community/dualtor.db': PLATFORM_DEPENDENT,
     'community/memory.db': PLATFORM_DEPENDENT,
     'community/link.db': PLATFORM_AGNOSTIC_GROUP1,
+    'community/macsec.db': PLATFORM_DEPENDENT,
+    'community/voq.db': PLATFORM_DEPENDENT,
     'community/upgrade_related.db': PLATFORM_DEPENDENT,
     'community/sed_password.db': PLATFORM_DEPENDENT
 }
@@ -98,12 +100,16 @@ SETUPS_GROUPS_MAP = {
         ('t1', 'spc1'): {'arc-switch1025_setup': SETUPS_GROUP_1, 'r-panther-01_setup': SETUPS_GROUP_2},
         ('t0', 'spc3'): {'r-tigon-04_setup': SETUPS_GROUP_1, 'mtvr-leopard-01_setup': SETUPS_GROUP_2},
         ('t1', 'spc3'): {'r-leopard-01_setup': SETUPS_GROUP_1, 'r-tigon-11_setup': SETUPS_GROUP_2},
+        ('t0', 'spc5'): {'r-bison-06_setup': SETUPS_GROUP_1, 'r-bison-08_setup': SETUPS_GROUP_2},
+        ('t1', 'spc5'): {'r-bison-04_setup': SETUPS_GROUP_1},
     },
     'community_set2': {
         ('t0', 'spc1'): {'r-panther-42_setup': SETUPS_GROUP_1, 'r-panther-23_setup': SETUPS_GROUP_2},
         ('t1', 'spc1'): {'r-panther-40_setup': SETUPS_GROUP_1, 'r-panther-45_setup': SETUPS_GROUP_2},
         ('t0', 'spc3'): {'mtvr-leopard-09_setup': SETUPS_GROUP_1, 'r-tigon-21_setup': SETUPS_GROUP_2},
-        ('t1', 'spc3'): {'r-leopard-58_setup': SETUPS_GROUP_1, 'r-tigon-20_setup': SETUPS_GROUP_2}
+        ('t1', 'spc3'): {'r-leopard-58_setup': SETUPS_GROUP_1, 'r-tigon-20_setup': SETUPS_GROUP_2},
+        ('t0', 'spc5'): {'r-bison-18_setup': SETUPS_GROUP_1, 'r-bison-16_setup': SETUPS_GROUP_2},
+        ('t1', 'spc5'): {'r-bison-20_setup': SETUPS_GROUP_1, 'r-bison-22_setup': SETUPS_GROUP_2},
     },
     'canonical': {
         ('ptf_any', 'spc1'): {'sonic_panther_r-panther-03': SETUPS_GROUP_1, 'sonic_panther_r-panther-13': SETUPS_GROUP_2},
@@ -125,3 +131,43 @@ SETUPS_GROUPS_MAP = {
     }
 }
 # In canonical we have odd number of setups.
+
+# --- Finding the other setups of the scenario, and the topo and the hwsku each of them runs ---
+
+# Name of the environment variable Mars sets to the path of the scenario json of the current run.
+SCENARIO_JSON_ENV_VAR = 'JSON_FILE'
+
+# Key of a setup in that json, holding the command Mars runs to compute the dbs of that setup. It is
+# a generic key, a setup without it or with a command running another script takes its dbs from
+# somewhere else, see read_scenario_setups().
+SCENARIO_CALCULATE_PARAMS_KEY = 'MARS_ORCH_CALCULATE_PARAMS_COMMAND'
+
+# Options of extra_args_inst in that json, a setup declaring them overrides its .setup file.
+SCENARIO_TOPOLOGY_OPTION = '--meinfo_topology'
+SCENARIO_HWSKU_OPTION = '--meinfo_dut_hwsku'
+SCENARIO_SETUP_CONF_OPTION = '--conf'
+
+# The .setup file of a setup, holding its default topo and hwsku as xml like tags.
+SETUP_CONF_DIR = '/auto/sw_regression/system/SONIC/MARS/conf/setups'
+SETUP_CONF_TOPOLOGY_TAG = 'topology'
+SETUP_CONF_HWSKU_TAG = 'dut_hwsku'
+
+# Both files above live on the /auto mounts, which fail sporadically. A single failed read would
+# silently disable the sharing, so reading them is retried.
+NFS_READ_RETRIES = 3
+NFS_RETRY_DELAY_SECONDS = 1
+
+
+# --- Dbs that stay out of the sharing between the setups with the same topo and hwsku ---
+
+# Run by every one of those setups instead of being given to a single one.
+EVERY_SETUP_DBS = ['community/pretest.db']
+
+# Dbs depending on each other and on their order, they are given to a single setup as one block.
+INDIVISIBLE_DB_BLOCKS = [
+    ['community/pre_rpc.db',
+     'community/rpc_qos.db',
+     'community/rpc_pfc_asym_and_copp.db',
+     'community/rpc_qos_dualtor.db',
+     'community/post_rpc.db'],
+]

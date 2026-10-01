@@ -16,14 +16,6 @@
     </global>
 
     <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
         <info> System Log Case </info>
         <name> syslog </name>
         <cmd>
@@ -35,29 +27,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
-            </condition>
-        </ignore>
-        <info> Syslog source ip Case </info>
-        <name> syslog source ip </name>
-        <cmd>
-            <params>
-                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug  --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 3600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts syslog/test_syslog_source_ip.py </static_args>
-            </params>
-        </cmd>
-    </case>
-
-    <case>
-        <ignore>
-            <!-- daily case  -->
-            <condition>
-                <key> skip_weekend_cases </key>
-                <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> Syslog rate limit Case </info>
@@ -71,11 +45,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> System Logrotate Case </info>
@@ -89,11 +63,11 @@
 
     <case>
         <ignore>
-            <!-- daily case  -->
+            <!-- weekend case  -->
             <condition>
                 <key> skip_weekend_cases </key>
                 <op> == </op>
-                <value> no </value>
+                <value> yes </value>
             </condition>
         </ignore>
         <info> Cron Health Case </info>

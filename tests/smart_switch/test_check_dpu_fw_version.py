@@ -1,10 +1,10 @@
 import logging
-import os
 import pytest
 import re
 
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from tests.common.helpers.assertions import pytest_assert
+from tests.common.helpers.sonic_image_readme import resolve_sonic_image_readme_path
 
 pytestmark = [
     pytest.mark.topology('smartswitch'),
@@ -25,16 +25,17 @@ def test_check_dpu_fw_version(dpuhosts, localhost):
         sonic_image_directory = sonic_image_name[6:]
         # master_RC.43-878aeef52_Internal -> 43-878aeef52_Internal
         sonic_image_branch, sonic_image_version = sonic_image_directory.split(".", 1)
-        nfs_path = "/auto/sw_system_release/sonic"
-        readme_path = f"{nfs_path}/{sonic_image_directory}/dev/README"
+        readme_path = resolve_sonic_image_readme_path(sonic_image_directory)
         logger.debug(f"Sonic image branch: {sonic_image_branch}, version: {sonic_image_version}")
-        logger.debug(f"Expected README path: {readme_path}")
-        if not os.path.exists(readme_path):
-            # CI run image versions 0 after the branch name
+        logger.debug(f"Resolved README path: {readme_path}")
+        if not readme_path:
+            # Classic CI images version as 0 after the branch name and have no NFS README
             if sonic_image_version.startswith("0-"):
                 pytest.skip("README is not available in the NFS for the CI runs")
             else:
-                pytest.fail(f"README {readme_path} is not found")
+                pytest.fail(
+                    f"README /auto/sw_system_release/sonic/{sonic_image_directory}/dev/README is not found"
+                )
 
         fw_version_output = localhost.shell(f"grep FW_VERSION_DPU '{readme_path}'")['stdout']
         fw_version_pattern = r'\d{2}\.\d{4}'

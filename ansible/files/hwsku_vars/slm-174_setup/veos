@@ -1,0 +1,145 @@
+all:
+  children:
+    vm_host:
+      children:
+        vm_host_23:
+    eos:
+      children:
+        vms_23:
+
+    servers:
+      vars:
+        topologies:
+          - t1-isolated-d28u4
+
+      children:
+        server_23:
+
+vm_host_23:
+  hosts:
+    FIT-SONIC-VRT-MEC-40:
+      ansible_host: fit-sonic-vrt-mec-40
+
+vms_23:
+  hosts:
+    VM2301:
+      ansible_host: 10.220.207.48
+    VM2302:
+      ansible_host: 10.220.207.49
+    VM2303:
+      ansible_host: 10.220.207.50
+    VM2304:
+      ansible_host: 10.220.207.51
+    VM2305:
+      ansible_host: 10.220.207.52
+    VM2306:
+      ansible_host: 10.220.207.53
+    VM2307:
+      ansible_host: 10.220.207.54
+    VM2308:
+      ansible_host: 10.220.207.55
+    VM2309:
+      ansible_host: 10.220.207.56
+    VM2310:
+      ansible_host: 10.220.207.57
+    VM2311:
+      ansible_host: 10.220.207.58
+    VM2312:
+      ansible_host: 10.220.207.59
+    VM2313:
+      ansible_host: 10.220.207.60
+    VM2314:
+      ansible_host: 10.220.207.61
+    VM2315:
+      ansible_host: 10.220.207.62
+    VM2316:
+      ansible_host: 10.220.207.63
+    VM2317:
+      ansible_host: 10.220.207.64
+    VM2318:
+      ansible_host: 10.220.207.65
+    VM2319:
+      ansible_host: 10.220.207.66
+    VM2320:
+      ansible_host: 10.220.207.67
+    VM2321:
+      ansible_host: 10.220.207.68
+    VM2322:
+      ansible_host: 10.220.207.69
+    VM2323:
+      ansible_host: 10.220.207.70
+    VM2324:
+      ansible_host: 10.220.207.71
+    VM2325:
+      ansible_host: 10.220.207.72
+    VM2326:
+      ansible_host: 10.220.207.73
+    VM2327:
+      ansible_host: 10.220.207.74
+    VM2328:
+      ansible_host: 10.220.207.75
+    VM2329:
+      ansible_host: 10.220.207.76
+    VM2330:
+      ansible_host: 10.220.207.77
+    VM2331:
+      ansible_host: 10.220.207.78
+    VM2332:
+      ansible_host: 10.220.207.79
+    VM2333:
+      ansible_host: 10.220.207.80
+    VM2334:
+      ansible_host: 10.220.207.81
+    VM2335:
+      ansible_host: 10.220.207.82
+    VM2336:
+      ansible_host: 10.220.207.83
+    VM2337:
+      ansible_host: 10.220.207.84
+    VM2338:
+      ansible_host: 10.220.207.85
+    VM2339:
+      ansible_host: 10.220.207.86
+    VM2340:
+      ansible_host: 10.220.207.87
+    VM2341:
+      ansible_host: 10.220.207.88
+    VM2342:
+      ansible_host: 10.220.207.89
+    VM2343:
+      ansible_host: 10.220.207.90
+    VM2344:
+      ansible_host: 10.220.207.91
+    VM2345:
+      ansible_host: 10.220.207.92
+    VM2346:
+      ansible_host: 10.220.207.93
+    VM2347:
+      ansible_host: 10.220.207.94
+    VM2348:
+      ansible_host: 10.220.207.95
+    VM2349:
+      ansible_host: 10.220.207.96
+    VM2350:
+      ansible_host: 10.220.207.97
+    VM2351:
+      ansible_host: 10.220.207.98
+    VM2352:
+      ansible_host: 10.220.207.99
+    VM2353:
+      ansible_host: 10.220.207.100
+    VM2354:
+      ansible_host: 10.220.207.101
+    VM2355:
+      ansible_host: 10.220.207.102
+    VM2356:
+      ansible_host: 10.220.207.103
+    VM2357:
+      ansible_host: 10.220.207.104
+
+server_23:
+  children:
+    vm_host_23:
+    vms_23:
+  vars:
+    host_var_file: host_vars/FIT-SONIC-VRT-MEC-40.yml

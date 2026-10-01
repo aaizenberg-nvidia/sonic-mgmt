@@ -34,6 +34,8 @@ class Defaults:
     PLDM_NAME = 'pldm'
     PRODUCTION = 'prod'
     DEVELOPMENT = 'dev'
+    BMC_READY_TRIES = 36
+    BMC_READY_DELAY = 5
 
 
 class NogaConstants:

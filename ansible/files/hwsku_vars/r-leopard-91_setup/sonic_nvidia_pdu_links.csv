@@ -2,4 +2,4 @@ StartDevice,StartPort,EndDevice,EndPort,EndFeed
 pdu-10-208-2-11,1.5,r-leopard-91,PSU1,
 pdu-10-208-2-11,1.11,r-leopard-91,PSU2,
 pdu-10-208-2-11,1.7,r-leopard-93,PSU1,
-pdu-10-208-2-11,1.13,r-leopard-93,PSU2,
+pdu-10-208-2-11,2.1,r-leopard-93,PSU2,

@@ -137,7 +137,6 @@ def test_radius_bad_secret(test_api, engines, topology_obj):
 
 
 @pytest.mark.security
-@pytest.mark.simx_security
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_radius_bad_port(test_api, engines, topology_obj):
     """
@@ -195,7 +194,6 @@ def test_radius_priority(test_flow, test_api, engines, topology_obj, request):
 
 
 @pytest.mark.security
-@pytest.mark.simx_security
 @pytest.mark.parametrize('test_flow', TestFlowType.ALL_TYPES)
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_radius_server_unreachable(test_flow, test_api, engines, topology_obj, local_adminuser, request):
@@ -258,9 +256,8 @@ def test_radius_auth_error(test_flow, test_api, engines, topology_obj, local_adm
 
 @pytest.mark.timeout(MAX_TEST_TIMEOUT, func_only=True)
 @pytest.mark.security
-@pytest.mark.simx_security
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_radius_timeout(test_api, engines, topology_obj, local_adminuser: UserInfo):
+def test_radius_timeout(test_api, engines, topology_obj, local_adminuser: UserInfo, cleanup_after_aaa):
     """
     @summary: Verify timeout functionality
 
@@ -319,7 +316,6 @@ def test_radius_timeout(test_api, engines, topology_obj, local_adminuser: UserIn
             engines.dut.disconnect()
             _, timestamp1 = authenticator.attempt_login_failure()
             _, timestamp2 = authenticator.attempt_login_success(restart_session_process=False)
-            engines.dut.disconnect()
 
         with allure.step('Verify respond time >= sum of timeouts'):
             assert timestamp2 - timestamp1 >= rand_timeout + rand_timeout2, \

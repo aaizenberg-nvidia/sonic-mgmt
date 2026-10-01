@@ -3,6 +3,15 @@ package vars
 def pre(name) {
     return true
 }
+def is_stability_ci() {
+    try {
+        def branch = params.GERRIT_BRANCH?.replace("origin/", "")?.replace("origin1/", "")
+        return branch == "develop" &&  params.GERRIT_CHANGE_SUBJECT == "Stability test Issue: N/A"
+    } catch (Throwable ex) {
+        print "[WARNING] Failed to determine if build is stability CI: ${ex}"
+        return false
+    }
+}
 
 def set_dpu_bin(topic_map) {
     def DPU_bin_path
@@ -270,6 +279,12 @@ def update_readme_file(String filePath, Map updates) {
 
 def run_step(name) {
     try {
+        env.IS_STABILITY_CI = is_stability_ci()
+        echo "IS_STABILITY_CI: ${env.IS_STABILITY_CI}"
+        if (env.IS_STABILITY_CI && env.IS_STABILITY_CI.toBoolean()) {
+            print "Stability CI run detected — adding NBU-sw-ci-sonic@exchange.nvidia.com to the mailing list."
+            env.ADD_MAILS_TO_MAILING_LIST = "NBU-sw-ci-sonic@exchange.nvidia.com"
+        }
         def topic = (GerritTools.get_topic(env.GERRIT_CHANGE_NUMBER)).replace("\"","")
         def topic_map = [:]
         for (_topic in topic.split(",")) {

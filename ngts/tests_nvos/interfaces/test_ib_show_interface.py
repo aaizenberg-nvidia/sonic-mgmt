@@ -22,6 +22,7 @@ from ngts.nvos_tools.infra.ResultObj import ResultObj
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.general.security.conftest import create_ssh_login_engine
+from ngts.tests_nvos.general.telemetry.ib.helpers import get_plane_port_oid
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.PhotonicsTool import PhotonicsTool
@@ -470,15 +471,13 @@ def test_validate_total_in_out_counters_show_db_gnmi(engines, random_api):
 
 
 def get_port_oid(engines, port_name, plane_suffix):
-    fae = Fae(port_name=f'{port_name}')
-    output_dictionary = Tools.OutputParsingTool.parse_show_interface_output_to_dictionary(
-        fae.interface.show()).get_returned_value()
-    port_key_with_suffix = output_dictionary["plan-ports"][port_name + plane_suffix]["key"]
-    port_key = port_key_with_suffix[:-3]
-    port_to_oid_cmd = f'sonic-db-cli COUNTERS_DB hget "COUNTERS_PORT_NAME_MAP" "{port_key}"'
-    output = engines.dut.run_cmd(port_to_oid_cmd)
-    port_oid = output.split(":")[1]
-    return port_oid
+    # Use the shared plane-port -> OID resolver: it tries the plane name and the
+    # IB-name form in COUNTERS_PORT_NAME_MAP before falling back to the FAE
+    # `plane-ports` "key" trick, so it survives Aports that don't expose
+    # `plane-ports` in `nv show fae interface <aport>`.
+    plane_port_name = port_name + plane_suffix
+    oid_key = get_plane_port_oid(engines, plane_port_name)  # "oid:0x..."
+    return oid_key.split(":", 1)[1] if oid_key.startswith("oid:") else oid_key
 
 
 def validate_field_from_sonic_db(engines, port_oid, field_name):
@@ -546,10 +545,10 @@ def validate_link_fields(output_dictionary, switch_type, port_up=True):
                           # IbInterfaceConsts.LINK_SUPPORTED_SPEEDS,
                           IbInterfaceConsts.LINK_LOGICAL_PORT_STATE,
                           IbInterfaceConsts.LINK_PHYSICAL_PORT_STATE,
-                          IbInterfaceConsts.LINK_VL_ADMIN_CAPABILITIES,
-                          IbInterfaceConsts.LINK_CONNECTION_MODE]
+                          IbInterfaceConsts.LINK_VL_ADMIN_CAPABILITIES]
         if switch_type == "ib":
             field_to_check.insert(1, IbInterfaceConsts.LINK_IB_SUBNET)  # Insert at the desired position
+            field_to_check.append(IbInterfaceConsts.LINK_CONNECTION_MODE)
 
         Tools.ValidationTool.verify_field_exist_in_json_output(output_dictionary, field_to_check).verify_result()
 
@@ -558,7 +557,8 @@ def validate_link_fields(output_dictionary, switch_type, port_up=True):
                           # IbInterfaceConsts.LINK_IB_SPEED,
                           IbInterfaceConsts.LINK_OPERATIONAL_VLS]
 
-        if output_dictionary[IbInterfaceConsts.LINK_CONNECTION_MODE] == IbInterfaceConsts.XDR and \
+        if switch_type == "ib" and \
+           output_dictionary[IbInterfaceConsts.LINK_CONNECTION_MODE] == IbInterfaceConsts.XDR and \
            output_dictionary[IbInterfaceConsts.LINK_LOGICAL_PORT_STATE] == IbInterfaceConsts.LINK_LOGICAL_PORT_STATE_ACTIVE:
             field_to_check.insert(1, IbInterfaceConsts.LINK_SPEED)
 
@@ -694,6 +694,7 @@ def test_ib_interface_counters_cli_structure(engines, devices, random_api):
 def verify_ib_interface_counters_cli_structure_nvl(devices):
     with allure.step('Select a random port'):
         selected_port = Tools.RandomizationTool.select_random_port(
+            requested_ports_state=None,
             requested_ports_type=NvlInterfaceConsts.NVL_PORT_TYPE).get_returned_value()
 
         TestToolkit.update_tested_ports([selected_port])
@@ -705,7 +706,7 @@ def verify_ib_interface_counters_cli_structure_nvl(devices):
         logger.info(f"Counters output: {counters_dict}")
 
         expectations = [
-            (NvlInterfaceConsts.NVL, True),
+            (IbInterfaceConsts.NVL, True),
             (IbInterfaceConsts.IB_PORT_TYPE, False),
             (IbInterfaceConsts.LINK, True)]
 
@@ -718,11 +719,15 @@ def verify_ib_interface_counters_cli_structure_nvl(devices):
     with allure.step('Verify NVL interface counters link'):
         counters_output = selected_port.interface.counters.link.show()
         counters_dict = Tools.OutputParsingTool.parse_json_str_to_dictionary(counters_output).get_returned_value()
-        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.NVL_COUNTERS_LINK_FIELDS).verify_result()
+        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.LINK_STATS_QNT3_UNDER_LINK).verify_result()
 
     with allure.step('Verify NVL interface counters nvl'):
-        selected_port.interface.counters.nvl.errors.show().get_returned_value()
-        selected_port.interface.counters.nvl.drops.show().get_returned_value()
+        counters_output = selected_port.interface.counters.nvl.show()
+        counters_dict = Tools.OutputParsingTool.parse_json_str_to_dictionary(counters_output).get_returned_value()
+        ValidationTool.verify_field_exist_in_json_output(counters_dict, IbInterfaceConsts.NVL_COUNTERS_NVL_FIELDS).verify_result()
+        for sub_counters in IbInterfaceConsts.NVL_COUNTERS_NVL_FIELDS:
+            Tools.OutputParsingTool.parse_json_str_to_dictionary(
+                selected_port.interface.counters.nvl.show(op_param=sub_counters)).verify_result()
 
 
 def verify_ib_interface_counters_cli_structure_ib(devices):

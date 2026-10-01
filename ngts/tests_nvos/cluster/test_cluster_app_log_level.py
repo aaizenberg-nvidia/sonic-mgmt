@@ -22,6 +22,7 @@ logger = logging.getLogger()
 
 @disabled_access_ports
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_cluster_app_log_level(engines, devices, random_api, has_loopbox, standalone_system, setup_name):
     output_format = OutputFormat.json

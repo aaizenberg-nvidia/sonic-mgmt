@@ -1,3 +1,0 @@
-StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
-MTBC-RCON02,2005,c-panther-01,ssh,,root
-MTBC-RCON02,2006,c-panther-02,ssh,,root

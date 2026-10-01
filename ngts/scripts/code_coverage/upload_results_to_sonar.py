@@ -1,20 +1,48 @@
+from allure_commons.types import AttachmentType
 from pathlib import Path
 import logging
 import shutil
-import allure
 import pytest
+import json
+import enum
+import re
 
-from ngts.scripts.code_coverage.code_coverage_consts import NvosConsts, SharedConsts
 from ngts.nvos_tools.infra.JenkinsTool import JenkinsQueryBuilder, JenkinsTool
 from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.tools.test_utils import allure_utils as allure
 from ngts.scripts.code_coverage import coverage_helpers
 from ngts.ngts_types import EnginesT, TopologyT
 
+from .code_coverage_consts import NvosConsts, SharedConsts
+
 logger = logging.getLogger(__name__)
 
-python_job_name = "NVOS_Python_upload_results_to_sonar"
-cpp_job_name = "NVOS_C_upload_results_to_sonar"
+_CONFIG_FILES_DIR = (Path(__file__).parent / 'config_files').resolve().absolute()
+_PYTHON_JOB_NAME = "NVOS_Python_upload_results_to_sonar"
+_CPP_JOB_NAME = "NVOS_C_upload_results_to_sonar"
+
+
+class ConfigLanguage(enum.IntEnum):
+    PYTHON = enum.auto()
+    CPP = enum.auto()
+
+
+class ConfigFileType(enum.IntEnum):
+    INCLUDE = enum.auto()
+    EXCLUDE = enum.auto()
+
+
+_CONFIG_FILES_NAMES: dict[ConfigLanguage, dict[ConfigFileType, str]] = {
+    ConfigLanguage.PYTHON: {
+        ConfigFileType.INCLUDE: "nvos_coverage_python_include.conf",
+        ConfigFileType.EXCLUDE: "nvos_coverage_python_exclude.conf",
+    },
+    ConfigLanguage.CPP: {
+        ConfigFileType.INCLUDE: "nvos_coverage_cpp_include.conf",
+        ConfigFileType.EXCLUDE: "nvos_coverage_cpp_exclude.conf",
+    },
+}
 
 
 @pytest.fixture(scope='module')
@@ -29,8 +57,8 @@ def results_path(topology_obj: TopologyT, engines: EnginesT) -> Path:
 
 
 @pytest.mark.disable_loganalyzer
-@allure.title('Upload results to sonar')
-def test_upload_results_to_sonar(target_version: str, results_path: Path) -> None:
+@allure.orig_allure.title('Upload results to sonar')
+def test_upload_results_to_sonar(target_version: str, results_path: Path, branch_n_commit_id: tuple[str, str] | None) -> None:
     try:
         with allure.step("Get coverage results paths, branch name and commit id"):
             python_results_path = results_path / SharedConsts.PYTHON_DIR
@@ -39,10 +67,8 @@ def test_upload_results_to_sonar(target_version: str, results_path: Path) -> Non
             cpp_results_path = results_path / SharedConsts.C_DIR
             logger.info(f"cpp results path: {cpp_results_path}")
 
-            branch_name = _get_branch_name(python_results_path.as_posix())
+            branch_name, commit_id = (branch_n_commit_id or _get_branch_and_commit_id(results_path))
             logger.info(f"branch name: {branch_name}")
-
-            commit_id = _get_commit_id(python_results_path.as_posix())
             logger.info(f"commit id: {commit_id}")
 
         client = JenkinsTool(project_job_path=SharedConsts.JENKINS_SONAR_PROJECT_PATH)
@@ -54,24 +80,49 @@ def test_upload_results_to_sonar(target_version: str, results_path: Path) -> Non
             .mailing_list(["yport,ramih"])
         )
 
-        with allure.step('Upload python coverage results to sonar'):
-            python_job_params = (
-                general_job_params
-                .project("NVOS-Python")
-                .coverage_folder(python_results_path)
-                .exclude_file_path(f"{NvosConsts.DEST_PATH}/exclude_lists/coverage_python_exclude.conf")
-                .build()
-            )
-            client.trigger_with_query(python_job_name, python_job_params)
+        sonar_upload_jobs: tuple[tuple[ConfigLanguage, str, str, Path], ...] = (
+            (ConfigLanguage.PYTHON, "NVOS-Python", _PYTHON_JOB_NAME, python_results_path),
+            (ConfigLanguage.CPP, "NVOS_CPP", _CPP_JOB_NAME, cpp_results_path),
+        )
 
-        with allure.step('Upload cpp coverage results to sonar'):
-            cpp_job_params = (
-                general_job_params
-                .project("NVOS_CPP")
-                .coverage_folder(cpp_results_path)
-                .build()
-            )
-            client.trigger_with_query(cpp_job_name, cpp_job_params)
+        config_files_names = _CONFIG_FILES_NAMES.copy()
+        mapper: dict[str, tuple[Path, Path]] = {}
+        with allure.step("Validate config files"):
+            for lang, items in config_files_names.items():
+                lang_title = lang.name.upper() if lang == ConfigLanguage.CPP else lang.name.title()
+                for file_type, conf_file_name in items.items():
+                    src = _CONFIG_FILES_DIR / conf_file_name
+                    with allure.independent_step(f"Validate {lang_title} {file_type.name.title()} config file {src.name!r}"):
+                        if not src.exists():
+                            raise FileNotFoundError(f"Config file {str(src)!r} not found")
+
+                    dst = Path(NvosConsts.DEST_PATH) / f'{file_type.name.lower()}_lists' / f'{branch_name}_{conf_file_name}'
+                    mapper[conf_file_name] = (src, dst)
+
+        for lang, proj, job_name, result_path in sonar_upload_jobs:
+            lang_title = lang.name.upper() if lang == ConfigLanguage.CPP else lang.name.title()
+            with allure.step(f"Copy {lang_title} coverage conf files to NFS with branch prefix {branch_name!r}"):
+                for file_type, conf_file_name in config_files_names[lang].items():
+                    src, dst = mapper[conf_file_name]
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+
+                    logger.info(f"Copying {src} to {dst}")
+                    shutil.copy2(src, dst)
+                    config_files_names[lang][file_type] = str(dst)
+                attachment_name = f"{lang_title.lower()}-config-files.json"
+                allure.attach(attachment_name, json.dumps(config_files_names[lang], indent=2), AttachmentType.JSON)
+
+            with allure.step(f'Upload {lang_title} coverage results to sonar'):
+                job_params = (
+                    general_job_params
+                    .project(proj)
+                    .coverage_folder(result_path)
+                    .include_file_path(config_files_names[lang][ConfigFileType.INCLUDE])
+                    .exclude_file_path(config_files_names[lang][ConfigFileType.EXCLUDE])
+                    .build()
+                )
+                logger.info(f"Triggering {job_name} with params: {job_params}")
+                client.trigger_with_query(job_name, job_params)
 
     except Exception as err:
         raise AssertionError(err)
@@ -113,61 +164,31 @@ def test_copy_unitests_results(engines: EnginesT, target_version: str, topology_
             logger.info(f"Unitests results: {dest}")
 
 
-def _get_branch_name(target_version: str) -> str:
+def _get_branch_and_commit_id(results_path: Path) -> tuple[str, str]:
     """
-    Extract branch name from a coverage path.
+    Extract the Sonar branch and git commit ID from a coverage results path.
 
     Args:
-        target_version: Path like '/auto/sw_system_project/NVOS_INFRA/coverage/nvos-25-02-5000_25.02.4936-029/c_coverage_origin'
+        results_path: Coverage directory named using the branch and build version.
 
     Returns:
-        str: Branch name like 'nvos-25-02-5000'
+        tuple containing the prefixed Sonar branch and unmodified git commit ID.
 
     Examples:
-        '/auto/sw_system_project/NVOS_INFRA/coverage/nvos-25-02-5000_25.02.4936-029/c_coverage_origin' -> 'nvos-25-02-5000'
+        'nvos-25-03-0800_25.03.0720' -> ('rel-nvos-25-03-0800', 'nvos-25-03-0800_25.03.0720')
+        'dev-system-alarms_dev-system-alarms-005' -> ('fb-dev-system-alarms', 'dev-system-alarms_dev-system-alarms-005')
     """
-    import re
+    commit_id = results_path.name
+    release_match = re.fullmatch(
+        r"(?P<branch>nvos-(?P<major>\d{2})-(?P<minor>\d{2})-\d{4})_"
+        r"(?P=major)\.(?P=minor)\.\d{4}(?:-\d{3})?",
+        commit_id,
+    )
+    if release_match:
+        return f"rel-{release_match.group('branch')}", commit_id
 
-    # Pattern to match nvos branch format like nvos-25-02-5000
-    pattern = r'/.+[-_](\d+[-.]\d+[-.]\d+)'
+    feature_match = re.fullmatch(r"(?P<branch>dev-.+)_(?P=branch)-\d{3}", commit_id)
+    if feature_match:
+        return f"fb-{feature_match.group('branch')}", commit_id
 
-    if grep := re.search(pattern, target_version):
-        result = f"nvos-{grep.group(1)}"
-        logger.debug(f"{result=!r}")
-        release: str = TestToolkit.version_to_release(result)
-        logger.debug(f'{release=!r}')
-        return release
-    else:
-        raise ValueError(f"Could not extract branch name from path: {target_version}")
-
-
-def _get_version_name(target_version: str) -> str:
-    """
-    Extract version name from a coverage path.
-
-    Args:
-        target_version: Path like '/auto/sw_system_release/nos/nvos/25.02.4936-029/amd64/dev/nvos-coverage-amd64-25.02.4936-029.bin'
-
-    Returns:
-        str: Version name like '25.02.4936-029'
-
-    Examples:
-        '/auto/sw_system_release/nos/nvos/25.02.4936-029/amd64/dev/nvos-coverage-amd64-25.02.4936-029.bin' -> '25.02.4936-029'
-        '/auto/sw_system_release/nos/nvos/25.02.2000/amd64/dev/nvos-coverage-amd64-25.02.2000.bin' -> '25.02.2000'
-    """
-    import re
-
-    # Pattern to match version format like 25.02.4936-029 or 25.02.2000
-    pattern = r'\d+\.\d+\.\d+(?:-\d+)?'
-    match = re.search(pattern, target_version)
-
-    if match:
-        return match.group(0)
-    else:
-        raise ValueError(f"Could not extract version name from path: {target_version}")
-
-
-def _get_commit_id(target_version: str) -> str:
-    version_name = _get_version_name(target_version)
-    branch_name = _get_branch_name(target_version)
-    return branch_name + "_" + version_name
+    raise ValueError(f"Could not extract branch name and commit ID from coverage path: {results_path}")

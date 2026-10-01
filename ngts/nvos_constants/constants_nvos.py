@@ -3,8 +3,7 @@ import os
 import re
 from enum import Enum
 from pathlib import Path
-from typing import List, TypedDict
-import re
+from typing import TypedDict
 
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import ADMIN
 
@@ -92,6 +91,7 @@ class CumulusConsts:
     DNS_PRIORITY = "priority"
     DNS_VRF_LIST = ['default', 'RED']
     INTERFACE_IP_VRF = 'vrf'
+    LINK_MAC = "mac-address"
     FETCH_SUCCESS_MESSAGE = "File has been successfully fetched"
     FETCH_ERROR_MESSAGE = "Failed to fetch file due to the following error"
     PLATFORM_ASIC_TEMPERATURE_FIELDS = ['current', 'min', 'max', 'crit', 'state']
@@ -171,6 +171,11 @@ class NvosConst:
     DOCKER_PER_ASIC_LIST = ['syncd-ibv0', 'swss-ibv0', 'database']
     NV_GNMI_DOCKER = 'nv-gnmi'
     NV_UMF_DOCKER = 'nv-umf'
+    # Dockers allowed to start only after the system reports ready - polled instead of
+    # required immediately. Every other docker must be up the moment the system is ready.
+    LATE_START_DOCKERS = (NV_GNMI_DOCKER,)
+    DOCKERS_UP_TIMEOUT = 40
+    DOCKERS_UP_POLL_INTERVAL = 5
     SYM_MGR_SERVICES = ['configmgrd.service', 'countermgrd.service', 'portsyncmgrd.service']
     PORT_STATUS_LABEL = 'admin_status'
     PORT_CONFIG_DB_TABLES_PREFIX = "IB_PORT"
@@ -603,7 +608,10 @@ class SystemConsts:
     LATEST_KEY = 'latest'
 
     MIN_SYSTEM_YEAR = '1970'
-    MAX_SYSTEM_YEAR = '2035'
+    # 2037 is the last full year settable on a 32-bit time_t device (the "Year 2038" limit:
+    # max representable instant is 2038-01-19 03:14:07 UTC). Must match the DUT's accepted
+    # range (it reports "Date year must be in the range of (1970-2037)").
+    MAX_SYSTEM_YEAR = '2037'
     MIN_SYSTEM_DATE = MIN_SYSTEM_YEAR + "-01-01"
     MAX_SYSTEM_DATE = MAX_SYSTEM_YEAR + "-12-31"
     MIN_SYSTEM_DATETIME = MIN_SYSTEM_DATE + " 00:00:00"
@@ -1147,6 +1155,7 @@ class PlatformConsts:
     FW_COMPONENTS = [FW_BMC, FW_EROT, FW_CPLD, FW_BIOS, FW_SMA]
     FW_FIELD_NAME_DICT = {"Actual FW": "actual-firmware"}
     FW_ACTUAL = "actual-firmware"
+    FW_VERSION = "fw-version"
     FW_BACKGROUND_COPY_STATUS = 'background-copy-status'
     FW_DEBUG_TOKEN_STATUS = 'debug-token-status'
     FW_AP_BOOT_STATUS = 'ap-boot-status'
@@ -1279,8 +1288,32 @@ class PlatformConsts:
     REMOVED = 'Removed'
     INSERTED = 'Inserted'
     TRANSCEIVER_CABLE_TYPE = 'cable-type'
+    TRANSCEIVER_VENDOR_PN = 'vendor-pn'
     TRANSCEIVER_CABLE_OPTICAL_MODULE = 'Optical module'
     TRANSCEIVER_CABLE_COPPER_CABLE = 'Copper cable'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED = 'supported-cable-ib-speed'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NA = 'N/A'
+    TRANSCEIVER_SUPPORTED_CABLE_IB_SPEED_NAMES = ('sdr', 'fdr', 'edr', 'hdr', 'ndr', 'xdr')
+    TRANSCEIVER_VENDOR_PN = 'vendor-pn'
+    # Per-vendor-pn rules for the supported-cable-ib-speed leaf. Each entry has:
+    #   required : speeds that MUST appear in the reported comma-joined tokens
+    #   forbidden: speeds that MUST NOT appear (catches FW spurious-bit bugs)
+    # Unlisted PNs fall back to the well-formed structure check only.
+    # Speeds sourced from the NVIDIA Quantum-X800 XDR portfolio, the XDR Modules
+    # Confluence page, the Approved Cable List, and Wolverine2-Arcus2 bug
+    # SW #6453983 / Redmine #4660953. All 980-9IAxx-00XMxx entries below are
+    # XDR-generation OSFP modules/cables; MCP4Y10-N001-FTF is a Quantum-2 NDR
+    # copper cable and must not advertise XDR.
+    _XDR_ONLY = {'required': {'xdr'}, 'forbidden': {'sdr', 'fdr', 'edr', 'hdr', 'ndr'}}
+    TRANSCEIVER_IB_SPEED_RULES_BY_PN = {
+        '980-9IAH1-00XM00': _XDR_ONLY,
+        '980-9IAH' 'B-00XM0N': _XDR_ONLY,  # split literal - shared aspell dict
+        '980-9IAM3-00XD2A': _XDR_ONLY,
+        '980-9IAS0-00XM0N': _XDR_ONLY,
+        '980-9IAU6-00XM0M': _XDR_ONLY,
+        '980-9IAU9-00XM0G': _XDR_ONLY,
+        'MCP4Y10-N001-FTF': {'required': {'ndr'}, 'forbidden': {'xdr'}},
+    }
     EROTS_LIST = ['ERoT_BMC_0', 'ERoT_CPU_0', 'ERoT_FPGA_0', 'ERoT_NVSwitch_0', 'ERoT_NVSwitch_1']
     INV_STATE = 'state'
     INV_OK = 'ok'
@@ -1302,6 +1335,28 @@ class PlatformConsts:
         "920-9K42W-1313-TS3": FW_ASIC_REVISION_VALUE,
         "920-9K42W-1313-TS4": FW_ASIC_REVISION_VALUE,
     }
+
+
+class UsbFrontPanelConsts:
+    """
+    Front-panel USB disable/enable (FR #4294636). Only feature-specific values live here;
+    enable/disable/yes/no/state come from ActionParamConsts / ActionConsts / SystemConsts.
+    """
+    PENDING_STATE = 'pending-state'
+    REBOOT_REQUIRED = 'reboot-required'
+    OPPOSITE_STATE = {ActionParamConsts.ENABLED: ActionParamConsts.DISABLED,
+                      ActionParamConsts.DISABLED: ActionParamConsts.ENABLED}
+    ACTION_PER_STATE = {ActionParamConsts.ENABLED: ActionConsts.ENABLE,
+                        ActionParamConsts.DISABLED: ActionConsts.DISABLE}
+    CONFIRMATION = 'y'
+    ACTION_REBOOT_EXPECTED_OUTPUT = ('Action succeeded',) + SystemConsts.REBOOT_RESPONSE_MESSAGES
+    LSBLK_COLUMNS = 'NAME,TRAN,TYPE'
+    LSBLK_TRAN_USB = 'usb'
+    LSBLK_TYPE_DISK = 'disk'
+    LSBLK_BLOCKDEVICES = 'blockdevices'
+    COMMAND_NOT_FOUND_RC = 127
+    UNSUPPORTED_ERRORS = ['The requested item does not exist.', 'Invalid Command']
+    ACTION_TIMEOUT = 120
 
 
 class ChassisLocationConsts:
@@ -1533,8 +1588,8 @@ class PhyRoleConsts:
         def operational(cls):
             return [cls.PRIMARY.value, cls.SECONDARY.value]
 
-    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES = (PhyRole.PRIMARY, PhyRole.SECONDARY)
-    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT
+    PHY_ROLE_OPERATIONAL_DEFAULT_VALUES: tuple[str, ...] = (PhyRole.PRIMARY.value, PhyRole.SECONDARY.value)
+    PHY_ROLE_APPLIED_DEFAULT: str = PhyRole.FW_DEFAULT.value
 
     CONSTANT_ROLE: str = 'constant-role'
 
@@ -1546,7 +1601,7 @@ class PhyRoleConsts:
         def all(cls):
             return [member.value for member in cls]
 
-    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED
+    CONSTANT_ROLE_DEFAULT: str = ConstantRole.ENABLED.value
 
 
 class LowPowerConsts:
@@ -1566,9 +1621,12 @@ class LowPowerConsts:
     FAE_FIELDS = {
         PEC_DURATION: {"values": range(0, 65535), "default": 379},
         PEC_RECAL_PERIOD: {"values": range(0, 65535), "default": 8008},
-        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION}
+        PEC_RECAL_FORCE_PERIOD: {"values": PecRecalPeriodForce.all(), "default": PecRecalPeriodForce.USE_AGREED_FUNCTION.value}
     }
 
+    STATE_DEFAULT: str = NvosConst.DISABLED
+
+    COUNTERS: str = 'counters'
     L1_TOTAL_ENTRIES: str = 'l1-total-entries'
     AVERAGE_LOCAL_FULL_BW_EXIT: str = 'average-local-full-bw-exit'
     ALL_COUNTERS: list[str] = [L1_TOTAL_ENTRIES, AVERAGE_LOCAL_FULL_BW_EXIT]
@@ -1651,6 +1709,10 @@ class ImageConsts:
                                        'fit70')
     SCP_PATH_SERVER = 'scp://{username}:{password}@{ip}{path}'
     NVOS_RELEASE_25_02_1000 = "25.02.1000"
+    BASE_IMAGE_VERSION_TO_INSTALL = "nvos-amd64-{pre_release_name}.bin"
+    BASE_IMAGE_VERSION_TO_INSTALL_PATH = (
+        "/auto/sw_system_release/nos/nvos/{pre_release_name}/amd64/{base_image}"
+    )
     CL_RELEASE_5_16_0 = "5.16.0"
     CL_BASE_IMAGE_VERSION_TO_INSTALL = "cumulus-linux-mlx-amd64.bin"
     CL_BASE_IMAGE_VERSION_TO_INSTALL_PATH = "/devenv/release/{pre_release_name}/passed-mlx-amd64/build/images/{base_image}"
@@ -1785,6 +1847,7 @@ class NtpConsts:
     SERVER_FAILED = 'DNS resolution failed'
     USER_CONFIG = 'user-config'
     MULTIPLE_SERVERS_NUMBER = 11
+    SET_SERVERS_LOG_MSG = 'NtpCfg: Set servers'  # hostcfgd syslog line marking NTP server config applied
     CONFIG_TIME_DIFF_THRESHOLD = 2.5  # [sec]
     SHOW_TIME_DIFF_THRESHOLD = 0.5  # [sec]
     SYNCHRONIZE_NEW_LISTEN_TIME = 20  # [sec]
@@ -2078,6 +2141,7 @@ class RebootConsts:
     PSU_OFF = "psu-off"
     REBOOT_REASON_POWER_CYCLE = 'Power Cycle'
     REBOOT_REASON_RESET_BIT = "System reset"
+    REBOOT_REASON_TYPE_CRITICAL_ERROR = "critical-error"
     REMOTE_REBOOT = "remote-reboot"
     INSTALL_FW = "install-fw"
     RESET_BIT = "reset_bit"
@@ -2238,6 +2302,16 @@ class ClusterConsts:
     INITIAL_EXPECTED_APPS = [NMX_CONTROLLER, NMX_TELEMETRY]
     INITIAL_APPS_PATH = '/usr/local/cluster_pkgfiles/'
     INFRA_PACKAGES_PATH = '/host/cluster_infra/packages/'
+
+
+class OtlpConsts:
+    ENDPOINT = "endpoint"
+    CRL = "crl"
+    ENCRYPTION = "encryption"
+    CERT_ID = "cert-id"
+    CA_CERT_ID = "cacert-id"
+    CRL_ID = "crl-id"
+    MODE = "mode"
 
 
 class SyslogSeverityLevels:
@@ -2430,6 +2504,9 @@ class HealthConsts:
     STATUS_LED = "status-led"
     LED_OK_STATUS = "green"
     LED_NOT_OK_STATUS = "amber"
+    # OS-specific health monitoring systemd service names
+    NVOS_HEALTH_SERVICE = "health-statsd"
+    CUMULUS_HEALTH_SERVICE = "cumulus-sdk-health-mon"
     MONITOR_LIST = "monitor-list"
     HEALTH_FIRST_FILE = "health_history"
     HEALTH_SECOND_FILE = "health_history.1"
@@ -2490,118 +2567,6 @@ class OperationTimeConsts:
     TEST_NAME_COL = 'test_name'
     SESSION_ID_COL = 'session_id'
     DATE_COL = 'date'
-
-    # Operation labels used by save_duration / row-name lookups in expected_operation_durations.
-    IMAGE_INSTALL = 'image install'
-    IMAGE_UPGRADE = 'image upgrade'
-    IMAGE_DOWNGRADE = 'image downgrade'
-    IMAGE_INSTALL_OPERATION_ROW = 'image install (operation)'
-
-
-class StatsConsts:
-    class State(Enum):
-        ENABLED = 'enabled'
-        DISABLED = 'disabled'
-
-    SLEEP_15_SECONDS = 15  # [sec]
-    SLEEP_20_SECONDS = 20  # [sec]
-    SLEEP_40_SECONDS = 40  # [sec]
-    SLEEP_1_MINUTE = 60  # [sec]
-    SLEEP_3_MINUTES = 180  # [sec]
-    SLEEP_5_MINUTES = 300  # [sec]
-    STATE = 'state'
-    STATE_DEFAULT = State.ENABLED.value
-    INTERVAL = 'interval'
-    INTERVAL_DEFAULT = '5'  # [min]
-    INTERVAL_MIN = '1'  # [min]
-    HISTORY_DURATION = 'history-duration'
-    HISTORY_DURATION_DEFAULT = '365'  # [days]
-    HISTORY_DURATION_MIN = '1'  # [days]
-    GENERATE_ALL_TIME_MAX = 2  # [sec]
-    CATEGORY_STATE_DISABLED = {STATE: State.DISABLED.value}
-    CATEGORY_MIN_DICT = {
-        STATE: STATE_DEFAULT,
-        INTERVAL: INTERVAL_MIN,
-        HISTORY_DURATION: HISTORY_DURATION_MIN
-    }
-    CATEGORY_MIN_DISABLED_DICT = {
-        STATE: State.DISABLED.value,
-        INTERVAL: INTERVAL_MIN,
-        HISTORY_DURATION: HISTORY_DURATION_MIN
-    }
-
-    LOG_MSG_UNSET_STATS = "PATCH /nvue_v1/system/stats"
-    LOG_MSG_SET_CATEGORY1 = "INFO stats-reportd: got config change "
-    LOG_MSG_SET_CATEGORY2 = ": {'enabled': 'true', 'history_duration': '365', 'interval': '1'}"
-    LOG_MSG_PATCH_CATEGORY = "PATCH /nvue_v1/system/stats/category/"
-
-    LOG_MSG_ERROR_DB = "..."  # TODO: Update message (parameter not found in redis DB)...
-
-    INVALID_CATEGORY_NAME = 'invalid_category_name'
-    ALL_CATEGORIES = 'all'
-    INVALID_STATE = 'invalid_state'
-    INVALID_INTERVAL_LOW = 0
-    INVALID_INTERVAL_HIGH = 1441
-    INVALID_HISTORY_DURATION_LOW = 0
-    INVALID_HISTORY_DURATION_HIGH = 366
-    INVALID_FILE_NAME = 'file_not_exists.csv'
-    INVALID_SHOW_CATEGORY = 'The requested item does not exist.'
-
-    TEMP_PATH = '/auto/rdmzsysgwork/shared/test_utilities/tmp/5b5931e6aac04bd39499372ef73fbf31'
-    INTERNAL_PATH = "/tmp"
-    OLD_SAMPLES_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/old_samples/"
-    BIG_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/big_file/"
-    HUGE_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/huge_file/"
-    NO_HEADER_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/no_header_file/"
-    MAX_SIZE_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/max_size/"
-    GENERATED_FILE_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/generated/"
-    RESULTS_PATH = "/auto/sw_system_project/NVOS_INFRA/verification/stats/results/"
-    INTERNAL_CAT_PATH = "/var/stats"
-    TEMP_FOLDER = "/auto/sw_regression/system/NVOS/MARS/results/"
-    HEADER_HOSTNAME = "# Hostname:         "
-    HEADER_GROUP = "# Statistic group:  "
-    HEADER_TIME = "# Started sampling: "
-    TIMESTAMP_FORMAT = "%b-%d %Y %H:%M:%S"
-    SYSTEM_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
-    MAX_ROWS_TO_SCAN = 300
-    CONST_HEADER_ROWS = 8
-    BIG_FILE_NUM_OF_LINES = 600026
-
-    TEMP_MIN = 15  # [Celsius]
-    TEMP_MAX = 90  # [Celsius]
-    MGMT_INT_MIN = 0  # [Bytes/sec]
-    MGMT_INT_MAX = 10000  # [Bytes/sec]
-    FAN_MIN = 0  # [%]
-    FAN_MAX = 100  # [%]
-    PWR_PSU_VOLT_MIN = 0  # [V] TODO: Update
-    PWR_PSU_VOLT_MAX = 300  # [V] TODO: Update
-    PWR_PSU_CUR_MIN = 0  # [A] TODO: Update
-    PWR_PSU_CUR_MAX = 100  # [A] TODO: Update
-    ASIC_PWR_WATT_MIN = 400  # [Watt]
-    ASIC_PWR_WATT_MAX = 600  # [Watt]
-    CPU_FREE_RAM_MIN = 30  # [%]
-    CPU_FREE_RAM_MAX = 100  # [%]
-    CPU_UTIL_MIN = 0  # [%]
-    CPU_UTIL_MAX = 60  # [%]
-    CPU_REBOOT_CNT_MIN = 0
-    CPU_REBOOT_CNT_MAX = 100
-    DISK_FREE_SPACE_MIN = 30  # [%]
-    DISK_FREE_SPACE_MAX = 99  # [%]
-    DISK_RMN_LIFE_MIN = 70  # [%]
-    DISK_RMN_LIFE_MAX = 100  # [%]
-    DISK_FAIL_CNT_MIN = 0
-    DISK_FAIL_CNT_MAX = 0
-    DISK_TOTAL_LBA_RW_MIN = 10000
-    DISK_TOTAL_LBA_RW_MAX = 4294967295
-    VOLTAGE_GENERAL_MIN = 0
-    VOLTAGE_GENERAL_MAX = 100
-    VOLTAGE_PSU_MIN = 0
-    VOLTAGE_PSU_MAX = 300
-
-    GENERATE = 'generate'
-    DELETE = 'delete'
-    UPLOAD = 'upload'
-    CLEAR = 'clear'
 
     # Operation labels used by save_duration / row-name lookups in expected_operation_durations.
     IMAGE_INSTALL = 'image install'
@@ -2718,7 +2683,6 @@ class LogComponentsConsts:
         "sai_api_switch",
         SYMMETRY_MANAGER,
         "syncd",
-        GPU_TELEMETRY,
         PEER_TELEMETRY,
     ]
     CRITICAL = "critical"
@@ -3188,6 +3152,83 @@ class PackageConsts:
     REMOTE_URL = 'remote-url'
 
 
+class LinkHealthConsts:
+    """NVLink link-health indication (QM4 / NVL-6 Rosalind only).
+
+    Post-0.18 field split: switch ``nv show interface`` leaves are ``state`` /
+    ``trigger`` / ``metric`` / ``time``. ``trigger`` is the FW metric name (e.g.
+    ``PLR-Tx-BW-Loss``) and ``metric`` its index (e.g. ``5``); together they
+    replace the single ``reason`` leaf of HLD 0.15-0.18 (``PLR_Tx_BW_Loss.5``).
+    Both are empty unless state is attention. ``time`` is a local-timezone
+    timestamp in CLI (STATE_DB / gNMI store Unix-epoch ns), cleared on recovery.
+    Images predating the split are still readable: the helpers fall back to
+    splitting ``reason`` on its last dot.
+
+    Peer-port (0.8): compute does not publish the metric index or a FAE clear.
+    ``nv show peer-port <gpu> link health`` is ``state`` / ``trigger`` / ``time``
+    only — ``metric`` is pruned until 1.0/1.1, same as peer-port clear.
+    """
+    LINK = 'link'
+    HEALTH = 'health'
+    LINK_HEALTH = 'link-health'
+    STATE = 'state'
+    TRIGGER = 'trigger'
+    METRIC = 'metric'
+    TIME = 'time'
+    # Pre-split leaf, still read as a fallback on older images.
+    REASON = 'reason'
+    STATE_HEALTHY = 'healthy'
+    STATE_ATTENTION = 'attention'
+    STATE_NA = 'n/a'
+    VALID_STATES = frozenset({STATE_HEALTHY, STATE_ATTENTION, STATE_NA})
+    # Leaf set of the health block after the split. ``reason`` is removed, not
+    # deprecated (HLD 0.16), so it must be gone wherever trigger/metric appear.
+    HEALTH_LEAVES = frozenset({STATE, TRIGGER, METRIC, TIME})
+    REMOVED_HEALTH_LEAVES = frozenset({REASON})
+    # Peer-port 0.8: metric is interface-only until compute 1.0/1.1.
+    PEER_PORT_HEALTH_LEAVES = frozenset({STATE, TRIGGER, TIME})
+    PEER_PORT_PRUNED_HEALTH_LEAVES = frozenset({METRIC})
+    # e.g. PLR-Tx-BW-Loss / Effective-BER (pre-split images use underscores)
+    TRIGGER_PATTERN = r'^[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*$'
+    # Metric index: 0 = n/a, 1-15 = metric1...metric15 (PDDR 38h bits [19:13]),
+    # so an attention must carry an index inside 1-15.
+    METRIC_PATTERN = r'^\d+$'
+    METRIC_INDEX_MIN = 1
+    METRIC_INDEX_MAX = 15
+    # Pre-split combined form: <FW metric name>.<metric index>
+    REASON_PATTERN = r'^[A-Za-z][A-Za-z0-9_-]*(?:[.][A-Za-z0-9_-]+)*[.]\d+$'
+    GNMI_PATH_STATE = 'infiniband/link-health/state'
+    GNMI_PATH_STATUS = 'infiniband/link-health/state/status'
+    GNMI_PATH_TRIGGER = 'infiniband/link-health/state/trigger'
+    GNMI_PATH_METRIC = 'infiniband/link-health/state/metric'
+    GNMI_PATH_TIME = 'infiniband/link-health/state/time'
+    # Pre-split leaf; the telemetry proposal for the split is still open, so
+    # gNMI is read as trigger/metric first and reason second.
+    GNMI_PATH_REASON = 'infiniband/link-health/state/reason'
+    GNMI_PREFIX_TEMPLATE = 'interfaces/interface[name={port_name}]'
+    # Unused: link-health gNMI subscribe is interface-only
+    # (``interfaces/interface[name=<acp>]``). There is no peer-port subscription
+    # in 0.8; CLI prune of metric is the customer-facing peer-port contract.
+    GNMI_PEER_PREFIX_TEMPLATE = 'peer-port/interfaces/interface[name={peer_port_name}]'
+    GNMI_STATUS_UNSPECIFIED = 'UNSPECIFIED'
+    GNMI_STATUS_HEALTHY = 'HEALTHY'
+    # HLD 0.9: UNHEALTHY → ATTENTION; keep UNHEALTHY alias for older images.
+    GNMI_STATUS_ATTENTION = 'ATTENTION'
+    GNMI_STATUS_UNHEALTHY = GNMI_STATUS_ATTENTION
+    GNMI_VALID_STATUSES = frozenset({
+        GNMI_STATUS_UNSPECIFIED,
+        GNMI_STATUS_HEALTHY,
+        GNMI_STATUS_ATTENTION,
+    })
+    ATTENTION_POLL_TIMEOUT_SEC = 25
+    ATTENTION_POLL_INTERVAL_SEC = 2
+    ATTENTION_INDUCTION_ENV = 'NVOS_LINK_HEALTH_ATTENTION_CMD'
+    COUNTERS_LINK_HEALTH_FIELD = 'link_health'
+    COUNTERS_ATTENTION_TRIGGER_FIELD = 'attention_trigger'
+    COUNTERS_ATTENTION_METRIC_FIELD = 'attention_metric'
+    FAE_CLEAR_MAIN_PARAM = ('health', 'health')
+
+
 class PeerPortConsts:
     GPU_TELEMETRY_SERVICE = "gpu-telemetry"
     NMX_T_LITE_SERVICE = "nmx-t-lite"
@@ -3207,6 +3248,27 @@ class PeerPortConsts:
                                      ApiType.OPENAPI: {"under_limit": LOWER_INTERVAL_ERR_MSG,
                                                        "over_limit": HIGHER_INTERVAL_ERR_MSG}}
     ASSOCIATED_SWITCH_PORT = "associated-switch-port"
+    HOSTNAME = "hostname"
+    EXPECTED_GPU_HOSTNAME = "GR100"
+    COUNTERS = "counters"
+    LINK = "link"
+    NVL = "nvl"
+    PHY = "phy"
+    DETAIL = "detail"
+    HEALTH = "health"
+    HISTOGRAM = "histogram"
+    # Blocks aggregated by 'nv show peer-port --view=detail', one per drill-in show command
+    DETAIL_VIEW_BLOCKS = (
+        (COUNTERS,),
+        (COUNTERS, LINK),
+        (COUNTERS, NVL),
+        (LINK,),
+        (LINK, HEALTH),
+        (LINK, PHY),
+        (LINK, PHY, DETAIL),
+        (LINK, PHY, HEALTH),
+        (LINK, PHY, HEALTH, HISTOGRAM),
+    )
 
 
 class StoDebug:

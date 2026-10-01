@@ -20,8 +20,8 @@ from tests.common.helpers.sensor_control_test_helper import mocker_factory  # no
 from tests.common.helpers.thermal_control_test_helper import ThermalPolicyFileContext, \
     check_cli_output_with_mocker, restart_thermal_control_daemon, check_thermal_algorithm_status, \
     disable_thermal_policy  # noqa: F401
-from tests.common.fixtures.duthost_utils import is_support_pdb, check_pdb_support  # noqa: F401
 from tests.common.helpers.pdb_mocker import create_pdb_mocker
+from tests.common.fixtures.duthost_utils import is_support_pdb, check_pdb_support  # noqa: F401
 
 pytestmark = [
     pytest.mark.topology('any'),

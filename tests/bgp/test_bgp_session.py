@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 vrfname = 'default'
 
 pytestmark = [
-    pytest.mark.topology("t0", "t1", 'm1', 'lt2', 'ft2', 'c0'),
+    pytest.mark.topology("t0", "t1", 'm1', 'lt2', 'ft2', 'c0', 'lma', 'uma'),
 ]
 
 
@@ -309,12 +309,12 @@ def test_bgp_session_interface_down(duthosts, enum_frontend_dut_hostname, fanout
             reboot_type = "warm"
         else:
             reboot_type = "cold"
-        # TODO: remove this override once warm reboot is supported on sn6600_ld
+        # TODO: remove this override once warm reboot is supported on sn6600_ld/sn6810_ld
         # (https://redmine.mellanox.com/issues/5154543).
         if reboot_type == "warm" \
-                and "sn6600_ld" in duthost.facts.get("platform", "") \
+                and "sn6" in duthost.facts.get("platform", "") \
                 and is_redmine_issue_active([5154543])[0]:
-            logger.info("Overriding warm reboot with cold reboot on sn6600_ld due to "
+            logger.info("Overriding warm reboot with cold reboot on sn6 due to "
                         "RM 5154543 (warm-reboot unsupported on this platform).")
             reboot_type = "cold"
         logger.info("Rebooting DUT {} with type {}".format(duthost.hostname, reboot_type))
@@ -334,5 +334,18 @@ def test_bgp_session_interface_down(duthosts, enum_frontend_dut_hostname, fanout
     if test_type == "swss_docker":
         # It may take up to 6 minutes after restarting swss for BGP sessions to be up
         timeout = 360
+
+    # Dynamically adjust timeout based on route table size.
+    try:
+        route_summary = duthost.shell("show ip route summary")['stdout']
+        for line in route_summary.splitlines():
+            if line.strip().startswith("Totals"):
+                route_count = int(line.split()[1])
+                timeout = max(timeout, route_count // 200)
+                logger.info("Adjusted BGP recovery timeout to {}s based on {} routes".format(timeout, route_count))
+                break
+    except Exception as e:
+        logger.warning("Failed to get route count for dynamic timeout: {}".format(e))
+
     pytest_assert(wait_until(timeout, 10, 0, asichost.check_bgp_session_state, list(setup['neighhosts'].keys())),
                   "Not all BGP sessions are established on DUT ASIC {}".format(asic_index))

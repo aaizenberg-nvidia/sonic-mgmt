@@ -15,6 +15,10 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.HostMethods import HostMethods
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 
+
+cumulus_owner = "hiept"
+
+
 log = logging.getLogger()
 
 

@@ -2,8 +2,8 @@
 
 These are the JSON-mode equivalents of the HLD's human-readable samples, used
 as offline parser fixtures. Shapes and field names
-follow the HLD; values are representative. Generated for the default Portia
-simx topology (4 CPOs, 4 OEs + 1 ELS each, 64 channels, 16 lasers).
+follow the HLD; values are representative. Generated for a four-ASIC Portia
+SIMX test topology (4 CPOs, 4 OEs + 1 ELS each, 64 channels, 16 lasers).
 """
 
 from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoTopology

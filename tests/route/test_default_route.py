@@ -162,6 +162,8 @@ def test_default_route_set_src(duthosts, tbinfo):
     check if ipv4 and ipv6 default src address match Loopback0 address
 
     """
+    pytest_require('t2-isolated-d128s2' not in tbinfo['topo']['name'],
+                   f"Skip this testcase since this topology {tbinfo['topo']['name']} has no default routes")
     duthost = find_duthost_on_role(
         duthosts, get_default_route_upstream_neigh_type(tbinfo), tbinfo)
     asichost = duthost.asic_instance(0 if duthost.is_multi_asic else None)
@@ -208,6 +210,8 @@ def test_default_ipv6_route_next_hop_global_address(duthosts, tbinfo):
     check if ipv6 default route nexthop address uses global address
 
     """
+    pytest_require('t2-isolated-d128s2' not in tbinfo['topo']['name'],
+                   f"Skip this testcase since this topology {tbinfo['topo']['name']} has no default routes")
     duthost = find_duthost_on_role(
         duthosts, get_default_route_upstream_neigh_type(tbinfo), tbinfo)
     asichost = duthost.asic_instance(0 if duthost.is_multi_asic else None)
@@ -272,7 +276,7 @@ def test_default_route_with_bgp_flap(duthosts, tbinfo):
 
     """
 
-    pytest_require('t1-backend' not in tbinfo['topo']['name'],
+    pytest_require('t1-backend' not in tbinfo['topo']['name'] and 't2-isolated-d128s2' not in tbinfo['topo']['name'],
                    "Skip this testcase since this topology {} has no default routes"
                    .format(tbinfo['topo']['name']))
 

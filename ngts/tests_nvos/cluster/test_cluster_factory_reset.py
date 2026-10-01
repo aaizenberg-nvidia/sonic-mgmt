@@ -30,7 +30,10 @@ logger = logging.getLogger()
 @pytest.mark.timeout(35 * MINUTE, func_only=True)
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
-def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, has_loopbox, standalone_system, setup_name):
+def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, has_loopbox, standalone_system, setup_name, chassis_info, tray_topology_config):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
 
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -68,13 +71,24 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
             with allure.step("Set tray maintenance-state to non-default before factory reset"):
                 trays_output = OutputParsingTool.parse_show_output_to_dict(sdn.trays.show()).get_returned_value()
                 tray_ids = list(trays_output.keys())
-                if tray_ids:
-                    selected_tray = tray_ids[0]
-                    tray_non_default = random.choice(['down', 'diag'])
+                # Switch trays only: compute-tray admin state is not released to customers
+                local_switch_slot = str(chassis_info.get('slot-number'))
+                if local_switch_slot in tray_ids:
+                    selected_tray = local_switch_slot
+                    # 'diag' (not 'down'): hitless — links stay up, so the factory-reset flow's
+                    # link checks stay valid. 'down' would take all cabled acps down; the reset
+                    # auto-restores the tray to 'up' but nothing verifies links retrain — a
+                    # retrain hiccup would leak a dead-link setup into the next test. 'down'
+                    # coverage lives in the tray_admin_state suite.
+                    tray_non_default = 'diag'
                     sdn.trays.action_update_maintenance_state(
                         tray_id=selected_tray, maintenance_state=tray_non_default).verify_result()
                     tray_state_set = True
                     logger.info(f"Set tray {selected_tray} to '{tray_non_default}' before factory reset")
+                else:
+                    logger.warning(
+                        f"Local switch slot {local_switch_slot} not in tray list {tray_ids} — "
+                        f"skipping the tray maintenance-state reset-to-default step")
 
         with allure.step("Run reset factory without params"):
             execute_reset_factory(engines, system, devices.dut.reset_factory, "", current_time)
@@ -159,6 +173,9 @@ def test_cluster_default_factory_reset(engines, dut_engines, devices, test_api, 
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_reset_keep_basic(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name,
                                           standalone_system, handle_la_marker_in_manufacture):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # SAME AS DEFAULT.
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -246,6 +263,9 @@ def test_cluster_factory_reset_keep_basic(engines, dut_engines, devices, test_ap
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_keep_only_files(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name, standalone_system):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # SAME
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
@@ -334,6 +354,9 @@ def test_cluster_factory_keep_only_files(engines, dut_engines, devices, test_api
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_cluster_factory_reset_keep_all_config(engines, dut_engines, devices, test_api, test_name, has_loopbox, setup_name,
                                                standalone_system):
+    if standalone_system and is_bug_active(5267842):
+        pytest.skip("Skipping on standalone systems while Redmine #5267842 is active: "
+                    "GFM discards chassis_mapping install, regenerated file is empty (nvbugs/6752416)")
     # Only fetched and generated files will be cleaned.
     # SAME
     TestToolkit.tested_api = test_api
@@ -387,6 +410,10 @@ def test_cluster_factory_reset_keep_all_config(engines, dut_engines, devices, te
                 ClusterTools.verify_log_level(log_level, app, output_format, cluster, engine=engines.dut)
             # Not expecting content to change.
             for file_type in initial_config_contents.keys():
+                # transform only where the guarded edit actually modified the file - on files that
+                # already carried the injected section the edit no-ops and initial stays as-is
+                if not ClusterTools.config_edit_expected_to_change(file_type, initial_config_contents[file_type]):
+                    continue
                 transformation_fn = ClusterConsts.CONFIG_FILES_CONTENT_CHANGE.get(file_type, lambda x: x)
                 initial_config_contents[file_type] = transformation_fn(initial_config_contents[file_type])
 
@@ -499,6 +526,7 @@ def reset_factory_pre_steps(engines, devices, test_api, cluster, current_time, s
     uploaded_files = []
 
     # Only iterate over file types that actually exist on this device
+    chassis_sn = ClusterTools.get_chassis_sn()
     for file_type in config_files_paths.keys():
         app = ClusterConsts.MAP_CONFIG_FILE_TYPE_TO_APP[file_type]
         sdn.config.apps.app_name[app].type.file_type[file_type].files.file_name[
@@ -513,7 +541,8 @@ def reset_factory_pre_steps(engines, devices, test_api, cluster, current_time, s
         engines.sonic_mgmt.run_cmd("sudo cp {} {}".format(initial_configs_paths_to_restore[file_type], dummy_file_path))
         uploaded_files.append(ClusterConsts.INITIAL_CONFIGURATIONS_PATH + '/' + file_name)
         with allure.step("Change initial content"):
-            edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=dummy_file_path)
+            edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                file_path=dummy_file_path, chassis_sn=chassis_sn)
             engines.sonic_mgmt.run_cmd(edit_cmd)
         path_to_config[file_type] = dummy_file_path
         config_file_name[file_type] = file_name
@@ -571,7 +600,9 @@ def rotate_logs(system):
 
 
 def _filter_config_lines(content, file_type):
-    lines = set(content.split('\n'))
+    # drop empty/whitespace-only lines so trailing-newline artifacts (cat vs netmiko prompt
+    # stripping vs the CONFIG_FILES_CONTENT_CHANGE transformations) never fail the comparison
+    lines = {line.strip() for line in content.split('\n') if line.strip()}
     if file_type == 'fm_config':
         lines = {line for line in lines if not line.startswith('LOG_LEVEL=') and
                  not line.startswith('GFM_WAIT_TIMEOUT_SEC=')}

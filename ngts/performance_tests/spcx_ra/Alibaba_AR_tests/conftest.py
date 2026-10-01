@@ -12,13 +12,15 @@ import allure
 import copy
 import os
 from ngts.constants.constants import BugHandlerConst, CliType, InfraConst
-from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
-                                                                restore_basic_configuration,
-                                                                apply_test_configuration, skip_test_on_unsupported_os)
+from ngts.helpers.performance.performance_setup_helpers import (
+    apply_test_configuration_guarded, restore_session_basic_configuration,
+    save_session_base_configuration, skip_test_on_unsupported_os,
+    skip_dvs_leaf_scenario_on_active_bug, get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
+from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.helpers.performance.traffic_helpers import create_json_traffic_file_with_stream_list, create_json_traffic_stream
-from ngts.performance_tests.spcx_ra.conftest import get_spine_to_leaf_stream_list
+from ngts.performance_tests.spcx_ra.conftest import get_spine_to_leaf_stream_list, resolve_ar_algorithm
 import re
 
 
@@ -37,6 +39,21 @@ class AlibabaScenarioToconfiguration:
     create_acls: bool
     create_goto_acl: bool
     two_sided_ar: bool
+    num_left_packets_spc6: int = None
+
+    def get_num_left_packets(self, chip_type):
+        """
+        Return the number of left TG packets to use for the given chip type.
+
+        Args:
+            chip_type (str): Chip type identifier (e.g. "SPC5", "SPC6").
+
+        Returns:
+            int: The SPC6-specific value when defined and running on SPC6, otherwise the default value.
+        """
+        if chip_type == "SPC6" and self.num_left_packets_spc6 is not None:
+            return self.num_left_packets_spc6
+        return self.num_left_packets
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -45,15 +62,18 @@ def skip_test_conditionally(players):
     yield
 
 
-def get_conf_args(is_ipv6):
+def get_conf_args(is_ipv6, chip_type):
     """
     Config args for the test.
     Note that unlike must tests, those test perform DVS_START at the end. Then, we override some variables according
     to the new test.
     """
     conf_args = {
-        "auto_buffer_mode": "False",
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+        "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+        **get_ar_congestion_thresholds(chip_type),
+        PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+        # Pass thresholds 4-7 here to run SPC6 extended grading.
+        **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
         "is_ipv6": is_ipv6,
         "host": PerfConsts.RIGHT_TG_ALIAS,
         "spine": PerfConsts.LEFT_TG_ALIAS,
@@ -66,8 +86,8 @@ def get_conf_args(is_ipv6):
         "params": None,
         "two_sided_ar": True,  # overridden in fixture
         "packet_size": PerfConsts.PACKET_SIZE_LIST[0],  # overridden in fixture
-        "left_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,  # overridden in fixture
-        "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2,  # overridden in fixture
+        "left_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],  # overridden in fixture
+        "right_num_packets": SPCXRAConsts.PACKET_NUM_400G_x2[chip_type],  # overridden in fixture
         "ecmp_type_stateless": True,  # overridden in fixture
         "ecmp_size": 4096,  # overridden in fixture
         "create_acls": False,  # overridden in fixture
@@ -76,45 +96,63 @@ def get_conf_args(is_ipv6):
     return conf_args
 
 
-def apply_basic_setup_configuration(is_ipv6, players):
-    conf_args = get_conf_args(is_ipv6)
-    with allure.step('Save Players initial Configuration'):
-        save_base_configuration(players)
+def apply_basic_setup_configuration(is_ipv6, players, chip_type, nodeid=None):
+    conf_args = get_conf_args(is_ipv6, chip_type)
     with allure.step("Apply Test configuration on all Players"):
-        apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+        apply_test_configuration_guarded(
+            players, scenario=TESTS_SCENARIO, conf_args=conf_args, nodeid=nodeid)
 
 
 @pytest.fixture(scope='class')
-def basic_setup_configuration(request, players):
+def basic_setup_configuration(request, players, chip_type):
     is_ipv6 = request.param == InfraConst.IPV6
+    baseline_available = False
+    primary_error = None
     try:
-        apply_basic_setup_configuration(is_ipv6, players)
+        with allure.step('Save Players initial Configuration'):
+            save_session_base_configuration(players)
+            baseline_available = True
+        apply_basic_setup_configuration(
+            is_ipv6, players, chip_type, nodeid=request.node.nodeid)
         yield is_ipv6
-    except Exception as e:
-        raise e
+    except Exception as error:
+        primary_error = error
+        raise
     finally:
-        with allure.step('Restore Base Configuration on all Players'):
-            restore_basic_configuration(players)
+        if baseline_available:
+            try:
+                with allure.step('Restore Base Configuration on all Players'):
+                    restore_session_basic_configuration(
+                        players, nodeid=request.node.nodeid)
+            except Exception:
+                if not has_primary_test_failure(primary_error, request.node):
+                    raise
+                logger.exception(
+                    "Baseline restore failed while preserving the primary setup/test failure")
 
 
 @pytest.fixture(scope='function', autouse=False)
-def alibaba_scenarios_fixture(players, scenario_configuration, hash_type, basic_setup_configuration):
+def alibaba_scenarios_fixture(request, players, chip_type, scenario_configuration, hash_type,
+                              basic_setup_configuration):
     """
     Fixture to apply scenario-specific configuration for each test case.
     Updates conf_args with scenario configuration and applies it to players.
     """
     if scenario_configuration is None:
         raise ValueError("scenario_configuration must be provided")
+    if not scenario_configuration.two_sided_ar:
+        skip_dvs_leaf_scenario_on_active_bug(players['dut']['cli'], chip_type)
     is_ipv6 = basic_setup_configuration
-    conf_args = get_conf_args(is_ipv6)
+    conf_args = get_conf_args(is_ipv6, chip_type)
     try:
         with allure.step("Restore Base Configuration on all Players"):
-            restore_basic_configuration(players)
+            restore_session_basic_configuration(
+                players, nodeid=request.node.nodeid)
 
         conf_args.update({
             "packet_size": scenario_configuration.packet_size,
-            "left_num_packets": scenario_configuration.num_left_packets,
-            "right_num_packets": scenario_configuration.num_right_packets,
+            "left_num_packets": scenario_configuration.get_num_left_packets(chip_type),
+            "right_num_packets": scenario_configuration.num_right_packets if chip_type != "SPC6" else int(scenario_configuration.num_right_packets * 1.5),
             "ecmp_type_stateless": scenario_configuration.ecmp_type_stateless,
             "ecmp_size": scenario_configuration.ecmp_size,
             "create_acls": scenario_configuration.create_acls,
@@ -124,7 +162,9 @@ def alibaba_scenarios_fixture(players, scenario_configuration, hash_type, basic_
         })
 
         with allure.step("Apply the updated test configuration"):
-            apply_test_configuration(players, scenario=TESTS_SCENARIO, conf_args=conf_args)
+            apply_test_configuration_guarded(
+                players, scenario=TESTS_SCENARIO, conf_args=conf_args,
+                nodeid=request.node.nodeid)
         return conf_args
     except Exception as e:
         logger.error(f"Error in alibaba_scenarios_fixture: {str(e)}")

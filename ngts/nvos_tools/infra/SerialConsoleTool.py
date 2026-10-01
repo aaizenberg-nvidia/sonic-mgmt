@@ -4,9 +4,8 @@ from retry import retry
 
 from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
 from devts.infra.tools.connection_tools.serial_engine_factory import SerialEngineFactory
-from devts.infra.tools.connection_tools.utils import generate_strong_password
+from devts.infra.tools.connection_tools.utils import extend_rcon_with_ssh_options, generate_strong_password
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
-from ngts.tests.nightly.secure.conftest import serial_engine
 from ngts.tools.test_utils import allure_utils as allure
 
 
@@ -40,11 +39,7 @@ class SerialConsoleTool:
                 f"Use SerialEngineFactory.create() instead. "
                 f"(player={serial_alias}, url={att['Specific'].get('serial_console_url')})"
             )
-        # add connection options to pass connection problems
-        extended_rcon_command = att['Specific']['serial_conn_cmd'].split(' ')
-        extended_rcon_command.insert(1, DefaultConnectionValues.BASIC_SSH_CONNECTION_OPTIONS)
-        extended_rcon_command = ' '.join(extended_rcon_command)
-        return extended_rcon_command
+        return extend_rcon_with_ssh_options(att['Specific']['serial_conn_cmd'])
 
     @classmethod
     def get_serial_console_session(cls, topology_obj, dut_alias='dut'):
@@ -80,8 +75,13 @@ class SerialConsoleTool:
 
         with allure.step(f'enter password: {password}'):
             out, idx = serial_engine.run_cmd(password, cls.SHELL_PROMPT_PATTERNS + [cls.NEW_PASSWORD_PATTERN], 10)
-        if idx == 1 and handle_change_password_prompt:
+        # any shell-prompt match means login completed (PAM prints 'New password:'
+        # before the MOTD, whose '#' in the kernel line matches SHELL_PROMPT_PATTERNS[1])
+        if idx == len(cls.SHELL_PROMPT_PATTERNS) and handle_change_password_prompt:
             cls.handle_change_password_prompt(serial_engine)
+        # we're logged in now; make auto_reconnect_on_eof re-login instead of
+        # landing on a bare login prompt (engine was created with login_to_switch=False)
+        serial_engine._create_engine_kwargs['login_to_switch'] = True
 
     @classmethod
     def handle_change_password_prompt(cls, serial_engine: PexpectSerialEngine, new_password='', restore_password=True):
@@ -90,6 +90,10 @@ class SerialConsoleTool:
             serial_engine.run_cmd(new_password, cls.RETYPE_NEW_PASSWORD_PATTERN, 10)
         with allure.step(f'retype new password: {new_password}'):
             serial_engine.run_cmd(new_password, cls.APPLIED_PATTERN)
+        with allure.step('wait for shell prompt after password change'):
+            # login flushes TTY input between the password change and spawning the
+            # shell - anything sent before the prompt appears is silently discarded
+            serial_engine.run_cmd('', cls.SHELL_PROMPT_PATTERNS)
         if restore_password:
             cls.restore_password_to_default(serial_engine)
             return serial_engine.password

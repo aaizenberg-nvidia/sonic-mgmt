@@ -27,6 +27,7 @@ def _verify_debug_sto_files_created(engines):
     assert StoDebug.STO_DEBUG_DUMPS in dump_folder, 'STO dumps not created'
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.fae
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_fae_system_sto_event_default(engines, devices, nv_command, random_api, test_name):

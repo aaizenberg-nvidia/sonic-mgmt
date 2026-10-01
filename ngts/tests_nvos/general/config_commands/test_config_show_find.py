@@ -9,6 +9,10 @@ from ngts.nvos_constants.constants_nvos import SystemConsts
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 
+
+cumulus_owner = "gosaini"
+
+
 logger = logging.getLogger()
 
 

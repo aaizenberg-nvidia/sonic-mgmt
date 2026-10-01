@@ -1,8 +1,8 @@
 import ipaddress
-import os
+import math
 import random
-from devts.infra.tools.exceptions.test_issue import TestIssue
-from ngts.constants.performance_constants import MRCConsts, PerfConsts
+from infra.tools.exceptions.test_issue import TestIssue
+from ngts.constants.performance_constants import MRCConsts, NoSrhPerfConsts, PerfConsts
 from ngts.helpers.performance.traffic_helpers import (create_srv6_json_traffic_stream, dscp_to_tc)
 
 PORT_DEFAULT_IPV6_PREFIX = "aaaa"
@@ -31,11 +31,11 @@ def get_dst_ip_by_traffic_type(traffic_type, dut_interfaces_ipv6_configuration_d
     if traffic_type == MRCConsts.TRAFFIC_TYPE_IPV6:
         return dut_interfaces_ipv6_configuration_dict[dst_port].replace(PORT_DEFAULT_IPV6_PREFIX,
                                                                         PORT_DEFAULT_IPV6_ROUTE_PREFIX)
-    elif traffic_type == MRCConsts.TRAFFIC_TYPE_SRV6:
+    elif traffic_type in (MRCConsts.TRAFFIC_TYPE_SRV6, NoSrhPerfConsts.TRAFFIC_TYPE_SRV6_NO_SRH):
         return dut_interfaces_ipv6_configuration_dict[dst_port].replace(PORT_DEFAULT_IPV6_PREFIX,
                                                                         PORT_DEFAULT_SRV6_PREFIX)
     else:
-        raise TestIssue(f"Unknown traffic type {traffic_type} is not supported by workload1 traffic stream")
+        raise TestIssue(f"Unknown traffic type {traffic_type} is not supported")
 
 
 def create_round_robin_stream(player_alias, cli_obj, src_ports, dst_port, traffic_parameters, traffic_type,
@@ -338,3 +338,81 @@ def get_gfp_streams(player_alias, traffic_parameters, src_ports, dst_port, both=
     gfp_control_streams = get_gfp_control_streams(player_alias, traffic_parameters, src_ports, dst_port, both)
     gfp_streams = gfp_data_streams + gfp_control_streams
     return gfp_streams
+
+
+def create_no_srh_stream(player_alias, cli_obj, src_ports, dst_port, traffic_parameters, traffic_type,
+                         mloops_dict, dut_interfaces_ipv6_configuration_dict, stream_list,
+                         entropy_type=NoSrhPerfConsts.ENTROPY_LOW, packet_size=None,
+                         num_packets=NoSrhPerfConsts.NO_SRH_NUM_DATA_PACKETS, **kwargs):
+    """Create regular IPv6/UDP traffic stream for no-SRH SRv6 testing (no BTH/MRC headers).
+
+    For high entropy: each packet gets a different DIPv6 lower 64 bits (many flows).
+    For low entropy: all packets share the same DIPv6 (single flow).
+
+    Args:
+        player_alias: TG alias (e.g. 'left_tg')
+        cli_obj: CLI object for the TG
+        src_ports: List of source ports
+        dst_port: Destination port
+        traffic_parameters: Dict with ports, MAC, IP, packet_size etc.
+        traffic_type: Must be NoSrhPerfConsts.TRAFFIC_TYPE_SRV6_NO_SRH
+        mloops_dict: Mloop port mapping
+        dut_interfaces_ipv6_configuration_dict: Port-to-IPv6 mapping
+        stream_list: List to append created streams to
+        entropy_type: ENTROPY_HIGH or ENTROPY_LOW
+        packet_size: Override packet size (if None, uses traffic_parameters default)
+        num_packets: Number of data packets per stream
+    """
+    set_workload_traffic_parameters(cli_obj, traffic_parameters, mloops_dict, src_ports, dst_port,
+                                    dut_interfaces_ipv6_configuration_dict, traffic_type)
+    get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
+                           num_packets=num_packets, stream_list=stream_list,
+                           entropy_type=entropy_type, packet_size=packet_size)
+
+
+def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
+                           num_packets, stream_list, entropy_type, packet_size=None):
+    """Create no-SRH data streams with configurable DIPv6 entropy.
+
+    High entropy: N individual streams, each with a unique DIPv6 (lower 64 bits).
+    Low entropy: One stream with all packets sharing the same DIPv6.
+    Packets are plain IPv6/UDP (no BTH/RoCE headers).
+
+    Each stream emits `packets_per_dip` copies of its template — scaled
+    inversely with packet_size so smaller packets get more in-flight packets
+    to sustain line rate via the mloop. With ~10 packets per pair, 4096B
+    saturates but 512B under flows; the scaling compensates.
+    """
+    if packet_size is not None:
+        traffic_parameters["packet_size"] = packet_size
+    actual_pkt_size = traffic_parameters["packet_size"]
+    # Scale packets_per_dip inversely with packet_size (relative to the
+    # largest packet size in the sweep, which is the reference that hits line
+    # rate at 10 packets/pair). pow(ratio, 0.55) is empirical, balancing
+    # "too few → underflow" and "too many → buffer/drop".
+    reference_size = max(NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST)
+    packets_per_dip = max(1, int(math.pow(
+        reference_size / max(actual_pkt_size, 1),
+        NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT)))
+    dscp = NoSrhPerfConsts.NO_SRH_DATA_DSCP
+    tc = dscp_to_tc(dscp, ecn=PerfConsts.ECN_CAPABLE_TRANSPORT)
+
+    if entropy_type == NoSrhPerfConsts.ENTROPY_HIGH:
+        base_dst_ipv6 = ipaddress.ip_address(traffic_parameters["IPV6"]["dst"])
+        original_dst = traffic_parameters["IPV6"]["dst"]
+        for i in range(num_packets):
+            traffic_parameters["IPV6"]["dst"] = str(base_dst_ipv6 + i)
+            traffic_parameters["num_packets"] = packets_per_dip
+            stream = create_srv6_json_traffic_stream(
+                player_alias, traffic_parameters, tc=tc,
+                stream_name=f"{', '.join(src_ports)}_to_{dst_port}_NO_SRH_HE_pkt{i}",
+                payload=True)
+            stream_list.append(stream)
+        traffic_parameters["IPV6"]["dst"] = original_dst
+    else:
+        traffic_parameters["num_packets"] = num_packets * packets_per_dip
+        stream = create_srv6_json_traffic_stream(
+            player_alias, traffic_parameters, tc=tc,
+            stream_name=f"{', '.join(src_ports)}_to_{dst_port}_NO_SRH_LE",
+            payload=True)
+        stream_list.append(stream)

@@ -42,12 +42,12 @@ def configure_oob_for_ztp(engines):
 
     Setup:
         1. Download ZTP JSON from NFS to oob-mgmt-server
-        2. Backup dhcpd.conf and dhcpd.hosts
-        3. Modify dhcpd.conf and dhcpd.hosts with ZTP options
+        2. Backup dhcpd.conf
+        3. Add ZTP options to dhcpd.conf
         4. Validate and restart DHCP server
 
     Teardown:
-        Restore original dhcpd.conf and dhcpd.hosts, restart DHCP.
+        Restore original dhcpd.conf, restart DHCP.
     """
     oob_engine = engines.oob_mgmt_server
 

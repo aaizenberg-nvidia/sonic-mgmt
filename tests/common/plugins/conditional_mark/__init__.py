@@ -6,6 +6,7 @@ marks, and conditions can be specified in a centralized file.
 import json
 import logging
 import os
+import pathlib
 import re
 import subprocess
 import yaml
@@ -13,7 +14,7 @@ import glob
 import pytest
 
 from tests.common.testbed import TestbedInfo
-from .issue import check_issues, DEFAULT_CONDITIONS_FILE, check_if_current_ver_include_bug_fix
+from .issue import check_issues, check_if_current_ver_include_bug_fix
 from tests.common.utilities import get_duts_from_host_pattern
 from tests.common.cisco_data import (
     CISCO_8122_PREFIX,
@@ -23,8 +24,15 @@ from tests.common.cisco_data import (
 
 logger = logging.getLogger(__name__)
 
-ASIC_NAME_PATH = '/../../../../ansible/group_vars/sonic/variables'
-ANSIBLE_LIBRARY_PATH = os.path.realpath(os.path.join(os.path.dirname(__file__), '../../../../ansible/library'))
+DEFAULT_CONDITIONS_FILE = 'common/plugins/conditional_mark/tests_mark_conditions*.yaml'
+_ansible_config_env = os.getenv("ANSIBLE_CONFIG")
+_ansible_config_env_path = pathlib.Path(_ansible_config_env) if _ansible_config_env else None
+ANSIBLE_CONFIG_PATH = (
+    _ansible_config_env_path.parent if _ansible_config_env_path and _ansible_config_env_path.is_file()
+    else _ansible_config_env_path or pathlib.Path(__file__).resolve().parent.joinpath("../../../ansible")
+)
+ASIC_NAME_PATH = ANSIBLE_CONFIG_PATH.joinpath("group_vars/sonic/variables")
+ANSIBLE_LIBRARY_PATH = ANSIBLE_CONFIG_PATH.joinpath("library")
 MARK_CONDITIONS_CONSTANTS = {
     # Cisco platform prefixes for use in conditions like:
     #   platform.startswith(constants['CISCO_8122_PREFIX'])
@@ -40,6 +48,7 @@ MARK_CONDITIONS_CONSTANTS = {
                      't2', 't2_2lc_36p-masic', 't2_2lc_min_ports-masic',
                      'lt2-p32o64', 'lt2-o128', 'ft2-64', 'ft2-16', 't2_one_hwsku_min', 't2_one_hwsku_max',
                      't2-single-node-min', 't2_single_node_min', 't2_single_node_max',
+                     't2_single_node_min_first_6ports',
                      't2_single_node_max_64p', 't2-single-node-max-64p', 't2_single_node_max_64p_v2',
                      'urh_min', 'lrh_min', 'lt2-min', 'lt2-o224', 'lt2-o32', 'lt2-o256-u32d224']
 }
@@ -132,9 +141,8 @@ def read_asic_name(hwsku):
         str or None: Return the asic generation name or None if something went wrong or nothing found in the file.
 
     '''
-    asic_name_file = os.path.dirname(__file__) + ASIC_NAME_PATH
     try:
-        with open(asic_name_file) as f:
+        with open(ASIC_NAME_PATH) as f:
             asic_name = yaml.safe_load(f)
 
         for key, value in list(asic_name.copy().items()):
@@ -167,7 +175,7 @@ def load_dut_basic_facts(inv_name, dut_name):
     results = {}
     logger.info('Getting dut basic facts: {}'.format(dut_name))
     try:
-        inv_full_path = os.path.join(os.path.dirname(__file__), '../../../../ansible', inv_name)
+        inv_full_path = ANSIBLE_CONFIG_PATH.joinpath(inv_name)
         ansible_cmd = (
             'ansible -M {} -m dut_basic_facts -i {} {} -o'
             .format(ANSIBLE_LIBRARY_PATH, inv_full_path, dut_name))
@@ -206,16 +214,13 @@ def get_basic_facts(session):
 
 
 def get_http_proxies(inv_name):
-    INV_ENV_FILE = '../../../../ansible/group_vars/{}/env.yml'.format(inv_name)
-    PUBLIC_ENV_FILE = '../../../../ansible/group_vars/all/env.yml'
-    base_path = os.path.dirname(__file__)
-    inv_env_path = os.path.join(base_path, INV_ENV_FILE)
-    public_env_path = os.path.join(base_path, PUBLIC_ENV_FILE)
+    INV_ENV_FILE = ANSIBLE_CONFIG_PATH.joinpath("group_vars/{}/env.yml".format(inv_name))
+    PUBLIC_ENV_FILE = ANSIBLE_CONFIG_PATH.joinpath("group_vars/all/env.yml")
     proxies = {}
 
-    if os.path.isfile(public_env_path):
+    if os.path.isfile(PUBLIC_ENV_FILE):
         try:
-            with open(public_env_path) as env_file:
+            with open(PUBLIC_ENV_FILE) as env_file:
                 proxy_env = yaml.safe_load(env_file)
                 if proxy_env is not None:
                     proxy = proxy_env.get("proxy_env", {})
@@ -224,19 +229,18 @@ def get_http_proxies(inv_name):
                 else:
                     proxies = {'http': '', 'https': ''}
         except Exception as e:
-            logger.error('Load proxy env from {} failed with error: {}'.format(public_env_path, repr(e)))
+            logger.error('Load proxy env from {} failed with error: {}'.format(PUBLIC_ENV_FILE, repr(e)))
 
-    if os.path.isfile(inv_env_path):
+    if os.path.isfile(INV_ENV_FILE):
         try:
-            with open(inv_env_path) as env_file:
+            with open(INV_ENV_FILE) as env_file:
                 proxy_env = yaml.safe_load(env_file)
                 if proxy_env is not None:
                     proxy = proxy_env.get("proxy_env", {})
                     http_proxy = proxy.get('http_proxy', '')
                     proxies = {'http': http_proxy, 'https': http_proxy}
         except Exception as e:
-            logger.error('Load proxy env from {} failed with error: {}'.format(inv_env_path, repr(e)))
-
+            logger.error('Load proxy env from {} failed with error: {}'.format(INV_ENV_FILE, repr(e)))
     return proxies
 
 
@@ -649,11 +653,11 @@ def evaluate_conditions(dynamic_update_skip_reason, mark_details, conditions, ba
     if isinstance(conditions, list):
         # Apply 'AND' or 'OR' operation to list of conditions based on conditions_logical_operator(by default 'AND')
         if conditions_logical_operator == 'OR':
-            return any([evaluate_condition(dynamic_update_skip_reason, mark_details, c, basic_facts, session)
-                        for c in conditions])
+            return any(evaluate_condition(dynamic_update_skip_reason, mark_details, c, basic_facts, session)
+                       for c in conditions)
         else:
-            return all([evaluate_condition(dynamic_update_skip_reason, mark_details, c, basic_facts, session)
-                        for c in conditions])
+            return all(evaluate_condition(dynamic_update_skip_reason, mark_details, c, basic_facts, session)
+                       for c in conditions)
     else:
         if conditions is None or conditions.strip() == '':
             return True

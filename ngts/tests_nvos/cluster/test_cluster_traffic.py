@@ -167,7 +167,7 @@ def _ansible_cluster_traffic_failure_appendix() -> str:
     return "\n".join(lines)
 
 
-def _assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok=True):
+def assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok=True):
     """Assert test results and provide detailed failure information"""
     failed_components = []
     passed_components = []
@@ -243,7 +243,7 @@ def test_cluster_traffic_basic_test(engines, devices, test_api, has_loopbox, sta
         with allure.step("Check disk writes during traffic (bug 5653301)"):
             disk_write_ok = _check_disk_writes(engines.dut, initial_writes)
 
-        _assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
+        assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
 
     finally:
         if cluster is not None:
@@ -378,7 +378,7 @@ def test_cluster_traffic_all_test(engines, devices, test_api, has_loopbox, stand
         with allure.step("Check disk writes during traffic (bug 5653301)"):
             disk_write_ok = _check_disk_writes(engines.dut, initial_writes)
 
-        _assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
+        assert_test_results(status_check, configure_nmx_status, traffic_status, disk_write_ok)
 
     finally:
         with allure.step(f"Cleanup: clear interface counters on {_CLUSTER_TRAFFIC_COUNTERS_IFACE}"):

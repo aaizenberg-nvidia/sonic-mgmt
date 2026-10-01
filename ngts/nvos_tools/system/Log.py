@@ -13,7 +13,7 @@ from ngts.nvos_tools.infra.DefaultDict import DefaultDict
 from ngts.constants.constants import BugHandlerConst
 from ngts.tools.test_utils import allure_utils as allure
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class BaseLog(BaseComponent):
@@ -73,10 +73,7 @@ class Log(BaseLog):
                     break
 
                 with allure.step(f"Try to find expected logs in {log_file}"):
-                    cmd = 'zcat' if log_file.endswith('.gz') else 'cat'
-                    output = engine.run_cmd(f'{cmd} {RemarkableLogsConsts.LOGS_PATH}'
-                                            f''
-                                            f'{log_file} | grep -E -a "{grep_logs}"')
+                    output: str = engine.run_cmd(f'zgrep -a -E "{grep_logs}" {RemarkableLogsConsts.LOGS_PATH}{log_file}')
 
                 if output:
                     for log in logs_to_find:
@@ -92,9 +89,10 @@ class Log(BaseLog):
         :param engine: system engine
         :param only_latest_log: verify in only latest log file, instead of all in log files.
         :param start_time: only logs printed after this time are relevant
-        :return:
+        :return: the timestamp of the last matched log
         """
         with allure.step('Verify expected logs'):
+            matched_time = None
             log_search_errors: Dict[str, str] = {log: f'log "{log}" was not found' for log in logs_to_find}
             grep_logs = '|'.join(logs_to_find)
 
@@ -123,14 +121,18 @@ class Log(BaseLog):
                                 date_match = re.search(fr'{NvosConst.DATE_TIME_REGEX[0]}', line)
                                 date_str = date_match.group()
                                 parsed_time = datetime.strptime(date_str, BugHandlerConst.TIMESTAMP_FORMATS[3])
-                                current_year = datetime.now().year
+                                # syslog timestamps carry no year; take it from start_time (same
+                                # clock as the DUT log) - the client year may differ from the DUT's
+                                current_year = start_time.year if start_time else datetime.now().year
                                 parsed_time = parsed_time.replace(year=current_year)
                                 if start_time <= parsed_time and log in log_search_errors:
                                     del log_search_errors[log]
+                                    matched_time = parsed_time
                                     break
 
             err = ',\n'.join(list(log_search_errors.values()))
             assert not log_search_errors, f"The following logs weren't found:\n{err}"
+            return matched_time
 
 
 class File(BaseComponent):

@@ -1,8 +1,10 @@
+import logging
 import os
 import random
 import string
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import CacertType
 from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CmdRunner import CmdRunner
@@ -17,9 +19,17 @@ from ngts.tests_nvos.helpers.general_helpers import generate_rand_str
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import generate_scp_uri_using_player
 
+logger = logging.getLogger(__name__)
 
-def set_new_random_users(num_users: int, role: str, apply=False) -> List[UserInfo]:
+
+def set_new_random_users(num_users: int, role: str, apply=False, engine=None) -> List[UserInfo]:
+    """Create random local AAA users.
+
+    ``engine`` should be the caller's DUT engine (e.g. ``engines.dut``). Falls back to
+    ``TestToolkit.get_engine()`` only for legacy call sites / session fixtures.
+    """
     system = System()
+    dut_engine = engine if engine is not None else TestToolkit.get_engine()
     users = []
     with allure.step(f'set {num_users} new random local {role} users'):
         for _ in range(num_users):
@@ -27,8 +37,47 @@ def set_new_random_users(num_users: int, role: str, apply=False) -> List[UserInf
             users.append(UserInfo(username, password, role))
     if apply:
         with allure.step('apply users'):
-            system._general_cli_wrapper.apply_config(TestToolkit.engines.dut, verify_execution=True)
+            system._general_cli_wrapper.apply_config(dut_engine, verify_execution=True)
     return users
+
+
+def cleanup_aaa_users(users: Optional[List[UserInfo]], engine=None) -> None:
+    """Best-effort batch removal of AAA users created by SPIFFE/gNMI setup.
+
+    Stages all unsets with ``apply=False``, then applies once. On apply failure,
+    detaches the pending revision so staged deletes cannot poison later tests.
+    Empty/no-diff applies are skipped via ``skip_no_config_diff_err``.
+
+    Prefer passing ``engine`` (e.g. ``engines.dut``). Falls back to
+    ``TestToolkit.get_engine()`` only for session-scoped cleanup without an engines fixture.
+    """
+    if not users:
+        return
+    system = System()
+    dut_engine = engine if engine is not None else TestToolkit.get_engine()
+    cleanup_staged = False
+    with allure.step('cleanup AAA users created by test setup'):
+        for user in users:
+            with allure.step(f'unset user {user.username}'):
+                try:
+                    system.aaa.user.user_id[user.username].unset(apply=False).verify_result()
+                    cleanup_staged = True
+                except Exception as error:
+                    logger.warning('Failed to unset AAA user "%s": %s', user.username, error)
+        if not cleanup_staged:
+            return
+        with allure.step('apply AAA user cleanup'):
+            try:
+                system._general_cli_wrapper.apply_config(
+                    dut_engine, verify_execution=True, skip_no_config_diff_err=True)
+            except Exception as error:
+                logger.warning('Failed to apply AAA user cleanup: %s', error)
+                with allure.step('detach pending AAA cleanup revision after apply failure'):
+                    try:
+                        NvueGeneralCli.detach_config(dut_engine)
+                    except Exception as detach_error:
+                        logger.warning(
+                            'Failed to detach pending AAA cleanup revision: %s', detach_error)
 
 
 def add_etc_host_mapping_to_dn(dn, address, cmd_runner=None):
@@ -43,7 +92,12 @@ def remove_etc_host_mapping_to_dn(dn, cmd_runner=None):
     cmd_runner.run_cmd(cmd)
 
 
-def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostname, dut_ip=None, create_chain: bool = False) -> Dict[str, CertInfo]:
+def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostname, dut_ip=None,
+                           create_chain: bool = False, expiration_days: Optional[int] = None) -> Dict[str, CertInfo]:
+    """Generate leaf certs under ``dest_dir``.
+
+    :param expiration_days: when set, leaf validity is that many days (CA stays long-lived).
+    """
     certs_info: Dict[str, CertInfo] = {}
 
     with allure.step('arrange test certs'):
@@ -57,7 +111,8 @@ def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostnam
                     rand_pass = ''.join([random.choice(string.ascii_lowercase + '0123456789') for _ in range(10)])
                     cert_info = CertInfo(
                         name=cert_name,
-                        info='cert for test',
+                        info=('cert for test' if expiration_days is None
+                              else f'cert for test (valid for {expiration_days} day(s))'),
                         private=os.path.join(cert_dir, 'cert.key'),
                         public=os.path.join(cert_dir, 'cert.pem'),
                         p12_bundle=os.path.join(cert_dir, 'cert.p12'),
@@ -84,8 +139,10 @@ def prepare_tmp_test_certs(cert_names: List[str], dest_dir, engines, dut_hostnam
                         CertificateGenerator().generate_cert_chain(cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
                                                                    cert_dir, 'rCA', cert_info.p12_password)
                     else:
-                        CertificateGenerator().generate_cert(cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
-                                                             cert_dir, 'ca', cert_info.p12_password)
+                        CertificateGenerator().generate_cert(
+                            cert_dir, 'cert', cert_info.dn, cert_info.ip, cert_info.dn,
+                            cert_dir, 'ca', cert_info.p12_password,
+                            expiration_days=expiration_days)
         with allure.step('chmod 777'):
             CmdRunner().run_cmd(f'chmod -R 777 {dest_dir}')
 

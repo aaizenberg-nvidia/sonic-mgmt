@@ -26,7 +26,7 @@ class CumulusGeneralCli(NvueGeneralCli):
     def __init__(self, engine, device):
         super().__init__(engine, device)
 
-    def install_traffic_generator(self, latest_version=False):
+    def install_traffic_generator(self, latest_version=False, perf_sys_sdk_change=None):
         """
         Function verifies the traffic generator is functional post deploy on CL OS
 
@@ -36,12 +36,14 @@ class CumulusGeneralCli(NvueGeneralCli):
         is running traffic generation script.
         :return: None
         """
+        logger.info(
+            f"install_traffic_generator (Cumulus): latest_version={latest_version}, "
+            f"perf_sys_sdk_change={perf_sys_sdk_change!r}"
+        )
+        perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         with allure.step('Get SDK_VER git'):
-            sdk_version = self.get_sdk_version()
-            sdk_branch = self.get_sdk_branch(sdk_version)
-            if latest_version:
-                sdk_version = self.get_latest_sdk_version(cur_sdk_version=sdk_version, sdk_branch=sdk_branch)
-
+            sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
+                latest_version=latest_version)
             deb_file_path = self.resolve_sdk_git_deb_path(sdk_version)
             self.engine.copy_file(source_file=f'{deb_file_path}',
                                   dest_file=f'{PerfConsts.SDK_DEB_FILE_TEMPLATE.format(SDK_VERSION=sdk_version)}',
@@ -59,7 +61,8 @@ class CumulusGeneralCli(NvueGeneralCli):
             self.install_apt_get_pkg()
 
         with allure.step('Prepare SDK_VER git to run tests'):
-            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch)
+            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, perf_sys_sdk_branch=perf_sys_sdk_branch,
+                                                 perf_sys_sdk_gerrit_change=perf_sys_sdk_gerrit_change)
             self.engine.run_cmd(f"sudo {Cl_Consts.CL_PYTHON_PATH} {PerfConsts.DVS_RUN_TEST_PATH} -si")
 
     def install_pip_dependencies(self):
@@ -82,7 +85,7 @@ class CumulusGeneralCli(NvueGeneralCli):
 
     def install_apt_get_pkg(self):
         with allure.step('Install apt-get packages'):
-            self.engine.run_cmd('sudo apt-get install build-essential -y', timeout=120, retry_run=True)
+            self.engine.run_cmd('sudo apt-get install build-essential libatomic1=12.2.0-14+deb12u1 -y', timeout=120, retry_run=True)
             self.engine.run_cmd('sudo apt-get install swig -y', timeout=60, retry_run=True)
             self.engine.run_cmd('sudo apt-get install kmod -y', timeout=60, retry_run=True)
             self.engine.run_cmd('sudo apt-get install pciutils -y', timeout=60, retry_run=True)

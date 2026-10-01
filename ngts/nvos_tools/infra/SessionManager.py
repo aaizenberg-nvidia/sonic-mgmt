@@ -275,14 +275,11 @@ class SessionManager:
                     handle_change_password_prompt=False
                 )
 
-                # Get the session object
-                session = SerialConsoleTool.get_serial_console_session(topology_obj)
-
                 # Track the session
                 with self.sessions_dict_lock:
-                    self.sessions_dict[username].append(session)
+                    self.sessions_dict[username].append(serial)
 
-                return session
+                return serial
 
             except Exception as e:
                 logger.error(f"Failed to create console session for user {username}: {str(e)}")

@@ -62,6 +62,8 @@ all:
         vm_host_95:
         vm_host_96:
         vm_host_97:
+        vm_host_98:
+        vm_host_100:
     eos:
       children:
         vms_1:
@@ -124,6 +126,8 @@ all:
         vms_95:
         vms_96:
         vms_97:
+        vms_98:
+        vms_100:
     servers:
       vars:
         topologies:
@@ -302,6 +306,8 @@ all:
         server_95:
         server_96:
         server_97:
+        server_98:
+        server_100:
 
 vm_host_1:
   hosts:
@@ -602,6 +608,16 @@ vm_host_97:
   hosts:
     FIT-SONIC-VRT-MEC-240:
       ansible_host: fit-sonic-vrt-mec-240
+
+vm_host_98:
+  hosts:
+    FIT-SONIC-VRT-MEC-9240:
+      ansible_host: fit-sonic-vrt-mec-9240
+
+vm_host_100:
+  hosts:
+    FIT-SONIC-VRT-MEC-250:
+      ansible_host: fit-sonic-vrt-mec-250
 
 
 vms_0:
@@ -4257,69 +4273,69 @@ vms_81:
 
 vms_82:
   hosts:
-    VM4733:
+    VM8801:
       ansible_host: 10.245.40.4
-    VM4734:
+    VM8802:
       ansible_host: 10.245.40.5
-    VM4735:
+    VM8803:
       ansible_host: 10.245.40.6
-    VM4736:
+    VM8804:
       ansible_host: 10.245.40.7
-    VM4737:
+    VM8805:
       ansible_host: 10.245.40.8
-    VM4738:
+    VM8806:
       ansible_host: 10.245.40.9
-    VM4739:
+    VM8807:
       ansible_host: 10.245.40.10
-    VM4740:
+    VM8808:
       ansible_host: 10.245.40.11
-    VM4741:
+    VM8809:
       ansible_host: 10.245.40.12
-    VM4742:
+    VM8810:
       ansible_host: 10.245.40.13
-    VM4743:
+    VM8811:
       ansible_host: 10.245.40.14
-    VM4744:
+    VM8812:
       ansible_host: 10.245.40.15
-    VM4745:
+    VM8813:
       ansible_host: 10.245.40.16
-    VM4746:
+    VM8814:
       ansible_host: 10.245.40.17
-    VM4747:
+    VM8815:
       ansible_host: 10.245.40.18
-    VM4748:
+    VM8816:
       ansible_host: 10.245.40.19
-    VM4749:
+    VM8817:
       ansible_host: 10.245.40.20
-    VM4750:
+    VM8818:
       ansible_host: 10.245.40.21
-    VM4751:
+    VM8819:
       ansible_host: 10.245.40.22
-    VM4752:
+    VM8820:
       ansible_host: 10.245.40.23
-    VM4753:
+    VM8821:
       ansible_host: 10.245.40.24
-    VM4754:
+    VM8822:
       ansible_host: 10.245.40.25
-    VM4755:
+    VM8823:
       ansible_host: 10.245.40.26
-    VM4756:
+    VM8824:
       ansible_host: 10.245.40.27
-    VM4757:
+    VM8825:
       ansible_host: 10.245.40.28
-    VM4758:
+    VM8826:
       ansible_host: 10.245.40.29
-    VM4759:
+    VM8827:
       ansible_host: 10.245.40.30
-    VM4760:
+    VM8828:
       ansible_host: 10.245.40.31
-    VM4761:
+    VM8829:
       ansible_host: 10.245.40.32
-    VM4762:
+    VM8830:
       ansible_host: 10.245.40.33
-    VM4763:
+    VM8831:
       ansible_host: 10.245.40.34
-    VM4764:
+    VM8832:
       ansible_host: 10.245.40.35
 
 vms_83:
@@ -9561,6 +9577,12 @@ vms_96:
 vms_97:
   hosts:
 
+vms_98:
+  hosts:
+
+vms_100:
+  hosts:
+
 
 server_1:
   children:
@@ -9981,3 +10003,17 @@ server_97:
     vms_97:
   vars:
     host_var_file: host_vars/FIT-SONIC-VRT-MEC-240.yml
+
+server_98:
+  children:
+    vm_host_98:
+    vms_98:
+  vars:
+    host_var_file: host_vars/FIT-SONIC-VRT-MEC-9240.yml
+
+server_100:
+  children:
+    vm_host_100:
+    vms_100:
+  vars:
+    host_var_file: host_vars/FIT-SONIC-VRT-MEC-250.yml

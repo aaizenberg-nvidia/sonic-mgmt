@@ -98,6 +98,7 @@ def test_nmxc_log_stream_set(engines, random_api, stream_protocol):
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 def test_nmxc_log_stream_show(random_api):
     cluster = Cluster()
     try:

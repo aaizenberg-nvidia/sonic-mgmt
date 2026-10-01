@@ -1,10 +1,12 @@
 import logging
 import ipaddress
+import shlex
 
 from tests.common.utilities import wait_until
 from tests.common.errors import RunAnsibleModuleFail
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.devices.eos import EosHost
+from tests.common.devices.csonic import CsonicHost
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +28,23 @@ def is_snmp_subagent_running(duthost):
 
 
 def _get_snmp_facts(localhost, host, version, community, is_dell, include_swap, module_ignore_errors,
-                    timeout=SNMP_DEFAULT_TIMEOUT):
+                    timeout=SNMP_DEFAULT_TIMEOUT, collect_only=None):
+    optional_args = {'collect_only': collect_only} if collect_only else {}
     snmp_facts = localhost.snmp_facts(host=host, version=version, community=community, is_dell=is_dell,
                                       module_ignore_errors=module_ignore_errors, include_swap=include_swap,
-                                      timeout=timeout)
+                                      timeout=timeout, **optional_args)
     return snmp_facts
 
 
 def _update_snmp_facts(localhost, host, version, community, is_dell, include_swap, duthost,
-                       timeout=SNMP_DEFAULT_TIMEOUT):
+                       timeout=SNMP_DEFAULT_TIMEOUT, collect_only=None):
     global global_snmp_facts
 
     try:
         snmp_subagent_running = is_snmp_subagent_running(duthost)
         global_snmp_facts = _get_snmp_facts(localhost, host, version, community, is_dell, include_swap,
-                                            module_ignore_errors=False, timeout=timeout)
+                                            module_ignore_errors=False, timeout=timeout,
+                                            collect_only=collect_only)
     except RunAnsibleModuleFail as e:
         logger.info("encountered error when getting snmp facts: {}".format(e))
         global_snmp_facts = {}
@@ -51,15 +55,16 @@ def _update_snmp_facts(localhost, host, version, community, is_dell, include_swa
 
 def get_snmp_facts(duthost, localhost, host, version, community, is_dell=False, module_ignore_errors=False,
                    wait=False, include_swap=False, timeout=DEF_WAIT_TIMEOUT, interval=DEF_CHECK_INTERVAL,
-                   snmp_timeout=SNMP_DEFAULT_TIMEOUT):
+                   snmp_timeout=SNMP_DEFAULT_TIMEOUT, collect_only=None):
     if not wait:
         return _get_snmp_facts(localhost, host, version, community, is_dell, include_swap, module_ignore_errors,
-                               timeout=snmp_timeout)
+                               timeout=snmp_timeout, collect_only=collect_only)
 
     global global_snmp_facts
 
     pytest_assert(wait_until(timeout, interval, 0, _update_snmp_facts, localhost, host, version,
-                             community, is_dell, include_swap, duthost, snmp_timeout), "Timeout waiting for SNMP facts")
+                             community, is_dell, include_swap, duthost, snmp_timeout, collect_only),
+                  "Timeout waiting for SNMP facts")
     return global_snmp_facts
 
 
@@ -98,6 +103,32 @@ def get_snmp_output(ip, duthost, nbr, creds_all_duts, oid='.1.3.6.1.2.1.1.1.0'):
         eos_snmpget = "bash {} snmpget -v2c -c {} {} {}".format(
             vrf_prefix, creds_all_duts[duthost.hostname]['snmp_rocommunity'], ip, oid)
         out = nbr['host'].eos_command(commands=[eos_snmpget])
+    elif isinstance(nbr["host"], CsonicHost):
+        # cSONiC (docker-sonic-vs) neighbor: CsonicHost already runs commands
+        # inside the neighbor container, so run net-snmp's snmpwalk directly
+        # there. The legacy "docker exec snmp ..." wrapper assumes a nested snmp
+        # container and fails with rc=127 'docker: command not found' (cEOS
+        # avoids this via the EosHost branch above).
+        community = creds_all_duts[duthost.hostname]['snmp_rocommunity']
+        # The neighbor Loopback is not routable back from the DUT, so bind the
+        # query to the DUT-facing PortChannel1 global address via --clientaddr.
+        addr_family = "-6" if isinstance(ipaddr, ipaddress.IPv6Address) else "-4"
+        # Pick the first globally-scoped address on the DUT-facing PortChannel1
+        # regardless of its prefix (IPv4 need not be in 10/8, IPv6 ULAs may be
+        # fc.. or fd..), then strip the /mask.
+        src_lookup = (
+            "ip {af} -o addr show PortChannel1 scope global 2>/dev/null | "
+            "awk '{{print $4}}' | head -n1 | cut -d/ -f1"
+        ).format(af=addr_family)
+        src_out = nbr['host'].command(src_lookup, module_ignore_errors=True)
+        client_addr = ""
+        src_stdout = src_out.get('stdout', '') if isinstance(src_out, dict) else ""
+        if src_stdout and src_stdout.strip():
+            client_addr = "--clientaddr={} ".format(shlex.quote(src_stdout.strip()))
+        command = "snmpwalk -v 2c -c {} {}{} {}".format(
+            shlex.quote(community), client_addr, shlex.quote(str(ip)),
+            shlex.quote(oid))
+        out = nbr['host'].command(command)
     else:
         command = "docker exec snmp snmpwalk -v 2c -c {} {} {}".format(
                   creds_all_duts[duthost.hostname]['snmp_rocommunity'], ip, oid)

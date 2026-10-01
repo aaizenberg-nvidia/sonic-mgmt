@@ -24,9 +24,14 @@ from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 
+
+cumulus_owner = "gosaini"
+
+
 logger = logging.getLogger()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.general
 def test_save_reboot(engines, devices):
@@ -133,8 +138,7 @@ def test_save_reboot(engines, devices):
 
             with allure.step("Set NMX-C log stream configuration"):
                 player = engines.sonic_mgmt
-                url = f'{player.username}:{player.password}@{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
-                url_show = f'{player.username}:********@{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
+                url = f'{player.ip}:{ClusterConsts.NMXC_LOG_STREAM_DEFAULT_PORT}'
                 stream = f'{ClusterConsts.PROTOCOL_RSYSLOG} {url}'
                 cluster.apps.app_name[ClusterConsts.NMX_CONTROLLER].logstream.action_update_cluster_log_stream(stream=stream)
 
@@ -145,8 +149,8 @@ def test_save_reboot(engines, devices):
         if fec_capable:
             selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).get_returned_value()
             fec_mode = LinkDetectionConsts.FEC_MODE_DOUBLE
-            with allure.step("Set the fec mode to {} for the selected port {}".format(fec_mode, selected_port.name)):
-                selected_port.interface.link.set(op_param_name=LinkDetectionConsts.FEC_MODE, op_param_value=fec_mode).\
+            with allure.step("Set the fec mode to {} for the selected port {} - and apply".format(fec_mode, selected_port.name)):
+                selected_port.interface.link.set(op_param_name=LinkDetectionConsts.FEC_MODE, op_param_value=fec_mode, apply=True, ask_for_confirmation=True).\
                     verify_result()
 
         with allure.step("Update the health component unhealthy counters"):
@@ -344,8 +348,8 @@ def test_save_reboot(engines, devices):
                     output_dict = OutputParsingTool.parse_json_str_to_dictionary(output).get_returned_value()
                     assert output_dict["protocol"] == ClusterConsts.PROTOCOL_RSYSLOG, \
                         "Protocol is {} instead of {}".format(output_dict["protocol"], ClusterConsts.PROTOCOL_RSYSLOG)
-                    assert output_dict["remote-url"] == url_show, \
-                        "Remote-url is {} instead of {}".format(output_dict["remote-url"], url_show)
+                    assert output_dict["remote-url"] == url, \
+                        "Remote-url is {} instead of {}".format(output_dict["remote-url"], url)
 
             if fec_capable:
                 # Platform is FEC capable

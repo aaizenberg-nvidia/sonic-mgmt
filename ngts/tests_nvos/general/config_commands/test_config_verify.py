@@ -12,6 +12,10 @@ from ngts.nvos_tools.acl.acl import Acl
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 
+
+cumulus_owner = "gosaini"
+
+
 logger = logging.getLogger(__name__)
 
 pytestmark = [

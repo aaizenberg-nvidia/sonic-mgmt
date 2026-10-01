@@ -27,9 +27,11 @@ scripts/sonic_deploy/test_deploy_and_upgrade.py::test_more_then_2_fan_status_wro
 
 scripts/test_verify_fanout_version.py:
   skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5042675 for SN6600_LD platform"
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5042675 for SN6600_LD platform or due to RM issue: https://redmine.mellanox.com/issues/5312071 on Air setups"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5042675 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5312071 and 'air' in testbed"
 
 tests/nightly/cpld/test_cpld.py:
   skip:
@@ -50,6 +52,12 @@ tests/nightly/route/test_async_route.py::test_adding_routes[ipv4-static_routes_i
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5089669"
     conditions:
     - "https://redmine.mellanox.com/issues/5089669"
+
+tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_techsupport]:
+  xfail:
+    reason: "Testcase expected to fail on SPC5 due to RM issue: https://redmine.mellanox.com/issues/5136159"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5136159 and 'sn5640' in platform"
 
 tests/nightly/fec/test_fec.py::TestFec::test_fec_bug_2705016:
   xfail:
@@ -80,17 +88,18 @@ tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_platform]:
 
 tests/nightly/runtime/test_runtime.py::TestRuntime::test_runtime[show_ifaces_status]:
   xfail:
-    reason: "Testcase might fail due to RM issue: https://redmine.mellanox.com/issues/5083746"
+    reason: "Testcase might fail due to RM issue: https://redmine.mellanox.com/issues/5083746 or expected to fail on SPC5 due to RM issue: https://redmine.mellanox.com/issues/5275324"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5083746"
+    - "https://redmine.mellanox.com/issues/5275324 and 'sn5640' in platform"
 
 tests/nightly/auto_negotition:
   skip:
-    reason: "Testcase not supported on simx or on sn6600_ld platform due to RM 4978794"
+    reason: "Testcase not supported on simx platform"
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
-    - "https://redmine.mellanox.com/issues/4978794 and 'sn6600_ld' in platform"
 
 tests/nightly/copp/test_copp.py::test_copp_policer[LLDP_Reboot]:
   skip:
@@ -209,14 +218,19 @@ tests/nightly/secure:
     reason: "Skipped on gaur and bobcat testbeds"
     conditions_logical_operator: or
     conditions:
-    - "'r-gaur-04' in testbed or 'mtvr-gaur-02' in testbed or 'mtvr-gaur-03' in testbed"
     - "'sn4280' in platform"
+
+tests/nightly/secure/test_secure_boot/test_secure_boot.py::test_unsgined_vmlinuz_secure_boot:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5261704"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5261704"
 
 tests/nightly/secure/test_secure_corrupt_fw/test_secure_corrupt_fw.py:
   xfail:
-    reason: "no err msg output due to RM issue: https://redmine.mellanox.com/issues/5157205"
+    reason: "corrupt MFA need to be regenerated for mtvr-moose-11, tracked by https://redmine.mellanox.com/issues/5222862"
     conditions:
-    - "https://redmine.mellanox.com/issues/5157205"
+    - "https://redmine.mellanox.com/issues/5222862 and 'mtvr-moose-11' in testbed"
 
 tests/nightly/p4/examples_application/p4_gtp_parser/test_gtp_parser.py:
   skip:
@@ -356,12 +370,6 @@ tests/push_build_tests/general/wjh/test_wjh.py::test_l3_non_ip_packet:
     conditions:
     - "https://redmine.mellanox.com/issues/3770476 and 'simx' in platform"
 
-tests/push_build_tests/L2/vxlan/test_vxlan.py:
-  skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/2804440 on SIMX platform"
-    conditions:
-    - "https://redmine.mellanox.com/issues/2804440 and 'simx' in platform"
-
 tests/push_build_tests/L3/dhcp_relay/test_dhcp_relay.py::TestDHCPRelay::test_dhcp_relay_release_message:
   skip:
     reason: "Testcase ignored due to GitHub issue: https://github.com/Azure/sonic-buildimage/issues/6053"
@@ -399,26 +407,13 @@ tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::tes
     conditions:
     - "'simx' in platform"
 
-tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::test_cpu_usage:
-  skip:
-    reason: "The test is related to performance, no meaningful to run it on simx platform "
-    conditions:
-    - "'simx' in platform"
-
 tests/push_build_tests/system/test_cpu_ram_hdd_usage.py::TestCpuRamHddUsage::test_ram_usage:
-  skip:
-    reason: "The test is related to performance, no meaningful to run it on simx platform"
-    conditions_logical_operator: or
-    conditions:
-    - "'simx' in platform"
   xfail:
     reason: "Testcase ignored due to RM issues"
     conditions_logical_operator: or
     conditions:
-    - "https://redmine.mellanox.com/issues/4977733 and 'sn4280' in platform"
-    - "https://redmine.mellanox.com/issues/4970711"
     - "https://redmine.mellanox.com/issues/4975253 and 'sn6600_ld' not in platform"
-    - "https://redmine.mellanox.com/issues/4970326"
+    - "https://redmine.mellanox.com/issues/5226570"
 
 tests/push_build_tests/L3/evpn_vxlan/test_evpn_vxlan.py:
   skip:
@@ -524,6 +519,12 @@ autorestart.test_container_autorestart.py::test_containers_autorestart\[.*-bgp\]
     conditions:
     - "https://redmine.mellanox.com/issues/5075468"
 
+autorestart/test_container_autorestart.py::test_containers_autorestart:
+  xfail:
+    reason: "Xfail on BMC: FEATURE|telemetry has no auto_restart field, so the module scoped fixture config_reload_after_tests fails during setup, due to RM issue: https://redmine.mellanox.com/issues/5235361"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5235361"
+
 bgp/test_bgp_bbr.py::test_bbr_enabled_dut_asn_in_aspath:
   xfail:
     reason: "Testcase expected to fail due to RM issue https://redmine.mellanox.com/issues/4989648"
@@ -542,6 +543,12 @@ bgp/:
     conditions:
     - "https://redmine.mellanox.com/issues/4931314"
     - "hwsku in ['Mellanox-SN6600-V448P16S2']"
+
+clock/test_syncd_clock_sync.py::test_syncd_ptp_clock_sync:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5258418"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5258418"
 
 console/test_console_driver.py:
   skip:
@@ -570,6 +577,12 @@ container_hardening/test_container_hardening.py::test_container_privileged.*what
     conditions:
     - https://redmine.mellanox.com/issues/4400983
 
+dash/canonical/test_dash_privatelink.py::test_privatelink_basic_transform:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5273040"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5273040 and is_smartswitch==True"
+
 dash/test_dash_vnet.py::test_outbound_vnet_direct:
   skip:
     reason: "Testcase ignored due to platform nvda_bf and RM issue: https://redmine.mellanox.com/issues/3634592"
@@ -587,12 +600,6 @@ dash/test_dash_crm.py::TestDashCRM::test_dash_crm_cleanup:
     reason: "Xfail the test for RM issue https://redmine.mellanox.com/issues/4531681"
     conditions:
     - "https://redmine.mellanox.com/issues/4531681"
-
-dash/nasa_debug/test_nasa_debug.py::test_nasa_debug_action:
-  skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5099209"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5099209"
 
 dash/test_dash_privatelink_redirect.py::TestPrivateLinkRedirectFNIC::test_dst_port_above_port_map_range:
   xfail:
@@ -624,23 +631,17 @@ ha/test_ha_npu_process_crash.py:
     conditions:
     - "https://redmine.mellanox.com/issues/5138419"
 
-dhcp_relay/test_dhcp_relay.py::test_dhcp_broadcast_not_flooded:
-  xfail:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5100749"
-    conditions:
-    - "https://redmine.mellanox.com/issues/5100749"
-
 dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_non_default_vrf:
-  skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5041721"
+  xfail:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5240149"
     conditions:
-    - "https://redmine.mellanox.com/issues/5041721"
+    - "https://redmine.mellanox.com/issues/5240149"
 
 dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_different_non_default_vrf:
-  skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5041721"
+  xfail:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5240149"
     conditions:
-    - "https://redmine.mellanox.com/issues/5041721"
+    - "https://redmine.mellanox.com/issues/5240149"
 
 dhcp_relay/test_dhcpv4_relay.py:
   xfail:
@@ -755,15 +756,21 @@ ecmp/inner_hashing:
 
 everflow/test_everflow_testbed.py::TestEverflowV4EgressAclEgressMirror::test_everflow_egress_mirror_mtu_drop:
   skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5005586"
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5172208"
     conditions:
-    - https://redmine.mellanox.com/issues/5005586
+    - https://redmine.mellanox.com/issues/5172208
 
 everflow/test_everflow_ipv6.py::TestEgressEverflowIPv6::test_everflow_egress_mirror_mtu_drop_ipv6:
   skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5005586"
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5172208"
     conditions:
-    - https://redmine.mellanox.com/issues/5005586
+    - https://redmine.mellanox.com/issues/5172208
+
+gnmi/test_gnmi_srv6.py:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303099"
+    conditions:
+      - https://redmine.mellanox.com/issues/5303099
 
 gnmi/test_gnoi_system.py:
   xfail:
@@ -777,12 +784,24 @@ gnmi/test_gnoi_os.py:
     conditions:
     - "https://redmine.mellanox.com/issues/4958590"
 
+smart_switch/test_check_dpu_fw_version.py::test_check_dpu_fw_version:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5273040"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5273040 and is_smartswitch==True"
+
 iface_loopback_action/test_iface_loopback_action_wjh.py:
   skip:
     reason: "Testcase ignored due to dualtor topology."
     conditions_logical_operator: or
     conditions:
     - "'dualtor' in topo_name"
+
+iface_loopback_action/test_iface_loopback_action_wjh.py::test_loopback_action_wjh:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5300307"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5300307 and 'sn2700' in platform"
 
 ip/test_mgmt_ipv6_only.py::test_ro_user_ipv6_only:
   skip:
@@ -808,12 +827,37 @@ ip/test_mgmt_ipv6_only.py::test_ntp_ipv6_only:
     conditions:
     - "'r-lionfish-13' in testbed"
 
+packet_trimming/test_packet_trimming_.*::test_trimming_during_warm_reboot:
+  regex: true
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303333"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5303333 and 'sn5640' in platform"
+
 passw_hardening/test_passw_hardening.py:
   skip:
     reason: "Testcase skipped because the test is related to performance, no meaningful to run it on simx platform "
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
+
+platform_tests/test_thermal_polling.py::TestPerComponentPollingIntervals::test_platform_json_polling_intervals_parsed:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
+
+platform_tests/test_thermal_polling.py::TestPerComponentPollingIntervals::test_thermal_sensors_update_at_configured_intervals:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
+
+platform_tests/test_sfp_thermal_state_db.py::TestSfpThermalStateDb::test_no_sfp_entries_in_temperature_info:
+  skip:
+    reason: "sn6810_ld simx not support"
+    conditions:
+    - "'sn6810_ld_simx' in platform"
 
 platform_tests/test_service_warm_restart.py:
   skip:
@@ -852,6 +896,42 @@ platform_tests/daemon/test_bmcctld.py::TestBmcctldDaemon::test_bmc_reboot_does_n
     reason: "Case check swss/synd contain on switch. Skip it on r-salamandra-01 and slm-chipless-2700a1-146 due to they are chipless"
     conditions:
     - "'bmc' in topo_type and ('r-salamandra-01' in testbed or 'slm-chipless-2700a1-146' in testbed)"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_presence:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_model:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_serial:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_status:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_get_position_in_parent:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
+
+platform_tests/api/test_component.py::TestComponentApi::test_is_replaceable:
+  xfail:
+    reason: "Component platform API does not work on BMC, xfail due to RM issue: https://redmine.mellanox.com/issues/5221533"
+    conditions:
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5221533"
 
 platform_tests/api/test_chassis.py::TestChassisApi::test_thermals:
   skip:
@@ -1097,6 +1177,12 @@ platform_tests/cli/test_show_platform.py::test_show_platform_syseeprom:
     conditions:
     - "'simx' in platform"
 
+platform_tests/counterpoll/test_counterpoll_watermark.py::test_counterpoll_queue_watermark_pg_drop:
+  skip:
+    reason: "Performance-related validation is not tested on ASAN images"
+    conditions:
+    - "'ASAN' in build_version"
+
 platform_tests/test_memory_exhaustion.py::TestMemoryExhaustion::test_memory_exhaustion:
   skip:
     reason: "Simx doesn't support PDU"
@@ -1282,11 +1368,12 @@ platform_tests/test_sensors.py::test_sensors:
     conditions:
     - "https://redmine.mellanox.com/issues/4261914 and 'sn5640_simx' in platform"
   xfail:
-    reason: "Testcase may fail due to RM 4441016 on affected PSUs or RM 5174071 on mtvr-moose-11"
+    reason: "Testcase may fail due to RM 4441016 on affected PSUs, RM 5174071 on mtvr-moose-11 or RM 5125814 on r-bison-12"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/4441016 and psu_manufacture=='Murata-PS' and psu_capacity=='1500'"
     - "https://redmine.mellanox.com/issues/5174071 and 'mtvr-moose-11' in testbed"
+    - "https://redmine.mellanox.com/issues/5125814 and 'r-bison-12' in testbed"
 
 platform_tests/test_platform_info.py::test_turn_on_off_psu_and_check_psustatus:
   skip:
@@ -1374,17 +1461,18 @@ smartswitch/platform_tests/test_reload_dpu.py::test_cold_reboot_dpus[gnoi:
 
 process_monitoring/test_critical_process_monitoring.py:
   skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/3464488 and standalone dpu platform"
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/3464488 and standalone dpu platform or RM 5302452 on sn6600_ld platform"
     conditions:
     - "https://redmine.mellanox.com/issues/3464488 and 'nvda_bf-9009' in platform"
+    - "https://redmine.mellanox.com/issues/5302452 and 'sn6600_ld' in platform"
 
 process_monitoring/test_critical_process_monitoring.py::test_monitoring_critical_processes:
   xfail:
-    reason: "Testcase expected to fail on bobcat t1 or ptf-any setups due to RM issue: https://redmine.mellanox.com/issues/5100919"
+    reason: "Testcase expected to fail on bobcat t1 or ptf-any setups due to RM issue: https://redmine.mellanox.com/issues/5100919, or on BMC because FEATURE|telemetry has no auto_restart field, due to RM issue: https://redmine.mellanox.com/issues/5235361"
+    conditions_logical_operator: or
     conditions:
-    - "https://redmine.mellanox.com/issues/5100919"
-    - "'bobcat' in testbed"
-    - "'ptf' in topo_name or 't1' in topo_name"
+    - "https://redmine.mellanox.com/issues/5100919 and 'bobcat' in testbed and ('ptf' in topo_name or 't1' in topo_name)"
+    - "'bmc' in topo_type and https://redmine.mellanox.com/issues/5235361"
   skip:
     reason: "skip on simx due to no pdu control"
     conditions:
@@ -1448,6 +1536,12 @@ golden_config_infra/test_config_reload_with_rendered_golden_config.py::test_rend
     conditions:
     - "https://redmine.mellanox.com/issues/4692207 and 'sn5640' in platform"
 
+reboot/test_reboot_blocking_mode.py::TestRebootBlockingModeCLI::test_non_blocking_mode:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5269218"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5269218 and 'sn4280' in platform"
+
 restapi/:
   skip:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5044612 on sn6600_ld platform"
@@ -1498,6 +1592,12 @@ high_frequency_telemetry/test_high_frequency_telemetry.py:
     conditions:
     - "https://redmine.mellanox.com/issues/4924461"
     - "'sn6600_ld_simx' in platform"
+
+high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_port_counters:
+  xfail:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_full_ingress_priority_group_counters:
   skip:
@@ -1681,11 +1781,17 @@ tests/nightly/lag/test_lag.py::test_lags_scale:
     conditions:
     - "https://redmine.mellanox.com/issues/5007451 and 'sn6600_ld' in platform"
 
+tests/nightly/lag/test_lag.py::test_lag_members_scale:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5252511"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5252511"
+
 platform_tests/test_reboot.py::test_warm_reboot:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 fib/test_fib.py::test_nvgre_hash[ipv6:
   skip:
@@ -1695,15 +1801,15 @@ fib/test_fib.py::test_nvgre_hash[ipv6:
 
 bgp/test_bgp_slb.py::test_bgp_slb_neighbor_persistence_across_advanced_reboot[fast:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5042499 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5042499 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5042499 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5042499 and 'sn6' in platform"
 
 bgp/test_bgp_slb.py::test_bgp_slb_neighbor_persistence_across_advanced_reboot[warm:
   skip:
-    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6600_LD platform"
+    reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 system_health/test_system_health.py::test_service_checker_with_process_exit:
   xfail:
@@ -1727,30 +1833,42 @@ system_health/test_system_status.py::test_system_is_running:
     conditions:
     - "https://github.com/sonic-net/sonic-buildimage/issues/19879 and 'simx' in platform"
 
-########################## IGNORE WARM REBOOT ON SN6600_LD START ##########################
+vxlan/test_vxlan_multi_tunnel.py::test_vxlan_error_null_tunnel_id:
+  xfail:
+    reason: "Xfail due to RM issue: https://redmine.mellanox.com/issues/5239813"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5239813 and ('sn5640' in platform or 'msn4700' in platform or 'msn4600c' in platform or 'sn4280' in platform)"
+
+vxlan/test_vxlan_multiple_tunnels.py::test_vxlan_multiple_tunnels:
+  xfail:
+    reason: "Xfail due to RM issue: https://redmine.mellanox.com/issues/5239813"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5239813 and ('sn5640' in platform or 'msn4700' in platform or 'msn4600c' in platform or 'sn4280' in platform)"
+
+########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) START ##########################
 arp/test_wr_arp.py:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 bgp/test_bgp_aggregate_address_resilience.py::test_aggregate_persists_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 gnmi/test_gnoi_system_reboot.py::test_gnoi_system_reboot_warm:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 mvrf/test_mgmtvrf.py::TestReboot::test_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 pfcwd/test_pfcwd_timer_accuracy.py::TestPfcwdAllTimer::test_pfcwd_timer_accuracy:
   xfail:
@@ -1760,9 +1878,9 @@ pfcwd/test_pfcwd_timer_accuracy.py::TestPfcwdAllTimer::test_pfcwd_timer_accuracy
 
 pfcwd/test_pfcwd_warm_reboot.py:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_fast_reboot:
   xfail:
@@ -1772,80 +1890,80 @@ platform_tests/test_advanced_reboot.py::test_fast_reboot:
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot_mac_jump:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_warm_reboot_sad:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_cancelled_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_cont_warm_reboot.py::test_continuous_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_ecmp_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 route/test_static_route.py::test_static_route_ipv6_warmboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 sflow/test_sflow.py::TestReboot::testWarmreboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_multi_hop_upgrade_path.py::test_multi_hop_warm_upgrade_sad_path:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_upgrade_path.py::test_warm_upgrade_sad_path:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 upgrade_path/test_warmboot_data_consistency.py::test_warmboot_data_consistency:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 vrf/test_vrf.py::TestVrfWarmReboot::test_vrf_system_warm_reboot:
   skip:
-    reason: "Warm-reboot not supported on sn6600_ld - RM https://redmine.mellanox.com/issues/5154543"
+    reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
     conditions:
-    - "https://redmine.mellanox.com/issues/5154543 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
-########################## IGNORE WARM REBOOT ON SN6600_LD END ##########################
+########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) END ##########################

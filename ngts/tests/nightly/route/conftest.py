@@ -148,14 +148,16 @@ def number_of_routes(request, chip_type):
         return 20000, ipv6_max_scale
 
 
-def verify_neighbor_learned(engine, neighbor_ip):
+def learn_and_verify_neighbor(engine, neighbor_ip):
     """
-    Checks if neighbor is learned
+    Triggers neighbor discovery and checks if the neighbor is learned.
 
     :param engine: engine
     :param neighbor_ip: neighbor IP
-    :return bool: True if neighbor is learned, False otherwise
     """
+    ping_cmd = 'ping6' if ipaddress.ip_address(neighbor_ip).version == 6 else 'ping'
+    engine.run_cmd(f'{ping_cmd} {neighbor_ip} -c 1')
+
     if neighbor_ip not in engine.run_cmd('ip neighbor'):
         raise Exception(f'Neighbor {neighbor_ip} is not learned')
 
@@ -194,9 +196,8 @@ def static_routes_ipv4(interfaces, engines, topology_obj, number_of_routes):
     }
     IpConfigTemplate.configuration(topology_obj, ip_config_dict)
 
-    # send 1 packet to learn neighbor
-    engines.dut.run_cmd(f'ping {neighbor_ip} -c 1')
-    retry_call(verify_neighbor_learned,
+    # Retry both the traffic trigger and verification because interface programming is asynchronous.
+    retry_call(learn_and_verify_neighbor,
                fargs=[engines.dut, neighbor_ip],
                tries=20,
                delay=5)
@@ -242,9 +243,8 @@ def static_routes_ipv6(interfaces, engines, topology_obj, number_of_routes):
     }
     IpConfigTemplate.configuration(topology_obj, ip_config_dict)
 
-    # send 1 packet to learn neighbor
-    engines.dut.run_cmd(f'ping6 {neighbor_ip} -c 1')
-    retry_call(verify_neighbor_learned,
+    # Retry both the traffic trigger and verification because interface programming and IPv6 DAD are asynchronous.
+    retry_call(learn_and_verify_neighbor,
                fargs=[engines.dut, neighbor_ip],
                tries=20,
                delay=5)

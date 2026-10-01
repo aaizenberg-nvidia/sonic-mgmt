@@ -16,6 +16,7 @@ from perscache import Cache
 from devts.infra.tools.redmine.redmine_api import get_issue_list_info
 from ngts.helpers.bug_handler.bug_handler_helper import is_current_ver_newer_or_equal_than_fixed_ver
 from ngts.helpers.redmine_cache_helper import access_redmine_cache
+from ngts.helpers.github_issues_helper import extract_github_issues_info, fetch_github_issues_status
 
 import requests
 import six
@@ -58,9 +59,27 @@ def get_conditions_redmine_issues_status():
     conditions = get_conditions_list()
     ignore_list_string = json.dumps(conditions)
     all_redmine_issues = re.findall(r"https:\/\/redmine\.mellanox\.com\/issues\/(\d+)", ignore_list_string)
-    issues_active_status_dict = access_redmine_cache(all_redmine_issues, use_active_status=True)
+    issues_active_status_dict = access_redmine_cache(all_redmine_issues)
     return issues_active_status_dict
-    
+
+
+@cache(ttl=dt.timedelta(hours=36))
+def get_conditions_github_issues_status(proxies_items=()):
+    """Resolve every GitHub issue referenced by the conditions files in one bulk query.
+
+    Args:
+        proxies_items (tuple): Sorted items of the proxies dict, so that the result can be cached.
+
+    Returns:
+        dict: Issue URL to bool, True when the issue is still active. Issues that could
+            not be resolved in bulk are absent, and are resolved one at a time instead.
+    """
+    logger.info('Reading GitHub Issues Status from API')
+    conditions = get_conditions_list()
+    issue_refs = extract_github_issues_info(json.dumps(conditions))
+    return fetch_github_issues_status(issue_refs, proxies=dict(proxies_items))
+
+
 @cache(ttl=dt.timedelta(hours=36))
 def get_conditions_redmine_active_issues_fixed_version():
     logger.info('Reading Redmine Issues information from API')
@@ -100,8 +119,10 @@ class RedmineIssueChecker(IssueCheckerBase):
     Redmine issue state checker
     """
     NAME = 'Redmine'
+
     def __init__(self, url):
         super(RedmineIssueChecker, self).__init__(url)
+
     def is_active(self):
         """Check if the issue is still active.
         If unable to get issue state, always consider it as active.
@@ -149,6 +170,21 @@ class GitHubIssueChecker(IssueCheckerBase):
 
     def is_active(self):
         """Check if the GitHub issue is still active.
+
+        Prefer the state from the once per session bulk query, falling back to a single
+        request for URLs it did not resolve.
+
+        Returns:
+            bool: False if the issue is closed else True.
+        """
+        github_issues_status = get_conditions_github_issues_status(tuple(sorted((self.proxies or {}).items())))
+        if self.url in github_issues_status:
+            return github_issues_status[self.url]
+
+        return self._is_active_via_rest()
+
+    def _is_active_via_rest(self):
+        """Check if the GitHub issue is still active using one REST request.
 
         Attempt to fetch issue details via proxy if configured. If proxy fails, retry with direct GitHub API URL.
         If unable to retrieve issue state, assume the issue is active (safe default).
@@ -231,6 +267,9 @@ def check_issues(issues, proxies=None):
     Because issue state checking may involve sending HTTP request. This function uses parallel run to speed up
     issue status checking.
 
+    The GitHub status cache is filled in this process first, so each forked checker
+    reads the same perscache entry instead of sending its own bulk query.
+
     Args:
         issues (list of str): List of issue URLs.
 
@@ -241,6 +280,8 @@ def check_issues(issues, proxies=None):
     if not checkers:
         logger.error('No checker created for issues: {}'.format(issues))
         return {}
+
+    get_conditions_github_issues_status(tuple(sorted((proxies or {}).items())))
 
     check_results = multiprocessing.Manager().dict()
     check_procs = []

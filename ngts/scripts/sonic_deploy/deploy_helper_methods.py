@@ -5,10 +5,14 @@ import os
 import json
 import re
 import shutil
+import socket
+import subprocess
+import tarfile
 import time
 import yaml
 
 import allure
+import pytest
 from retry.api import retry_call
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 try:
@@ -21,12 +25,13 @@ from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 from ngts.constants.constants import (
     PlayersAliases, SonicDeployConstants, BmcDeployConstants, MarsConstants,
-    SerialLoggerConst, CliType, SSHConsts,
+    SerialLoggerConst, CliType, SSHConsts, SonicMgmtChangeConstants, Sonic_Cache,
 )
 from ngts.constants.performance_constants import PerfConsts, Cl_Consts
 from ngts.scripts.sonic_deploy.image_preparetion_methods import get_real_paths, prepare_images
 from ngts.tools.align_components.nogaq import CACHE_FILE_NAME as NOGA_CACHE_FILE
 from ngts.helpers.general_helper import extract_host_details_from_topo_obj, get_cli_obj
+from ngts.helpers.gerrit_helper import get_latest_patchset_ref
 from ngts.scripts.sonic_deploy.sonic_only_methods import is_community, SonicInstallationSteps
 from ngts.scripts.sonic_deploy.community_only_methods import get_deploy_minigraph_cmd, execute_script
 from ngts.nvos_tools.Devices.IbDevice import BlackMambaSwitch, CrocodileSwitch
@@ -41,6 +46,105 @@ from ngts.common.util import download_file_to_dut, save_specified_installed_dpus
 from ngts.tools.infra import get_dumps_folder
 
 logger = logging.getLogger()
+
+
+def checkout_sonic_mgmt_change(sonic_mgmt_change):
+    """Check out the requested tag, branch, or Gerrit change in the local sonic-mgmt
+    working copy.
+
+    Runs against the repo containing this file, i.e. the checkout that is itself
+    executing pytest. Does not affect Python modules already imported by this
+    process; it affects files read from disk at runtime and any subprocess spawned
+    after the checkout completes.
+
+    Args:
+        sonic_mgmt_change (str): ``'branch_<name>'`` for a branch, ``'tag_<name>'`` for
+            a tag, or a numeric Gerrit change number to check out that change's latest
+            patchset (e.g. an unmerged CR).
+
+    Raises:
+        ValueError: if ``sonic_mgmt_change`` starts with neither prefix and is not all
+            digits.
+        subprocess.CalledProcessError: if the fetch or checkout fails (e.g. the ref
+            does not exist on origin).
+    """
+    # Git refuses to operate on a checkout whose owning UID isn't in the local user
+    # database ("dubious ownership"), which is common on shared/NFS-mounted MARS player
+    # hosts and ephemeral containers. Scoping "-c safe.directory=..." to each invocation
+    # grants trust for that single git process only - nothing is written to any host's
+    # persistent git config, so this self-heals on every machine that runs this step
+    # instead of requiring a one-off manual fix per host/container.
+    git_rev_parse_command = ["git", "-c", "safe.directory=*", "rev-parse", "--show-toplevel"]
+    logger.info("About to execute command: %s", git_rev_parse_command)
+    repo_root = subprocess.run(
+        git_rev_parse_command,
+        cwd=os.path.dirname(__file__), check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    safe_directory_arg = f"safe.directory={repo_root}"
+
+    # Fetch over HTTPS using the SONiC verification service account instead of the local
+    # "origin" remote, which is configured over SSH and depends on a personal SSH private
+    # key + known_hosts entry being present on whatever host/container happens to run this
+    # step. GERRIT_API_KEY/SVC_SONIC_VER_BOT are loaded into every MARS session by the
+    # existing "Fetch and load secrets" pre-session step, so they're already present here
+    # without any per-host provisioning (same credential
+    # sonic-tool/mars/scripts/checkout_scripts_on_host.py already uses to clone this repo).
+    # The credential is supplied via a git credential helper that reads it from the
+    # environment at git's own (internal, shell-based) invocation time, so the plaintext
+    # token is never embedded in the repo URL, in any command list, or in a local variable
+    # that pytest's --showlocals could print into a MARS log on failure.
+    repo_url = f"https://git-nbu-sw.nvidia.com/r/a/{Sonic_Cache.PROJECT_NAME}"
+    credential_helper = '!f() { echo username="$SVC_SONIC_VER_BOT"; echo password="$GERRIT_API_KEY"; }; f'
+    credential_helper_arg = f"credential.https://git-nbu-sw.nvidia.com.helper={credential_helper}"
+
+    if sonic_mgmt_change.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX):
+        ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.BRANCH_PREFIX):]
+        refspec = f"refs/heads/{ref}:refs/remotes/origin/{ref}"
+    elif sonic_mgmt_change.startswith(SonicMgmtChangeConstants.TAG_PREFIX):
+        ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.TAG_PREFIX):]
+        refspec = f"refs/tags/{ref}:refs/tags/{ref}"
+    elif sonic_mgmt_change.isdigit():
+        change_ref = get_latest_patchset_ref(
+            repo_url, sonic_mgmt_change, cwd=repo_root, extra_git_config=[credential_helper_arg],
+        )
+        ref = "FETCH_HEAD"
+        refspec = change_ref
+    else:
+        raise ValueError(
+            f"Invalid sonic_mgmt_change={sonic_mgmt_change!r}. Must start with "
+            f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}' or '{SonicMgmtChangeConstants.TAG_PREFIX}', "
+            f"or be a numeric Gerrit change number."
+        )
+
+    logger.info(f"Checking out sonic-mgmt {sonic_mgmt_change!r} in {repo_root}")
+
+    git_fetch_command = [
+        "git", "-c", safe_directory_arg, "-c", credential_helper_arg, "fetch", repo_url, refspec,
+    ]
+    logger.info("About to execute command: %s", git_fetch_command)
+    subprocess.run(git_fetch_command, cwd=repo_root, check=True)
+
+    git_checkout_command = ["git", "-c", safe_directory_arg, "checkout", ref]
+    logger.info("About to execute command: %s", git_checkout_command)
+    subprocess.run(git_checkout_command, cwd=repo_root, check=True)
+
+
+def get_image_fw_version(image_path):
+    """Return FW_VERSION_SWITCH from the README next to the SONiC installer."""
+    readme_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(image_path))), 'README')
+    with open(readme_path) as readme:
+        for line in readme:
+            if line.startswith('FW_VERSION_SWITCH:'):
+                return line.split()[1]
+    raise Exception(f'FW_VERSION_SWITCH not found in {readme_path}')
+
+
+def check_fw_version(image):
+    if image:
+        fw_version = get_image_fw_version(image)
+        if fw_version < "2020.1136":
+            pytest.exit(f"Deployment paused: SPC6 requires FW >= 2020.1136, "
+                        f"but image {image} contains {fw_version}")
 
 
 class DeploymentContext:
@@ -60,7 +164,8 @@ class DeploymentContext:
                  verify_secure_boot, chip_type, destination_hwsku, show_setup_versions,
                  serial_log_analyzers, fanout_target_version, request, is_air,
                  deploy_testbed_in_parallel=False, deploy_image_only=False, deploy_chipless=False,
-                 deploy_sequential=False, base_version_bmc="", neighbor_mode=""):
+                 deploy_sequential=False, base_version_bmc="", neighbor_mode="",
+                 sdk_source=None, perf_sys_sdk_change=None):
         """
         Initialize DeploymentContext with all parameters.
 
@@ -106,6 +211,11 @@ class DeploymentContext:
         self.deploy_sequential = deploy_sequential
         self.base_version_bmc = base_version_bmc
         self.neighbor_mode = neighbor_mode
+        self.sdk_source = sdk_source
+        self.perf_sys_sdk_change = perf_sys_sdk_change
+        # Set True for the host-switch phases of a BMC + switch deploy, so the
+        # switch deploy skips remove-topo/add-topo
+        self.skip_add_remove_topo = False
         # True when a BMC image is provided and BMC installation should run
         self.deploy_bmc = bool(base_version_bmc)
         # True when a switch base/target image is provided and switch deployment should run
@@ -191,7 +301,7 @@ class DeploymentContext:
 
     def _validate_and_adjust_parameters(self):
         """Validate parameters and make necessary adjustments."""
-        if not self.deploy_switch and not self.deploy_bmc:
+        if not self.deploy_switch and not self.deploy_bmc and not self.request.config.getoption('--post_install_only'):
             logger.warning(
                 'No image provided via "--base-version", "--target-version" or '
                 '"--base-version-bmc"; deployment flow will be skipped.'
@@ -609,11 +719,13 @@ class DeployMultiNosHelper:
         noga_cli_type = DeployMultiNosHelper._get_expected_noga_cli_type(dut_ip)
         current_os, engine = DeployConnectionHelper.get_current_os_engine(dut_ip, noga_cli_type)
         if engine:
-            DeployMultiNosHelper.validate_sudo_config(engine, current_os)
-            GeneralCliCommon(engine).uninstall_os_flow(current_os, target_cli_type, chip_type)
+            with engine:
+                DeployMultiNosHelper.validate_sudo_config(engine, current_os)
+                GeneralCliCommon(engine).uninstall_os_flow(current_os, target_cli_type, chip_type)
 
     @staticmethod
-    def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False):
+    def multi_nos_post_installation_steps(duts, target_cli_type, is_performance, deploy_sequential=False,
+                                          sdk_source=None, perf_sys_sdk_change=None):
         for dut in duts:
             data_query = json.loads('{ "update": { "CLI_TYPE": "' + target_cli_type +
                                     '", "TYPE": "' + CliType.NOS_TO_TYPE_DICT[target_cli_type] +
@@ -625,7 +737,12 @@ class DeployMultiNosHelper:
             upload_data_to_noga(data_query)
         DeployMultiNosHelper._remove_noga_cache()
         if is_performance:
-            DeployMultiNosHelper.multi_nos_install_traffic_generator(duts, deploy_sequential=deploy_sequential)
+            DeployMultiNosHelper.multi_nos_install_traffic_generator(
+                duts,
+                deploy_sequential=deploy_sequential,
+                sdk_source=sdk_source,
+                perf_sys_sdk_change=perf_sys_sdk_change
+            )
 
     @staticmethod
     def _remove_noga_cache():
@@ -640,12 +757,23 @@ class DeployMultiNosHelper:
             logger.warning(f"Failed to remove Noga cache {NOGA_CACHE_FILE}: {e}")
 
     @staticmethod
-    def multi_nos_install_traffic_generator(duts, deploy_sequential=False):
+    def multi_nos_install_traffic_generator(duts, deploy_sequential=False, sdk_source=None,
+                                            perf_sys_sdk_change=None):
+        install_kwargs = {}
+        if sdk_source is not None:
+            install_kwargs['latest_version'] = sdk_source == "latest"
+            logger.info(
+                f"Traffic generator SDK source from pytest args: '{sdk_source}' "
+                f"(latest_version={install_kwargs['latest_version']})"
+            )
+        if perf_sys_sdk_change is not None:
+            install_kwargs['perf_sys_sdk_change'] = perf_sys_sdk_change
+            logger.info(f"perf_sys_sdk_change from pytest args: '{perf_sys_sdk_change}'")
         if deploy_sequential:
             for dut in duts:
                 cli_obj = dut['cli_obj']
                 with allure.step('Install traffic generator on switch: {}'.format(dut['dut_name'])):
-                    cli_obj.install_traffic_generator()
+                    cli_obj.install_traffic_generator(**install_kwargs)
         else:
             install_threads = []
             executor = concurrent.futures.ThreadPoolExecutor()
@@ -653,7 +781,7 @@ class DeployMultiNosHelper:
                 cli_obj = dut['cli_obj']
                 with allure.step('Install traffic generator on switch: {}'.format(dut['dut_name'])):
                     install_threads.append((f"Traffic Generator install on {dut['dut_name']}",
-                                            executor.submit(cli_obj.install_traffic_generator)))
+                                            executor.submit(cli_obj.install_traffic_generator, **install_kwargs)))
             DeployOrchestrator.wait_until_deploy_background_process(install_threads)
 
 
@@ -694,6 +822,12 @@ class DeployOrchestrator:
 
     def execute_installation(self):
         """Execute installation phase for all DUTs"""
+        if self.context.chip_type == "SPC6":
+            # deploy_only_target installs only the target image.
+            base_image = "" if self.context.deploy_only_target else self.context.base_version
+            target_image = self.context.target_version
+            check_fw_version(base_image)
+            check_fw_version(target_image)
 
         executor = None if self.context.deploy_sequential else concurrent.futures.ThreadPoolExecutor()
         use_GA_image = False
@@ -785,7 +919,7 @@ class DeployOrchestrator:
             dut_ip=dut_ip,
             fanout_target_version=fanout_target_version
         )
-        time.sleep(30)
+        time.sleep(PerfConsts.IMAGE_SETTLING_TIME)
 
     def execute_post_installation_steps(self):
         cli_obj = self.context.primary_cli_obj
@@ -799,8 +933,27 @@ class DeployOrchestrator:
                 self.context.setup_info['duts'],
                 replace_nos,
                 self.context.is_performance,
-                deploy_sequential=self.context.deploy_sequential
+                deploy_sequential=self.context.deploy_sequential,
+                sdk_source=self.context.sdk_source,
+                perf_sys_sdk_change=self.context.perf_sys_sdk_change
             )
+
+    def execute_post_install_only(self):
+        """Complete first boot and execute NOS-specific post-installation steps."""
+        for dut in self.context.all_duts:
+            with allure.step(f"Complete first boot on {dut['dut_name']}"):
+                serial_log_analyzer = self.context.serial_log_analyzers[dut['dut_ip']]
+                with serial_log_analyzer.stage(SerialLoggerConst.MANUFACTURE_STAGE):
+                    cli_obj = self.context.get_cli_obj(dut)
+                    cli_obj.complete_first_boot_after_onie(self.context.topology_obj, dut['dut_alias'])
+
+        # Match the settling period used after each image installation in the full deploy flow.
+        time.sleep(PerfConsts.IMAGE_SETTLING_TIME)
+
+        with allure.step('post installation steps'):
+            self.execute_post_installation_steps()
+            cache_full_path = os.path.join(os.path.dirname(__file__), '../../.pytest_cache')
+            shutil.rmtree(cache_full_path, ignore_errors=True)
 
     def execute_dpu_post_installation_steps(self):
         cli_obj = self.context.primary_cli_obj
@@ -863,7 +1016,16 @@ class DeployOrchestrator:
             ansible_path = ctx.setup_info['ansible_path']
             bmc_params = DeployBmcHelper._resolve_bmc_params(ctx)
 
-            # remove-topo / add-topo / gen-mg reuse the community deploy functions
+            with allure.step('Setup local TFTP/HTTP file server for BMC image'):
+                DeployBmcHelper._setup_bmc_image_file_servers(ctx)
+
+            # bmc-dual-mgmt lists two duts: the BMC and the host-switch.
+            # The deploy-mg below must target the BMC alone. The host-switch
+            # deploy-mg executes later.
+            # A trailing --limit wins because ansible keeps only the last --limit
+            bmc_deploy_limit = "--limit {}-bmc".format(dut_name)
+
+            # remove-topo / add-topo reuse the community deploy functions
             # in sonic_only_methods directly (bmc-dual-mgmt is a normal topo); there
             # are no BMC-specific topo wrappers.
             with allure.step('BMC remove-topo'):
@@ -873,7 +1035,7 @@ class DeployOrchestrator:
                     setup_name=ctx.setup_name,
                     sonic_topo=ctx.sonic_topo,
                 )
-            with allure.step('BMC add-topo and generate minigraph'):
+            with allure.step('BMC add-topo'):
                 SonicInstallationSteps.start_community_background_threads(
                     bmc_topo_threads, ctx.setup_name, dut_name, ctx.sonic_topo,
                     'ceos', MarsConstants.DEFAULT_PTF_TAG, '', ansible_path,
@@ -882,13 +1044,16 @@ class DeployOrchestrator:
                 )
             with allure.step('BMC installation'):
                 DeployBmcHelper.install_bmc(ctx)
-            with allure.step('Wait for BMC add-topo/gen-mg to finish'):
+            with allure.step('Wait for BMC add-topo to finish'):
                 wait_until_background_procs_done(bmc_topo_threads)
 
             # deploy-mg produces the NetworkBmc DEVICE_METADATA, the default ACL
             # tables and the telemetry certificates on the BMC.
             with allure.step('BMC deploy minigraph'):
                 deploy_cmd = get_deploy_minigraph_cmd().format(SWITCH=dut_name, TOPO=ctx.sonic_topo)
+                # Restrict deploy-mg to the BMC (see bmc_deploy_limit above); otherwise
+                # it would push the NetworkBmc minigraph onto the real host-switch.
+                deploy_cmd = "{} {}".format(deploy_cmd, bmc_deploy_limit)
                 logger.info(f"Running CMD: {deploy_cmd}")
                 execute_script(deploy_cmd, ansible_path, validate=True, timeout=900)
 
@@ -906,6 +1071,17 @@ class DeployOrchestrator:
                     DeployBmcHelper._disable_unavailable_services(bmc_params)
 
         if self.context.deploy_switch:
+            # In a dual (BMC + switch) deploy the single --sonic-topo drives the
+            # BMC deploy above (bmc-dual-mgmt). The host-switch is deployed on its
+            # own fixed management topology and must NOT run remove-topo/add-topo,
+            # because the BMC deploy already set up the testbed topology. Redirect
+            # the switch deploy-mg to the fixed switch topo and skip topology
+            # add/remove. Switch-only deploys (no BMC image) keep using
+            # --sonic-topo unchanged.
+            if self.context.deploy_bmc:
+                self.context.sonic_topo = BmcDeployConstants.SWITCH_DUAL_DEPLOY_TOPO
+                self.context.skip_add_remove_topo = True
+
             # Phase 1: Pre-installation
             with allure.step('pre installation steps'):
                 results['pre_install_threads'] = self.execute_pre_installation_steps()
@@ -966,6 +1142,14 @@ class DeployOrchestrator:
             wait_until_background_procs_done(pre_install_threads)
         except AssertionError:
             # Give it another try if the background processes fail
+            if is_community(self.context.sonic_topo):
+                with allure.step("Cleanup server before remove-topo/add-topo retry"):
+                    try:
+                        hypervisor_engine = self.context.topology_obj.players['hypervisor']['engine']
+                        hypervisor_engine.run_cmd("sudo ./cleanup.scale.sh", validate=False,
+                                                  timeout=SonicDeployConstants.CLEANUP_SCRIPT_TIMEOUT)
+                    except Exception as err:
+                        logger.warning(f'Cleanup script failed, retrying anyway. Got error: {err}')
             self.execute_pre_installation_steps()
             wait_until_background_procs_done(pre_install_threads)
         logger.info("Pre-installation background processes are done")
@@ -1003,7 +1187,7 @@ class DeployDpuHelper:
         try:
             with allure.step('Install BFB image on all DPUs'):
                 output = dut_engine.run_cmd(
-                    f"sudo sonic-bfb-installer.sh -r {rshim_value} -b {dest_file} -v")
+                    f"sudo sonic-bfb-installer.sh -r {rshim_value} -b {dest_file} --collect-dump-on-failure -v", validate=True)
                 failures = []
                 for index in dpu_index_list:
                     pattern = f"{index}.*Installation Successful"
@@ -1220,15 +1404,168 @@ class DeployBmcHelper:
                 f"under noga Specific attributes for DUT {primary_dut['dut_name']}"
             )
 
+        tftp_server_ip = DeployBmcHelper._detect_local_server_ip(bmc_ip)
+
         return {
             'dut_name': primary_dut['dut_name'],
-            'tftp_server_ip': BmcDeployConstants.BMC_TFTP_SERVER_IP,
+            'tftp_server_ip': tftp_server_ip,
+            'http_server_url': f"http://{tftp_server_ip}:{BmcDeployConstants.BMC_HTTP_PORT}",
             'bmc_ip': bmc_ip,
             'bmc_bootconf': specific.get(
                 'bmc_bootconf', BmcDeployConstants.UBOOT_BOOTCONF_DEFAULT
             ),
             'engine': context.topology_obj.players['bmc']['engine'],
         }
+
+    @staticmethod
+    def _detect_local_server_ip(bmc_ip):
+        """
+        Return the local IP the sonic-mgmt container uses to reach the BMC,
+        i.e. its management-network interface address, to use as the TFTP/HTTP
+        server IP. Connecting a UDP socket triggers a routing-table lookup
+        without sending any packet, so this works even before the BMC is
+        reachable and picks the correct source IP regardless of the subnet.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect((bmc_ip, BmcDeployConstants.BMC_TFTP_PORT))
+            local_ip = sock.getsockname()[0]
+        finally:
+            sock.close()
+        if not local_ip or local_ip.startswith('127.'):
+            raise Exception(
+                f"Could not determine a routable local IP to reach BMC {bmc_ip} "
+                f"(got {local_ip!r})"
+            )
+        logger.info(f"Local file-server IP for BMC {bmc_ip}: {local_ip}")
+        return local_ip
+
+    @staticmethod
+    def _setup_bmc_image_file_servers(context):
+        """
+        Bring up the local file servers the BMC install downloads from.
+
+        U-Boot can only fetch the FIT over TFTP (its 'tftp' command speaks
+        nothing else), while the installer kernel fetches the much larger
+        eMMC image over HTTP. Both are served by the sonic-mgmt container.
+        """
+        root = BmcDeployConstants.BMC_TFTP_ROOT
+        os.makedirs(root, exist_ok=True)
+        with allure.step('Start local TFTP server'):
+            DeployBmcHelper._start_tftp_server(root)
+        with allure.step('Start local HTTP server'):
+            DeployBmcHelper._start_http_server(root)
+        with allure.step(f'Copy BMC image from NFS {context.base_version_bmc} into {root}'):
+            DeployBmcHelper._copy_bmc_image_from_nfs(context.base_version_bmc, root)
+
+    @staticmethod
+    def _start_tftp_server(root):
+        """Restart the local TFTP server so that it serves root."""
+        port = BmcDeployConstants.BMC_TFTP_PORT
+        script = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'common',
+            BmcDeployConstants.BMC_TFTP_SERVER_SCRIPT,
+        )
+        signature = BmcDeployConstants.BMC_TFTP_SERVER_SCRIPT
+        DeployBmcHelper._stop_running_server(signature)
+        cmd = ['python3', script, '--root', root, '--port', str(port)]
+        DeployBmcHelper._start_server_detached(cmd, 'bmc_tftp_server', signature)
+        logger.info(f"Started TFTP server on port {port} serving {root}")
+
+    @staticmethod
+    def _start_http_server(root):
+        """Restart the local HTTP server so that it serves root."""
+        port = BmcDeployConstants.BMC_HTTP_PORT
+        signature = f"http.server {port}"
+        DeployBmcHelper._stop_running_server(signature)
+        cmd = ['python3', '-m', 'http.server', str(port), '--directory', root]
+        DeployBmcHelper._start_server_detached(cmd, 'bmc_http_server', signature)
+        logger.info(f"Started HTTP server on port {port} serving {root}")
+
+    @staticmethod
+    def _copy_bmc_image_from_nfs(tar_path, root):
+        """Extract the BMC image tar from NFS into root and verify the served files exist."""
+        if not tar_path or not os.path.isfile(tar_path):
+            raise Exception(f"BMC image tarball not found: {tar_path!r}")
+        logger.info(f"Extracting BMC image {tar_path} into {root}")
+        with tarfile.open(tar_path) as tar:
+            try:
+                tar.extractall(path=root, filter='data')
+            except TypeError:
+                tar.extractall(path=root)
+        for name in (BmcDeployConstants.BMC_FIT_FILE_NAME,
+                     BmcDeployConstants.BMC_EMMC_IMG_FILE_NAME):
+            copied = os.path.join(root, name)
+            if not os.path.isfile(copied):
+                raise Exception(
+                    f"Expected {name} not found under {root} after extracting {tar_path}"
+                )
+        logger.info(f"Copied BMC image files into {root}")
+
+    @staticmethod
+    def _stop_running_server(signature):
+        """
+        Kill a file server left behind by an earlier deploy and wait until it
+        is really gone.
+
+        The servers are detached and outlive the pytest run, so one may still
+        be up from a previous deploy - possibly serving a different --root.
+        Reusing it silently would only surface hundreds of seconds later, as a
+        U-Boot TFTP timeout, so always restart from a known state. pkill
+        returns before the process dies, hence the wait: starting the new
+        server too early would race on the port.
+        """
+        if not DeployBmcHelper._is_server_process_running(signature):
+            return
+        logger.info(f"Stopping file server already running: {signature}")
+        run_process_on_host(f'pkill -f "{signature}"', validate=False)
+        for _ in range(BmcDeployConstants.FILE_SERVER_PROC_RETRIES):
+            if not DeployBmcHelper._is_server_process_running(signature):
+                return
+            time.sleep(BmcDeployConstants.FILE_SERVER_PROC_INTERVAL)
+        raise Exception(f"File server {signature!r} is still running after pkill")
+
+    @staticmethod
+    def _is_server_process_running(signature):
+        """True if a process whose command line matches signature is running."""
+        _, _, rc = run_process_on_host(f'pgrep -f "{signature}"', validate=False)
+        return rc == 0
+
+    @staticmethod
+    def _start_server_detached(cmd, log_name, signature):
+        """
+        Launch cmd in a new session so it survives after this pytest process
+        exits (the file servers must stay up for the whole deploy). Output
+        goes to /tmp/<log_name>.log.
+
+        Popen returns before the child has bound its port, so wait for the
+        process to actually come up: a failed start (port taken, wrong path)
+        would otherwise stay invisible until the BMC fails to download.
+        """
+        log_path = os.path.join('/tmp', f'{log_name}.log')
+        log_file = open(log_path, 'ab')
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        finally:
+            log_file.close()
+        logger.info(f"Launched detached process {cmd}, logging to {log_path}")
+        for _ in range(BmcDeployConstants.FILE_SERVER_PROC_RETRIES):
+            time.sleep(BmcDeployConstants.FILE_SERVER_PROC_INTERVAL)
+            if proc.poll() is not None:
+                raise Exception(
+                    f"File server {cmd} exited immediately with rc={proc.returncode}, "
+                    f"see {log_path}"
+                )
+            if DeployBmcHelper._is_server_process_running(signature):
+                return
+        raise Exception(f"File server {cmd} did not come up, see {log_path}")
 
     @staticmethod
     def _close_serial(serial_engine):
@@ -1283,27 +1620,32 @@ class DeployBmcHelper:
     @staticmethod
     def _run_uboot_cmd(serial_engine, cmd, timeout=None):
         timeout = timeout or BmcDeployConstants.UBOOT_PROMPT_TIMEOUT
-        serial_engine.run_cmd(
+        output, _ = serial_engine.run_cmd(
             cmd,
             expected_value=BmcDeployConstants.UBOOT_PROMPT,
             timeout=timeout,
         )
+        return output or ''
 
     @staticmethod
     def _run_uboot_install(serial_engine, bmc_params):
         """Execute the U-Boot command sequence to start the install."""
         emmc_img = BmcDeployConstants.BMC_EMMC_IMG_FILE_NAME
 
+        # Drop whatever a previous install left in the saved U-Boot environment.
+        DeployBmcHelper._run_uboot_cmd(
+            serial_engine, BmcDeployConstants.UBOOT_ENV_DEFAULT_CMD
+        )
+
         # DHCP can occasionally fail; retry a few times.
         dhcp_ok = False
         for attempt in range(BmcDeployConstants.DHCP_RETRY_LIMIT):
             try:
-                DeployBmcHelper._run_uboot_cmd(
+                output = DeployBmcHelper._run_uboot_cmd(
                     serial_engine, 'dhcp', timeout=BmcDeployConstants.DHCP_TIMEOUT
                 )
-                output = DeployBmcHelper._wait_uboot_prompt(serial_engine)
                 logger.info(f"DHCP output: {output}")
-                dhcp_ok = "DHCP client bound to address" in output
+                dhcp_ok = BmcDeployConstants.UBOOT_DHCP_BOUND_MARKER in output
                 if dhcp_ok:
                     break
             except Exception as e:
@@ -1325,7 +1667,7 @@ class DeployBmcHelper:
         for tail_tmpl in BmcDeployConstants.UBOOT_BOOTARGS_TAILS:
             tail = tail_tmpl.format(
                 emmc_img=emmc_img,
-                http_server=BmcDeployConstants.BMC_HTTP_SERVER_URL,
+                http_server=bmc_params['http_server_url'],
             )
             DeployBmcHelper._run_uboot_cmd(
                 serial_engine, f'setenv bootargs "${{bootargs}}{tail}"'
@@ -1589,13 +1931,16 @@ class DeployBmcHelper:
         logger.info(
             f"BMC clock before sync: {engine.run_cmd('date').strip()}"
         )
-        engine.run_cmd("sudo systemctl start chrony")
-        time.sleep(BmcDeployConstants.BMC_CHRONY_SETTLE_SECONDS)
-        engine.run_cmd("sudo chronyc -a makestep")
+        # Write the drop-in before chronyd starts, so no chronyd restart is needed afterwards
         if is_redmine_issue_active([5083483])[0]:
             logger.info('Redmine #5083483 is active, persisting chrony makestep on BMC')
             engine.run_cmd("echo 'makestep 1 3' | sudo tee /etc/chrony/conf.d/step.conf")
-            engine.run_cmd("sudo systemctl restart chrony")
+        engine.run_cmd("sudo systemctl start chrony")
+        time.sleep(BmcDeployConstants.BMC_CHRONY_SETTLE_SECONDS)
+        engine.run_cmd("sudo chronyc -a makestep")
+        # The clock step re-triggers the overdue set-epoch.timer, keep the unit out of failed state
+        engine.run_cmd("sudo systemctl start set-epoch.service || true")
+        engine.run_cmd("sudo systemctl reset-failed set-epoch.service || true")
         logger.info(
             f"BMC clock after sync:  {engine.run_cmd('date').strip()}"
         )

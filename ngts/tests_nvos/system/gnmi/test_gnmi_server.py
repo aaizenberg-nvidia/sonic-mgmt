@@ -1,43 +1,34 @@
-import ast
-import logging
-import os
-import random
-import re
-import signal
-import time
 from multiprocessing import Process
-
+import subprocess
+import logging
+import random
+import signal
 import pytest
+import time
+import ast
+import os
+import re
 
-import ngts.tools.test_utils.allure_utils as allure
-from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
-from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
-from ngts.constants.constants import GnmiConsts
-from ngts.nvos_constants.constants_nvos import NvosConst, DatabaseConst, ApiType, ActionConsts, EventConsts
-from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
-from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
-from ngts.nvos_tools.infra.Fae import Fae
-from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.Tools import Tools
-from ngts.nvos_tools.system.System import System
-from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
+from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
+
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiServerStatus, MAX_GNMI_SUBSCRIBERS, GnmicErr
-from ngts.tests_nvos.system.gnmi.helpers import gnmi_basic_flow, validate_gnmi_is_running_and_stream_updates, \
-    validate_show_gnmi, validate_gnmi_server_in_health_issues, run_gnmi_client_in_the_background, \
-    verify_description_value, run_gnmi_client_and_parse_output, validate_gnmi_enabled_and_running, wait_for_gnmi_ready, \
-    validate_memory_and_cpu_utilization, get_infiniband_name_from_port_name, get_port_oid_from_infiniband_port, \
-    create_gnmi_infiniband_list, validate_redis_cli_and_gnmi_commands_results, create_interface_state_commands_list, \
-    create_gnmi_counter_list, create_platform_general_commands_list, change_interface_description, \
-    verify_msg_not_in_out_or_err, verify_msg_in_out_or_err, parse_gnmi_status, get_gnmi_status_clients, \
-    run_gnmi_client_and_parse_multi_path_json_output, validate_notification_has_prefix_and_leaves
-from ngts.tests_nvos.platform.firmware_telemetry_helpers import (
-    assert_gnmi_firmware_version_matches_nvue,
-    expand_nvue_key_to_gnmi_components,
-)
+from ngts.nvos_constants.constants_nvos import NvosConst, DatabaseConst, EventConsts
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.tests_nvos.platform import firmware_telemetry_helpers
+from ngts.tests_nvos.system.gnmi import helpers as gnmi_helpers
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_constants.constants_nvos import PlatformConsts
+from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
+from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
+from ngts.ngts_types import DevicesT, EnginesT, TopologyT
+from ngts.tools.test_utils import allure_utils as allure
+from ngts.tests_nvos.helpers import redmine_helpers
+from ngts.nvos_tools.system.System import System
+from ngts.constants.constants import GnmiConsts
+from ngts.nvos_tools.infra.Tools import Tools
+from ngts.nvos_tools.infra.Fae import Fae
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 # Wait after stopping subscriptions before re-checking gnmi-server status
 WAIT_AFTER_STOP_SUBSCRIPTION_SEC = 3
@@ -53,7 +44,7 @@ def _get_counter(status_dict, key, default=0):
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_basic_flow_poll(engines, topology_obj):
+def test_gnmi_basic_flow_poll(engines: EnginesT, topology_obj: TopologyT):
     """
     Check gnmi basic flow: show command , disable and enable commands, validate stream updates to gnmi-client,
      with subscribe mode - poll.
@@ -70,13 +61,13 @@ def test_gnmi_basic_flow_poll(engines, topology_obj):
             11. validate gnmi-server stream updates
     """
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
-    gnmi_basic_flow(engines, mode=GnmiMode.POLL, mgmt_port_name=mgmt_port_name)
+    gnmi_helpers.gnmi_basic_flow(engines, mode=GnmiMode.POLL, mgmt_port_name=mgmt_port_name)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
 @pytest.mark.nvos_ci
-def test_gnmi_basic_flow_once(engines, topology_obj):
+def test_gnmi_basic_flow_once(engines: EnginesT, topology_obj: TopologyT):
     """
     Check gnmi basic flow: show command , disable and enable commands, validate stream updates to gnmi-client,
      with subscribe mode - once.
@@ -93,12 +84,12 @@ def test_gnmi_basic_flow_once(engines, topology_obj):
             11. validate gnmi-server stream updates
     """
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
-    gnmi_basic_flow(engines, mode=GnmiMode.ONCE, mgmt_port_name=mgmt_port_name)
+    gnmi_helpers.gnmi_basic_flow(engines, mode=GnmiMode.ONCE, mgmt_port_name=mgmt_port_name, timeout_sec=5)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_basic_flow_stream(random_api, engines, topology_obj):
+def test_gnmi_basic_flow_stream(random_api: str, engines: EnginesT, topology_obj: TopologyT):
     """
     Check gnmi basic flow: show command , disable and enable commands, validate stream updates to gnmi-client,
      with subscribe mode - stream.
@@ -116,12 +107,12 @@ def test_gnmi_basic_flow_stream(random_api, engines, topology_obj):
     """
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     TestToolkit.tested_api = random_api
-    gnmi_basic_flow(engines, mode=GnmiMode.STREAM, mgmt_port_name=mgmt_port_name)
+    gnmi_helpers.gnmi_basic_flow(engines, mode=GnmiMode.STREAM, mgmt_port_name=mgmt_port_name)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_updates_on_gnmi_stream_mode(engines, devices):
+def test_updates_on_gnmi_stream_mode(engines: EnginesT, devices: DevicesT):
     """
         Test flow:
             1. validate gnmi is running and send updates
@@ -130,22 +121,22 @@ def test_updates_on_gnmi_stream_mode(engines, devices):
     """
     system = System()
     gnmi_server_obj = system.gnmi_server
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
+    gnmi_helpers.validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
 
     with allure.step("Change port description and wait until gnmi-client gets description update"):
         selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
         xpath = f'interfaces/interface[name={selected_port.name}]/state/description'
 
         with allure.step('Run gnmi client command in the background'):
-            background_process = run_gnmi_client_in_the_background(engines.dut.ip, xpath, devices.dut)
+            background_process = gnmi_helpers.run_gnmi_client_in_the_background(engines.dut.ip, xpath, devices.dut)
 
         with allure.step('Set port description'):
             port_description = Tools.RandomizationTool.get_random_string(7)
             selected_port.interface.set(NvosConst.DESCRIPTION, port_description, apply=True).verify_result()
             selected_port.update_output_dictionary()
-            verify_description_value(selected_port.show_output_dictionary, port_description)
+            gnmi_helpers.verify_description_value(selected_port.show_output_dictionary, port_description)
 
-        if not is_bug_active(3727441):
+        if not redmine_helpers.is_bug_active(3727441):
             with allure.step('Kill gnmi client command and verify updates'):
                 logger.info(f"sleep {GnmiConsts.SLEEP_TIME_FOR_UPDATE} sec until verify gnmi updates")
                 time.sleep(GnmiConsts.SLEEP_TIME_FOR_UPDATE)
@@ -159,7 +150,7 @@ def test_updates_on_gnmi_stream_mode(engines, devices):
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_bad_flow(random_api, engines, devices, setup_name):
+def test_gnmi_bad_flow(random_api: str, engines: EnginesT, devices: DevicesT, setup_name: str):
     """
     Check gnmi bad flow:
         Test flow:
@@ -172,28 +163,30 @@ def test_gnmi_bad_flow(random_api, engines, devices, setup_name):
     system = System()
     gnmi_server_obj = system.gnmi_server
     xpath = f'interfaces/interface[name={devices.dut.default_port}]/state/counters/in-broadcast-pkts'
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
+    gnmi_helpers.validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
 
     with allure.step("invalid command"):
         gnmi_server_obj.set(GnmiConsts.GNMI_STATE_FIELD, Tools.RandomizationTool.get_random_string(7), "Error")
 
     with allure.step("Subscribe to the gnmi server for data that is not supported"):
         xpath = f'interfaces/interface[name={devices.dut.default_port}]/state/counters/in-broadcast-pkts'
-        gnmi_stream_updates = run_gnmi_client_and_parse_output(engines, devices, xpath, engines.dut.ip)
+        gnmi_stream_updates = gnmi_helpers.run_gnmi_client_and_parse_output(engines, devices, xpath, engines.dut.ip)
         gnmi_stream_updates_value = list(gnmi_stream_updates.values())
         if devices.dut.switch_type == NvosConst.NVL_SWITCH_TYPE:
-            assert not gnmi_stream_updates_value, f'{xpath} is unsupported field, so we expect to have none, but got {gnmi_stream_updates_value}'
+            assert not gnmi_stream_updates_value, \
+                f'{xpath} is unsupported field, so we expect to have none, but got {gnmi_stream_updates_value}'
         else:
-            assert gnmi_stream_updates_value[0] == '0', f'{xpath} is unsupported field, so we expect to have 0, but got {gnmi_stream_updates_value}'
+            assert gnmi_stream_updates_value[0] == '0', \
+                f'{xpath} is unsupported field, so we expect to have 0, but got {gnmi_stream_updates_value}'
 
     with allure.step("Subscribe to the gnmi server with bad xpath"):
         xpath = f'/{Tools.RandomizationTool.get_random_string(5)}/{Tools.RandomizationTool.get_random_string(5)}'
-        run_gnmi_client_and_parse_output(engines, devices, xpath, engines.dut.ip)  # just want to be sure no LA errors
+        gnmi_helpers.run_gnmi_client_and_parse_output(engines, devices, xpath, engines.dut.ip)  # just want to be sure no LA errors
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_simulate_gnmi_client_failure(engines, devices):
+def test_simulate_gnmi_client_failure(engines: EnginesT, devices: DevicesT):
     """
     In this test we will simulate a gnmi-client failure by killing the gnmi-client process,
     will validate that it’s still enabled and running on the switch, health status doesn’t change
@@ -209,21 +202,21 @@ def test_simulate_gnmi_client_failure(engines, devices):
     """
     system = System()
     gnmi_server_obj = system.gnmi_server
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
+    gnmi_helpers.validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, engines.dut.ip)
 
     with allure.step('Simulate gnmi client failure'):
         with allure.step('Run gnmi client command in the background and sleep 3 sec'):
-            background_process = run_gnmi_client_in_the_background(engines.dut.ip, '/interfaces', devices.dut)
+            background_process = gnmi_helpers.run_gnmi_client_in_the_background(engines.dut.ip, '/interfaces', devices.dut)
             time.sleep(3)
         with allure.step('Kill gnmi client command'):
             os.killpg(os.getpgid(background_process.pid), signal.SIGTERM)
-        validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
-        validate_gnmi_server_in_health_issues(system, expected_gnmi_health_issue=False)
+        gnmi_helpers.validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
+        gnmi_helpers.validate_gnmi_server_in_health_issues(system, expected_gnmi_health_issue=False)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_performance(engines, devices):
+def test_gnmi_performance(engines: EnginesT, devices: DevicesT):
     """
     Run 10 gnmi-client process to the same switch, validate stream updates and switch state.
         Test flow:
@@ -243,89 +236,91 @@ def test_gnmi_performance(engines, devices):
 
     with allure.step("Show gnmi-server status before clients are set up - expect no clients"):
         out_before = gnmi_status.show(dut_engine=dut)
-        status_before = parse_gnmi_status(out_before)
+        status_before = gnmi_helpers.parse_gnmi_status(out_before)
         with allure.independent_step("Expect no clients before setup"):
-            assert len(get_gnmi_status_clients(status_before)) == 0
+            assert len(gnmi_helpers.get_gnmi_status_clients(status_before)) == 0
         with allure.independent_step("Expect total-active-subscriptions 0 before setup"):
             assert _get_counter(status_before, GnmiServerStatus.TOTAL_ACTIVE_SUBSCRIPTIONS) == 0
 
     with allure.step(f"run {num_engines} gnmi_client sessions in the background"):
         for engine_id in range(num_engines):
-            threads.append(run_gnmi_client_in_the_background(engines.dut.ip,
-                                                             f"interfaces/interface[name={selected_port.name}]/state/description",
-                                                             devices.dut))
+            threads.append(gnmi_helpers.run_gnmi_client_in_the_background(
+                engines.dut.ip,
+                f"interfaces/interface[name={selected_port.name}]/state/description",
+                devices.dut,
+            ))
 
     with allure.step("Show gnmi-server status after all clients are set up - expect 10 clients"):
         time.sleep(2)
         out_after_setup = gnmi_status.show(dut_engine=dut)
-        status_after_setup = parse_gnmi_status(out_after_setup)
+        status_after_setup = gnmi_helpers.parse_gnmi_status(out_after_setup)
         with allure.independent_step(f"Expect {num_engines} clients"):
-            assert len(get_gnmi_status_clients(status_after_setup)) == num_engines
+            assert len(gnmi_helpers.get_gnmi_status_clients(status_after_setup)) == num_engines
         with allure.independent_step(f"Expect total-active-subscriptions {num_engines}"):
             assert _get_counter(status_after_setup, GnmiServerStatus.TOTAL_ACTIVE_SUBSCRIPTIONS) == num_engines
 
     with allure.step("validate memory and CPU utilization"):
-        validate_memory_and_cpu_utilization()
+        gnmi_helpers.validate_memory_and_cpu_utilization()
 
-    with allure.step(f"change port description"):
+    with allure.step("change port description"):
         selected_port.interface.set(NvosConst.DESCRIPTION, port_description, apply=True).verify_result()
         selected_port.update_output_dictionary()
-        verify_description_value(selected_port.show_output_dictionary, port_description)
+        gnmi_helpers.verify_description_value(selected_port.show_output_dictionary, port_description)
         logger.info(f"sleep {GnmiConsts.SLEEP_TIME_FOR_UPDATE} sec until we start validate the gnmi stream")
         time.sleep(GnmiConsts.SLEEP_TIME_FOR_UPDATE)
 
-    with allure.step(f"stop the gnmi_client sessions and validate updates"):
+    with allure.step("stop the gnmi_client sessions and validate updates"):
         for thread in threads:
             os.killpg(os.getpgid(thread.pid), signal.SIGTERM)
             output, error = thread.communicate()
             result.append(output)
             if port_description not in str(output):
                 gnmi_clients_without_updates += 1
-        assert gnmi_clients_without_updates == 0, f"{gnmi_clients_without_updates} gnmi clients didn't get updates..{output}"
+        assert gnmi_clients_without_updates == 0, f"{gnmi_clients_without_updates} gnmi clients didn't get updates..{result}"
 
     with allure.step("Show gnmi-server status after all clients torn down - expect no clients"):
         time.sleep(WAIT_AFTER_STOP_SUBSCRIPTION_SEC)
         out_after_teardown = gnmi_status.show(dut_engine=dut)
-        status_after_teardown = parse_gnmi_status(out_after_teardown)
+        status_after_teardown = gnmi_helpers.parse_gnmi_status(out_after_teardown)
         with allure.independent_step("Expect no clients after teardown"):
-            assert len(get_gnmi_status_clients(status_after_teardown)) == 0
+            assert len(gnmi_helpers.get_gnmi_status_clients(status_after_teardown)) == 0
         with allure.independent_step("Expect total-active-subscriptions 0 after teardown"):
             assert _get_counter(status_after_teardown, GnmiServerStatus.TOTAL_ACTIVE_SUBSCRIPTIONS) == 0
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_mapping_table(engines, devices):
+def test_gnmi_mapping_table(engines: EnginesT, devices: DevicesT):
     """
     test will validate all the mapping tables between the redis DB data and the gnmic output
     """
     selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
     port_name = selected_port.name
-    infiniband_name = get_infiniband_name_from_port_name(engines.dut, port_name)
-    port_oid = get_port_oid_from_infiniband_port(engines.dut, infiniband_name)
+    infiniband_name = gnmi_helpers.get_infiniband_name_from_port_name(engines.dut, port_name)
+    port_oid = gnmi_helpers.get_port_oid_from_infiniband_port(engines.dut, infiniband_name)
     with allure.step("Validate infiniband table mapping"):
-        gnmi_list = create_gnmi_infiniband_list(port_name, port_oid, infiniband_name)
-        validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
+        gnmi_list = gnmi_helpers.create_gnmi_infiniband_list(port_name, port_oid, infiniband_name)
+        gnmi_helpers.validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
     with allure.step("Validate interface state table mapping"):
-        gnmi_list = create_interface_state_commands_list(port_name, infiniband_name)
-        validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
+        gnmi_list = gnmi_helpers.create_interface_state_commands_list(port_name, infiniband_name)
+        gnmi_helpers.validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
     with allure.step("Validate counter table mapping"):
-        gnmi_list = create_gnmi_counter_list(port_name, port_oid)
-        validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
+        gnmi_list = gnmi_helpers.create_gnmi_counter_list(port_name, port_oid)
+        gnmi_helpers.validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_platform_general_components(engines, devices):
+def test_gnmi_platform_general_components(engines: EnginesT, devices: DevicesT):
     with allure.step("Create gnmi disk info mapping"):
-        gnmi_list = create_platform_general_commands_list()
+        gnmi_list = gnmi_helpers.create_platform_general_commands_list()
     with allure.step("Validate disk and ram fields"):
-        validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list, allowed_range_in_bytes=20)
+        gnmi_helpers.validate_redis_cli_and_gnmi_commands_results(engines, devices, gnmi_list, allowed_range_in_bytes=20)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_aggregates_in_and_out_octets_under_common_prefix(engines, devices):
+def test_gnmi_aggregates_in_and_out_octets_under_common_prefix(engines: EnginesT, devices: DevicesT):
     """
     Validate GNMI Agent built-in common-prefix behavior for sibling leaves in one subscription.
     We subscribe once under:
@@ -339,9 +334,9 @@ def test_gnmi_aggregates_in_and_out_octets_under_common_prefix(engines, devices)
     if_name = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value.name
 
     with allure.step("Run single poll subscribe with both counter paths (json format)"):
-        validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
+        gnmi_helpers.validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
         prefix = f"interfaces/interface[name={if_name}]/state"
-        notifications = run_gnmi_client_and_parse_multi_path_json_output(
+        notifications = gnmi_helpers.run_gnmi_client_and_parse_multi_path_json_output(
             engines=engines,
             devices=devices,
             target_ip=engines.dut.ip,
@@ -353,7 +348,7 @@ def test_gnmi_aggregates_in_and_out_octets_under_common_prefix(engines, devices)
 
     with allure.step("Verify both leaves are in one Notification under common counters prefix"):
         expected_prefix = f"interfaces/interface[name={if_name}]/state/counters"
-        validate_notification_has_prefix_and_leaves(
+        gnmi_helpers.validate_notification_has_prefix_and_leaves(
             notifications=notifications,
             expected_prefix=expected_prefix,
             expected_leaves=["in-octets", "out-octets"],
@@ -362,7 +357,7 @@ def test_gnmi_aggregates_in_and_out_octets_under_common_prefix(engines, devices)
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_does_not_aggregate_leaves_from_different_subtrees(engines, devices):
+def test_gnmi_does_not_aggregate_leaves_from_different_subtrees(engines: EnginesT, devices: DevicesT):
     """
     Contrast case: subscribe to two paths from different subtrees and verify that the
     "counters in/out under one payload" validation fails.
@@ -372,9 +367,9 @@ def test_gnmi_does_not_aggregate_leaves_from_different_subtrees(engines, devices
     if_name = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value.name
 
     with allure.step("Run poll subscribe with leaves from different subtrees"):
-        validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
+        gnmi_helpers.validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
         prefix = f"interfaces/interface[name={if_name}]/state"
-        notifications = run_gnmi_client_and_parse_multi_path_json_output(
+        notifications = gnmi_helpers.run_gnmi_client_and_parse_multi_path_json_output(
             engines=engines,
             devices=devices,
             target_ip=engines.dut.ip,
@@ -387,7 +382,7 @@ def test_gnmi_does_not_aggregate_leaves_from_different_subtrees(engines, devices
     with allure.step("Verify counters in/out same-payload validation fails as expected"):
         expected_prefix = f"interfaces/interface[name={if_name}]/state/counters"
         with pytest.raises(AssertionError):
-            validate_notification_has_prefix_and_leaves(
+            gnmi_helpers.validate_notification_has_prefix_and_leaves(
                 notifications=notifications,
                 expected_prefix=expected_prefix,
                 expected_leaves=["description", "in-octets"],
@@ -398,7 +393,7 @@ def test_gnmi_does_not_aggregate_leaves_from_different_subtrees(engines, devices
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_max_subscribers(engines, local_adminuser):
+def test_gnmi_max_subscribers(engines: EnginesT, local_adminuser):
     """
     verify that max number of subscribers cannot be exceeded
 
@@ -421,16 +416,16 @@ def test_gnmi_max_subscribers(engines, local_adminuser):
         last_process = client.gnmic_subscribe_interface_and_keep_session_alive(GnmiMode.STREAM, selected_port.name,
                                                                                skip_cert_verify=True)
     with allure.step('change port description'):
-        new_description = change_interface_description(selected_port)
+        new_description = gnmi_helpers.change_interface_description(selected_port)
     with allure.step('verify last user fails and do not receive update'):
         out, err = client.close_session_and_get_out_and_err(last_process)
-        verify_msg_in_out_or_err(GnmicErr.NO_SUBSCRIBER_SLOT_AVAILABLE, out, err)
-        verify_msg_not_in_out_or_err(new_description, out, err)
+        gnmi_helpers.verify_msg_in_out_or_err(GnmicErr.NO_SUBSCRIBER_SLOT_AVAILABLE, out, err)
+        gnmi_helpers.verify_msg_not_in_out_or_err(new_description, out, err)
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_events_overload(engines, devices):
+def test_gnmi_events_overload(engines: EnginesT, devices: DevicesT):
     """
     Run 10 gnmi-client process to the same switch, validate CPU state when events stream updates reaches maximum
         Test flow:
@@ -454,7 +449,7 @@ def test_gnmi_events_overload(engines, devices):
 
     try:
         with allure.step("Check CPU, Memory and mpstat at the beginning"):
-            validate_memory_and_cpu_utilization()
+            gnmi_helpers.validate_memory_and_cpu_utilization()
             mpstat_output = engines.dut.run_cmd('mpstat -P ALL')
             logger.info("At the beginning - Utilization: {}".format(parse_mpstat_output(regex, mpstat_output)))
             logger.info(mpstat_output)
@@ -510,14 +505,14 @@ def test_gnmi_events_overload(engines, devices):
             system.events.action_clear().verify_result()
 
         with allure.step("Check CPU, Memory and mpstat at the end"):
-            validate_memory_and_cpu_utilization()
+            gnmi_helpers.validate_memory_and_cpu_utilization()
             mpstat_output = engines.dut.run_cmd('mpstat -P ALL')
             logger.info("At the End - Utilization: {}".format(parse_mpstat_output(regex, mpstat_output)))
 
 
 @pytest.mark.system
 @pytest.mark.gnmi
-def test_gnmi_extend_telemetry(random_api, engines, devices):
+def test_gnmi_extend_telemetry(random_api: str, engines: EnginesT, devices: DevicesT):
     """
     Check gnmi extend telemetry flow:
         Test flow:
@@ -534,8 +529,7 @@ def test_gnmi_extend_telemetry(random_api, engines, devices):
         system_version = system.version.get_nvos_image_version()
 
     with allure.step("Subscribe to the gnmi server and check system version"):
-        gnmi_stream_updates = run_gnmi_client_and_parse_output(engines, devices, devices.dut.version_xpath,
-                                                               engines.dut.ip)
+        gnmi_stream_updates = gnmi_helpers.run_gnmi_client_and_parse_output(engines, devices, devices.dut.version_xpath, engines.dut.ip)
         gnmi_stream_updates_value = list(gnmi_stream_updates.values())[0]
         assert system_version == gnmi_stream_updates_value, f"'{system_version}' not exist in {gnmi_stream_updates_value}"
 
@@ -547,6 +541,7 @@ def test_gnmi_extend_telemetry(random_api, engines, devices):
         component_keys = Tools.DatabaseTool.sonic_db_cli_get_keys(engine=engines.dut, asic="",
                                                                   db_name=DatabaseConst.STATE_DB_NAME,
                                                                   grep_str=GnmiConsts.SYSTEM_COMPONENTS).splitlines()
+        component_keys = [key for key in component_keys if key.startswith(f"{GnmiConsts.SYSTEM_COMPONENTS}|")]
         for component in component_keys:
             component_output = Tools.DatabaseTool.sonic_db_cli_hgetall(engine=engines.dut, asic="",
                                                                        db_name=DatabaseConst.STATE_DB_NAME,
@@ -566,9 +561,10 @@ def test_gnmi_extend_telemetry(random_api, engines, devices):
         # Backward compatibility check only: these legacy platform-general paths are still validated,
         # but are expected to be removed once all firmware telemetry users move to OpenConfig components/* paths.
         for path in devices.dut.components_gnmi_xpath:
-            gnmi_stream_updates = run_gnmi_client_and_parse_output(engines, devices, path, engines.dut.ip)
+            gnmi_stream_updates = gnmi_helpers.run_gnmi_client_and_parse_output(engines, devices, path, engines.dut.ip, mode=GnmiMode.ONCE)
             gnmi_stream_updates_value = list(gnmi_stream_updates.values())[0]
-            assert any(component.get('actual-firmware') == gnmi_stream_updates_value for component in firmware_show.values()), f"Value '{gnmi_stream_updates_value}' not found in any 'actual-firmware' field"
+            assert any(component.get('actual-firmware') == gnmi_stream_updates_value for component in firmware_show.values()), \
+                f"Value '{gnmi_stream_updates_value}' not found in any 'actual-firmware' field"
 
     with allure.step("One-liner OpenConfig firmware-version checks against NVUE"):
         client = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, devices.dut.default_username, devices.dut.default_password)
@@ -577,13 +573,13 @@ def test_gnmi_extend_telemetry(random_api, engines, devices):
                 continue
             if nvue_key in ("EROT", "transceiver") or str(nvue_key).startswith("CPLD"):
                 continue
-            for gnmi_component in expand_nvue_key_to_gnmi_components(nvue_key, devices.dut):
-                assert_gnmi_firmware_version_matches_nvue(
+            for gnmi_component in firmware_telemetry_helpers.expand_nvue_key_to_gnmi_components(nvue_key, devices.dut):
+                firmware_telemetry_helpers.assert_gnmi_firmware_version_matches_nvue(
                     client, gnmi_component, entry[PlatformConsts.FW_ACTUAL]
                 )
 
 
-def check_subscriber_output_in_parallel(client_no, client_proc):
+def check_subscriber_output_in_parallel(client_no: int, client_proc: subprocess.Popen):
     out, _ = client_proc.communicate()
     out = out.decode('utf-8')
     log_str = "Test event with index "
@@ -594,7 +590,7 @@ def check_subscriber_output_in_parallel(client_no, client_proc):
                                                                          GnmiConsts.STREAM_PERFORMANCE_EVENTS_MAX_SIZE)
 
 
-def check_memory_and_cpu_in_parallel(regex, engine):
+def check_memory_and_cpu_in_parallel(regex: re.Pattern, engine: ProxySshEngine):
     try:
         no_of_iterations = 0
         # Monitor the usage till streaming is happening over GNMI ie 200 seconds
@@ -602,7 +598,7 @@ def check_memory_and_cpu_in_parallel(regex, engine):
 
         while no_of_iterations < total_iterations:
             no_of_iterations += 1
-            # validate_memory_and_cpu_utilization()
+            # gnmi_helpers.validate_memory_and_cpu_utilization()
             mpstat_output = engine.run_cmd('mpstat -P ALL')
             logger.info("Iteration_{} Utilization: {}".format(no_of_iterations,
                                                               parse_mpstat_output(regex, mpstat_output)))
@@ -618,7 +614,7 @@ def check_memory_and_cpu_in_parallel(regex, engine):
             logger.info("CPU utilization monitoring completed")
 
 
-def parse_mpstat_output(regex, mpstat_output):
+def parse_mpstat_output(regex: re.Pattern, mpstat_output: str) -> dict[str, float]:
     matches = regex.findall(mpstat_output)
     cpu_utilization_dict = {}
 

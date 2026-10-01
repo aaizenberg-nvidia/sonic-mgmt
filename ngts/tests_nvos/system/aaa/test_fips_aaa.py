@@ -67,6 +67,10 @@ from ngts.tests_nvos.general.security.security_test_tools.security_test_utils im
     disable_gnmi_server_and_cleanup
 )
 
+
+cumulus_owner = "gpazbenitzha"
+
+
 logger = logging.getLogger(__name__)
 
 

@@ -173,7 +173,8 @@ def test_rpc_check_and_set_topology(topology_obj, engines, cli_objects, current_
     with allure.step('Apply DNS servers configuration'):
         cli_objects.dut.ip.apply_dns_servers_into_resolv_conf()
 
-    if expected_topo != "ptp-256" and expected_topo != "ptp-130":
+    ptp_topos = ["ptp-256", "ptp-130", "ptp-126"]
+    if expected_topo not in ptp_topos:
         with allure.step("Post upgrade checks"):
             cmd = "ansible-playbook -i inventory --limit {SWITCH} post_upgrade_check.yml " \
                   "-e topo={TOPO} -b -vvv ".format(SWITCH=dut_name, TOPO=expected_topo)

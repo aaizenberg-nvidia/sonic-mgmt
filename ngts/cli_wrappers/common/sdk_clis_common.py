@@ -6,6 +6,7 @@ import re
 from ngts.constants.constants import InfraConst, Sonic_Cache, CliType
 from ngts.constants.performance_constants import PerfConsts
 from ngts.helpers.system_helpers import copy_files_to_syncd
+from ngts.helpers.gerrit_helper import get_latest_patchset_ref
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 logger = logging.getLogger()
@@ -22,15 +23,44 @@ class SdkCliCommon():
         self.dut_alias = dut_alias
 
     def get_sdk_version(self):
+        """Return the SDK version the DUT is running.
+
+        The version is not always a released ``X.Y.Z`` triplet: builds off a private SDK
+        branch report a build name instead (e.g. ``arv2_grading-004``), which still
+        resolves to a real folder under ``/auto/sw_system_release/sx_sdk_eth``.
+
+        Raises:
+            TestIssue: If the version cannot be parsed out of the command output.
+        """
         sdk_version_output = self.engine.run_cmd(InfraConst.CMD_GET_SDK_VERSION, validate=True)
-        sdk_version = re.search(r"SX-SDK ETH (\d+\.\d+\.\d+)", sdk_version_output).group(1)
+        version_match = re.search(r"SX-SDK ETH ([^,\s]+)", sdk_version_output)
+        if not version_match:
+            raise TestIssue(f"Could not parse the SDK version out of "
+                            f"'{InfraConst.CMD_GET_SDK_VERSION}' output: {sdk_version_output}")
+        sdk_version = version_match.group(1)
+        logger.info(f"DUT is running SDK version '{sdk_version}' (reported: {sdk_version_output.strip()})")
         return sdk_version
 
     def get_sdk_branch(self, sdk_version):
+        """Return the SDK branch that ``sdk_version`` was built from.
+
+        Release branch names carry a version suffix (``sx_sdk_4_7_4500``) and are trimmed
+        to it. Private branches have no such suffix (``sx_sdk_arv2_grading``), so they are
+        returned as read.
+        """
         command = f"cat /auto/sw_system_release/sx_sdk_eth/sx_sdk_eth-{sdk_version}/SDK_BRANCH.txt"
         sdk_branch = os.popen(command).read().strip()
+        if not sdk_branch:
+            logger.warning(f"Could not read the SDK branch of version '{sdk_version}' with: {command} - "
+                           f"callers that clone per branch will fall back to their default")
+            return sdk_branch
         if sdk_branch.startswith("sx_sdk_"):
-            sdk_branch = re.search(r"(sx_sdk_\d+_\d+_\d{4})", sdk_branch).group(1)
+            numbered_branch = re.search(r"(sx_sdk_\d+_\d+_\d{4})", sdk_branch)
+            if numbered_branch and numbered_branch.group(1) != sdk_branch:
+                logger.info(f"Trimmed release SDK branch '{sdk_branch}' to '{numbered_branch.group(1)}'")
+            if numbered_branch:
+                sdk_branch = numbered_branch.group(1)
+        logger.info(f"SDK version '{sdk_version}' was built from branch '{sdk_branch}'")
         return sdk_branch
 
     def get_kernel_version(self):
@@ -39,9 +69,35 @@ class SdkCliCommon():
         return kernel_version
 
     def get_latest_sdk_version(self, cur_sdk_version, sdk_branch):
+        """Resolve the latest SDK version published under the branch lastrc DEBS folder.
+
+        Looks up ``lastrc_{sdk_branch}/DEBS``, finds a kernel folder matching the DUT
+        kernel, and extracts the SDK version from the ``sys-sdk-git`` deb filename.
+        Returns ``cur_sdk_version`` when no matching kernel folder is found.
+
+        Args:
+            cur_sdk_version (str): SDK version currently installed on the DUT, used as
+                the fallback when no matching kernel package is available.
+            sdk_branch (str): SDK branch name used to build the lastrc DEBS path
+                (e.g. ``sx_sdk_4_10_1000``).
+
+        Returns:
+            str: Latest SDK version parsed from the matching deb, or ``cur_sdk_version``
+            if no DUT-kernel match exists.
+
+        Raises:
+            FileNotFoundError: If the lastrc DEBS directory does not exist.
+            IndexError: If no ``sys-sdk-git`` deb is present under the matched kernel folder.
+            AttributeError: If the deb filename does not match the expected version pattern.
+        """
         dut_kernel_version = self.get_kernel_version()
         deb_file_path = os.path.join(PerfConsts.LATEST_SDK_DEB_DIR_TEMPLATE.format(SDK_BRANCH=sdk_branch))
+        logger.info(
+            f"Looking up latest SDK version under '{deb_file_path}' "
+            f"for DUT kernel '{dut_kernel_version}' (current SDK version: '{cur_sdk_version}')"
+        )
         available_kernel_versions = os.listdir(deb_file_path)
+        logger.info(f"Available kernel folders in lastrc DEBS: {sorted(available_kernel_versions)}")
 
         deb_kernel_version = None
         for kernel_version in available_kernel_versions:
@@ -50,16 +106,83 @@ class SdkCliCommon():
                 deb_kernel_version = kernel_version
                 break
         if not deb_kernel_version:
-            logger.warning(f"No matching kernel version found for {dut_kernel_version}")
+            logger.warning(
+                f"No matching kernel version found for '{dut_kernel_version}' "
+                f"under lastrc DEBS; keeping current SDK version '{cur_sdk_version}'"
+            )
             return cur_sdk_version
+        logger.info(f"Matched DUT kernel '{dut_kernel_version}' to DEBS folder '{deb_kernel_version}'")
         files_available_in_deb_dir = glob.glob(os.path.join(deb_file_path, PerfConsts.LATEST_SDK_DEB_FILE_TEMPLATE))
+        logger.info(f"sys-sdk-git packages found under '{deb_file_path}': {files_available_in_deb_dir}")
         sdk_version = re.search(r"sys-sdk-git_1.mlnx.(\d+.\d+.\d+.*\d*)_", files_available_in_deb_dir[0]).group(1)
 
         if sdk_version.count('.') == 3:
             last_dot_index = sdk_version.rfind('.')
             sdk_version = sdk_version[:last_dot_index] + '-' + sdk_version[last_dot_index + 1:]
 
+        logger.info(f"Resolved latest SDK version '{sdk_version}' from '{files_available_in_deb_dir[0]}'")
         return sdk_version
+
+    def get_latest_sdk_version_or_current(self, cur_sdk_version, sdk_branch):
+        """Resolve the latest SDK version, keeping the DUT version when resolution fails.
+
+        The lastrc release folder for a branch is not always published (or is pruned),
+        so upgrading to the latest deb is best effort and must never fail the flow.
+        """
+        try:
+            logger.info(
+                f"About to get latest SDK version for branch '{sdk_branch}' "
+                f"and current SDK version '{cur_sdk_version}'"
+            )
+            latest_sdk_version = self.get_latest_sdk_version(cur_sdk_version=cur_sdk_version,
+                                                             sdk_branch=sdk_branch)
+            logger.info(f"Latest SDK version resolved successfully with version '{latest_sdk_version}'")
+        except Exception as err:
+            logger.warning(
+                f"Could not resolve latest SDK version for branch '{sdk_branch}' ({err}); "
+                f"continuing with the SDK version installed on the DUT: {cur_sdk_version}"
+            )
+            return cur_sdk_version
+
+        if latest_sdk_version != cur_sdk_version:
+            logger.info(f"Using latest SDK version {latest_sdk_version} instead of {cur_sdk_version}")
+        return latest_sdk_version
+
+    def resolve_sdk_version_and_branch_for_traffic_generator(self, latest_version=True):
+        """Resolve the SDK version and branch used to install the traffic generator.
+
+        Reads the DUT SDK version and branch, optionally upgrading to the latest
+        published version for that branch when ``latest_version`` is True.
+
+        Args:
+            latest_version (bool): Whether to attempt resolving the latest SDK version
+                for the DUT branch.
+
+        Returns:
+            tuple[str, str]: Selected ``(sdk_version, sdk_branch)``.
+        """
+        logger.info(
+            f"resolve_sdk_version_and_branch_for_traffic_generator called with "
+            f"latest_version={latest_version}"
+        )
+        sdk_version = self.get_sdk_version()
+        sdk_branch = self.get_sdk_branch(sdk_version)
+        logger.info(
+            f"Preparing traffic generator installation with DUT SDK version "
+            f"'{sdk_version}' from branch '{sdk_branch}'"
+        )
+        if latest_version:
+            dut_sdk_version = sdk_version
+            logger.info(f"Attempting to resolve the latest SDK version for branch '{sdk_branch}'")
+            sdk_version = self.get_latest_sdk_version_or_current(cur_sdk_version=sdk_version,
+                                                                 sdk_branch=sdk_branch)
+            logger.info(
+                f"SDK version selected for traffic generator installation: '{sdk_version}' "
+                f"(DUT version: '{dut_sdk_version}')"
+            )
+        else:
+            logger.info(f"Latest SDK lookup disabled; using DUT SDK version '{sdk_version}'")
+        return sdk_version, sdk_branch
 
     @staticmethod
     def _kernel_dir_sort_key(kernel_dir):
@@ -123,13 +246,62 @@ class SdkCliCommon():
         generic_cmd_prefix = f"{prefix_cmd} '{cmd}'" if prefix_cmd else cmd
         return generic_cmd_prefix
 
-    def overlay_perf_sys_sdk_to_sys_sdk(self, sdk_branch, is_in_syncd=False, tar_file_enabled=False):
+    PERF_SYS_SDK_CHANGE_BRANCH_PREFIX = "branch_"
+
+    def resolve_perf_sys_sdk_change(self, perf_sys_sdk_change):
+        """
+        Resolve a raw ``--perf_sys_sdk_change`` value into an explicit branch or Gerrit
+        change number, before it's passed to methods like ``overlay_perf_sys_sdk_to_sys_sdk``.
+
+        Args:
+            perf_sys_sdk_change (str | None): Raw value: ``'branch_<name>'``, a numeric
+                Gerrit change number, or None.
+
+        Returns:
+            tuple[str | None, str | None]: ``(perf_sys_sdk_branch, perf_sys_sdk_gerrit_change)``.
+            Exactly one is non-None, or both are None when ``perf_sys_sdk_change`` is None.
+        """
+        if perf_sys_sdk_change is None:
+            return None, None
+        if perf_sys_sdk_change.startswith(self.PERF_SYS_SDK_CHANGE_BRANCH_PREFIX):
+            return perf_sys_sdk_change[len(self.PERF_SYS_SDK_CHANGE_BRANCH_PREFIX):], None
+        return None, perf_sys_sdk_change
+
+    def overlay_perf_sys_sdk_to_sys_sdk(self, sdk_branch, is_in_syncd=False, tar_file_enabled=False,
+                                        perf_sys_sdk_branch=None, perf_sys_sdk_gerrit_change=None):
+        """
+        Args:
+            sdk_branch (str): SDK branch derived from the DUT's installed SDK version.
+            perf_sys_sdk_branch (str | None): Explicit perf_sys_sdk branch to clone, overriding
+                ``sdk_branch``. Resolved from ``--perf_sys_sdk_change`` via
+                ``resolve_perf_sys_sdk_change``.
+            perf_sys_sdk_gerrit_change (str | None): Gerrit change number whose latest patchset
+                should be fetched instead of cloning a branch. Mutually exclusive with
+                ``perf_sys_sdk_branch``.
+        """
         docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
         command_prefix = f"{docker_exec_syncd_cmd}" if is_in_syncd else ""
-        if tar_file_enabled:
-            self.get_perf_sys_sdk_with_tar(sdk_branch, command_prefix, is_in_syncd)
+
+        if perf_sys_sdk_gerrit_change is not None:
+            if tar_file_enabled:
+                raise TestIssue(
+                    f"perf_sys_sdk_gerrit_change={perf_sys_sdk_gerrit_change!r} requests a Gerrit "
+                    f"change number, which is not supported together with the perf_sys_sdk "
+                    f"tar-file flow."
+                )
+            logger.info(f"Overlaying perf_sys_sdk onto sys_sdk from Gerrit change {perf_sys_sdk_gerrit_change}")
+            self.get_perf_sys_sdk_with_clone_from_change(perf_sys_sdk_gerrit_change, command_prefix)
         else:
-            self.get_perf_sys_sdk_with_clone(sdk_branch, command_prefix)
+            branch_to_use = perf_sys_sdk_branch or sdk_branch
+            logger.info(
+                f"Overlaying perf_sys_sdk onto sys_sdk using branch '{branch_to_use}' "
+                f"({'explicit --perf_sys_sdk_change branch override' if perf_sys_sdk_branch else 'DUT-derived SDK branch'})"
+            )
+            if tar_file_enabled:
+                self.get_perf_sys_sdk_with_tar(branch_to_use, command_prefix, is_in_syncd)
+            else:
+                self.get_perf_sys_sdk_with_clone(branch_to_use, command_prefix)
+
         self.run_overlay_cmd(command_prefix, is_in_syncd)
 
     def clean_up_existing_sdk_folders(self, sys_sdk_path, sudo_prefix, command_prefix, is_in_syncd):
@@ -233,6 +405,61 @@ class SdkCliCommon():
         sanitized_full_cmd = self.get_generic_cmd_prefix(command_prefix, sanitized_clone_cmd)
         logger.info(f'Running CMD: {sanitized_full_cmd}')
         self.engine.run_cmd(full_cmd, validate=True, print_output=False)
+
+    def get_perf_sys_sdk_change_ref(self, repo_url, change_number):
+        """
+        Resolve the Gerrit ref of the latest patchset for a change number.
+
+        Args:
+            repo_url (str): The URL of the repository.
+            change_number (str): Gerrit change number.
+
+        Returns:
+            str: The ref of the latest patchset, e.g. 'refs/changes/42/347942/1'.
+
+        Raises:
+            RuntimeError: If ``git ls-remote`` fails.
+            TestIssue: If the change has no patch sets on the remote.
+        """
+        return get_latest_patchset_ref(repo_url, change_number)
+
+    def get_perf_sys_sdk_with_clone_from_change(self, change_number, command_prefix):
+        """
+        Clone perf_sys_sdk and check out the latest patchset of an unmerged Gerrit change.
+
+        Args:
+            change_number (str): Gerrit change number.
+            command_prefix (str): Command prefix to prepend to commands, for example docker exec.
+        """
+        repo_url = f"https://{Sonic_Cache.gerrit_username}:{Sonic_Cache.gerrit_api_token}@git-nbu-sw.nvidia.com/r/a/switchx/perf_sys_sdk"
+        sanitized_url = re.sub(r'://[^@]+@', '://***:***@', repo_url)
+        change_ref = self.get_perf_sys_sdk_change_ref(repo_url, change_number)
+        sudo_prefix = '' if command_prefix else 'sudo -i '
+        clone_dest = '/root/perf_sys_sdk'
+
+        # Remove any existing clone to avoid "already exists" errors
+        cleanup_cmd = f'{sudo_prefix}rm -rf {clone_dest}'
+        cleanup_full_cmd = self.get_generic_cmd_prefix(command_prefix, cleanup_cmd)
+        self.engine.run_cmd(cleanup_full_cmd, validate=True)
+
+        clone_cmd = f'{sudo_prefix}git clone \"{repo_url}\" {clone_dest}'
+        full_cmd = self.get_generic_cmd_prefix(command_prefix, clone_cmd)
+        sanitized_clone_cmd = f'{sudo_prefix}git clone \"{sanitized_url}\" {clone_dest}'
+        sanitized_full_cmd = self.get_generic_cmd_prefix(command_prefix, sanitized_clone_cmd)
+        logger.info(f'Running CMD: {sanitized_full_cmd}')
+        self.engine.run_cmd(full_cmd, validate=True, print_output=False)
+
+        fetch_checkout_cmd = (
+            f'{sudo_prefix}git -C {clone_dest} fetch \"{repo_url}\" {change_ref} '
+            f'&& {sudo_prefix}git -C {clone_dest} checkout FETCH_HEAD'
+        )
+        full_fetch_checkout_cmd = self.get_generic_cmd_prefix(command_prefix, fetch_checkout_cmd)
+        sanitized_fetch_checkout_cmd = (
+            f'{sudo_prefix}git -C {clone_dest} fetch \"{sanitized_url}\" {change_ref} '
+            f'&& {sudo_prefix}git -C {clone_dest} checkout FETCH_HEAD'
+        )
+        logger.info(f'Running CMD: {self.get_generic_cmd_prefix(command_prefix, sanitized_fetch_checkout_cmd)}')
+        self.engine.run_cmd(full_fetch_checkout_cmd, validate=True, print_output=False)
 
     def get_perf_sys_sdk_with_tar(self, sdk_branch, command_prefix, is_in_syncd):
         path, file_name = self.get_perf_sys_sdk_tar_file_name(sdk_branch)

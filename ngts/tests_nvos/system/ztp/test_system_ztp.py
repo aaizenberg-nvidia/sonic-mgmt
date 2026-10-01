@@ -181,6 +181,7 @@ def test_ztp_json(engines: EnginesT):
 
 @pytest.mark.ztp
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_ztp_image(engines: EnginesT, devices: DevicesT):
     """
     Test flow:
@@ -209,8 +210,13 @@ def test_ztp_image(engines: EnginesT, devices: DevicesT):
 
             with allure.step("Check ztp status for uninstall image"):
                 _wait_until_ztp_step_status(system, '02-image', SystemConsts.ZTP_STATUS_SUCCESS)
-                output_dictionary = system.image.parse_show()
-                assert output_dictionary['partition2']['build-id'] is None, 'Image not uninstalled'
+
+                @retry.retry(AssertionError, tries=60, delay=5)
+                def _verify_partition2_cleared():
+                    output_dictionary = system.image.parse_show()
+                    assert output_dictionary['partition2']['build-id'] is None, 'Image not uninstalled'
+
+                _verify_partition2_cleared()
 
 
 def _restore_port_up(selected_port: Port) -> None:
@@ -364,6 +370,7 @@ def test_ztp_connectivity_check(engines: EnginesT):
 
 @pytest.mark.ztp
 @pytest.mark.system
+@pytest.mark.dut_reboot
 def test_ztp_json_complex(engines: EnginesT, devices: DevicesT):
     """
     Test flow:
@@ -473,9 +480,9 @@ def test_ztp_nmx_negative(
 def test_ztp_nmx_positive(engines: EnginesT, devices: DevicesT, setup_name: str, register_cleanup: CleanUpT):
     """
     Test flow:
-        1. Check default values for ztp
-        2. Start cluster
-        3. Download and run positive ztp json
+        1. Download and run positive ztp json
+        2. Enable cluster from the first commands-list stage
+        3. Update NMX app log levels from the second commands-list stage
         4. Verify changes
         5. Cleanup
     """
@@ -484,23 +491,12 @@ def test_ztp_nmx_positive(engines: EnginesT, devices: DevicesT, setup_name: str,
     cluster = Cluster()
     register_cleanup(partial(ClusterTools.stop_cluster, cluster))
 
+    _download_ztp_json_config(engines, SystemConsts.NMX_POSITIVE_JSON)
     _run_system_ztp_with_empty_config(engines, system)
-    _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES, tries=5, delay=2)
-
-    with allure.step("Start cluster"):
-        ClusterTools.start_cluster(cluster, setup_name, devices=devices)
-
-    with allure.step("Download ztp nmx positive command list, cluster enabled"):
-        # _run_system_ztp_with_empty_config(engines, system)
-        _download_file_and_run_ztp(
-            engines,
-            system,
-            SystemConsts.NMX_POSITIVE_JSON,
-            '1-nmx-commands-list',
-            SystemConsts.ZTP_STATUS_SUCCESS,
-            SystemConsts.ZTP_STATUS_SUCCESS,
-            run_ztp=False,
-        )
+    with allure.step("Check ztp nmx positive command list"):
+        _wait_until_ztp_step_status(system, '01-commands-list', SystemConsts.ZTP_STATUS_SUCCESS)
+        _wait_until_ztp_step_status(system, '02-nmx-commands-list', SystemConsts.ZTP_STATUS_SUCCESS)
+        _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_SUCCESS)
 
         with allure.step("Verify log level of apps changed"):
             ClusterTools.verify_log_level(ClusterAppsLogLevels.INFO, ClusterConsts.NMX_CONTROLLER, output_format, cluster)

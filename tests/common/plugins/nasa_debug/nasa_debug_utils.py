@@ -1,4 +1,5 @@
 import logging
+import os
 from shlex import quote
 from enum import Enum
 from collections import namedtuple
@@ -11,6 +12,26 @@ logger = logging.getLogger(__name__)
 # Parametrization for the NASA CLI helper commands
 NASA_DEBUG_ENTITY_CONTENT = namedtuple("NASA_DEBUG_ENTITY_CONTENT", ["title", "nasa_helper_key", "config_key"])
 NASA_DEBUG_DUMP_DIR = "/var/log/bluefield/sdk-dumps"
+NASA_CT_DUMP_SENTINEL = "/var/run/sonic-platform-nvidia-bluefield/sdk-techsupport-ct-dump.enabled"
+NASA_CT_DUMP_FILES = [
+    "stats.log.gz",
+    "stats_query.log.gz",
+    "general.log.gz",
+    "routing.log.gz",
+    "vnets.dump.gz",
+    "counters.dump.gz",
+    "enis.log.gz",
+    "acls.log.gz",
+    "meter_policies.log.gz",
+    "crm.log.gz",
+    "ct_table_log.bin.gz",
+    "ct_table_log_ipvx.bin.gz",
+]
+NASA_MST_DUMP_PATTERNS = [
+    "mstdump_full_*_iter1of3.log.gz",
+    "mstdump_full_*_iter2of3.log.gz",
+    "mstdump_full_*_iter3of3.log.gz",
+]
 
 
 class NASA_DEBUG_ENTITY(Enum):
@@ -113,3 +134,59 @@ def get_file_size(dpuhost, file_path):
     """
     result = dpuhost.shell(f"stat -c %s {file_path}")
     return int(result['stdout'].strip())
+
+
+def nasa_ct_dump_set(dpuhost, enable):
+    """Enable or disable NASA CT dump inclusion in techsupport.
+
+    Uses the platform CLI command to create or remove the sentinel file
+    inside the syncd container.
+
+    Args:
+        dpuhost: DPU host object
+        enable: bool - True to enable, False to disable
+    """
+    state = "enabled" if enable else "disabled"
+    logger.info(f"{'Enabling' if enable else 'Disabling'} NASA CT dump in techsupport on {dpuhost.hostname}")
+    dpuhost.shell(f"sudo config platform nvidia-bluefield sdk techsupport-ct-dump {state}")
+
+
+def get_nasa_ct_dump_enabled(dpuhost):
+    """Check if NASA CT dump is enabled (sentinel file exists in syncd container).
+
+    Args:
+        dpuhost: DPU host object
+
+    Returns:
+        bool: True if enabled, False if disabled
+    """
+    rc = dpuhost.shell(
+        f"docker exec syncd test -f {NASA_CT_DUMP_SENTINEL}",
+        module_ignore_errors=True
+    )['rc']
+    return rc == 0
+
+
+def get_techsupport_file_list(dpuhost, tech_support_file):
+    """List all files inside a techsupport tarball with the top-level prefix stripped.
+
+    Args:
+        dpuhost: DPU host object
+        tech_support_file: Full path to the techsupport .tar.gz file on the DPU
+
+    Returns:
+        list[str]: List of file paths inside the tarball (prefix stripped)
+    """
+    result = dpuhost.shell(f"tar tzf {quote(tech_support_file)}")
+    basename = os.path.basename(tech_support_file)
+    prefix = basename.replace(".tar.gz", "") + "/"
+    files = []
+    for line in result['stdout_lines']:
+        line = line.strip()
+        if line.startswith(prefix):
+            stripped = line[len(prefix):]
+            if stripped:
+                files.append(stripped)
+        elif line:
+            files.append(line)
+    return files

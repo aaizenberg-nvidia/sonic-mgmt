@@ -257,7 +257,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
 
             # sx_core module validation only applies to switches that have the sx_core kernel module.
             # IB (XDR) switches (Crocodile, Mamba, Taipan) have sx_core; NVLink switches (Juliet, Rosalind) do not.
-            if devices.dut.has_sx_core:
+            if devices.dut.has_sx_core_modules:
                 with allure.independent_step('validate sx_core modules in dump'):
                     validate_sx_core_modules_in_dump_nvos(engines.dut, tech_support_dir)
 
@@ -268,6 +268,16 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
             else:
                 logger.info('Skipping sx_core module validation: not an IB switch (switch_type={})'.format(
                     devices.dut.switch_type))
+
+            # NVBridge (Rosalind) tech-support must automatically bundle the
+            # standalone /var/log/nv-bridge/ directory and the nv-bridge status
+            # snapshot /var/run/nvbridge/nvbs_info.json without a manual folder
+            # spec. Gated to devices that set requires_nv_bridge_config (Rosalind
+            # family); a no-op on every other platform.
+            if getattr(devices.dut, 'requires_nv_bridge_config', False):
+                with allure.independent_step('validate nv-bridge logs and status are bundled in tech-support'):
+                    validate_nv_bridge_logs_in_dump(engines.dut, tech_support_dir)
+
     finally:
         if devices.dut.has_nmx and not skynet:
             Cluster().unset(apply=True)
@@ -348,6 +358,48 @@ def validate_techsupport_bkv_output(dut_engine, tech_support_dir: str, expected_
     content = dut_engine.run_cmd(f'sudo cat {bkv_path}')
     assert str(version) in content, (
         f"BKV operational version {version!r} not found in tech-support file {bkv_path!r}: {content!r}")
+
+
+def validate_nv_bridge_logs_in_dump(engine, tech_support_dir):
+    """Verify tech-support bundles the nv-bridge logs and status snapshot.
+
+    Checks that the dump automatically collects the standalone
+    /var/log/nv-bridge/ directory and the nv-bridge status snapshot
+    (/var/run/nvbridge/nvbs_info.json), with no manual folder specification.
+
+    :param engine: NVOS SSH engine (engines.dut)
+    :param tech_support_dir: path to the extracted tech-support dump folder
+    """
+    with allure.step('locate nv-bridge log directory in the tech-support dump'):
+        # Prefer the expected log/nv-bridge location, but fall back to a broad
+        # search so a layout change does not silently pass an empty result.
+        nvb_dir = engine.run_cmd(
+            'sudo find {} -type d -path "*/log/nv-bridge" -print -quit '
+            '2>/dev/null || true'.format(tech_support_dir)).strip()
+        if not nvb_dir:
+            nvb_dir = engine.run_cmd(
+                'sudo find {} -type d -name nv-bridge -print -quit '
+                '2>/dev/null || true'.format(tech_support_dir)).strip()
+        assert nvb_dir and 'No such file' not in nvb_dir, \
+            ('/var/log/nv-bridge/ was not bundled into the tech-support dump under '
+             '{} (expected it to be collected automatically)'.format(tech_support_dir))
+
+    with allure.step('verify the bundled nv-bridge log directory is non-empty'):
+        non_empty = engine.run_cmd(
+            'sudo find {} -type f -not -empty -print -quit '
+            '2>/dev/null || true'.format(nvb_dir)).strip()
+        assert non_empty, \
+            ('nv-bridge log directory {} was bundled but contains no non-empty log '
+             'files'.format(nvb_dir))
+
+    with allure.step('verify the nv-bridge status snapshot (nvbs_info.json) is bundled'):
+        nvbs_info = engine.run_cmd(
+            'sudo find {} -type f -name nvbs_info.json -not -empty -print -quit '
+            '2>/dev/null || true'.format(tech_support_dir)).strip()
+        assert nvbs_info and 'No such file' not in nvbs_info, \
+            ('nv-bridge status snapshot /var/run/nvbridge/nvbs_info.json was not '
+             'bundled (non-empty) into the tech-support dump under {} '
+             '(expected it to be collected automatically)'.format(tech_support_dir))
 
 
 def verify_techsupport_files_names(files_list, expected_files):

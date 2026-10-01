@@ -4,16 +4,45 @@ import json
 import ipaddress
 import random
 import logging
+import re
 import pandas as pd
 from netaddr import EUI
 from ngts.helpers.performance.packet_json_generator import PacketGenerator
 from ngts.constants.performance_constants import PerfConsts, ValidationConsts, BwFairnessThreshold, OccupancyVarianceConfig
+from ngts.helpers.performance.validation_precision_helpers import (
+    round_for_reference_comparison,
+    round_pair_for_comparison,
+    round_to_threshold_precision,
+    value_above_threshold,
+    value_below_threshold,
+)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ast import literal_eval
 from typing import Dict, List, Any, Optional
 
 
 logger = logging.getLogger()
+
+LOOPBACK_FILTER_COUNTER = 'loopback_filter'
+LOOPBACK_FILTER_REDMINE_ISSUE = 5195585
+# Bug #5195585: the traffic pattern raises a few loopback_filter discards per sample. While the issue
+# is open only a per-port value above 5 is a violation; once it is closed 0 restores strict checking.
+LOOPBACK_FILTER_MAX_TOLERATED_VALUE = 5 if is_redmine_issue_active([LOOPBACK_FILTER_REDMINE_ISSUE])[0] else 0
+
+SAMPLE_NUMBER_PATTERN = re.compile(r"sample #(\d+)")
+PAUSE_DISCARDS_REDMINE_ISSUE = 5258617
+# Ports 0x10101 and 0x10102 (the two lanes of cage 30). 0x10102 only exists where the breakout gives
+# one port per lane; in the wider breakouts it is simply never present in the counters frame.
+PAUSE_DISCARDS_PORTS = ('0x10101', '0x10102')
+# Two events under five names, as the SDK dump shows on a single port: the pause pair is the PFC
+# asserted on the lossless priority (11108890 each), and the three drop counters are one ingress
+# no-buffer discard (15815493 / 15815502 / 15815584). All five must be waived together.
+PAUSE_DISCARDS_COUNTERS = ('a_mac_control_frames_transmitted', 'a_pause_mac_ctrl_frames_transmitted',
+                           'if_in_discards', 'ether_stats_drop_events', 'port_rx_no_buffer')
+# Bug #5258617: those ports assert PFC and discard on ingress while the traffic ramps up, on the first
+# two samples of a run. While the issue is open the counters above are not a violation on those ports
+# up to that sample; once it is closed 0 restores strict checking.
+PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE = 2 if is_redmine_issue_active([PAUSE_DISCARDS_REDMINE_ISSUE])[0] else 0
 
 
 def generate_ip_address_list(address_start_v4="172.168.1.1", address_start_v6="172::1:1", step_v4=256, step_v6=0x10000,
@@ -338,13 +367,17 @@ def validate_bw(traffic_json, bw_threshold, validate_bw_rx, violations_list):
                     violations_list.append(f"No threshold specified for port group {port_group_name}.")
                     continue
 
-                if tx_threshold is not None and bw_stats[tx_validation_key] < tx_threshold:
+                tx_value = bw_stats[tx_validation_key]
+                if tx_threshold is not None and value_below_threshold(tx_value, tx_threshold):
                     violations_list.append(
-                        f"TX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{tx_validation_key}']={bw_stats[tx_validation_key]} was below threshold {tx_threshold}."
+                        f"TX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{tx_validation_key}']="
+                        f"{round_to_threshold_precision(tx_value, tx_threshold)} was below threshold {tx_threshold}."
                     )
-                if validate_bw_rx and rx_threshold is not None and bw_stats[rx_validation_key] < rx_threshold:
+                rx_value = bw_stats[rx_validation_key]
+                if validate_bw_rx and rx_threshold is not None and value_below_threshold(rx_value, rx_threshold):
                     violations_list.append(
-                        f"RX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{rx_validation_key}']={bw_stats[rx_validation_key]} was below threshold {rx_threshold}."
+                        f"RX bandwidth for {sample_id} (group: {port_group_name}) bw_stats['{rx_validation_key}']="
+                        f"{round_to_threshold_precision(rx_value, rx_threshold)} was below threshold {rx_threshold}."
                     )
 
 
@@ -384,11 +417,12 @@ def validate_bw_per_ports(traffic_json, bw_threshold, ports_list, violations_lis
             for port in ports_list:
                 if port in bw_df[ValidationConsts.PORT].values:
                     port_tx = bw_df.loc[bw_df[ValidationConsts.PORT] == hex(literal_eval(port))].loc[:, ValidationConsts.TX_RATE].values[0]
-                    if bw_threshold == 0 and port_tx > bw_threshold:
-                        violations_list.append(f"Port {port} tx: {port_tx} > {bw_threshold}, "
+                    rounded_port_tx, _ = round_pair_for_comparison(port_tx, bw_threshold)
+                    if bw_threshold == 0 and value_above_threshold(port_tx, bw_threshold):
+                        violations_list.append(f"Port {port} tx: {rounded_port_tx} > {bw_threshold}, "
                                                f"please check {sample_id} in port group: {port_group_name}")
-                    if port_tx < bw_threshold:
-                        violations_list.append(f"Port {port} tx: {port_tx} < {bw_threshold}, "
+                    if value_below_threshold(port_tx, bw_threshold):
+                        violations_list.append(f"Port {port} tx: {rounded_port_tx} < {bw_threshold}, "
                                                f"please check {sample_id} in port group: {port_group_name}")
 
 
@@ -420,12 +454,16 @@ def _validate_bw_utilization_fairness_per_port_group(sample_id: str, port_group_
             min_val = bw_df[rate_col].min()
             max_val = bw_df[rate_col].max()
             min_tolerated_value = max_val * (1 - threshold)
-            if min_val < min_tolerated_value:
+            rounded_min_val = round_to_threshold_precision(min_val, threshold)
+            rounded_min_tolerated_value = round_to_threshold_precision(min_tolerated_value, threshold)
+            rounded_max_val = round_to_threshold_precision(max_val, threshold)
+            if rounded_min_val < rounded_min_tolerated_value:
                 min_port = bw_df.loc[bw_df[rate_col].idxmin(), ValidationConsts.PORT]
                 max_port = bw_df.loc[bw_df[rate_col].idxmax(), ValidationConsts.PORT]
                 violations_list.append(
                     f"{sample_id} (group: {port_group_name}) {direction} min utilization "
-                    f"{min_val:.3f} < min_tolerated_value {min_tolerated_value:.3f} (= max {max_val:.3f} * {1 - threshold}) "
+                    f"{rounded_min_val} < min_tolerated_value {rounded_min_tolerated_value} "
+                    f"(= max {rounded_max_val} * {1 - threshold}) "
                     f"(min port: {min_port}, max port: {max_port})"
                 )
     except (KeyError, TypeError, ValueError) as exc:
@@ -525,20 +563,23 @@ def _check_metric_fairness(
         ).append(json_metric)
         return None
     min_tolerated = max_val * (1 - variance)
+    rounded_min_val = round_to_threshold_precision(min_val, variance)
+    rounded_max_val = round_to_threshold_precision(max_val, variance)
+    rounded_min_tolerated = round_to_threshold_precision(min_tolerated, variance)
     logger.info(
         f"      checking fairness: buffer_type={buffer_type} "
         f"buffer_id={buffer_id} metric={json_metric} occ_key={occ_key} variance={variance} "
-        f"min={min_val:.3f} max={max_val:.3f} min_tolerated={min_tolerated:.3f} "
+        f"min={rounded_min_val} max={rounded_max_val} min_tolerated={rounded_min_tolerated} "
         f"min_port={min_port} max_port={max_port}"
     )
-    if min_val < min_tolerated:
-        deviation_from_max = (max_val - min_val) / max_val
-        shortfall_from_threshold = (min_tolerated - min_val) / max_val
+    if rounded_min_val < rounded_min_tolerated:
+        deviation_from_max = (rounded_max_val - rounded_min_val) / rounded_max_val
+        shortfall_from_threshold = (rounded_min_tolerated - rounded_min_val) / rounded_max_val
         return (
             f"{buffer_type} buffer_id={buffer_id} metric={json_metric} "
-            f"min={min_val:.3f} [{deviation_from_max:.1%} from max] < "
-            f"min_tolerated {min_tolerated:.3f} [exceeded by {shortfall_from_threshold:.1%} of max] "
-            f"(= max {max_val:.3f} * {1 - variance:.3f}) "
+            f"min={rounded_min_val} [{deviation_from_max:.1%} from max] < "
+            f"min_tolerated {rounded_min_tolerated} [exceeded by {shortfall_from_threshold:.1%} of max] "
+            f"(= max {rounded_max_val} * {1 - variance:.3f}) "
             f"(min port: {min_port}, max port: {max_port})"
         )
     passed_check_count_by_buffer_type.setdefault(buffer_type, {}).setdefault(occ_key, 0)
@@ -716,8 +757,11 @@ def validate_tc(traffic_json, tc_occ_threshold, violations_list):
                     tc_occ_threshold = _get_tc_occ_threshold(tc_occ_threshold, port_group_name)
                     for tc_occ_key, tc_occ_th in tc_occ_threshold.items():
                         tc_occ = tc_dict[tc_occ_key]
-                        if tc_occ > tc_occ_th:
-                            violations_list.append(f"{sample_id},{port_group_name} - TC {tc_name} {tc_occ_key} {tc_occ} > {tc_occ_th} threshold")
+                        if value_above_threshold(tc_occ, tc_occ_th):
+                            violations_list.append(
+                                f"{sample_id},{port_group_name} - TC {tc_name} {tc_occ_key} "
+                                f"{round_to_threshold_precision(tc_occ, tc_occ_th)} > {tc_occ_th} threshold"
+                            )
                             with allure.step(f"Attach TC sample {sample_id} in port group: {port_group_name}: {tc_dict}"):
                                 pass
 
@@ -764,8 +808,11 @@ def validate_tc_occ_value(tc_occ, tc_occ_th, tolerance, higher_tc_samples, sampl
         if not is_within_range:
             higher_tc_samples.append(f"{sample_id} - TC {tc_name} {tc_occ_key} {tc_occ} is off range {min_range} - {max_range}")
     else:
-        if tc_occ > tc_occ_th:
-            higher_tc_samples.append(f"{sample_id} - TC {tc_name} {tc_occ_key} {tc_occ} > {tc_occ_th} threshold")
+        if value_above_threshold(tc_occ, tc_occ_th):
+            higher_tc_samples.append(
+                f"{sample_id} - TC {tc_name} {tc_occ_key} "
+                f"{round_to_threshold_precision(tc_occ, tc_occ_th)} > {tc_occ_th} threshold"
+            )
 
 
 def is_within_tolerance_range(value, threshold, tolerance):
@@ -780,7 +827,13 @@ def is_within_tolerance_range(value, threshold, tolerance):
         raise ValueError("Tolerance value must be between 0 and 1")
     min_tolerance, max_tolerance = 1 - tolerance, 1 + tolerance
     min_range, max_range = threshold * min_tolerance, threshold * max_tolerance
-    is_within_range = value > min_range and value < max_range
+    # Use the comparison helper so 0-place thresholds keep raw floats (0.4 / 0.8 stay
+    # 0.4 / 0.8 instead of rounding to 0 / 1) while fractional thresholds still clear
+    # float noise at their declared precision.
+    cmp_value, _ = round_pair_for_comparison(value, threshold)
+    cmp_min_range, _ = round_pair_for_comparison(min_range, threshold)
+    cmp_max_range, _ = round_pair_for_comparison(max_range, threshold)
+    is_within_range = cmp_min_range < cmp_value < cmp_max_range
     return min_range, max_range, is_within_range
 
 
@@ -793,7 +846,8 @@ def is_tolerance_value_valid(tolerance):
     return 0 < tolerance < 1
 
 
-def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_validate, allowed_deviation, violations_list):
+def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_validate, allowed_deviation,
+                                violations_list, reference_offset=0):
     """
     This function is used to compare the TC occupancy to a reference TC occupancy
     :param traffic_json: current test validation json
@@ -804,6 +858,11 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
     if allowed_deviation is a float, it is interpreted as a percentage deviation from the reference TC occupancy
     if allowed_deviation is an int, it is interpreted as an actual value deviation from the reference TC occupancy
     :param violations_list: list of violations
+    :param reference_offset: expected offset of the measured occupancy from the reference, in buffer cells.
+    The comparison band is centered on reference + reference_offset instead of on the reference itself,
+    which keeps the comparison relative while allowing for a known, expected difference between the two
+    runs (i.e the SRv6 uN forwarding overhead over an IPv6 baseline). Defaults to 0, which reproduces
+    the plain reference-centered band.
     """
     with allure.step(f"Compare TC occupancy to reference for {tc_to_validate}"):
         tc_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
@@ -817,17 +876,34 @@ def compare_tc_occ_to_reference(traffic_json, reference_json, tc_keys, tc_to_val
                         for key in tc_keys:
                             tc_occ = tc_dict[key]
                             reference_tc_occ = get_tc_occ_from_traffic_json(reference_json, port_group_name, key, tc_name)
+                            expected_tc_occ = reference_tc_occ + reference_offset
                             if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
-                                min_limit, max_limit = reference_tc_occ * (1 - allowed_deviation), reference_tc_occ * (1 + allowed_deviation)
+                                min_limit = expected_tc_occ * (1 - allowed_deviation)
+                                max_limit = expected_tc_occ * (1 + allowed_deviation)
                             else:
-                                min_limit, max_limit = reference_tc_occ - allowed_deviation, reference_tc_occ + allowed_deviation
+                                min_limit = expected_tc_occ - allowed_deviation
+                                max_limit = expected_tc_occ + allowed_deviation
                             min_limit = max(min_limit, 0)
-                            if tc_occ < min_limit or tc_occ > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {key} is not within reference comparison range {min_limit} - {max_limit}, current value: {tc_occ}")
+                            rounded_tc_occ = round_for_reference_comparison(tc_occ, reference_tc_occ)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_tc_occ)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_tc_occ)
+                            if rounded_tc_occ < rounded_min_limit or rounded_tc_occ > rounded_max_limit:
+                                expected_text = ""
+                                if reference_offset:
+                                    rounded_reference = round_for_reference_comparison(reference_tc_occ,
+                                                                                       reference_tc_occ)
+                                    expected_text = (f" (reference {rounded_reference} plus expected "
+                                                     f"offset {reference_offset})")
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {key} "
+                                    f"is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}"
+                                    f"{expected_text}, current value: {rounded_tc_occ}"
+                                )
 
 
 def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validate, allowed_deviation, violations_list,
-                            pg_buffer_type):
+                            pg_buffer_type, min_band_cells=0):
     """
     Compare PG occupancy to a reference PG occupancy.
 
@@ -842,6 +918,10 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
         violations_list: list of violations
         pg_buffer_type: which PG buffer to validate - ValidationConsts.PG_HEADROOM_DATAFRAME or
                        ValidationConsts.PG_BUFFER_DATAFRAME (REQUIRED - must be explicitly specified)
+        min_band_cells: floor for the band half width, in buffer cells. A percentage
+            allowed_deviation shrinks with the reference and collapses on a near-empty
+            buffer, so the effective band becomes max(allowed_deviation, min_band_cells).
+            Defaults to 0, which leaves the band exactly as allowed_deviation describes it.
     """
     buffer_type_name = "headroom" if pg_buffer_type == ValidationConsts.PG_HEADROOM_DATAFRAME else "buffer"
     pg_index_key = pg_buffer_type.replace("_dataframe", "")
@@ -859,11 +939,142 @@ def compare_pg_to_reference(traffic_json, reference_json, pg_keys, pg_to_validat
                             reference_pg_occ = get_pg_occ_from_traffic_json(reference_json, port_group_name, key, pg_name,
                                                                             pg_buffer_type)
                             if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
-                                min_limit, max_limit = reference_pg_occ * (1 - allowed_deviation), reference_pg_occ * (1 + allowed_deviation)
+                                deviation_cells = reference_pg_occ * allowed_deviation
                             else:
-                                min_limit, max_limit = reference_pg_occ - allowed_deviation, reference_pg_occ + allowed_deviation
-                            if pg_occ < min_limit or pg_occ > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} {buffer_type_name} {key} is not within reference comparison range {min_limit} - {max_limit}, current value: {pg_occ}")
+                                deviation_cells = allowed_deviation
+                            is_floor_binding = deviation_cells < min_band_cells
+                            if is_floor_binding:
+                                deviation_cells = min_band_cells
+                            min_limit = reference_pg_occ - deviation_cells
+                            max_limit = reference_pg_occ + deviation_cells
+                            rounded_pg_occ = round_for_reference_comparison(pg_occ, reference_pg_occ)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_pg_occ)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_pg_occ)
+                            if rounded_pg_occ < rounded_min_limit or rounded_pg_occ > rounded_max_limit:
+                                floor_text = ""
+                                if is_floor_binding:
+                                    floor_text = (f" (band widened to the {min_band_cells} cell floor, "
+                                                  f"reference is too small for a meaningful percentage)")
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                    f"{buffer_type_name} {key} is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}{floor_text}, "
+                                    f"current value: {rounded_pg_occ}"
+                                )
+
+
+def get_pg_port_group_data(traffic_json, port_group_name):
+    """
+    Get one port group's TC/PG sample data out of a validator json.
+
+    Args:
+        traffic_json: traffic validation json
+        port_group_name (str): name of the port group, i.e 'bisection_downstream'
+
+    Returns:
+        dict: The port group's sample data, or None when the port group is absent.
+    """
+    pg_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
+    pg_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)
+    port_group_data = None
+    for port_groups in pg_samples.values():
+        if port_group_name in port_groups:
+            port_group_data = port_groups[port_group_name]
+    return port_group_data
+
+
+def sum_pg_occ_across_frames(port_group_data, pg_key, pg, pg_buffer_types):
+    """
+    Sum one PG occupancy key across several PG frames.
+
+    A priority group is split between a reserved headroom and a dynamically borrowed
+    shared pool, reported as two separate frames. Summing them gives the total occupancy
+    of the priority group regardless of how a given chip divides the load between them.
+
+    Frames are read defensively, so a validator json produced by a collector that does
+    not populate one of them is reported rather than raising.
+
+    Args:
+        port_group_data (dict): One port group's sample data, from get_pg_port_group_data.
+        pg_key (str): occupancy key, i.e ValidationConsts.OCC_AVG
+        pg (int): PG number to sum for
+        pg_buffer_types (list): PG frames to sum, i.e MRCConsts.PG_TOTAL_OCC_FRAMES
+
+    Returns:
+        tuple: (total, missing_frames) where total is the summed occupancy and
+        missing_frames lists the frames that carried no entry for this PG.
+    """
+    total = 0
+    missing_frames = []
+    for pg_buffer_type in pg_buffer_types:
+        pg_index_key = pg_buffer_type.replace("_dataframe", "")
+        pg_occ = None
+        for pg_dict in (port_group_data or {}).get(pg_buffer_type) or []:
+            if pg_dict.get(pg_index_key) == pg:
+                pg_occ = pg_dict.get(pg_key)
+        if pg_occ is None:
+            missing_frames.append(pg_buffer_type)
+            continue
+        total += pg_occ
+    return total, missing_frames
+
+
+def compare_pg_total_occ_to_reference(traffic_json, reference_json, pg_keys, pg_to_validate,
+                                      allowed_deviation, violations_list, pg_buffer_types):
+    """
+    Compare the total PG occupancy, summed across PG frames, to a reference run.
+
+    Unlike compare_pg_to_reference, which looks at a single frame, this sums the reserved
+    headroom and the shared pool so the comparison does not depend on how a chip splits
+    the load between them. The loop is driven from pg_to_validate rather than from the
+    frame rows, so a PG missing from a frame is reported instead of silently skipped.
+
+    Args:
+        traffic_json: current test validation json
+        reference_json: reference validation json, i.e the IPv6 run of the same session
+        pg_keys (list): occupancy keys to compare, i.e [ValidationConsts.OCC_AVG]
+        pg_to_validate (list): PG numbers to compare, i.e MRCConsts.PG_LIST
+        allowed_deviation: allowed deviation from the reference total.
+            If a float between 0 and 1, interpreted as a percentage (e.g. 0.15 = +-15%).
+            Otherwise interpreted as an absolute value in buffer cells.
+        violations_list (list): list of violations, appended to in place
+        pg_buffer_types (list): PG frames to sum, i.e MRCConsts.PG_TOTAL_OCC_FRAMES
+    """
+    frame_names = " + ".join(frame.replace("_dataframe", "") for frame in pg_buffer_types)
+    with allure.step(f"Compare total PG occupancy ({frame_names}) to reference for {pg_to_validate}"):
+        pg_samples = traffic_json[ValidationConsts.TC_PG_SAMPLES]
+        pg_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)
+        for sample_id, port_groups in pg_samples.items():
+            for port_group_name, port_group_data in port_groups.items():
+                reference_port_group_data = get_pg_port_group_data(reference_json, port_group_name)
+                for pg_name in pg_to_validate:
+                    for key in pg_keys:
+                        pg_occ, missing = sum_pg_occ_across_frames(port_group_data, key,
+                                                                   pg_name, pg_buffer_types)
+                        reference_pg_occ, reference_missing = sum_pg_occ_across_frames(
+                            reference_port_group_data, key, pg_name, pg_buffer_types)
+                        if missing or reference_missing:
+                            violations_list.append(
+                                f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                f"{key} could not be summed, frames absent from the validator json: "
+                                f"current={missing}, reference={reference_missing}"
+                            )
+                            continue
+                        if isinstance(allowed_deviation, float) and 0 < allowed_deviation < 1:
+                            min_limit = reference_pg_occ * (1 - allowed_deviation)
+                            max_limit = reference_pg_occ * (1 + allowed_deviation)
+                        else:
+                            min_limit = reference_pg_occ - allowed_deviation
+                            max_limit = reference_pg_occ + allowed_deviation
+                        rounded_pg_occ = round_for_reference_comparison(pg_occ, reference_pg_occ)
+                        rounded_min_limit = round_for_reference_comparison(min_limit, reference_pg_occ)
+                        rounded_max_limit = round_for_reference_comparison(max_limit, reference_pg_occ)
+                        if rounded_pg_occ < rounded_min_limit or rounded_pg_occ > rounded_max_limit:
+                            violations_list.append(
+                                f"In sample {sample_id} for port group {port_group_name} - PG {pg_name} "
+                                f"total ({frame_names}) {key} is not within reference comparison range "
+                                f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_pg_occ}"
+                            )
 
 
 def get_tc_occ_from_traffic_json(traffic_json, port_group_name, tc_key, tc):
@@ -930,8 +1141,15 @@ def compare_latency_to_reference(traffic_json, reference_json, latency_keys, tc_
                             latency_value = tc_dict[latency_attribute_to_compare]
                             reference_latency = get_latency_from_traffic_json(reference_json, port_group_name, latency_attribute_to_compare, tc_name)
                             min_limit, max_limit = reference_latency - allowed_deviation, reference_latency + allowed_deviation
-                            if latency_value < min_limit or latency_value > max_limit:
-                                violations_list.append(f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} {latency_attribute_to_compare} is not within reference comparison range {min_limit} - {max_limit}, current value: {latency_value}")
+                            rounded_latency_value = round_for_reference_comparison(latency_value, reference_latency)
+                            rounded_min_limit = round_for_reference_comparison(min_limit, reference_latency)
+                            rounded_max_limit = round_for_reference_comparison(max_limit, reference_latency)
+                            if rounded_latency_value < rounded_min_limit or rounded_latency_value > rounded_max_limit:
+                                violations_list.append(
+                                    f"In sample {sample_id} for port group {port_group_name} - TC {tc_name} "
+                                    f"{latency_attribute_to_compare} is not within reference comparison range "
+                                    f"{rounded_min_limit} - {rounded_max_limit}, current value: {rounded_latency_value}"
+                                )
 
 
 def get_latency_from_traffic_json(traffic_json, port_group_name, tc_latency_key, tc):
@@ -1004,6 +1222,56 @@ def validate_required_counters(traffic_json, required_counter_list, violations_l
                 violations_list.append(f"Required counter '{counter}' was 0 in sample {sample_id}")
 
 
+def get_sample_number(sample_id: str) -> Optional[int]:
+    """
+    Extracts the ordinal of a TrafficValidator sample out of its id.
+
+    Args:
+        sample_id (str): Sample id, e.g. 'sample #2 2026-09-04 03:34:20'.
+
+    Returns:
+        Optional[int]: The sample ordinal, or None when the id does not carry one.
+    """
+    match = SAMPLE_NUMBER_PATTERN.search(sample_id)
+    return int(match.group(1)) if match else None
+
+
+def mask_waived_pause_and_discard_counters(counters_df: pd.DataFrame, sample_id: str,
+                                           port_group_name: str) -> pd.DataFrame:
+    """
+    Zeroes the Bug #5258617 counters on the affected ports while the issue is open.
+
+    Ports 0x10101 and 0x10102 assert PFC and take ingress no-buffer discards while the traffic ramps up,
+    on the first samples of a run. Only those ports' cells are cleared, so the same counters on every
+    other port, and every other counter on those ports, are still verified. A port the current breakout
+    does not expose simply never matches.
+
+    Args:
+        counters_df (pd.DataFrame): Counters of every port in the port group.
+        sample_id (str): Sample id the counters were collected in.
+        port_group_name (str): Port group the counters belong to, used for logging only.
+
+    Returns:
+        pd.DataFrame: A masked copy when the waiver applies, otherwise the frame as given.
+    """
+    sample_number = get_sample_number(sample_id)
+    if not PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE or sample_number is None or \
+            sample_number > PAUSE_DISCARDS_LAST_TOLERATED_SAMPLE:
+        return counters_df
+
+    is_waived_port = counters_df[ValidationConsts.PORT].astype(str).str.lower().isin(PAUSE_DISCARDS_PORTS)
+    waived_counters = [counter for counter in PAUSE_DISCARDS_COUNTERS if counter in counters_df.columns]
+    if not is_waived_port.any() or not waived_counters:
+        return counters_df
+
+    waived_values = counters_df.loc[is_waived_port, [ValidationConsts.PORT] + waived_counters]
+    logger.info(f"Bug #{PAUSE_DISCARDS_REDMINE_ISSUE} is active: skipping {waived_counters} on the ramp-up "
+                f"ports in {sample_id} for {port_group_name} (values: {waived_values.to_dict('records')})")
+    waived_df = counters_df.copy()
+    waived_df.loc[is_waived_port, waived_counters] = 0
+    return waived_df
+
+
 def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, violations_list):
     """
     Validates a single counter sample for any non-zero counter values.
@@ -1016,10 +1284,19 @@ def validate_counters_sample(sample_id, counters_sample, ignore_counter_list, vi
     """
     for port_group_name, port_group_data in counters_sample.items():
         counters_df = pd.DataFrame(port_group_data[ValidationConsts.COUNTERS_DATAFRAME])
+        counters_df = mask_waived_pause_and_discard_counters(counters_df, sample_id, port_group_name)
 
         ports_with_counters = counters_df.loc[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].any(axis=1), ValidationConsts.PORT].to_list()
         counters_with_values = counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].columns[counters_df.loc[:, counters_df.columns != ValidationConsts.PORT].gt(0).any()].tolist()
         counters_with_values = [counter for counter in counters_with_values if counter not in ignore_counter_list]
+
+        if LOOPBACK_FILTER_COUNTER in counters_with_values and \
+                not counters_df[LOOPBACK_FILTER_COUNTER].gt(LOOPBACK_FILTER_MAX_TOLERATED_VALUE).any():
+            logger.info(f"Bug #{LOOPBACK_FILTER_REDMINE_ISSUE} is active and no port exceeded "
+                        f"{LOOPBACK_FILTER_MAX_TOLERATED_VALUE}: skipping {LOOPBACK_FILTER_COUNTER} "
+                        f"(highest per-port value: {counters_df[LOOPBACK_FILTER_COUNTER].max()}) "
+                        f"in {sample_id} for {port_group_name}")
+            counters_with_values.remove(LOOPBACK_FILTER_COUNTER)
 
         if counters_with_values:
             violations_list.append(f"Ports: {ports_with_counters} had one or more of the following counters:\n"

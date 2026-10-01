@@ -3,8 +3,10 @@ import os
 import time
 from abc import ABC, ABCMeta, abstractmethod
 from collections import namedtuple
+from typing import NamedTuple, TypedDict
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
+
 from ngts.nvos_constants.constants_nvos import (
     ActionConsts,
     CumulusConsts,
@@ -14,10 +16,8 @@ from ngts.nvos_constants.constants_nvos import (
     FansConsts,
     NvosConst,
     PlatformConsts,
-    RebootConsts,
     SystemConsts,
 )
-from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.ResultObj import ResultObj
@@ -28,6 +28,18 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import get_version_info
 
 logger = logging.getLogger()
+
+
+PlatformInventorySwitchValues = TypedDict(
+    "PlatformInventorySwitchValues",
+    {
+        "hardware-version": str | None,
+        "model": str | ExpectedString | None,
+        "serial": str | None,
+        "state": str,
+        "type": str,
+    },
+)
 
 
 # -------------------------- Base Device ----------------------------
@@ -49,6 +61,10 @@ class BaseDevice(ABC):
         # simx flavors (SimxDevice subclasses) override both
         self.is_simx = False
         self.require_mloop_setup = False
+        # Time reference the platform's syslog daemon stamps in (DateTimeConsts.LOCAL_TIME or
+        # UNIVERSAL_TIME). verify_show_and_log_times() asserts log timestamps against this
+        # reference only. Default to local wall-clock time; platform subclasses may override.
+        self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
 
         self._init_constants()
         self._init_available_databases()
@@ -104,6 +120,9 @@ class BaseDevice(ABC):
         self.supports_ssd_upgrade = False
         self.supported_commands = []
         self.supports_tpm_testing = True
+        # IMA needs a TPM plus an IMA-enabled kernel build; the conftest does the final
+        # runtime check (security filesystem path), this flag is the coarse per-platform gate.
+        self.supports_ima_testing = True
         self.unset_all_command = "nv unset acl; nv unset interface; nv unset platform; nv unset system"
         self.allow_cpld_update = False
         self.sys_rst_n_bit_command = None
@@ -140,6 +159,7 @@ class BaseDevice(ABC):
 
     def _init_system_lists(self):
         self.user_fields = []
+        self.log_components_list = []
 
     def _init_fae_lists(self):
         pass
@@ -197,7 +217,7 @@ class BaseDevice(ABC):
         self.cur_mgmt_port_ip = ip
 
     def get_mgmt_ports(self) -> list[str]:
-        return None
+        return []
 
     def get_admins_group(self):
         return 'nvapply'
@@ -216,8 +236,8 @@ class BaseDevice(ABC):
         ngts_path = os.path.join(os.path.abspath(__file__).split('ngts', 1)[0], 'ngts')
         config_filename = self._relevant_config_filename_by_version(version)
         config_file_path = os.path.join(ngts_path, 'tools', 'test_utils', 'nvos_resources', config_filename)
-        logger.info(f'NGTS_PATH: {ngts_path}')
-        logger.info(f'CONF_YML_FILE_PATH: {config_file_path}')
+        logger.info('NGTS_PATH: %s', ngts_path)
+        logger.info('CONF_YML_FILE_PATH: %s', config_file_path)
         return config_file_path, config_filename
 
     def is_eth(self):
@@ -227,7 +247,7 @@ class BaseDevice(ABC):
         return self.switch_type == NvosConst.IB_SWITCH_TYPE
 
     @property
-    def has_sx_core(self):
+    def has_sx_core_modules(self):
         return self.is_ib()
 
     def get_lldp_port_name_from_dump(self, lldp_dict):
@@ -301,20 +321,25 @@ class BaseDevice(ABC):
 
             return result_obj
 
-    def verify_dockers(self, dut_engine, dockers_list=""):
+    def verify_dockers(self, dut_engine, dockers_list="", timeout=NvosConst.DOCKERS_UP_TIMEOUT):
         """
-        Validate existing dockers
+        Validate existing dockers.
+        Dockers listed in NvosConst.LATE_START_DOCKERS are allowed to come up after the system
+        reports ready, so they are polled. Any other missing docker fails immediately.
         """
         with allure.step('Verify dockers'):
-            result_obj = ResultObj(True, "")
-            cmd_output = dut_engine.run_cmd('docker ps --format \"table {{.Names}}\"')
             list_of_dockers = dockers_list or self.available_dockers
-            for docker in list_of_dockers:
-                if docker not in cmd_output:
-                    result_obj.result = False
-                    result_obj.info += f"{docker} docker is not active.\n"
+            deadline = time.monotonic() + timeout
+            while True:
+                cmd_output = dut_engine.run_cmd('docker ps --format \"table {{.Names}}\"')
+                missing = [docker for docker in list_of_dockers if docker not in cmd_output]
+                if not missing or any(docker not in NvosConst.LATE_START_DOCKERS for docker in missing) \
+                        or time.monotonic() >= deadline:
+                    break
+                logger.info("Waiting up to %ss for dockers to come up: %s", timeout, missing)
+                time.sleep(NvosConst.DOCKERS_UP_POLL_INTERVAL)
 
-            return result_obj
+            return ResultObj(not missing, "".join(f"{docker} docker is not active.\n" for docker in missing))
 
     def verify_services(self, dut_engine):
         """
@@ -380,7 +405,7 @@ class BaseDevice(ABC):
         raise Exception(f"Not implemented for this switch {self.__class__.__name__}")
 
     @abstractmethod
-    def show_setup_versions(self, dut_engine: LinuxSshEngine = None):
+    def show_setup_versions(self, dut_engine: LinuxSshEngine):
         raise Exception(f"Not implemented for this switch {self.__class__.__name__}")
 
     @abstractmethod
@@ -420,10 +445,28 @@ class BaseAppliance(BaseDevice):
 class BaseSwitch(BaseDevice):
     __metaclass__ = ABCMeta
 
-    Constants = namedtuple('Constants', ['system', 'dump_files', 'sdk_dump_files', 'sdk_dump_files_template', 'firmware',
-                                         'log_dump_files', 'log_nginx_files', 'log_nmx_files', 'stats_dump_files',
-                                         'hw_mgmt_files', 'audit_files', 'etc_files', 'cluster_files', 'bmc_dump_files', 'erots',
-                                         'kdump_files', 'techsupport_size_limit_mb'])
+    class Constants(NamedTuple):
+        system: dict[str, list[str]]
+        dump_files: list[str]
+        sdk_dump_files: list[str]
+        sdk_dump_files_template: list[str]
+        firmware: list[str]
+        log_dump_files: list[str]
+        log_nginx_files: list[str]
+        log_nmx_files: list[str]
+        stats_dump_files: list[str]
+        hw_mgmt_files: list[str]
+        audit_files: list[str]
+        etc_files: list[str]
+        cluster_files: list[str] | None
+        bmc_dump_files: list[str] | None
+        erots: list[str]
+        kdump_files: list[str]
+        techsupport_size_limit_mb: int
+
+    constants: Constants
+    cpld_amount: int
+    sma_amount: int
 
     @staticmethod
     def get_sdk_dump_files_for_asic(asic_num, sdk_dump_files_template):
@@ -673,7 +716,7 @@ class BaseSwitch(BaseDevice):
         self.platform_inventory_psu_values = {
             "hardware-version": None, "model": None,
             "serial": None, "state": FansConsts.STATE_OK, "type": PlatformConsts.ENV_PSU}
-        self.platform_inventory_switch_values = {
+        self.platform_inventory_switch_values: PlatformInventorySwitchValues = {
             "hardware-version": "", "model": "",  # update these in subclasses
             "serial": None, "state": FansConsts.STATE_OK, "type": PlatformConsts.HW_COMP_SWITCH.lower()}
         self.platform_port_state = {
@@ -699,7 +742,9 @@ class BaseSwitch(BaseDevice):
 
     def _extend_firmware_by_cpld_amount(self):
         if hasattr(self, "cpld_amount"):
-            self.constants.firmware[:] = [fw for fw in self.constants.firmware if not fw.startswith(PlatformConsts.FW_CPLD)]
+            self.constants.firmware[:] = [
+                fw for fw in self.constants.firmware if not fw.startswith(PlatformConsts.FW_CPLD)
+            ]
             self.constants.firmware.extend(
                 PlatformConsts.FW_CPLD + str(i) for i in range(1, self.cpld_amount + 1)
             )

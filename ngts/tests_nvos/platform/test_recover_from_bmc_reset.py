@@ -26,6 +26,7 @@ CPU_MAX_UTILIZATION = 40.0
 BMC_LOG_LINES_MAX = 30
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer
 def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
     # LA ignores some BMC errors during this test, pending on FR 4210208

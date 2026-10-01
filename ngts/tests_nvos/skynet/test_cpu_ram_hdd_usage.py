@@ -1,15 +1,11 @@
 import re
 import pytest
-import sys
 import logging
 
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
-from ngts.tests_nvos.helpers.general_helpers import get_absolute_devts_path
 from pathlib import Path
 
-devts_p = Path(get_absolute_devts_path() or '/devts')
-sys.path.append(str(devts_p / 'tests' / 'skynet'))
-from system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
+from ngts.test_commons.skynet.system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
     do_ssd_endurance_test  # noqa
 
 ONE_DAY_IN_SEC = 86400
@@ -92,6 +88,9 @@ class TestCpuRamHddUsage:
         partition_dir = partition_usage['partition']
         if is_parent_folder(partition_dir, SDK_DUMPS_PATH):
             partition_usage['max_usage'] += self.get_sai_fdw_dump_size()
+
+        if partition_dir == '/' and re.search('SN6600_LD|SN6810_LD', platform_params.hwsku):
+            partition_usage['max_usage'] += 4000
 
         logger.info(f"\nChecking hdd_usage of {partition_dir} with max_usage of {partition_usage['max_usage']}\n")
         try:

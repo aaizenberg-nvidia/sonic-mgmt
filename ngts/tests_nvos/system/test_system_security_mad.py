@@ -13,7 +13,6 @@ logger = logging.getLogger()
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
 def test_system_security_gpu_mad(test_api, engines, devices, nv_command):
     """
@@ -80,7 +79,6 @@ def test_system_security_gpu_mad(test_api, engines, devices, nv_command):
 
 
 @pytest.mark.system
-@pytest.mark.simx
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
 def test_system_security_gpu_mad_invalid(test_api, engines, devices, nv_command):
     """

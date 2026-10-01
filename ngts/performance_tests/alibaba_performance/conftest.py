@@ -17,7 +17,8 @@ logger = logging.getLogger()
 TESTS_SCENARIO = "alibaba_performance"
 
 
-def get_alibaba_leaf_traffic(players, conf_args, template_suite="traffic_packets_json_files"):
+def get_alibaba_leaf_traffic(players, conf_args, template_suite="traffic_packets_json_files",
+                             incremental_dip_num_packets=None):
     traffic_jsons = {}
     for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
         player_cli_obj = players[player_alias]['cli']
@@ -27,18 +28,25 @@ def get_alibaba_leaf_traffic(players, conf_args, template_suite="traffic_packets
                                                                                conf_args=conf_args)
 
         traffic_parameters["AR"] = PerfConsts.ADAPTIVE_ROUTING_ENABLED if conf_args["ar_enabled"] else PerfConsts.ADAPTIVE_ROUTING_DISABLED
-        get_multiple_ip_stream_list(player_alias, traffic_parameters, json_path, conf_args)
+        get_multiple_ip_stream_list(player_alias, traffic_parameters, json_path, conf_args,
+                                    incremental_dip_num_packets=incremental_dip_num_packets * 3 if player_alias == PerfConsts.LEFT_TG_ALIAS else incremental_dip_num_packets * 7)
         traffic_jsons[player_alias] = json_path
     return traffic_jsons
 
 
-def get_multiple_ip_stream_list(spine_tg, traffic_parameters, json_path, conf_args):
+def get_multiple_ip_stream_list(spine_tg, traffic_parameters, json_path, conf_args,
+                                incremental_dip_num_packets=None):
     direction_from = "left" if spine_tg == PerfConsts.LEFT_TG_ALIAS else "right"
     stream_list = []
 
     ports_from = f'{direction_from} {"host" if conf_args["host"] == spine_tg else "spine"}'
     ports_to = f'{direction_from} {"spine" if conf_args["spine"] == spine_tg else "host"}'
     direction_to = "right" if direction_from == "left" else "left"
+
+    effective_num_packets = (incremental_dip_num_packets if incremental_dip_num_packets is not None
+                             else conf_args.get("incremental_dip_num_packets"))
+    if effective_num_packets is not None:
+        traffic_parameters["num_packets"] = effective_num_packets
 
     for traffic_type, traffic_enabled in zip(["ipv4", "ipv6"], [conf_args["is_ipv4"], conf_args["is_ipv6"]]):
         if traffic_enabled:

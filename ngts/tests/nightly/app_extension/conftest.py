@@ -6,8 +6,26 @@ from ngts.tests.nightly.app_extension.app_extension_helper import \
     verify_add_app_to_repo, verify_app_container_up_and_repo_status_installed, APP_INFO, app_cleanup, \
     get_app_repository
 from ngts.constants.constants import InfraConst
+from ngts.helpers.e1000_tx_watchdog_debug import collect_e1000_tx_watchdog_debug
 
 logger = logging.getLogger()
+
+
+@pytest.fixture(scope='function', autouse=False)
+def e1000_tx_watchdog_debug(request, topology_obj, dumps_folder, is_simx, is_air):
+    """
+    Collect enhanced debug data for the intermittent e1000 mgmt-NIC TX-watchdog reset on SimX
+    setups (Redmine #5040675). Three data streams are sampled in parallel for the whole test
+    window: guest /proc/interrupts+/proc/softirqs, SimX-container QEMU 'info irq', and host
+    'perf sched record'. Runs only on SimX (non-air) setups and never fails the test.
+    """
+    if not is_simx or is_air:
+        yield
+        return
+
+    name_prefix = request.node.name.replace('/', '_').replace('[', '_').replace(']', '_')
+    with collect_e1000_tx_watchdog_debug(topology_obj, dumps_folder, name_prefix):
+        yield
 
 
 @pytest.fixture(scope='function', autouse=False)

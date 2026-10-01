@@ -5,10 +5,16 @@ import re
 import json
 import fcntl
 import pandas as pd
+from typing import Optional
 from retry import retry
 from ngts.constants.constants import BugHandlerConst
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
+from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
+from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
+                                                     get_cli_port_selection_options,
+                                                     load_forced_unconnected_label_ports)
 from ngts.nvos_tools.infra.FilesTool import FilesTool
+from ngts.performance_tests.log_files.players_logger import get_players_cmd_logger
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 
@@ -48,11 +54,52 @@ def _read_sdk_dump_support_gzip(path):
 
 
 class PerformanceCommon:
+    PORT_STYLE = SWP
+
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
         self.topology_obj = topology_obj
         self.engine = engine
         self.dut_alias = dut_alias
         self.cli_obj = cli_obj
+        self.port_selection = PortSelection(port_style=self.PORT_STYLE)
+        self._port_selection_params = None
+        self.excluded_port_names = set()
+        self.hostname = self.get_hostname()
+        self.forced_unconnected_label_ports = load_forced_unconnected_label_ports(self.hostname)
+
+    def get_hostname(self):
+        """Return the switch hostname from Noga metadata, or None when it is unavailable."""
+        try:
+            return self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Common']['Name']
+        except (AttributeError, KeyError, TypeError):
+            return None
+
+    def set_port_selection_params(self, params):
+        """Store raw port-selection parameters until the scenario is known.
+
+        Args:
+            params: Setup name, mode flags, and optional config path.
+        """
+        self._port_selection_params = params
+
+    def resolve_port_selection(self, scenario):
+        """Resolve port selection for a performance scenario.
+
+        Args:
+            scenario: Scenario key in the port-selection configuration.
+
+        Returns:
+            The resolved selection, inactive when no mode was enabled.
+        """
+        params = self._port_selection_params or get_cli_port_selection_options()
+        self.port_selection = build_port_selection(
+            setup_name=params.get("setup_name"), scenario=scenario,
+            exclude_enabled=params.get("exclude_enabled", False),
+            include_enabled=params.get("include_enabled", False),
+            config_path=params.get("config_path"), port_style=self.PORT_STYLE)
+        logging.info(f"[{self.dut_alias}] Port selection resolved for scenario '{scenario}': "
+                     f"mode={self.port_selection.mode} (active={self.port_selection.is_active()})")
+        return self.port_selection
 
     def get_chip_type(self):
         """Return the DUT chip type from Noga metadata when available."""
@@ -86,6 +133,10 @@ class PerformanceCommon:
         This method should return a cmd that is running on the sdk per OS
         """
         raise NotImplementedError
+
+    def _log_sdk_cmd(self, sdk_cmd):
+        """Log the final per-OS command built by get_cmd_for_sdk, right before it runs."""
+        logging.info(f"SDK command on {self.dut_alias}: {sdk_cmd}")
 
     @staticmethod
     def get_controllers_info_dicts_list(sensors_output):
@@ -122,6 +173,10 @@ class PerformanceCommon:
 
     def validate_ingress_buffer_mode_active(self):
         """Assert ingress buffer mode (IBM) is active. NVUE-only; no-op on other CLIs."""
+        pass
+
+    def validate_rebalancer_buffer_mode_active(self):
+        """Assert automatic/rebalancer buffer mode is active. NVUE-only; no-op on other CLIs."""
         pass
 
     def save_configuration_file(self, conf_path, conf_json, dst_dut_dir="/tmp"):
@@ -226,6 +281,36 @@ class PerformanceCommon:
         """
         pass
 
+    def wait_for_leaf_routes(self, conf_args=None, expected_count=None, timeout=120):
+        """
+        Wait for the leaf scenario's per-port host routes to reach the routing table.
+
+        Implemented for Cumulus only. DVS programs its forwarding through the SDK as part of
+        applying the configuration, so there is no separate route-installation step to wait on.
+        """
+        pass
+
+    def get_leaf_dip_list(self, dut_configuration: dict, conf_args: dict) -> list:
+        """
+        Returns the downstream (spine to host) destination IPs used by the leaf scenario.
+
+        DVS and SONiC publish one destination per DUT right port under
+        "right_side_ports_to_ip_dict", so the default simply forwards those values. Cumulus
+        overrides this hook because the same key there holds the far-side loopback that traffic
+        entering the right side targets, which is the opposite meaning.
+
+        Args:
+            dut_configuration (dict): Device configuration as returned by get_device_configuration.
+            conf_args (dict): Test configuration arguments.
+
+        Returns:
+            list: One destination IP per DUT right port.
+
+        Raises:
+            KeyError: If the device configuration carries no "right_side_ports_to_ip_dict" entry.
+        """
+        return list(dut_configuration["right_side_ports_to_ip_dict"].values())
+
     def logrotate(self, daemon=''):
         '''
         This method is optional for dvs and sonic but mandatory for cumulus
@@ -241,6 +326,35 @@ class PerformanceCommon:
         """
         pass
 
+    @staticmethod
+    def _parse_ports_dump_rows(ports_dump):
+        """Extract (log_port, label_port, oper_state, module_state) from every row of an sx_api_ports_dump.py table.
+
+        The rows keep the order of the dump, which matters because the ASIC bonus ports are identified by
+        being the trailing rows.
+
+        The dump columns are ``log_port | local_port | slot | label_port | mtu | truncation | admin_s | oper_s |
+        module_s | ...``, so the front-panel label port is the third of the four leading numeric columns.
+
+        Args:
+            ports_dump: Raw string output of sx_api_ports_dump.py.
+
+        Returns:
+            list: One (log_port_hex, label_port, oper_state, module_state) tuple per port, in dump order.
+                Both log_port_hex and label_port are the raw strings from the dump.
+        """
+        _log_port_hex = r"\|\s+(0x[\da-fA-F]+)\|"
+        _local_port_and_slot = r"(?:\s+\d+\|){2}"
+        _label_port = r"\s+(\d+)\|"
+        _mtu = r"\s+\d+\|"
+        _two_skip_columns = r"(?:\s+\S+\|){2}"
+        _oper_state = r"\s+(\S+)\|"
+        _module_state = r"\s+(\S+)\|"
+        return re.findall(
+            _log_port_hex + _local_port_and_slot + _label_port + _mtu + _two_skip_columns + _oper_state + _module_state,
+            ports_dump,
+        )
+
     def execute_cmd(self, cmd, print_output=False):
         """
         All functions on the inheritance classes (DVS, SONiC, Cumulus) will be executed
@@ -251,6 +365,9 @@ class PerformanceCommon:
         :param cmd: Command to be executed on the switch
         :return: None or raise error
         """
+        players_cmd_logger = get_players_cmd_logger()
+        if players_cmd_logger is not None:
+            players_cmd_logger.info(f"[{self.dut_alias}] {cmd}")
         try:
             output = self.engine.run_cmd(cmd, print_output=print_output, validate=True)
             logging.debug(f"command output: {output}")
@@ -260,13 +377,112 @@ class PerformanceCommon:
             logging.error(error_msg)
             raise TestIssue(msg=error_msg) from e
 
-    @staticmethod
-    def _parse_ports_dump(ports_dump, bonus_ports_to_remove=0):
-        """Parse sx_api_ports_dump.py output and classify ports as connected/unconnected.
+    def _apply_forced_unconnected(self, connected, unconnected, port_status_list):
+        """Move the switch's forced-unconnected ports out of the connected list.
 
-        Extracts (log_port, oper_state, module_state) from each row of the dump table.
-        Ports with module_state == "PLUGGED" are connected; all others are unconnected.
-        ASIC-specific bonus ports are trimmed from the tail of the list.
+        A traffic-generator port cabled to an external generator (Ixia) reports its transceiver as
+        PLUGGED, so plug-state classification files it as DUT-facing. The switch's entry in
+        forced_unconnected_ports.yaml names those front-panel label ports; every logical port behind
+        them is moved back to the unconnected (MLOOP generator) role. Listing the unsplit parent label
+        port therefore covers all of its split sub-ports.
+
+        Args:
+            connected: Sorted SDK logical ports classified as connected.
+            unconnected: Sorted SDK logical ports classified as unconnected.
+            port_status_list: Rows as returned by _parse_ports_dump_rows, already trimmed of bonus ports.
+
+        Returns:
+            tuple: (sorted_connected, sorted_unconnected) with the forced ports moved. The inputs are
+                returned unchanged when this switch declares no forced-unconnected ports.
+
+        Raises:
+            TestIssue: When a declared label port is missing from the dump, or its transceiver is not
+                PLUGGED — either way the YAML no longer describes the switch's actual cabling.
+        """
+        if not self.forced_unconnected_label_ports:
+            return connected, unconnected
+        forced_log_ports, seen_label_ports, plugged_label_ports = set(), set(), set()
+        for log_port, label_port, _, module_s in port_status_list:
+            label_port_int = int(label_port)
+            if label_port_int not in self.forced_unconnected_label_ports:
+                continue
+            seen_label_ports.add(label_port_int)
+            forced_log_ports.add(int(log_port, 16))
+            if module_s == "PLUGGED":
+                plugged_label_ports.add(label_port_int)
+        missing_label_ports = sorted(self.forced_unconnected_label_ports - seen_label_ports)
+        if missing_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config lists front-panel label port(s) "
+                            f"{missing_label_ports} for {self.hostname}, but sx_api_ports_dump.py reports no such "
+                            f"port. Fix forced_unconnected_ports.yaml to match the switch.")
+        unplugged_label_ports = sorted(self.forced_unconnected_label_ports - plugged_label_ports)
+        if unplugged_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config declares front-panel label port(s) "
+                            f"{unplugged_label_ports} on {self.hostname} as cabled to an external traffic "
+                            f"generator, but their transceiver is not PLUGGED. The cable was removed, or "
+                            f"forced_unconnected_ports.yaml is stale.")
+        forced_connected = sorted(forced_log_ports.intersection(connected))
+        logging.info(f"[{self.dut_alias}] Forcing label port(s) {sorted(self.forced_unconnected_label_ports)} on "
+                     f"{self.hostname} to unconnected: moved SDK logical port(s) "
+                     f"{[hex(port) for port in forced_connected]}")
+        return ([port for port in connected if port not in forced_log_ports],
+                sorted(set(unconnected) | forced_log_ports))
+
+    def check_connected_unconnected_balance(self, connected, unconnected):
+        """Report whether the connected/unconnected port counts match on this player.
+
+        MLOOP pairs each unconnected generator port with one connected DUT-facing port, so a traffic
+        generator is expected to split evenly. An imbalance means the classification disagrees with the
+        cabling — most often a port cabled to an external traffic generator that is missing from
+        forced_unconnected_ports.yaml. The DUT is exempt: it has no unconnected ports by design.
+
+        Args:
+            connected: SDK logical ports classified as connected.
+            unconnected: SDK logical ports classified as unconnected.
+
+        Returns:
+            bool: True when the counts match, or the player is the DUT with no unconnected ports.
+        """
+        if not unconnected and self.dut_alias == PerfConsts.DUT_ALIAS:
+            return True
+        if len(connected) == len(unconnected):
+            return True
+        logging.warning(f"[{self.dut_alias}] The number of connected ports {len(connected)} is not equal to the number "
+                        f"of unconnected ports {len(unconnected)}")
+        logging.warning(f"[{self.dut_alias}] The connected ports are {connected}")
+        logging.warning(f"[{self.dut_alias}] The unconnected ports are {unconnected}")
+        logging.warning(f"[{self.dut_alias}] If a port is cabled to an external traffic generator, declare its "
+                        f"front-panel label port under {self.hostname} in forced_unconnected_ports.yaml")
+        return False
+
+    def _classify_ports_dump_rows(self, port_status_list, bonus_ports_to_remove=0):
+        """Classify already-parsed ports-dump rows as connected/unconnected.
+
+        Ports with module_state == "PLUGGED" are connected; all others are unconnected. ASIC-specific
+        bonus ports are trimmed from the tail of the list. Ports this switch declares forced-unconnected
+        are then moved back to unconnected regardless of their plug state.
+
+        Args:
+            port_status_list: Rows as returned by _parse_ports_dump_rows, in dump order.
+            bonus_ports_to_remove: Number of trailing rows to discard (management/bonus ports).
+
+        Returns:
+            tuple: (sorted_connected, sorted_unconnected) — each a sorted list of
+                   SDK logical port numbers as ints.
+        """
+        if bonus_ports_to_remove > 0:
+            port_status_list = port_status_list[:-bonus_ports_to_remove]
+        connected, unconnected = [], []
+        for log_port, _, _, module_s in port_status_list:
+            log_port_int = int(log_port, 16)
+            if module_s == "PLUGGED":
+                connected.append(log_port_int)
+            else:
+                unconnected.append(log_port_int)
+        return self._apply_forced_unconnected(sorted(connected), sorted(unconnected), port_status_list)
+
+    def _parse_ports_dump(self, ports_dump, bonus_ports_to_remove=0):
+        """Parse sx_api_ports_dump.py output and classify ports as connected/unconnected.
 
         Args:
             ports_dump: Raw string output of sx_api_ports_dump.py.
@@ -276,25 +492,14 @@ class PerformanceCommon:
             tuple: (sorted_connected, sorted_unconnected) — each a sorted list of
                    SDK logical port numbers as ints.
         """
-        _log_port_hex = r"\|\s+(0x[\da-fA-F]+)\|"
-        _four_numeric_columns = r"(?:\s+\d+\|){4}"
-        _two_skip_columns = r"(?:\s+\S+\|){2}"
-        _oper_state = r"\s+(\S+)\|"
-        _module_state = r"\s+(\S+)\|"
-        port_status_list = re.findall(
-            _log_port_hex + _four_numeric_columns + _two_skip_columns + _oper_state + _module_state,
-            ports_dump,
-        )
-        if bonus_ports_to_remove > 0:
-            port_status_list = port_status_list[:-bonus_ports_to_remove]
-        connected, unconnected = [], []
-        for log_port, _, module_s in port_status_list:
-            log_port_int = int(log_port, 16)
-            if module_s == "PLUGGED":
-                connected.append(log_port_int)
-            else:
-                unconnected.append(log_port_int)
-        return sorted(connected), sorted(unconnected)
+        return self._classify_ports_dump_rows(self._parse_ports_dump_rows(ports_dump), bonus_ports_to_remove)
+
+    def _write_json_to_remote(self, local_path, data, dst_dut_dir, dest_file):
+        """Write `data` as local JSON at `local_path` and copy it to `dest_file` on the switch."""
+        with open(local_path, "w") as f:
+            json.dump(data, f, indent=4)
+        self.engine.copy_file(source_file=local_path, file_system=dst_dut_dir, dest_file=dest_file,
+                              overwrite_file=True, verify_file=False, direction='put')
 
     def _save_player_ports(self, player_ports, dst_dut_dir="/tmp"):
         """Save player ports dict to local JSON and copy to the switch.
@@ -305,11 +510,65 @@ class PerformanceCommon:
         """
         get_ports_output = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
                                         f"{self.dut_alias}_ports.json")
-        with open(get_ports_output, "w") as f:
-            json.dump(player_ports, f, indent=4)
         self.execute_cmd(f"sudo rm -f {dst_dut_dir}/tg_ports.json")
-        self.engine.copy_file(source_file=get_ports_output, file_system=dst_dut_dir, dest_file="tg_ports.json",
-                              overwrite_file=True, verify_file=False, direction='put')
+        self._write_json_to_remote(get_ports_output, player_ports, dst_dut_dir, "tg_ports.json")
+
+    def clear_stale_ports_json(self, rm_cmd=f"sudo rm -f {PerfConsts.PORTS_JSON_PATH}"):
+        """Delete any leftover /ports.json before this class applies its own configuration.
+
+        The SDK-side SDK tests read /ports.json (or the syncd-container copy on SONiC) if it
+        already exists rather than re-discovering ports. add_ports_connectivity_to_dut only
+        deletes-then-writes the file at the end of apply_configuration_file, which is too late
+        for this class's own config-apply/SDK test: it can still read the *previous* class's
+        file (e.g. a different lane/split topology) and fail with ENTRY_NOT_FOUND for ports that
+        don't exist here. Call this before applying this class's configuration so its own SDK
+        test (re)discovers ports for this topology instead of trusting stale data.
+
+        Args:
+            rm_cmd: Command that deletes /ports.json on this player. Defaults to the bare
+                host-filesystem path used by DVS and Cumulus; SONiC passes the syncd-container
+                equivalent since its copy of the file lives inside that container.
+        """
+        logging.info(f"[{self.dut_alias}] Clearing stale /ports.json before applying configuration")
+        self.execute_cmd(rm_cmd)
+
+    def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
+        """Publish the runner's port classification to /ports.json on the switch.
+
+        DUT-side SDK tests read this file rather than re-deriving connected/unconnected from the
+        transceiver state, so whatever the runner decided reaches them — in particular the
+        forced-unconnected cages, which report as plugged but must stay MLOOP generators.
+
+        Only the port lists are published. conf_args carries its speed in Kbps as a string, while the
+        SDK tests express speed in Gb and resolve it from the hardware themselves, so publishing it
+        would overwrite a correct value with an incompatible one.
+
+        This host-filesystem path serves DVS and Cumulus, where the SDK tests run bare on the switch
+        and both classify ports into SDK logical port numbers via _parse_ports_dump - already the
+        form the SDK tests expect, so the lists are published as they are. SONiC overrides this
+        method: its SDK tests run inside the syncd container and its lists are Ethernet<N> names,
+        which it maps to SDK ports itself.
+
+        Args:
+            conf_args (dict): Scenario configuration. Unused here; kept for the SONiC override.
+            selected_connected_ports: Publish this connected list instead of the cached one, for
+                callers that scope a run to a subset of the switch.
+        """
+        connected_ports = selected_connected_ports if selected_connected_ports else self.connected_ports
+        ports_connectivity_dict = {"unconnected_ports": list(self.unconnected_ports),
+                                   "connected_ports": list(connected_ports)}
+        local_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                  f"{self.dut_alias}_ports_connectivity.json")
+        logging.info(f"[{self.dut_alias}] Publishing port connectivity to /ports.json: "
+                     f"{len(ports_connectivity_dict['connected_ports'])} connected, "
+                     f"{len(ports_connectivity_dict['unconnected_ports'])} unconnected")
+        # Delete first so a class that skips this publish step (e.g. an exception during a
+        # sibling player's config apply) never leaves the previous class's /ports.json behind.
+        self.execute_cmd(f"sudo rm -f {PerfConsts.PORTS_JSON_PATH}")
+        # Staged through /tmp because the SDK tests read /ports.json from the root filesystem,
+        # which the switch login user cannot write to directly.
+        self._write_json_to_remote(local_path, ports_connectivity_dict, "/tmp", PerfConsts.PORTS_JSON_FILENAME)
+        self.execute_cmd(f"sudo mv /tmp/{PerfConsts.PORTS_JSON_FILENAME} {PerfConsts.PORTS_JSON_PATH}")
 
     def get_port_mapping_df(self):
         sdk_port_to_local_port_mapping = {}
@@ -322,12 +581,48 @@ class PerformanceCommon:
             sdk_port_speed_mapping[sdk_port] = int(speed)
         return sdk_port_to_local_port_mapping, sdk_port_speed_mapping
 
+    def get_burst_config_path(self, dst_dut_dir="/tmp"):
+        """Path of the burst configuration file on the player, as passed to the SDK."""
+        return os.path.join(dst_dut_dir, BurstConfigConsts.BURST_CONFIG_FILE_NAME)
+
+    def deploy_burst_config(self, burst_config, dst_dut_dir="/tmp"):
+        """Write the burst configuration of this player and copy it to the switch.
+
+        The flood egress ports are resolved per player, since each traffic generator has its own logical
+        port ids, and are the ports facing the DUT so that the bonus ports burst into it.
+
+        Args:
+            burst_config: BurstConfig of the running test scenario.
+            dst_dut_dir: Remote directory for the burst configuration file (default /tmp).
+
+        Returns:
+            str: Path of the burst configuration file on the switch.
+        """
+        sdk_burst_config = burst_config.to_sdk_json(self.get_sdk_ports(self.get_dut_ports()))
+        local_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                  f"{self.dut_alias}_{BurstConfigConsts.BURST_CONFIG_FILE_NAME}")
+        remote_path = self.get_burst_config_path(dst_dut_dir)
+        logging.info(f"Copy burst configuration of {self.dut_alias} from {local_path} to "
+                     f"{self.engine.ip}:{remote_path}: {sdk_burst_config}")
+        self._write_json_to_remote(local_path, sdk_burst_config, dst_dut_dir, BurstConfigConsts.BURST_CONFIG_FILE_NAME)
+        logging.info(f"Burst configuration of {self.dut_alias} is in place at {self.engine.ip}:{remote_path}, "
+                     f"the SDK will read it from {PerfConsts.BURST_CONFIG_FILE_PATH_ENV}")
+        return remote_path
+
     @retry(exceptions=TestIssue, tries=2, delay=2)
-    def configure_mloops(self, validate_mloops=True, is_simx=False):
+    def configure_mloops(self, validate_mloops=True, is_simx=False, burst_config: Optional[BurstConfig] = None):
         try:
             logging.info(f"Configure Mloop on {self.dut_alias}")
             self.logrotate("rsyslog")
             env_variables = [f"{PerfConsts.SEND_FWS_ENV}={'false' if is_simx else 'true'}"]
+            if burst_config:
+                # The file itself is deployed before this step, so a copy failure is reported as such instead of
+                # as a mloop configuration failure, and the retry of this method does not re-copy it.
+                burst_config_path = self.get_burst_config_path()
+                burst_env_variable = f"{PerfConsts.BURST_CONFIG_FILE_PATH_ENV}={burst_config_path}"
+                logging.info(f"Burst is enabled on {self.dut_alias}, the SDK mloop configuration will read the burst "
+                             f"configuration from {burst_config_path} and turn the bonus ports into burst generators")
+                env_variables.append(burst_env_variable)
             configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
             self.execute_cmd(self.get_cmd_for_sdk(configure_mloops_cmd, env_variables=env_variables))
             if validate_mloops:
@@ -440,12 +735,16 @@ class PerformanceCommon:
                             f"The file may not exist on the DUT at {source_path}.")
 
     @retry(exceptions=TestIssue, tries=2, delay=2)
-    def stop_traffic(self):
+    def stop_traffic(self, burst_config=None):
         logging.info(f"Remove Mloop configuration from {self.dut_alias}")
         remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
         self.logrotate("rsyslog")
+        # The burst configuration must be pointed at on teardown as well, otherwise the SDK leaves the
+        # policers and ACLs it bound to the bonus ports behind for every following test on this player.
+        env_variables = [f"{PerfConsts.BURST_CONFIG_FILE_PATH_ENV}={self.get_burst_config_path()}"] \
+            if burst_config else []
         try:
-            self.execute_cmd(self.get_cmd_for_sdk(remove_mloops_cmd))
+            self.execute_cmd(self.get_cmd_for_sdk(remove_mloops_cmd, env_variables=env_variables))
         except Exception as e:
             logging.error(f"Error stopping traffic: {e}")
             raise TestIssue(msg=f"Error stopping traffic: {type(e).__name__}: {e}") from e

@@ -13,6 +13,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, UndefinedErro
 
 
 class DvsPerformance(PerformanceCommon):
+    PORT_STYLE = "sdk_hex"
+
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
         super().__init__(topology_obj, engine, dut_alias, cli_obj)
         self.base_ports, self.ports_lanes = self.get_base_ports()
@@ -45,12 +47,15 @@ class DvsPerformance(PerformanceCommon):
     def get_cmd_for_sdk(self, cmd, env_variables=None):
         """
         Returns:
-        a cmd that is running on the sdk. When env_variables (e.g. SEND_FWS=0 for Simx) is set, adds export.
+        a cmd that is running on the sdk. When env_variables (e.g. SEND_FWS=0 for Simx) is set, prepends them
+        so they are only scoped to this command, not exported into the whole session.
         """
         if env_variables:
-            export_part = " ".join(f"export {v}" for v in env_variables)
-            return f"{export_part} && {cmd}"
-        return cmd
+            sdk_cmd = f"{' '.join(env_variables)} {cmd}"
+        else:
+            sdk_cmd = cmd
+        self._log_sdk_cmd(sdk_cmd)
+        return sdk_cmd
 
     def update_player_ports(self):
         self.connected_ports, self.unconnected_ports = self.get_player_ports()
@@ -59,6 +64,8 @@ class DvsPerformance(PerformanceCommon):
         # TODO: Remove this once we have a better way to undo SDK tests
         if is_redmine_issue_active([4644033])[0]:
             self.clear_syslog()
+
+        self.clear_stale_ports_json()
 
         self.base_ports, self.ports_lanes = self.get_base_ports()
         self.right_left_ports_dict = self.get_right_left_ports_dict()
@@ -69,6 +76,7 @@ class DvsPerformance(PerformanceCommon):
         cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {test_name}"
         self.execute_cmd(cmd)
         self.update_player_ports()
+        self.add_ports_connectivity_to_dut(conf_args)
 
     def get_configuration_file(self, scenario, conf_args, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR):
         templates_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
@@ -319,18 +327,21 @@ class DvsPerformance(PerformanceCommon):
 
     def restore_basic_configuration(self):
         self.cleanup_shared_json_file()
-        restart_cmd = "dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID"
+        switch_attributes = self.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
+        chip_type = get_chip_type(switch_attributes)
+
+        restart_cmd = "dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL"
+        if chip_type == "SPC6":
+            custom_config_file_arg = f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
+            logging.info(f"chip_type is SPC6, adding '{custom_config_file_arg}' to the restart command")
+            restart_cmd += custom_config_file_arg
         self.execute_cmd(restart_cmd)
 
         # TODO: Remove this once we have a better way to undo SDK tests
         if is_redmine_issue_active([4644033])[0]:
             self.clear_syslog()
 
-        switch_attributes = self.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
-        chip_type = get_chip_type(switch_attributes)
-        # TODO: Remove this once unsplit in SPC6 is supported
-        unsplit_list = ["SPC5"] if is_redmine_issue_active([4985641])[0] else ["SPC5", "SPC6"]
-        if chip_type in unsplit_list:
+        if chip_type == "SPC5":
             self.unsplit_all_ports()
         self.connected_ports = self.original_connected_ports
         self.unconnected_ports = self.original_unconnected_ports
@@ -358,9 +369,11 @@ class DvsPerformance(PerformanceCommon):
             | 0x10001  |  1  |   1   |  0  | ... | DOWN  | UNPLUGGED|
             | 0x10041  |  1  |  65   | 64  | ... | UP    | PLUGGED  |
 
-        The regex extracts (log_port, oper_state, module_state) from each row.
+        The regex extracts (log_port, label_port, oper_state, module_state) from each row.
         Ports with module_state == "PLUGGED" are classified as connected (cable present),
         all others as unconnected. ASIC-specific bonus ports are excluded from the tail.
+        Ports declared in forced_unconnected_ports.yaml for this switch are then moved back to
+        unconnected, so a port cabled to an external traffic generator stays an MLOOP generator.
 
         The result is also saved as tg_ports.json on the switch and locally as
         {dut_alias}_ports.json.
@@ -374,9 +387,11 @@ class DvsPerformance(PerformanceCommon):
         """
         bonus_ports_to_remove = self.get_bonus_ports_to_remove()
         ports_dump = self.execute_cmd("sx_api_ports_dump.py")
-        self.connected_ports, self.unconnected_ports = self._parse_ports_dump(
-            ports_dump, bonus_ports_to_remove
+        self._ports_dump_rows = self._parse_ports_dump_rows(ports_dump)
+        self.connected_ports, self.unconnected_ports = self._classify_ports_dump_rows(
+            self._ports_dump_rows, bonus_ports_to_remove
         )
+        self.check_connected_unconnected_balance(self.connected_ports, self.unconnected_ports)
         player_ports = {"connected_ports": self.connected_ports,
                         "unconnected_ports": self.unconnected_ports}
         self._save_player_ports(player_ports, dst_dut_dir)
@@ -475,6 +490,29 @@ class DvsPerformance(PerformanceCommon):
 
         return bonus_ports_map[chip_type]
 
+    def get_bonus_ports(self):
+        """Get the ASIC bonus ports of this player.
+
+        These are the trailing ports of the dump that get_player_ports excludes from testing, and the ones
+        the SDK turns into extra traffic generators when a burst is configured. Chips without bonus ports
+        (SPC1/2/3) yield an empty list.
+
+        Reuses the dump rows get_player_ports already fetched when available, since bonus-port identity is
+        a static hardware property that does not change within a test; falls back to a fresh dump otherwise.
+
+        Returns:
+            list: Bonus ports as SDK logical port numbers (int), in dump order.
+        """
+        bonus_ports_count = self.get_bonus_ports_to_remove()
+        if not bonus_ports_count:
+            return []
+        port_status_list = getattr(self, "_ports_dump_rows", None)
+        if port_status_list is None:
+            port_status_list = self._parse_ports_dump_rows(self.execute_cmd("sx_api_ports_dump.py"))
+        bonus_ports = [int(log_port, 16) for log_port, _, _, _ in port_status_list[-bonus_ports_count:]]
+        logging.info(f"Bonus ports on {self.dut_alias}: {self.get_sdk_ports(bonus_ports)}")
+        return bonus_ports
+
     def get_base_ports(self):
         """
         Returns:
@@ -483,11 +521,12 @@ class DvsPerformance(PerformanceCommon):
         """
         port_dump = self.execute_cmd('sx_api_ports_dump.py')
         port_label_tuple_list = re.findall(r"\|\s+(0x\d*\w*\d*)\|\s+\d+\|\s+\d+\|\s+(\d+)\|", port_dump)
-        ports_lanes = self.get_ports_lanes(port_label_tuple_list)
 
         bonus_ports_to_remove = self.get_bonus_ports_to_remove()
         if bonus_ports_to_remove > 0:
             port_label_tuple_list = port_label_tuple_list[:-bonus_ports_to_remove]
+        ports_lanes = self.get_ports_lanes(port_label_tuple_list)
+
         self.base_ports = port_label_tuple_list
         self.ports_lanes = ports_lanes
 
@@ -504,6 +543,10 @@ class DvsPerformance(PerformanceCommon):
         for idx, (port, label) in enumerate(port_label_tuple_list[:-1]):
             nxt_port, nxt_label = port_label_tuple_list[idx + 1]
             ports_lanes[port] = abs(int(port, 16) - int(nxt_port, 16))
+        if len(port_label_tuple_list) >= 2:
+            last_port = port_label_tuple_list[-1][0]
+            prev_port = port_label_tuple_list[-2][0]
+            ports_lanes[last_port] = ports_lanes[prev_port]
         return ports_lanes
 
     def get_right_left_ports_dict(self):
@@ -606,12 +649,7 @@ class DvsPerformance(PerformanceCommon):
         return traffic_parameters
 
     def set_ibm(self, scenario, conf_args, chip_type):
-        self.restore_basic_configuration()
-        # TODO: Remove this once unsplit in SPC6 is supported
-        unsplit_list = ["SPC5"] if is_redmine_issue_active([4985641])[0] else ["SPC5", "SPC6"]
-        if chip_type in unsplit_list:
-            self.unsplit_all_ports()
-        self.apply_configuration_file(scenario, conf_args)
+        return
 
     def get_sdk_ports(self, ports_list):
         """

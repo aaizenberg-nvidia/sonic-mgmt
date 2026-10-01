@@ -26,10 +26,10 @@ from ngts.nvos_constants.constants_nvos import (
     NvosConst,
     RebootConsts,
     RemarkableLogsConsts,
-    StatsConsts,
     SyslogConsts,
     SystemConsts,
 )
+from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.nvos_tools.infra.DeviceLogTool import grep_log_lines_after_datetime
 from ngts.nvos_tools.infra.ConnectionTool import ConnectionTool
 from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
@@ -37,6 +37,7 @@ from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
+from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.tools.test_utils import allure_utils as allure
 try:
     from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine

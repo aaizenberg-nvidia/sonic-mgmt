@@ -3,19 +3,19 @@
 {% set split_right = parameter_dict.split_right %}
 {% set dut_lldp_ports = port_list['dut'] %}
 {% set mloop_lldp_ports = down_ports() %}
-{% set dut_pre_split = cumulus_ports_already_logical_split(dut_lldp_ports) %}
-{% set mloop_pre_split = cumulus_ports_already_logical_split(mloop_lldp_ports) %}
+{% set dut_pre_split = cumulus_ports_match_requested_split(dut_lldp_ports, split_right) %}
+{% set mloop_pre_split = cumulus_ports_match_requested_split(mloop_lldp_ports, split_right) %}
 {% set _ = validate_no_unsupported_service_port_split(dut_lldp_ports, split_right, "SPX-RA right TG DUT-facing ports") %}
 {% set _ = validate_no_unsupported_service_port_split(mloop_lldp_ports, split_right, "SPX-RA right TG mloop ports") %}
 {% set dut_parent_ports = get_swp_parent_port_names(dut_lldp_ports) %}
 {% set mloop_parent_ports = get_swp_parent_port_names(mloop_lldp_ports) %}
 {% set _ = validate_no_overlapping_swp_parent_ports(dut_lldp_ports, mloop_lldp_ports, "SPX-RA right TG DUT-facing and mloop ports") %}
-{% if dut_pre_split and split_right | int == 2 %}
+{% if dut_pre_split %}
 {% set dut_ports = sort_swp_split_port_names(dut_lldp_ports) %}
 {% else %}
 {% set dut_ports = get_swp_ports_for_split(dut_lldp_ports, split_right) %}
 {% endif %}
-{% if mloop_pre_split and split_right | int == 2 %}
+{% if mloop_pre_split %}
 {% set mloop_ports = sort_swp_split_port_names(mloop_lldp_ports) %}
 {% else %}
 {% set mloop_ports = get_swp_ports_for_split(mloop_lldp_ports, split_right) %}
@@ -99,7 +99,7 @@
           address:
             130::1/120: {}
         type: loopback
-    {% if split_right | int != 1 and not (dut_pre_split and split_right | int == 2) %}
+    {% if split_right | int != 1 %}
     {% for port in dut_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -108,7 +108,7 @@
         type: swp
     {% endfor %}
     {% endif %}
-    {% if split_right | int != 1 and not (mloop_pre_split and split_right | int == 2) %}
+    {% if split_right | int != 1 %}
     {% for port in mloop_parent_ports %}
       {{ port }}:
 {% include '_interface_link_phy_breakout.jinja' %}
@@ -120,7 +120,7 @@
     {% set counter = namespace(value=0) %}
     {% for port in dut_ports %}
       {{ port }}:
-      {% if not (split_right | int == 8 and parameter_dict.get('link_phy_speed')) %}
+      {% if not parameter_dict.get('link_phy_speed') %}
 {% include '_interface_link_phy_optional.jinja' %}
       {% endif %}
         bridge:
@@ -134,7 +134,7 @@
     {% set counter = namespace(value=0) %}
     {% for port in mloop_ports %}
       {{ port }}:
-      {% if split_right | int == 8 and parameter_dict.get('link_phy_speed') %}
+      {% if parameter_dict.get('link_phy_speed') %}
         link:
           speed: {{ parameter_dict.get('link_phy_speed') }}
       {% else %}
@@ -191,6 +191,10 @@
         max-unauthenticated:
           throttle-start: 30
         permit-root-login: enabled
+    {% if parameter_dict.chip_type == 'SPC6' %}
+      wjh:
+        state: disabled
+    {% endif %}
     router:
       bgp:
         state: enabled

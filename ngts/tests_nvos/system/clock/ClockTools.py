@@ -18,7 +18,6 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_constants.constants_nvos import ApiType, NvosConst, DateTimeConsts, SyslogConsts
 from ngts.tests_nvos.system.stats.constants import StatsConsts
 from ngts.nvos_tools.infra.SudoScope import sudo_scope_if
-from ngts.nvos_constants.constants_nvos import ApiType, NvosConst, StatsConsts, DateTimeConsts
 
 
 class ClockTools:
@@ -533,14 +532,75 @@ class ClockTools:
             if 'T' not in last_log_datetime:
                 last_log_datetime = ' '.join(last_log_datetime.split())
             show_datetime = ClockTools.get_local_time_from_show_system_date_time_output(show_system_datetime)
+            show_universal = ClockTools.get_universal_time_from_show_system_date_time_output(show_system_datetime)
             # Extract year from system datetime to use for log timestamp parsing
             # (log timestamps don't include the year, so we must infer it from the system datetime)
             system_year = datetime.strptime(show_datetime, StatsConsts.SYSTEM_TIME_FORMAT).year
             log_datetime = ClockTools.get_datetime_of_system_log_line(last_log_datetime, system_year)
-            logging.info('show date-time: {}\nlogs date-time: {}'.format(show_datetime, log_datetime))
+            logging.info(
+                'show local-time: {}\nshow universal-time: {}\nlogs date-time: {}'.format(
+                    show_datetime, show_universal, log_datetime
+                )
+            )
 
-        with allure.step('Verify log timestamp similar to show date-time'):
-            ClockTools.verify_same_datetimes(show_datetime, log_datetime)
+        with allure.step('Verify log timestamp matches show date-time'):
+            ClockTools.verify_log_timestamp_matches_show(show_datetime, show_universal, log_datetime)
+
+    @staticmethod
+    def verify_log_timestamp_matches_show(show_datetime, show_universal, log_datetime):
+        """
+        @summary:
+            Assert that the last system-log timestamp matches 'show system date-time' within the
+            allowed margin, comparing ONLY against the time reference (local vs universal) that this
+            platform's syslog daemon is known to stamp in (dut.syslog_time_reference).
+        @param show_datetime: local time parsed from 'show system date-time'
+        @param show_universal: universal (UTC) time parsed from 'show system date-time'
+        @param log_datetime: date-time parsed from the last system-log line
+        """
+        # show_datetime (local) and show_universal (UTC) are the same instant in two references.
+        # Each platform's syslog daemon stamps in a KNOWN reference, exposed via
+        # dut.syslog_time_reference (DateTimeConsts.LOCAL_TIME or UNIVERSAL_TIME). We assert
+        # against that reference ONLY. Using min(diff_local, diff_universal) would mask a
+        # systematic timezone bug: e.g. a daemon that keeps stamping UTC after the local
+        # timezone changed would still "match" universal-time and pass silently.
+        expected_reference = TestToolkit.devices.dut.syslog_time_reference
+        allowed_margin = ClockConsts.DATETIME_MARGIN
+        # OpenAPI requests go through the REST/HTTP (gunicorn) stack, which adds noticeably
+        # more end-to-end latency than the NVUE CLI path. That extra delay between reading
+        # 'show system date-time' and the last log timestamp widens the observed diff, so we
+        # allow a larger margin for OpenAPI (same rationale as verify_same_datetimes() above).
+        if TestToolkit.tested_api == ApiType.OPENAPI:
+            allowed_margin *= 2
+        diff_local = ClockTools.datetime_difference_in_seconds(show_datetime, log_datetime)
+        diff_universal = ClockTools.datetime_difference_in_seconds(show_universal, log_datetime)
+        if expected_reference == DateTimeConsts.UNIVERSAL_TIME:
+            expected_show_time, expected_diff = show_universal, diff_universal
+        else:
+            expected_show_time, expected_diff = show_datetime, diff_local
+        with allure.step(
+            "Assert log timestamp matches expected '{}' reference: diff {}s < {}s".format(
+                expected_reference, expected_diff, allowed_margin
+            )
+        ):
+            assert expected_diff < allowed_margin, (
+                "Log timestamp does not match show '{ref}' within {margin}s. This platform's "
+                "syslog daemon is expected to stamp in '{ref}'; a large diff here (especially when "
+                "diff vs the other reference is small) indicates a systematic timezone issue, i.e. "
+                "the daemon used the wrong time reference.\n"
+                "expected reference: {ref} ({exp})\nshow local-time: {sl}\n"
+                "show universal-time: {su}\nlog parsed: {lg}\n"
+                "diff vs local: {dl}s, diff vs universal: {du}s"
+                .format(
+                    ref=expected_reference,
+                    exp=expected_show_time,
+                    margin=allowed_margin,
+                    sl=show_datetime,
+                    su=show_universal,
+                    lg=log_datetime,
+                    dl=diff_local,
+                    du=diff_universal,
+                )
+            )
 
     # Regex patterns for extracting timestamps from log lines
     _SYSLOG_TS_RE = re.compile(r'^(\w{3}\s{1,2}\d{1,2}\s+\d{2}:\d{2}:\d{2})')

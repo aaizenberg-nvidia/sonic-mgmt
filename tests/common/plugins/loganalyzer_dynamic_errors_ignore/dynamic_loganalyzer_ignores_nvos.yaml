@@ -582,9 +582,11 @@
         - tests_nvos/system/syslog/test_system_syslog.py::test_rsyslog_server_severity_levels
         - tests_nvos/system/syslog/test_system_syslog.py::test_rsyslog_server_severity_levels_openapi
 
-# NVOS
+# NVOS. ref: https://nvbugspro.nvidia.com/bug/6566466
 - Errors_list:
     - '.* ERR rsyslogd: omfwd: remote server.*'
+    - '.* ERR rsyslogd: omfwd:.*remote server closed connection.*'
+    - '.* WARNING rsyslogd: omfwd:.*no working target servers.*'
     - '.* ERR rsyslogd: cannot connect to.*'
     - ".*ERR rsyslogd:.+cannot connect to .+Connection refused.+"
   Conditions:
@@ -775,8 +777,11 @@
       Redmine:
         - 3544347
 
+# NVOS - expected when restoring cert while encryption is still active (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR nvued:.*ERROR: lifecycle\.py:.*user_config\.json data: {.*} does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/nmx_cert/test_cluster_app_mngr_security.py::test_restore_cluster_app_mngr_cert_fail_when_in_encryption_mode
@@ -789,6 +794,7 @@
       - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_auth
       - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_priority
       - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_accounting_basic
+      - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_accounting_local_first
       - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_accounting_lowest_server_only
       - tests_nvos/general/security/tacacs/test_aaa_tacacs.py::test_tacacs_accounting_unreachable_lowest_server
       - tests_nvos/system/gnmi/test_gnmi_pam.py::test_gnmi_auth_failthrough
@@ -847,6 +853,13 @@
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/platform_certificate/test_platform_certificate.py::test_upload_platform_certificate_bad_url
+
+# NVOS SECURITY - IMA error flows intentionally exercise bad SCP upload destinations
+- Errors_list:
+    - '.*ERR nvued:.*ERROR:.*Failed to upload file.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/general/security/ima/test_ima.py::test_ima_error_flows
 
 # NVOS SECURITY
 - Errors_list:
@@ -1022,8 +1035,8 @@
 - Errors_list:
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 800G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 100G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
   Conditions:
     - Affected_test_cases:
         - tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_nvl_negative
@@ -1163,6 +1176,17 @@
   Conditions:
     - Affected_test_cases:
       - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
+
+# NVOS - expected errors during those tests, bug 5091322
+# simulate fan speed fault
+- Errors_list:
+    - '.*WARNING hw-management-tc: WARNING: drwr\d+:\[[\d,\s]*\] FAN tacho issue\. Set tz_pwm \d+.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
+      - tests_nvos/system/test_system_health.py::test_system_health_component_counters
+      - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
+      - tests_nvos/platform/test_platform_firmware_bios/test_platform_firmware_bios.py::test_bios_auto_update_enabled
 
 # NVOS
 - Errors_list:
@@ -1477,9 +1501,11 @@
         - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
         - tests_nvos/system/test_system_health.py::test_simulate_health_problem_with_user_config_file
 
-# NVOS Security
+# NVOS Security - expected when restoring cert while encryption is still active (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR nvued:   ERROR: lifecycle\.py:.* user_config\.json data: {.*} does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nmx_cert/test_nmx_cert.py::test_restore_cert_when_in_encryption_mode
@@ -1535,8 +1561,12 @@
         - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_auth[dn-OpenApi-BadFlow]
         - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_auth_error[NVUE-BadFlow]
         - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_auth_error[OpenApi-BadFlow]
-        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[NVUE-BadFlow]
-        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[OpenApi-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[ipv4-NVUE-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[ipv6-NVUE-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[dn-NVUE-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[ipv4-OpenApi-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[ipv6-OpenApi-BadFlow]
+        - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority[dn-OpenApi-BadFlow]
 
 # NVOS ldap bad flow
 - Errors_list:
@@ -1556,11 +1586,12 @@
     - Affected_test_cases:
         - tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_server_unreachable
 
-# NVOS ldap bad flow
+# NVOS ldap bad flow. ref: https://nvbugspro.nvidia.com/bug/6565711
 - Errors_list:
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*failed to bind to LDAP server.*'
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*no available LDAP server found.*'
     - '.*WARNING nslcd\[\d+\]: \[\w+\].*ldap_start_tls_s\(\) failed \(.*\): Connect error: \(unknown error code\).*'
+    - '.*WARNING nslcd\[\d+\]: \[\w+\].*ldap_start_tls_s\(\) failed.*Connect error.*certificate verify failed.*'
     - '.*WARNING systemd\[1\]: nvued\.service: Failed with result.*'
     - '.*ERR nslcd\[\d+\]: \[\w+\].*no available LDAP server found.*'
   Conditions:
@@ -1584,11 +1615,24 @@
 # functional failure, but it was triggering the Log Analyzer bug handler on nearly
 # every LDAP test (~73 invocations / ~1h in a single MARS case). Scoped file-wide
 # (good + bad flow) via the startswith match on the test file path.
+# Also hit by suites that configure LDAP next to another method. ref: https://nvbugspro.nvidia.com/bug/5518648
 - Errors_list:
     - '.*ERR nslcd\[\d+\]: thread \d+ is still running, shutting down anyway.*'
   Conditions:
     - Affected_test_cases:
         - 'tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::'
+        - 'tests_nvos/general/security/tacacs/test_aaa_tacacs.py::'
+        - 'tests_nvos/system/gnmi/test_gnmi_pam.py::'
+
+# NVOS LDAP priority: the LDAP port is global, but the test keeps 2 servers on different ports
+# configured, so the non-promoted one is always probed on the wrong port.
+# ref: https://redmine.mellanox.com/issues/4296701, https://redmine.mellanox.com/issues/4066313
+- Errors_list:
+    - '.*WARNING nslcd\[.*\]:.*failed to bind to LDAP server ldap://.*:.*/: Can''t contact LDAP server: Transport endpoint is not connected.*'
+    - '.*WARNING nslcd\[\d+\]: \[\w+\].*Invalid credentials.*'
+  Conditions:
+    - Affected_test_cases:
+        - 'tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_priority'
 
 # NVOS
 - Errors_list:
@@ -2116,8 +2160,11 @@
     - Affected_test_cases:
       - tests_nvos/platform/test_platform_ps_redundancy.py::test_platform_ps_redundancy_functionality
 
+# NVOS - expected when updating RBAC without encryption first (ERR + WARNING).
+# ref: https://nvbugspro.nvidia.com/bug/6187355 (Redmine 5036128, Disposition: Not a bug)
 - Errors_list:
     - '.*ERR.*does not contain the encryption mode required.*'
+    - '.*WARNING nvued:.*WARNING:.*lifecycle\.py:\d+ user_config\.json data: \{.*\} does not contain the encryption mode required.*'
   Conditions:
     - Affected_test_cases:
       - tests_nvos/general/security/nmx_rbac/test_nmx_rbac.py::test_update_rbac_file_without_encryption
@@ -2157,6 +2204,18 @@
         - tests_nvos/system/test_system_factory_reset.py
         - tests_nvos/cluster/test_cluster_factory_reset.py
 
+# NVOS: Expected syncd/SDK logs during switch teardown (factory-reset / port-split / asic-health-fatal).
+#       Benign - SAI "remove switch is not implemented" plus CoS module already gone on teardown. NVBug 5849348.
+- Errors_list:
+    - '.*ERR syncd-ibv\d+#SDK: \[COS\.ERR\].*Failed to unregister CoS module LAG global advisor, error: Entry Not Found.*'
+    - '.*ERR syncd-ibv\d+#SDK: :- processOidRemove: remove switch is not implemented, FIXME.*'
+    - '.*ERR syncd-ibv\d+#SDK: :- run: Runtime error: :- processOidRemove: remove switch is not implemented, FIXME.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/system/test_system_factory_reset.py
+        - tests_nvos/interfaces/test_port_split.py
+        - tests_nvos/system/test_system_health.py::test_asic_health_fatal_state_marks_all_unhealthy
+
 # NVOS: Expected logs during ztp negative tests
 - Errors_list:
     - '.*provisioning-script: Error.*'
@@ -2165,6 +2224,11 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/system/test_system_ztp.py::test_ztp_provisioning_script_negative
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json
+        - tests_nvos/system/test_system_ztp.py::test_ztp_connectivity_check
+        - tests_nvos/system/test_system_ztp.py::test_ztp_json_complex
+        - tests_nvos/system/test_system_ztp.py::test_ztp_startup_file_commands_list
+        - tests_nvos/system/test_system_ztp.py::test_ztp_nmx_negative
 
 # NVOS: Expected logs
 - Errors_list:
@@ -2340,8 +2404,13 @@
         - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
 
 # NMX package good flow: nv-bridge Version mismatch during package swap (error expected)
+# gpu_telemetry: uninstalling nmx-telemetry also removes NMX-T Lite, which is shiped inside that package,
+# so gpu_telemetry cannot reach its sockets until the test restarts the container during cleanup.
 - Errors_list:
     - '.*WARNING nv-bridge#nv-bridge.*Version mismatch: daemon version.*vs server version.*'
+    - '.*WARNING nv-bridge#nv-bridge.*Hello gRPC refused.*'
+    - '.*ERR nv-bridge#nv-bridge.*[handle_connection_end] -E- Invalid or missing connection-id metadata.*'
+    - '.*ERR gpu_telemetry: Connection error: GET .* on /var/run/nmx-t-lite/.*\.sock.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/cluster/test_nmx_package.py::test_nmx_package_good_flow
@@ -2353,6 +2422,33 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_set
+
+# NVOS 2026 sonic rebase: Benign boot-time kernel messages on every reboot - appear in syslog during the early boot window.
+# ref: https://nvbugspro.nvidia.com/bug/6444993 https://nvbugspro.nvidia.com/bug/6451858
+- Errors_list:
+    - '.*NOTICE kernel: \[.*\] Kernel command line: BOOT_IMAGE=.*'
+    - '.*WARNING kernel: \[.*\] x86/bugs: return thunk changed.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] busy detected; another entity is sending conflicting requests.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] failed to cache protocols.*'
+    - '.*ERR kernel: \[.*\] pci .*: DOE: \[.*\] failed to create mailbox.*'
+    - '.*WARNING \(haveged\).*haveged\.service: Referenced but unset environment variable evaluates to an empty string: DAEMON_ARGS.*'
+    - '.*WARNING kernel: \[.*\] Could not retrieve perf counters.*'
+    - '.*WARNING kernel: \[.*\] dw-apb-uart.*forbid DMA for kernel console.*'
+    - '.*WARNING kernel: \[.*\] ipmi_si.*The BMC does not support clearing the recv irq bit, compensating.*'
+    - '.*WARNING kernel: \[.*\] ipmi_si.*Error clearing flags: c1.*'
+    - '.*WARNING kernel: \[.*\] nvme nvme\d+: using unchecked data buffer.*'
+    - '.*ERR sonic-db-cli: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*ERR sonic-cfggen: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*ERR python3: :- parseDatabaseConfig: Sonic database config file doesn''t exist at /var/run/redis/sonic-db/database_config\.json.*'
+    - '.*WARNING rsyslogd: omprog: program .* terminated; will be restarted.*'
+    - '.*WARNING rsyslogd: action .* suspended \(module ''omprog''\).*'
+    - '.*WARNING kernel: \[.*\] at24 .*: supply vcc not found, using dummy regulator.*'
+    - '.*ERR systemd-modules-load\[.*\]: Failed to find module ''i2c-mux-regmap''.*'
+    - '.*WARNING kernel: \[.*\] device-mapper: core: CONFIG_IMA_DISABLE_HTABLE is disabled.*'
+    - '.*WARNING systemd\[.*\]: .*/mgmtportsyncd\.service:\d+: Unknown key ''WantedBy'' in section \[Unit\], ignoring.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos
 
 # NVOS
 - Errors_list:
@@ -2418,3 +2514,21 @@
   Conditions:
   - Redmine:
     - 3669272
+
+# nv-bridge encryption negative: expected CA validation failure for internal certificate
+- Errors_list:
+    - '.*ERR nvued:.*ERROR: JobsThread nos.funits.cue_cluster_v\d+.lifecycle lifecycle.py:\d+ Internal certificate cannot be validated by the CA certificate.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_negative
+
+# certificate expiry monitoring: the scheduler WARNING/ERROR alerts are the expected result of these
+# tests. The alerts are emitted asynchronously, so they can land outside a loganalyzer_ignore() window.
+# Restricted to the 'cert-expiry-*' certificates these tests generate, so real expiry-monitoring
+# problems on other certificates are still reported.
+- Errors_list:
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expires\b.*'
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expired\b.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/security/certificate/test_cert_expiry_alert.py

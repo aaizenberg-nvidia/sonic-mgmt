@@ -37,7 +37,7 @@ from .helpers import (
     post_stress_checks
 )
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.stress_mode
@@ -213,6 +213,7 @@ def test_stress_mode_l1_power_saving_persistence(engines, devices):
                 validate_all_ports_l1_cap(engine, device, PowerSavingConsts.L1_CAP_DISABLED).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.stress_mode
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_stress_mode_fatal_no_reboot(engines, devices, nv_command):

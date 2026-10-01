@@ -1,2 +1,0 @@
-StartDevice,StartPort,EndDevice,EndPort,BandWidth,VlanID,VlanMode
-r-r740-05-bf3-sonic-01,Ethernet0,r-anaconda-86,ethernet 1/8,200000,108,Access

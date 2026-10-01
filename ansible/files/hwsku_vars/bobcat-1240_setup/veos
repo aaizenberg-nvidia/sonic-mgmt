@@ -13,6 +13,7 @@ all:
           - t1-48-lag
           - t0-28
           - t0-88-o8c80
+          - t1-d96u4
       children:
         server_01:
         
@@ -149,6 +150,80 @@ vms_1:
       ansible_host: 10.220.10.252
     VM0125:
       ansible_host: 10.220.10.253
+    VM0126:
+      ansible_host: 10.220.72.1
+    VM0127:
+      ansible_host: 10.220.72.2
+    VM0128:
+      ansible_host: 10.220.72.3
+    VM0129:
+      ansible_host: 10.220.72.4
+    VM0130:
+      ansible_host: 10.220.72.5
+    VM0131:
+      ansible_host: 10.220.72.6
+    VM0132:
+      ansible_host: 10.220.72.7
+    VM0133:
+      ansible_host: 10.220.72.8
+    VM0134:
+      ansible_host: 10.220.72.9
+    VM0135:
+      ansible_host: 10.220.72.10
+    VM0136:
+      ansible_host: 10.220.72.11
+    VM0137:
+      ansible_host: 10.220.72.12
+    VM0138:
+      ansible_host: 10.220.72.13
+    VM0139:
+      ansible_host: 10.220.72.14
+    VM0140:
+      ansible_host: 10.220.72.15
+    VM0141:
+      ansible_host: 10.220.72.16
+    VM0142:
+      ansible_host: 10.220.72.17
+    VM0143:
+      ansible_host: 10.220.72.18
+    VM0144:
+      ansible_host: 10.220.72.19
+    VM0145:
+      ansible_host: 10.220.72.20
+    VM0146:
+      ansible_host: 10.220.72.21
+    VM0147:
+      ansible_host: 10.220.72.22
+    VM0148:
+      ansible_host: 10.220.72.23
+    VM0149:
+      ansible_host: 10.220.72.24
+    VM0150:
+      ansible_host: 10.220.72.25
+    VM0151:
+      ansible_host: 10.220.72.26
+    VM0152:
+      ansible_host: 10.220.72.27
+    VM0153:
+      ansible_host: 10.220.72.28
+    VM0154:
+      ansible_host: 10.220.72.29
+    VM0155:
+      ansible_host: 10.220.72.30
+    VM0156:
+      ansible_host: 10.220.72.31
+    VM0157:
+      ansible_host: 10.220.72.32
+    VM0158:
+      ansible_host: 10.220.72.33
+    VM0159:
+      ansible_host: 10.220.72.34
+    VM0160:
+      ansible_host: 10.220.72.35
+    VM0161:
+      ansible_host: 10.220.72.36
+    VM0162:
+      ansible_host: 10.220.72.37
 
 server_01:
   children:

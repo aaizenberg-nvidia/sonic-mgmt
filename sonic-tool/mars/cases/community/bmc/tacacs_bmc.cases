@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> TACACS Test BMC </info>
+            <name> tacacs_bmc </name>
+            <owner> SONiC </owner>
+        </Test>
+        <Case>
+            <tags> TACACS, BMC </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 55555 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <info> RO_USER Case </info>
+        <name> ro_user </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout --disable_loganalyzer  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 5400 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_ro_user.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> RW_USER Case </info>
+        <name> rw_user </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout --disable_loganalyzer  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 5400 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_rw_user.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
+        <info> RO DISK Case </info>
+        <name> ro_disk </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout --disable_loganalyzer  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 2000 --session-timeout 3000 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_ro_disk.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
+        <info> JIT_USER Case </info>
+        <name> jit_user </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout --disable_loganalyzer  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 600 --session-timeout 900 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_jit_user.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
+        <info> Authorization Case </info>
+        <name> tacacs_authorization </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 3600 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_authorization.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <ignore>
+            <!-- weekend case  -->
+            <condition>
+                <key> skip_weekend_cases </key>
+                <op> == </op>
+                <value> yes </value>
+            </condition>
+        </ignore>
+        <info> Accounting Case </info>
+        <name> tacacs_accounting </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=stdout  -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 2400 --session-timeout 7200 --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts tacacs/test_accounting.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>

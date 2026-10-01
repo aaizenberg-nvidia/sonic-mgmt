@@ -14,7 +14,12 @@ class NvuePlatformCli(NvueBaseCli):
     @staticmethod
     @check_output
     def action_generate(engine, resource_path, name=""):
-        return NvuePlatformCli.action(engine, action_type=ActionType.GENERATE.replace('@', ''), resource_path=resource_path, param_value=name)
+        return NvuePlatformCli.action_deprecated(
+            engine,
+            action_type=ActionType.GENERATE.replace('@', ''),
+            resource_path=resource_path,
+            param_value=name,
+        )
 
     @staticmethod
     @check_output

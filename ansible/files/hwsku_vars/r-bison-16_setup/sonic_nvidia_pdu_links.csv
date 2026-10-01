@@ -1,3 +1,5 @@
 StartDevice,StartPort,EndDevice,EndPort,EndFeed
 pdu-10-208-0-189,15,r-bison-16,PSU1,
 pdu-10-208-0-189,16,r-bison-16,PSU2,
+pdu-10-208-2-47,19,r-bison-16,PSU3,
+pdu-10-208-2-47,20,r-bison-16,PSU4,

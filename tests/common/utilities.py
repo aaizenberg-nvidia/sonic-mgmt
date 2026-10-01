@@ -933,14 +933,14 @@ def pdu_reboot(pdu_controller):
         logging.warning("pdu_controller is None, skip PDU reboot")
         return False
     hostname = pdu_controller.dut_hostname
-    if not pdu_controller.turn_off_outlet():
+    turn_off_succeeded = pdu_controller.turn_off_outlet()
+    if not turn_off_succeeded:
         logging.error("Turn off the PDU outlets of {} failed".format(hostname))
-        return False
     time.sleep(10)  # sleep 10 second to ensure there is gap between power off and on
-    if not pdu_controller.turn_on_outlet():
+    turn_on_succeeded = pdu_controller.turn_on_outlet()
+    if not turn_on_succeeded:
         logging.error("Turn on the PDU outlets of {} failed".format(hostname))
-        return False
-    return True
+    return turn_off_succeeded and turn_on_succeeded
 
 
 def get_image_type(duthost):
@@ -1576,14 +1576,17 @@ def reload_minigraph_with_golden_config(duthost, json_data, safe_reload=True,
     for multi-asic/single-asic devices, we only have 1 golden_config_db.json
     """
     from tests.common.config_reload import config_reload
-    golden_config = "/etc/sonic/golden_config_db.json"
+    golden_config = constants.GOLDEN_CONFIG_DB_PATH
     duthost.copy(content=json.dumps(json_data, indent=4), dest=golden_config)
     try:
         config_reload(duthost, config_source="minigraph", safe_reload=safe_reload, override_config=True,
                       wait_for_bgp=True, safe_reload_ignored_dockers=safe_reload_ignored_dockers)
     finally:
-        # Cleanup golden config because some other test or device recover may reload config with golden config
+        # Cleanup golden config because some other test or device recover may reload config with golden config,
+        # then restore the original golden config.
         duthost.command('mv {} {}_backup'.format(golden_config, golden_config))
+        if file_exists_on_dut(duthost, constants.GOLDEN_CONFIG_DB_PATH_ORI):
+            duthost.command('cp {} {}'.format(constants.GOLDEN_CONFIG_DB_PATH_ORI, golden_config))
 
 
 def file_exists_on_dut(duthost, filename):

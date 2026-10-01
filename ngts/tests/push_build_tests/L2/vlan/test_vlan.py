@@ -1,5 +1,7 @@
 import allure
 import logging
+import re
+
 import pytest
 
 from retry.api import retry_call
@@ -17,6 +19,11 @@ from ngts.cli_util.verify_cli_show_cmd import verify_show_cmd
 """
 
 logger = logging.getLogger()
+
+# Poll until SONiC + kernel bridge VLAN membership converge after mode changes.
+# Air setups can lag behind "show vlan config"; avoid fixed sleeps.
+VLAN_MODE_READY_TRIES = 20
+VLAN_MODE_READY_DELAY_SEC = 1
 
 
 class TestVLAN:
@@ -60,6 +67,40 @@ class TestVLAN:
         if vlan:
             pkt_filter = 'vlan {} and '.format(vlan) + pkt_filter
         return pkt_filter
+
+    def wait_for_port_vlan_mode_ready(self, vlan_expected_info, port, bridge_vlan_expectations,
+                                      tries=VLAN_MODE_READY_TRIES, delay=VLAN_MODE_READY_DELAY_SEC):
+        """
+        Wait until SONiC VLAN config and kernel bridge VLAN membership converge.
+
+        :param vlan_expected_info: list of (regex, expected_match) for verify_show_cmd
+        :param port: interface name, e.g. PortChannel0001
+        :param bridge_vlan_expectations: list of (vid, mode) where mode is 'access', 'trunk',
+                                         or None to assert the VLAN is absent from the port
+        """
+        def _verify():
+            vlan_info = self.cli_object.vlan.show_vlan_config()
+            verify_show_cmd(vlan_info, vlan_expected_info)
+
+            bridge_vlan = self.dut_engine.run_cmd(f'sudo bridge vlan show dev {port}')
+            for vid, mode in bridge_vlan_expectations:
+                if mode is None:
+                    assert not re.search(r'\b{}\b'.format(vid), bridge_vlan), (
+                        'VLAN {} still present on {} in bridge vlan:\n{}'.format(vid, port, bridge_vlan))
+                elif mode == 'access':
+                    assert re.search(r'\b{}\b\s+PVID\s+Egress\s+Untagged'.format(vid), bridge_vlan, re.I), (
+                        'Expected VLAN {} as access (PVID Egress Untagged) on {}:\n{}'.format(
+                            vid, port, bridge_vlan))
+                elif mode == 'trunk':
+                    assert re.search(r'\b{}\b'.format(vid), bridge_vlan), (
+                        'Expected VLAN {} as trunk member on {}:\n{}'.format(vid, port, bridge_vlan))
+                    assert not re.search(r'\b{}\b\s+PVID'.format(vid), bridge_vlan, re.I), (
+                        'VLAN {} unexpectedly configured as PVID on {}:\n{}'.format(vid, port, bridge_vlan))
+                else:
+                    raise ValueError('Unsupported bridge vlan mode: "{}"'.format(mode))
+
+        with allure.step('Wait for SONiC and bridge VLAN mode ready on {}'.format(port)):
+            retry_call(_verify, tries=tries, delay=delay, logger=logger)
 
     @pytest.mark.build
     @pytest.mark.push_gate
@@ -431,7 +472,6 @@ class TestVLAN:
             self.cli_object.vlan.add_port_to_vlan(self.po_iface, self.vlan_800, 'trunk')
 
             logger.info("Vlan trunk mode: verify ports vlan mode")
-            vlan_info = self.cli_object.vlan.show_vlan_config()
             vlan_expected_info = [(self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.po_iface,
                                                                         mode='tagged'), True),
                                   (self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.dut_ha_2,
@@ -442,7 +482,9 @@ class TestVLAN:
                                                                         mode='tagged'), True),
                                   (self.show_vlan_config_pattern.format(vid=self.vlan_800, member=self.dut_hb_1,
                                                                         mode='tagged'), True)]
-            verify_show_cmd(vlan_info, vlan_expected_info)
+            self.wait_for_port_vlan_mode_ready(
+                vlan_expected_info, self.po_iface,
+                [(self.vlan_30, 'trunk'), (self.vlan_800, 'trunk')])
 
             with allure.step('Vlan trunk mode: verify tagged traffic with vlan {} from bond0 '
                              'can reach hb-dut-1 VLAN {}'.format(self.vlan_30, self.vlan_30)):
@@ -520,12 +562,17 @@ class TestVLAN:
 
             logger.info("Vlan access mode: verify dut-ha-1 ({}) in mode access with vlan {}".format(self.po_iface,
                                                                                                     self.vlan_800))
-            vlan_info = self.cli_object.vlan.show_vlan_config()
             vlan_expected_info = [(self.show_vlan_config_pattern.format(vid=self.vlan_800, member=self.po_iface,
                                                                         mode='untagged'), True),
                                   (self.show_vlan_config_pattern.format(vid=self.vlan_800, member=self.dut_hb_1,
-                                                                        mode='tagged'), True)]
-            verify_show_cmd(vlan_info, vlan_expected_info)
+                                                                        mode='tagged'), True),
+                                  (self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.po_iface,
+                                                                        mode='tagged'), False),
+                                  (self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.po_iface,
+                                                                        mode='untagged'), False)]
+            self.wait_for_port_vlan_mode_ready(
+                vlan_expected_info, self.po_iface,
+                [(self.vlan_800, 'access'), (self.vlan_30, None)])
 
             with allure.step('Vlan access mode: verify untagged traffic can reach from '
                              'bond0 (ha-dut-1) to hb-dut-1 VLAN {}'.format(self.vlan_800)):
@@ -581,12 +628,17 @@ class TestVLAN:
 
             logger.info("Vlan access mode: verify dut-ha-1 ({}) in mode access with vlan {}".format(self.po_iface,
                                                                                                     self.vlan_30))
-            vlan_info = self.cli_object.vlan.show_vlan_config()
             vlan_expected_info = [(self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.po_iface,
                                                                         mode='untagged'), True),
                                   (self.show_vlan_config_pattern.format(vid=self.vlan_30, member=self.dut_hb_1,
-                                                                        mode='tagged'), True)]
-            verify_show_cmd(vlan_info, vlan_expected_info)
+                                                                        mode='tagged'), True),
+                                  (self.show_vlan_config_pattern.format(vid=self.vlan_800, member=self.po_iface,
+                                                                        mode='tagged'), False),
+                                  (self.show_vlan_config_pattern.format(vid=self.vlan_800, member=self.po_iface,
+                                                                        mode='untagged'), False)]
+            self.wait_for_port_vlan_mode_ready(
+                vlan_expected_info, self.po_iface,
+                [(self.vlan_30, 'access'), (self.vlan_800, None)])
 
             with allure.step('Vlan access mode: verify untagged traffic can reach from '
                              'bond0 (ha-dut-1) to hb-dut-1 VLAN {}'.format(self.vlan_30)):

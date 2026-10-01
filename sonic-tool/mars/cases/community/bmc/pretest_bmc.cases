@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> pre test BMC </info>
+            <name> pretest_bmc </name>
+            <owner> SONiC </owner>
+            <pre></pre>
+            <post></post>
+        </Test>
+        <Case>
+            <tags> PRETEST, BMC </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 55555 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <info> PRE TEST BMC Case </info>
+        <name> pretest </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 2700 -k \"not test_cleanup\" --allure_server_addr=\"10.215.11.120\" --disable_memory_utilization\'" --test-scripts test_pretest.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>

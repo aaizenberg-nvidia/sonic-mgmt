@@ -55,6 +55,7 @@ def test_cluster_sdn_factory_reset_nmx_down(engines, devices, test_api, has_loop
 
 
 @pytest.mark.nmx
+@pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, setup_name,
@@ -74,6 +75,7 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
         TestToolkit.GeneralApi[TestToolkit.tested_api].save_config(engines.dut)
 
         skip_chassis_mapping = is_bug_active(4207869) and standalone_system
+        _wait_until_fm_config_has_gfm_value(engines, sdn)
         config_files_paths = get_current_config_files_paths(sdn, devices, skip_chassis_mapping)
         if not skip_chassis_mapping:
             with allure.step("Wait for chassis_mapping to be populated by nmx-c before baseline snapshot"):
@@ -83,8 +85,10 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
             initial_config_contents[file_type] = engines.dut.run_cmd("sudo cat {}".format(file_path))
 
         with allure.step("Change initial content"):
+            chassis_sn = ClusterTools.get_chassis_sn()
             for file_type in config_files_paths.keys():
-                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(file_path=config_files_paths[file_type])
+                edit_cmd = ClusterConsts.CONFIG_FILES_CHANGE[file_type].format(
+                    file_path=config_files_paths[file_type], chassis_sn=chassis_sn)
                 engines.dut.run_cmd(edit_cmd)
 
         with allure.step("Install modified configurations"):
@@ -96,6 +100,7 @@ def test_sdn_reset_factory(engines, devices, test_api, has_loopbox, test_name, s
         with allure.step("Running sdn factory reset"):
             ClusterTools.reset_sdn_factory_default_and_wait_for_restart(sdn, cluster, engine=engines.dut)
 
+        _wait_until_fm_config_has_gfm_value(engines, sdn)
         verify_current_config_equals_given_config(sdn, engines, devices, initial_config_contents, output_format,
                                                   skip_chassis_mapping)
 
@@ -167,6 +172,29 @@ def get_current_config_files_paths(sdn, devices, skip_chassis_mapping):
                 current_installed_config_path = output[installed_file]['path']
                 files_dict[file_type] = current_installed_config_path
     return files_dict
+
+
+def _wait_until_fm_config_has_gfm_value(engines, sdn):
+    """
+    Wait until a generated fm_config carries a value for GFM_WAIT_TIMEOUT_SEC. Observed: for ~10s after
+    an sdn/system factory reset brings nmx-controller back, `generate` still renders the package template
+    (key empty) before GFM's value appears, and no NVUE state exposes that transition. NVBug 6348727
+    (Not-a-bug) covers the value itself, not this window.
+    """
+    fm_config = sdn.config.apps.app_name[ClusterConsts.NMX_CONTROLLER].type.file_type[ClusterConsts.NMX_CONTROLLER_CONFIG_FM]
+    with allure.step("Wait for GFM_WAIT_TIMEOUT_SEC to be populated in generated fm_config"):
+        for _ in range(12):
+            generate_output = fm_config.action_generate_sdn()
+            generated_file = ClusterTools.get_generated_file_name(generate_output.returned_value, 'config')
+            output = OutputParsingTool.parse_show_output_to_dict(fm_config.files.show(output_format=OutputFormat.json),
+                                                                 output_format=OutputFormat.json).get_returned_value()
+            content = engines.dut.run_cmd(f"sudo cat {output[generated_file]['path']}")
+            if any(line.strip().startswith('GFM_WAIT_TIMEOUT_SEC=') and line.strip() != 'GFM_WAIT_TIMEOUT_SEC='
+                   for line in content.split('\n')):
+                return
+            logger.info("GFM_WAIT_TIMEOUT_SEC has no value yet, sleeping for 5 seconds")
+            time.sleep(5)
+        assert False, "fm_config GFM_WAIT_TIMEOUT_SEC did not get a value within 60s after nmx-controller came back"
 
 
 def _wait_until_chassis_mapping_file_has_content(engines, sdn):

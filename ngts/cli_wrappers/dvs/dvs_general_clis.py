@@ -43,7 +43,7 @@ class DvsGeneralCli(GeneralCliCommon):
         Internal method to install SDK and FW with debian flag control
         """
         di_flag = "-di" if debian_enabled else ""
-        install_cmd = "sdk_install -v {} {} && fw_burn -v {} -f --ocr".format(sdk_version, di_flag, fw_version)
+        install_cmd = "sdk_install -v {} {} && fw_burn -v {} -f -m --ocr".format(sdk_version, di_flag, fw_version)
         self.engine.run_cmd(install_cmd, validate=True)
 
     def install_sdk_and_burn_fw_flow(self, sdk_version):
@@ -66,14 +66,17 @@ class DvsGeneralCli(GeneralCliCommon):
             self.dvs_restart()
             logger.info("SDK and FW installation has ended successfully!")
 
-    def install_traffic_generator(self):
+    def install_traffic_generator(self, perf_sys_sdk_change=None):
         """
         Function verifies the traffic generator is functional post deploy on DVS OS
         :return: None
         """
+        logger.info(f"install_traffic_generator (DVS): perf_sys_sdk_change={perf_sys_sdk_change!r}")
+        perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         sdk_version = self.get_sdk_version()
         sdk_branch = self.get_sdk_branch(sdk_version)
-        self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch)
+        self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, perf_sys_sdk_branch=perf_sys_sdk_branch,
+                                             perf_sys_sdk_gerrit_change=perf_sys_sdk_gerrit_change)
 
     def get_fw_version_from_sdk(self, sdk_version):
         fw_version_path = os.path.join(PerfConsts.SDK_VERSION_PATH, sdk_version, PerfConsts.FW_VERSION_FILE)
@@ -85,8 +88,15 @@ class DvsGeneralCli(GeneralCliCommon):
         logger.info("Performing restart to DVS")
         clean_switch_alias_cmd = f"alias clean_switch={PerfConsts.CLEAN_SWITCH_PATH}"
         self.engine.run_cmd_set([clean_switch_alias_cmd], validate=True)
-        restart_cmd = "dvs_stop.sh && clean_switch && dvs_start.sh --sdk_bridge_mode=HYBRID"
+        restart_cmd = "dvs_stop.sh && clean_switch && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL"
+        if self._get_chip_type_from_noga() == "SPC6":
+            restart_cmd += f" --custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}"
         self.engine.run_cmd(restart_cmd, validate=True)
+
+    def _get_chip_type_from_noga(self):
+        hostname = self.hostname().strip()
+        noga_data = get_noga_entire_resource_data(resource_name=hostname)
+        return noga_data[0]['chip_type']
 
     def apply_mount(self):
         with allure.step("Apply mount and configure switch"):

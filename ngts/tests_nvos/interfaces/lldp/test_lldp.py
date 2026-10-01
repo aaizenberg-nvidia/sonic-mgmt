@@ -20,6 +20,9 @@ from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
 
 
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,6 +116,7 @@ def test_lldp_disabled(engines, devices, random_api):
 
 
 @pytest.mark.lldp
+@pytest.mark.simx
 @pytest.mark.system
 @pytest.mark.interface
 @pytest.mark.cumulus
@@ -413,8 +417,10 @@ def test_lldp_disable_dhcp(engines, devices, serial_engine):
                 # real defect, not something to silently skip. If a port is
                 # intentionally disconnected on a platform, remove it from that
                 # platform's mgmt_ports list (see Devices/*.py) instead of tolerating
-                # it here.
-                assert LLDPTool.is_mgmt_port_carrier_up(serial_engine, interface_name), (
+                # it here. Polled rather than one-shot: the previous iteration's
+                # dhcp-client unset+apply bounces ALL mgmt ports (interfaces-config),
+                # so this port's carrier may still be recovering for up to ~18s.
+                assert LLDPTool.wait_mgmt_port_carrier_up(serial_engine, interface_name), (
                     f"{interface_name} is declared as a mgmt port but has no operational "
                     f"carrier (ifconfig RUNNING); lldpd will not transmit LLDP on it. If "
                     f"this port is intentionally disconnected on this platform, remove it from "
@@ -709,7 +715,7 @@ def _restore_mgmt_ports_after_flapping(mgmt_port_names, serial_engine, engines, 
 
 
 def _verify_lldp_running(lldp, engine):
-    if TestToolkit.devices.dut.is_ib():
+    if TestToolkit.devices.dut.is_ib() or TestToolkit.devices.dut.is_nvl():
         with allure.step("Verify lldp container is running"):
             lldp_running = engine.run_cmd('docker inspect --format \'{{.State.Running}}\' lldp')
             assert lldp_running == 'true', 'The lldp docker container is down'
@@ -750,8 +756,8 @@ def _verify_lldp_running_and_neighbors_present(lldp, engine, device):
 
 def _verify_lldp_not_running(lldp, engine, device):
     with allure.step("Verify lldp container is not running"):
-        if TestToolkit.devices.dut.is_ib():
-            if is_redmine_issue_active(4868603):
+        if TestToolkit.devices.dut.is_ib() or TestToolkit.devices.dut.is_nvl():
+            if TestToolkit.devices.dut.is_ib() and is_redmine_issue_active(4868603):
                 time.sleep(5)
 
             def _check_lldp_container_stopped():

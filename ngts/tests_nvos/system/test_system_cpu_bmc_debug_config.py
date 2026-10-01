@@ -13,6 +13,7 @@ from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.cpu_debug_config
 @pytest.mark.system
 def test_system_cpu_debug_config(engines, devices, nv_command):
@@ -85,6 +86,7 @@ def test_system_cpu_debug_config(engines, devices, nv_command):
             assert SystemConsts.PASS_FOLDER_CPU_DEBUG_CONFIG not in output_dictionary, 'config file not deleted'
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.bmc_debug_config
 @pytest.mark.system
 def test_bmc_debug_config(engines, devices, nv_command):
@@ -157,6 +159,7 @@ def test_bmc_debug_config(engines, devices, nv_command):
         assert SystemConsts.PASS_FOLDER_CPU_DEBUG_CONFIG not in output_dictionary, 'config file not deleted'
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.cpu_debug_config
 @pytest.mark.system
 def test_cpu_bmc_debug_config_negative(engines, devices, nv_command):

@@ -16,7 +16,8 @@ import re
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration)
+                                                                apply_test_configuration,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts
 
 
@@ -40,14 +41,14 @@ def basic_setup_configuration(players, conf_args):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def conf_args(skip_test_conditionally):
+def conf_args(skip_test_conditionally, chip_type):
     """
     This function alters all of the jinja template files.
     """
     split_left = 2
     split_right = 2
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "fboss_enabled": True,
                  "auto_buffer_mode": "False",
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
@@ -70,7 +71,8 @@ def set_allure_lossy_lossless_title(request, scenario):
     scenario_names_dict = {"lossy_lossless_scenario_1": 'All lossless test',
                            "lossy_lossless_scenario_2": 'All lossy test',
                            "lossy_lossless_scenario_3a": '50% lossless traffic, 50% lossy traffic',
-                           "lossy_lossless_scenario_3b": '75% lossless traffic, 25% lossy traffic'}
+                           "lossy_lossless_scenario_3b": '75% lossless traffic, 25% lossy traffic',
+                           "lossy_lossless_scenario_1_burst": 'All lossless test, with a burst from the bonus ports'}
 
     test_name = get_perf_test_name(request)
     test_name_with_scenario = re.sub(r'\[.*?\]', test_name, f"- Scenario {scenario}: {scenario_names_dict[scenario]}")

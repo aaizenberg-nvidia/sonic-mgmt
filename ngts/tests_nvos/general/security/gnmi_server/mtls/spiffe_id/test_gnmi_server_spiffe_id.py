@@ -28,6 +28,7 @@ from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.test_api_mtls_sp
     import_cas_safely,
     import_certs_safely,
     setup_test,
+    spiffe_setup_users,
 )
 from ngts.tests_nvos.general.security.gnmi_server.mtls.spiffe_id.conftest import (
     system_cleanup,
@@ -41,7 +42,7 @@ from ngts.tests_nvos.general.security.helpers import (
 from ngts.tests_nvos.system.gnmi.conftest import gnmi_certs, scp_player
 from ngts.tests_nvos.system.gnmi.constants import CERTIFICATE, GnmiMode
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient, GnmicCmdBuilder
-from ngts.tests_nvos.system.gnmi.helpers import build_gnmic_cmd_and_verify
+from ngts.tests_nvos.system.gnmi.helpers import build_gnmic_cmd_and_verify, wait_for_gnmi_ready
 from ngts.tests_nvos.system.gnmi.test_gnmi_cert import (
     read_process_for_specified_time,
     validate_gnmi_streaming_output,
@@ -879,6 +880,9 @@ def check_spiffe_positive(
                     )
     if verify_auth:
         with allure.step("verify spiffe auth works"):
+            # Re-applying gnmi-server mtls config restarts the nv-gnmi container, so probing auth right
+            # away can hit the agent before it re-bound the new cert and get Unauthenticated.
+            wait_for_gnmi_ready(engines)
             cases: List[Case] = [
                 Case(
                     f"no creds + {setup.cert_spif_of_user1_1.info}",
@@ -997,7 +1001,7 @@ def gnmi_spiffe_factory_reset_no_params_check():
         with allure.step("verify after factory reset"):
             check_spiffe_negative(engines, setup, users_should_exist=False)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1055,7 +1059,7 @@ def gnmi_spiffe_factory_reset_keep_basic_check():
 
             check_spiffe_positive(engines, setup, verify_config=False)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1090,7 +1094,7 @@ def gnmi_spiffe_factory_reset_keep_all_config_check():
         with allure.step("verify after factory reset"):
             check_spiffe_positive(engines, setup)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -1129,6 +1133,6 @@ def gnmi_spiffe_upgrade_check():
 
             check_spiffe_positive(engines, setup)
     finally:
-        cleanup_spiffe_gnmi()
+        cleanup_spiffe_gnmi(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call

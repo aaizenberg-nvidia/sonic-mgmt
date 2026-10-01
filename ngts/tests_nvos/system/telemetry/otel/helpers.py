@@ -2,12 +2,12 @@
 
 The module is split into two helper types, separated by the banners below:
 
-1. **Suite plumbing** â€” bring-up, DUT telemetry configuration, collector artifact
+1. **Suite plumbing** — bring-up, DUT telemetry configuration, collector artifact
    parsing, and metric-name comparison. Test files call these directly. For telemetry
    master enable, always use :func:`stage_telemetry_master_state` and
    :func:`apply_telemetry_configuration` with ``is_nvos`` (never raw
    ``telemetry.set(state)`` / ``export.otlp.set`` in new code).
-2. **Expected-metrics derivation** â€” fetch ``metrics-classes.yaml`` from the DUT
+2. **Expected-metrics derivation** — fetch ``metrics-classes.yaml`` from the DUT
    and gate the expected metric-name set by DUT capabilities. Only
    :func:`expected_metric_names_from_dut` is consumed by tests; everything else
    in that section is internal.
@@ -65,7 +65,7 @@ _DISABLED = TelemetryConsts.State.DISABLED.value
 
 
 # =============================================================================
-# Suite plumbing â€” bring-up, DUT telemetry configuration, collector artifact
+# Suite plumbing — bring-up, DUT telemetry configuration, collector artifact
 # parsing, and metric-name comparison. Test files call these directly.
 # =============================================================================
 
@@ -107,7 +107,7 @@ class EnabledClasses:
     enabled class tokens. A class token is the base sentinel
     :data:`OtelCollectorConst.TELEMETRY_BASE_CLASS` (the always-on non-phy /
     non-categorized metrics), :data:`TelemetryConsts.PHY`, or a platform-stats
-    class name (``cpu``, ``transceiver-info``, â€¦).
+    class name (``cpu``, ``transceiver-info``, …).
     """
 
     families: Dict[str, frozenset]
@@ -117,9 +117,9 @@ class EnabledClasses:
 class TelemetryEnablement:
     """Test-declared model of what telemetry was enabled, per export scope.
 
-    * ``root`` â€” classes enabled at the telemetry root.
-    * ``stats_groups`` â€” classes enabled under each ``stats-group <id>``.
-    * ``destination_binding`` â€” OTLP destination IP -> bound ``stats-group`` id, or
+    * ``root`` — classes enabled at the telemetry root.
+    * ``stats_groups`` — classes enabled under each ``stats-group <id>``.
+    * ``destination_binding`` — OTLP destination IP -> bound ``stats-group`` id, or
       ``None`` when the destination exports the root config.
 
     The expected metric set for a destination is derived from
@@ -161,7 +161,7 @@ def _enabled_classes_for_nvos_stats_group() -> EnabledClasses:
     Platform sub-classes are default-on: enabling ``platform-stats`` exports every
     platform sub-class regardless of which subset the stats-group explicitly turns
     on. The test only enables a subset (``TEST01_STATS_GROUP_PLATFORM_CLASSES``) but
-    the DUT still exports the rest (disk/memory/health-info/â€¦), so the expected set
+    the DUT still exports the rest (disk/memory/health-info/…), so the expected set
     must mirror the full default-on class set. A class is only excluded when it is
     explicitly disabled (no test does so today).
     """
@@ -236,7 +236,7 @@ def cumulus_telemetry_uses_enable_schema(dut) -> bool:
 
     Pre-5.15 Cumulus uses ``nv set system telemetry enable on|off``; 5.15+ switched to
     ``nv set system telemetry state enabled|disabled`` (this is the only telemetry knob
-    that changed schema across 5.15 â€” every subtree ``export â€¦ state`` uses
+    that changed schema across 5.15 — every subtree ``export … state`` uses
     ``state enabled/disabled`` on both, per SSIM ``OM_CHANGED_BEFORE_5_15``).
 
     Applies only to Cumulus (``is_eth_dut``): NVOS always uses the ``state`` schema.
@@ -257,7 +257,7 @@ def stage_telemetry_master_state(
 ) -> None:
     """Stage the platform-specific telemetry master enable (no ``nv config apply``).
 
-    Call before other ``nv set system telemetry â€¦`` knobs in a multi-set block.
+    Call before other ``nv set system telemetry …`` knobs in a multi-set block.
 
     * NVOS: ``nv set system telemetry export otlp state enabled``
     * Cumulus 5.15+: ``nv set system telemetry state enabled``
@@ -365,7 +365,7 @@ def _clear_other_transport_destinations(
     Two reasons, both load-bearing once a test picks its transport at random:
 
     * NVOS refuses a configuration carrying the same destination address under
-      both transports â€” *"cannot be configured for both gRPC and HTTP. Use a
+      both transports — *"cannot be configured for both gRPC and HTTP. Use a
       unique destination address per protocol."*
     * The suite bring-up always leaves a gRPC destination pointing at the
       collector. Leaving it there while adding an http one would export to the
@@ -416,7 +416,7 @@ def _apply_otlp_grpc_base(
     ``insecure=False`` configures TLS: destination ``certificate``, transport-level ``insecure``
     disabled, and optional transport-level ``certificate`` (default VRF secured topology).
 
-    ``destination_id`` is whatever NVUE keys the destination by â€” an IPv4 or IPv6
+    ``destination_id`` is whatever NVUE keys the destination by — an IPv4 or IPv6
     address, or a hostname. ``transport`` selects the ``otlp/<transport>`` subtree;
     the two are configuration-identical apart from http's extra ``encoding`` leaf,
     which no caller here sets.
@@ -661,7 +661,7 @@ def enable_nvos_telemetry_families(
 ) -> TelemetryEnablement:
     """Enable OTLP + the given telemetry families on the DUT (others explicitly disabled).
 
-    ``families`` is any subset of :data:`TelemetryConsts.ALL_STATS_SUBTREES` â€”
+    ``families`` is any subset of :data:`TelemetryConsts.ALL_STATS_SUBTREES` —
     pass one family for "X only" tests, all four for full coverage, or any combo
     in between. For each enabled family the per-class metrics are turned on too.
 
@@ -687,7 +687,7 @@ def enable_nvos_telemetry_families(
     plan 5.1 / 5.2) do not have to keep the two in step by hand.
 
     ``clear_other_transports`` drops any destination left under the transports
-    not being used â€” see :func:`_clear_other_transport_destinations` for why a
+    not being used — see :func:`_clear_other_transport_destinations` for why a
     randomizing test needs that. Off by default so a caller that always exports
     over gRPC issues exactly the configuration it always did.
 
@@ -780,7 +780,7 @@ def enable_nvos_families_export(
     family subtrees are staged (Cumulus/NVOS secured test01 parity).
 
     Pass ``collector_ips`` to also bind ``stats-group sg_01`` and stage interface +
-    platform under the stats-group (insecure test01 / dual-dest flows only â€” not
+    platform under the stats-group (insecure test01 / dual-dest flows only — not
     used on secured test01).
     """
     enabled = set(families)
@@ -1210,7 +1210,7 @@ def collect_metric_names_window(
     """
     Truncate the collector's export, wait one collection window, fetch the artifact, parse names.
 
-    The wait defaults to :func:`OtelCollectorConst.collection_window_sec` â€” at minimum
+    The wait defaults to :func:`OtelCollectorConst.collection_window_sec` — at minimum
     :data:`OtelCollectorConst.OTEL_COLLECTION_MIN_WAIT_SEC` (70s) so platform-stats (60s
     sample interval) always emits at least one point. Pass ``wait_sec`` explicitly for
     Cumulus collection window (e.g. test01's 177s wait). Returns the de-duplicated set of metric names
@@ -1287,7 +1287,7 @@ def _is_prometheus_sidecar_metric(metric_name: str) -> bool:
 def _metric_name_matches_group_prefix(metric_name: str, group_prefix: str) -> bool:
     """Return True when ``metric_name`` belongs to the NVUE telemetry family ``group_prefix``.
 
-    metrics-classes / NVUE group names (``interface-stats``, ``platform-stats``, â€¦) map to
+    metrics-classes / NVUE group names (``interface-stats``, ``platform-stats``, …) map to
     OTLP ``nvswitch_*`` prefixes; each family prefix also matches the metrics of its
     ``-phy`` subgroup.
     """
@@ -1391,7 +1391,7 @@ def log_otel_metric_inventory(
 
     with allure.step(f"OTEL metric inventory ({collector_label})"):
         logger.info("=" * 72)
-        logger.info("OTEL METRIC INVENTORY â€” %s", collector_label)
+        logger.info("OTEL METRIC INVENTORY — %s", collector_label)
         logger.info("  collected (raw):           %d", len(actual))
         logger.info("  after exclude/ignore:      %d (ignore=%d)", len(actual_filtered), len(ignore))
         logger.info("  NVUE telemetry (matched): %d", len(telemetry_matched))
@@ -1564,7 +1564,7 @@ def assert_otlp_payload_valid(
     Checks the payload shape the plan calls for: at least one document, at least one
     ``resourceMetrics`` entry, and at least one metric inside it. An artifact that
     decodes but carries an empty ``resourceMetrics`` list is the interesting failure
-    â€” the export ran and delivered nothing.
+    — the export ran and delivered nothing.
     """
     with allure.step(f"Validate OTLP payload shape on {collector_label}"):
         if not docs:
@@ -1657,7 +1657,7 @@ def assert_nvos_export_stopped(
 
     Used after disabling the export. The collector stays up but its file exporter
     only writes when data reaches it, so the expected outcome is no artifact at all
-    â€” hence ``require_data=False``, without which this would wait out the artifact
+    — hence ``require_data=False``, without which this would wait out the artifact
     timeout on exactly the runs that should pass. A collector also carrying
     prometheus sidecar scrapes instead yields an artifact of non-catalog names; both
     outcomes pass, and only ``nvswitch_*`` presence fails.
@@ -2128,7 +2128,7 @@ def _attribute_key_names_interface(attribute_key: AttributeKey, interface: str) 
 
 
 # =============================================================================
-# Expected-metrics derivation â€” fetch metrics-classes.yaml from the DUT and gate
+# Expected-metrics derivation — fetch metrics-classes.yaml from the DUT and gate
 # the expected metric-name set by DUT capabilities. Only
 # expected_metric_names_from_dut is consumed by tests; everything below is
 # internal to this section.
@@ -2251,7 +2251,7 @@ def assert_metric_names_for_stats_group_export(
                 "; see OTEL METRIC INVENTORY log above."
             )
         logger.info(
-            "%s: export OK â€” telemetry=%d, prometheus_sidecar=%d (prefixes=%s)",
+            "%s: export OK — telemetry=%d, prometheus_sidecar=%d (prefixes=%s)",
             collector_label,
             summary["telemetry_matched_count"],
             summary["prometheus_sidecar_count"],
@@ -2520,7 +2520,7 @@ def _apply_capability_gating(
                 )
         out -= removed
         summary_lines.append(
-            f"  [ABSENT]  {capability}: prefixes {list(prefixes)} â†’ {len(removed)} names subtracted from expected"
+            f"  [ABSENT]  {capability}: prefixes {list(prefixes)} → {len(removed)} names subtracted from expected"
         )
 
     for capability, names in OtelCollectorConst.OTLP_METRIC_NAMES_GATED_BY_CAPABILITY.items():
@@ -2533,7 +2533,7 @@ def _apply_capability_gating(
         removed = out & gated
         out -= removed
         summary_lines.append(
-            f"  [ABSENT]  {capability}: exact names {sorted(gated)} â†’ "
+            f"  [ABSENT]  {capability}: exact names {sorted(gated)} → "
             f"{len(removed)} names subtracted from expected"
         )
 

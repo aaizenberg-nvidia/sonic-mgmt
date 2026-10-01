@@ -6,12 +6,12 @@ from retry.api import retry_call
 
 from ngts.cli_util.verify_cli_show_cmd import verify_show_cmd
 from ngts.tests.nightly.auto_negotition.conftest import convert_speeds_to_mb_format, get_matched_types, \
-    get_interface_cable_width
+    get_interface_cable_width, NO_LOOPBACKS_SKIP_REASON
 from ngts.tests.nightly.auto_negotition.auto_neg_common import TestAutoNegBase
 from tests.common.plugins.loganalyzer.loganalyzer import LogAnalyzer
 from ngts.tests.nightly.conftest import cleanup
-from ngts.helpers.interface_helpers import get_lb_mutual_speed
-from ngts.constants.constants import AutonegCommandConstants
+from ngts.helpers.interface_helpers import get_lb_mutual_speed, is_uneven_split
+from ngts.constants.constants import AutonegCommandConstants, SonicConst
 from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
 from ngts.tests.nightly.fec.test_fec import is_port_pam4
 from tests.common.plugins.loganalyzer.bug_handler_helper import get_bughandler_instance
@@ -28,6 +28,11 @@ INVALID_AUTO_NEG_MODE = "enable"
 INVALID_PORT_ERR_REGEX = r"Invalid\s+port"
 INVALID_SPEED_ERR_REGEX = r"Invalid\s+speed\s+specified"
 INVALID_AUTO_NEG_MODE_ERR_REGEX = r"Error: Invalid value.*enable.*enabled.*disabled"
+
+EVEN_SPLIT_MODES = (SonicConst.PORT_SPLIT_NUM_1, SonicConst.PORT_SPLIT_NUM_2,
+                    SonicConst.PORT_SPLIT_NUM_4, SonicConst.PORT_SPLIT_NUM_8)
+NO_SPLIT_LOOPBACK_SKIP_REASON = ("Test is skipped because the test could only run on loopback that is split,"
+                                 " the dut does not have such loopback")
 
 
 @pytest.fixture(autouse=False)
@@ -65,7 +70,22 @@ def local_loganalyzer_mismatch_speed_type(duthosts, ignore_main_loganalyzer, req
 
 class TestAutoNegNegative(TestAutoNegBase):
 
-    def test_negative_config_interface_autoneg(self):
+    @pytest.fixture()
+    def tested_lb_dict(self, available_lb_dict):
+        """
+        :param available_lb_dict: available_lb_dict fixture
+        :return: the dut loopbacks without the session skip, so the CLI checks run without loopbacks
+        """
+        return available_lb_dict
+
+    @pytest.fixture()
+    def tested_dut_host_lb_dict(self):
+        """
+        :return: an empty dict, the tests do not use the dut to host loopbacks
+        """
+        return {}
+
+    def test_negative_config_interface_autoneg(self, negative_cli_port):
         """
         Test command "config interface autoneg <interface_name> <mode>".
         Verify the command return error if given invalid interface
@@ -75,7 +95,7 @@ class TestAutoNegNegative(TestAutoNegBase):
         with allure.step("Verify the command return error if given invalid auto neg mode"):
             logger.info("Verify the command return error if given invalid auto neg mode.")
             output = \
-                self.cli_objects.dut.interface.config_auto_negotiation_mode(self.interfaces.dut_ha_1,
+                self.cli_objects.dut.interface.config_auto_negotiation_mode(negative_cli_port,
                                                                             INVALID_AUTO_NEG_MODE)
             verify_show_cmd(output, [(INVALID_AUTO_NEG_MODE_ERR_REGEX, True)])
 
@@ -94,7 +114,7 @@ class TestAutoNegNegative(TestAutoNegBase):
                     logger.info("port {} is PAM4".format(port))
                     pytest.skip("Disable autoneg is not supported on PAM4 ports")
 
-    def test_negative_config_advertised_speeds(self, cleanup_list):
+    def test_negative_config_advertised_speeds(self, cleanup_list, negative_cli_port):
         """
         Test command config interface advertised-speeds <interface_name> <speed_list>.
         Verify the command return error if given invalid interface name or speed list.
@@ -105,27 +125,9 @@ class TestAutoNegNegative(TestAutoNegBase):
         :param cleanup_list:  a list of cleanup functions that should be called in the end of the test
         :return: raise assertion error in case of failure
         """
-        split_mode = 2
-        if not self.tested_lb_dict.get(split_mode):
-            pytest.skip("Test is skipped because the test could only run on loopback that is split,"
-                        " the dut does not have such loopback")
-        first_lb = 0
-        lb = self.tested_lb_dict[split_mode][first_lb]
-        lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
-        conf = self.get_mismatch_speed_conf(split_mode, lb, lb_mutual_speeds)
-        self.skip_test_for_pam4(conf)
-        with allure.step("Verify the command return error if given invalid speed list"):
-            logger.info("Verify the command return error if given invalid speed list")
-            output = self.cli_objects.dut.interface.config_advertised_speeds(lb[0], INVALID_SPEED)
-            verify_show_cmd(output, [(INVALID_SPEED_ERR_REGEX, True)])
-        with allure.step("Verify the command return error if given invalid interface name"):
-            logger.info("Verify the command return error if given invalid interface name")
-            output = self.cli_objects.dut.interface.config_advertised_speeds(INVALID_INTERFACE_NAME,
-                                                                             "all")
-            verify_show_cmd(output, [(INVALID_PORT_ERR_REGEX, True)])
-        with allure.step("Verify auto-negotiation fails in case of mismatch advertised speeds"):
-            logger.info("Verify auto-negotiation fails in case of mismatch advertised speeds")
-            self.verify_auto_neg_failure_scenario(lb, conf, cleanup_list)
+        self.verify_invalid_advertised_speeds_cli(negative_cli_port)
+        self.try_even_advertised_speeds_mismatch(cleanup_list)
+        self.try_uneven_advertised_speeds_mismatch(cleanup_list)
 
     def get_mismatch_speed_conf(self, split_mode, lb, lb_mutual_speeds):
         rand_idx = random.choice(range(1, len(lb_mutual_speeds)))
@@ -196,28 +198,19 @@ class TestAutoNegNegative(TestAutoNegBase):
         :param cleanup_list:  a list of cleanup functions that should be called in the end of the test
         :return: raise assertion error in case of failure
         """
-        possible_split_modes = [1, 2] if self.tested_lb_dict.get(2) else [1]
-        split_mode = random.choice(possible_split_modes)
-        first_lb = 0
-        lb = self.tested_lb_dict[split_mode][first_lb]
         with allure.step("Verify the command return error if given invalid interface name"):
             logger.info("Verify the command return error if given invalid interface name")
             output = self.cli_objects.dut.interface.config_advertised_interface_types(INVALID_INTERFACE_NAME,
                                                                                       "all")
             verify_show_cmd(output, [(INVALID_PORT_ERR_REGEX, True)])
-        lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
-        lb_mutual_types = get_matched_types(self.ports_lanes_dict[lb[0]], lb_mutual_speeds,
-                                            types_dict=self.interfaces_types_port_dict[lb[0]])
-        conf = self.get_mismatch_type_conf(split_mode, lb, list(lb_mutual_types))
-        self.skip_test_for_pam4(conf)
-        with allure.step("verify auto-negotiation fails in case of mismatch advertised types"):
-            logger.info("verify auto-negotiation fails in case of mismatch advertised types")
-            self.verify_auto_neg_failure_scenario(lb, conf, cleanup_list)
+        self.try_even_advertised_types_mismatch(cleanup_list)
+        self.try_uneven_advertised_types_mismatch(cleanup_list)
 
     def get_mismatch_type_conf(self, split_mode, lb, lb_mutual_types):
         if len(lb_mutual_types) <= 1:
-            pytest.skip(f"This test is not supported because lb {lb} doesn't support more than 1 interface type, "
-                        f"supported interfaces type on lb are: {lb_mutual_types}")
+            logger.warning(f"Skipping lb {lb} because it doesn't support more than 1 interface type, "
+                           f"supported interfaces type on lb are: {lb_mutual_types}")
+            return None
         rand_idx = random.choice(range(1, len(lb_mutual_types)))
         port_1_adv_type, port_2_adv_type = [lb_mutual_types[0:rand_idx], lb_mutual_types[rand_idx:]]
         tested_lb_dict = {split_mode: [lb]}
@@ -241,6 +234,8 @@ class TestAutoNegNegative(TestAutoNegBase):
         if self.cli_objects.dut.im.is_im_enabled():
             pytest.skip("Test must run while SW control feature is disabled")
         split_mode = 1
+        if not self.tested_lb_dict.get(split_mode):
+            pytest.skip(NO_LOOPBACKS_SKIP_REASON)
         first_lb = 0
         lb = self.tested_lb_dict[split_mode][first_lb]
         tested_lb_dict = {1: [lb]}
@@ -316,3 +311,143 @@ class TestAutoNegNegative(TestAutoNegBase):
         conf[lb[0]]['expected_autoneg_when_both_enabled'] = 'Force'
         conf[lb[1]]['expected_autoneg_when_both_enabled'] = 'enabled'
         return conf
+
+    def conf_is_pam4(self, conf):
+        return any(is_port_pam4(port_conf['Width'], port_conf['Speed']) for port_conf in conf.values())
+
+    def verify_invalid_advertised_speeds_cli(self, port):
+        with allure.step("Verify the command return error if given invalid speed list"):
+            logger.info("Verify the command return error if given invalid speed list")
+            output = self.cli_objects.dut.interface.config_advertised_speeds(port, INVALID_SPEED)
+            verify_show_cmd(output, [(INVALID_SPEED_ERR_REGEX, True)])
+        with allure.step("Verify the command return error if given invalid interface name"):
+            logger.info("Verify the command return error if given invalid interface name")
+            output = self.cli_objects.dut.interface.config_advertised_speeds(INVALID_INTERFACE_NAME, "all")
+            verify_show_cmd(output, [(INVALID_PORT_ERR_REGEX, True)])
+
+    @property
+    def has_uneven_split_lb(self):
+        return bool(self.tested_lb_dict.get(SonicConst.PORT_SPLIT_NUM_3))
+
+    def get_first_tested_lb(self, split_mode):
+        """
+        :param split_mode: the split mode to take the loopback from
+        :return: a (split_mode, lb) tuple of the first tested loopback, or None when there is none
+        """
+        lb_list = self.tested_lb_dict.get(split_mode)
+        return (split_mode, lb_list[0]) if lb_list else None
+
+    def choose_even_mismatch_lb(self, min_mutual_speeds):
+        """
+        :param min_mutual_speeds: the least number of mutual speeds the loopback has to support
+        :return: a random (split_mode, lb) tuple of the even-split loopbacks that can be used,
+        or None when the dut has no such loopback
+        """
+        candidates = [(split_mode, lb) for split_mode in EVEN_SPLIT_MODES
+                      for lb in self.tested_lb_dict.get(split_mode) or []
+                      if len(get_lb_mutual_speed(lb, split_mode,
+                                                 self.split_mode_supported_speeds)) >= min_mutual_speeds]
+        return random.choice(candidates) if candidates else None
+
+    def get_even_speeds_mismatch_lb(self):
+        """
+        The advertised speeds mismatch needs a loopback with at least 2 mutual speeds, so that the two
+        ports can advertise disjoint speed subsets. Setups without an uneven-split loopback keep using
+        the first split-2 loopback, so that their flow is unaffected by the uneven-split support.
+        :return: a (split_mode, lb) tuple to run on, or None when the dut has no usable loopback
+        """
+        if not self.has_uneven_split_lb:
+            selected = self.get_first_tested_lb(SonicConst.PORT_SPLIT_NUM_2)
+            if not selected:
+                pytest.skip(NO_SPLIT_LOOPBACK_SKIP_REASON)
+            return selected
+        return self.choose_even_mismatch_lb(min_mutual_speeds=2)
+
+    def get_even_types_mismatch_lb(self):
+        """
+        Setups without an uneven-split loopback keep choosing between the first split-1 and split-2
+        loopbacks, so that their flow is unaffected by the uneven-split support.
+        :return: a (split_mode, lb) tuple to run on, or None when the dut has no usable loopback
+        """
+        if not self.has_uneven_split_lb:
+            possible_split_modes = [SonicConst.PORT_SPLIT_NUM_1]
+            if self.tested_lb_dict.get(SonicConst.PORT_SPLIT_NUM_2):
+                possible_split_modes.append(SonicConst.PORT_SPLIT_NUM_2)
+            return self.get_first_tested_lb(random.choice(possible_split_modes))
+        return self.choose_even_mismatch_lb(min_mutual_speeds=1)
+
+    def try_advertised_speeds_mismatch(self, split_mode, lb, cleanup_list):
+        """
+        Verify auto-negotiation fails when the two loopback ports advertise disjoint speed subsets.
+        PAM4 ports cannot have auto-neg disabled, so such a loopback is not usable for this check. It
+        only skips the whole test when there is no uneven-split loopback left to check instead.
+        :param split_mode: the split mode of the loopback
+        :param lb: the loopback to run on
+        :param cleanup_list: a list of cleanup functions that should be called in the end of the test
+        :return: True if the mismatch scenario ran, False otherwise
+        """
+        lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
+        conf = self.get_mismatch_speed_conf(split_mode, lb, lb_mutual_speeds)
+        if not is_uneven_split(split_mode) and not self.tested_lb_dict.get(SonicConst.PORT_SPLIT_NUM_3):
+            self.skip_test_for_pam4(conf)
+        if self.conf_is_pam4(conf):
+            logger.info("Skip advertised-speeds mismatch on lb %s: disable autoneg is not supported on PAM4", lb)
+            return False
+        with allure.step("Verify auto-negotiation fails in case of mismatch advertised speeds"):
+            logger.info("Verify auto-negotiation fails in case of mismatch advertised speeds")
+            self.verify_auto_neg_failure_scenario(lb, conf, cleanup_list)
+        return True
+
+    def try_even_advertised_speeds_mismatch(self, cleanup_list):
+        selected = self.get_even_speeds_mismatch_lb()
+        if not selected:
+            return False
+        split_mode, lb = selected
+        return self.try_advertised_speeds_mismatch(split_mode, lb, cleanup_list)
+
+    def try_uneven_advertised_speeds_mismatch(self, cleanup_list):
+        split_mode = SonicConst.PORT_SPLIT_NUM_3
+        if not self.tested_lb_dict.get(split_mode):
+            return False
+        return self.try_advertised_speeds_mismatch(split_mode, self.tested_lb_dict[split_mode][0], cleanup_list)
+
+    def try_even_advertised_types_mismatch(self, cleanup_list):
+        selected = self.get_even_types_mismatch_lb()
+        if not selected:
+            return False
+        split_mode, lb = selected
+        lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
+        lb_mutual_types = get_matched_types(self.ports_lanes_dict[lb[0]], lb_mutual_speeds,
+                                            types_dict=self.interfaces_types_port_dict[lb[0]])
+        conf = self.get_mismatch_type_conf(split_mode, lb, list(lb_mutual_types))
+        if conf and not self.conf_is_pam4(conf):
+            with allure.step("verify auto-negotiation fails in case of mismatch advertised types"):
+                logger.info("verify auto-negotiation fails in case of mismatch advertised types")
+                self.verify_auto_neg_failure_scenario(lb, conf, cleanup_list)
+            return True
+        if not self.tested_lb_dict.get(SonicConst.PORT_SPLIT_NUM_3):
+            if conf is None:
+                pytest.skip(f"This test is not supported because lb {lb} doesn't support more than 1 "
+                            f"interface type, supported interfaces type on lb are: {lb_mutual_types}")
+            self.skip_test_for_pam4(conf)
+        return False
+
+    def try_uneven_advertised_types_mismatch(self, cleanup_list):
+        split_mode = SonicConst.PORT_SPLIT_NUM_3
+        if not self.tested_lb_dict.get(split_mode):
+            return False
+        lb = self.tested_lb_dict[split_mode][0]
+        lb_mutual_speeds = get_lb_mutual_speed(lb, split_mode, self.split_mode_supported_speeds)
+        lb_mutual_types = list(
+            get_matched_types(self.ports_lanes_dict[lb[0]], lb_mutual_speeds,
+                              types_dict=self.interfaces_types_port_dict[lb[0]]) &
+            get_matched_types(self.ports_lanes_dict[lb[1]], lb_mutual_speeds,
+                              types_dict=self.interfaces_types_port_dict[lb[1]]))
+        conf = self.get_mismatch_type_conf(split_mode, lb, lb_mutual_types)
+        if conf is None or self.conf_is_pam4(conf):
+            logger.info("Skip advertised-types mismatch on split-3 lb %s", lb)
+            return False
+        with allure.step("verify auto-negotiation fails in case of mismatch advertised types"):
+            logger.info("verify auto-negotiation fails in case of mismatch advertised types")
+            self.verify_auto_neg_failure_scenario(lb, conf, cleanup_list)
+        return True

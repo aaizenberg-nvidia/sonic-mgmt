@@ -36,18 +36,7 @@ class GNMIEnvironment(object):
                 return
             else:
                 pytest.fail("GNMI is not running")
-        cmd = "docker images | grep -w sonic-telemetry"
-        if duthost.shell(cmd, module_ignore_errors=True)['rc'] == 0:
-            cmd = "docker ps | grep -w telemetry"
-            if duthost.shell(cmd, module_ignore_errors=True)['rc'] == 0:
-                self.gnmi_config_table = "TELEMETRY"
-                self.gnmi_container = "telemetry"
-                self.gnmi_program = "telemetry"
-                self.gnmi_port = 50051
-                return
-            else:
-                pytest.fail("Telemetry is not running")
-        pytest.fail("Can't find telemetry and gnmi image")
+        pytest.fail("Can't find gnmi image")
 
 
 def create_ext_conf(ip, filename):
@@ -191,6 +180,7 @@ def apply_gnmi_cert(duthost, ptfhost):
     dut_command += "--server_crt %s%s " % (env.gnmi_cert_path, env.gnmi_server_cert)
     dut_command += "--server_key %s%s " % (env.gnmi_cert_path, env.gnmi_server_key)
     dut_command += "--ca_crt %s%s " % (env.gnmi_cert_path, env.gnmi_ca_cert)
+    dut_command += "--client_auth none "
     if env.enable_zmq:
         dut_command += " -zmq_address=tcp://127.0.0.1:8100 "
     dut_command += "-gnmi_native_write=true -v=10 >/root/gnmi.log 2>&1 &\""

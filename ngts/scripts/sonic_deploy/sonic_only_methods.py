@@ -10,10 +10,11 @@ import time
 import yaml
 from pathlib import Path
 
+from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers import json_file_helper
 from ngts.helpers.system_helpers import set_timezone as system_set_timezone
 from ngts.scripts.sonic_deploy.image_preparetion_methods import is_url, get_sonic_branch
-from ngts.constants.constants import MarsConstants, SonicDeployConstants, SonicConst, SimxCommunityConsts
+from ngts.constants.constants import MarsConstants, SonicDeployConstants, SonicConst, SimxCommunityConsts, InfraConst
 from ngts.scripts.sonic_deploy.community_only_methods import deploy_minigpraph, \
     reboot_validation, execute_script, is_dualtor_topo, is_dualtor_aa_topo, generate_minigraph, \
     config_y_cable_simulator, add_host_for_y_cable_simulator
@@ -21,8 +22,18 @@ from retry.api import retry_call, retry
 from ngts.helpers.run_process_on_host import run_background_process_on_host
 from ngts.helpers.interface_helpers import get_service_port
 from ngts.common.util import get_installed_dpu_info, get_specified_installed_dpus_from_noga
+from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
+from ngts.cli_util.cli_parsers import generic_sonic_output_parser
 
 logger = logging.getLogger()
+
+# Hosts that should skip BIOS version check / restore during deploy.
+BIOS_RESTORE_SKIP_HOSTS = {
+    'r-bobcat-01',  # r-bobcat-01 BIOS fail to restore, remove when the setup is fixed.
+    'slm-174',  # slm-174 BIOS fail to update, redmine#5255760
+}
+
+BIOS_INSTALL_REBOOT_TIMEOUT = 900
 
 
 class SonicInstallationSteps:
@@ -68,7 +79,7 @@ class SonicInstallationSteps:
     def pre_installation_steps(
             sonic_topo, neighbor_type, base_version, target_version, setup_info, port_number, is_simx, threads_dict,
             destination_hwsku, is_performance=False, parallel=False, deploy_image_only=False, is_air=False,
-            deploy_chipless=False, deploy_sequential=False):
+            deploy_chipless=False, deploy_sequential=False, skip_add_remove_topo=False):
         """
         Pre-installation steps for SONIC
         :param sonic_topo: the topo for SONiC testing, for example: t0, t1, t1-lag, ptf32
@@ -85,6 +96,9 @@ class SonicInstallationSteps:
         :param deploy_image_only: deploy image only flag
         :param deploy_chipless: deploy chipless flag
         :param deploy_sequential: perform deployment sequentially
+        :param skip_add_remove_topo: skip remove-topo/add-topo. Used for the host-switch phase of
+                                     a dual (BMC + switch) deploy, where the BMC deploy already
+                                     owns the testbed topology.
         """
         setup_name = setup_info['setup_name']
         dut_name = setup_info['duts'][0]['dut_name']
@@ -111,6 +125,13 @@ class SonicInstallationSteps:
                 dut_names.append(dut['dut_name'])
             if deploy_image_only:
                 logger.info("Skipping remove-topo as deploy_image_only is True")
+                return
+            if skip_add_remove_topo:
+                # Dual (BMC + switch) deploy: the host-switch runs on a fixed
+                # management topology and must not touch the testbed topology
+                # already set up by the BMC deploy. The switch minigraph is pushed
+                # later by the post-installation deploy-mg.
+                logger.info("Skipping remove-topo/add-topo for the host-switch in a dual BMC+switch deploy")
                 return
             with allure.step('Remove topologies'):
                 cached_hwsku = get_cached_hwsku(dut_name)
@@ -549,6 +570,120 @@ class SonicInstallationSteps:
         dut_engine.run_cmd(f"docker exec syncd python3 /usr/bin/{script_name} --ports {ports_arg}", validate=True)
 
     @staticmethod
+    def restore_bios_if_needed(engine, fw_pkg_path, platform_params, cli):
+        """
+        Check if the DUT's current BIOS version matches the target version
+        (index 0) defined in firmware.json. If there is a mismatch, restore
+        BIOS to the target version via fwutil install and perform a cold reboot.
+
+        :param engine: SSH engine connected to the DUT
+        :param fw_pkg_path: path to firmware.json (or updated-fw.tar.gz)
+        :param platform_params: DottedDict with platform info (filtered_platform, host_name, etc.)
+        :param cli: DUT cli object (used to wait for dockers before fwutil)
+        """
+        if not fw_pkg_path:
+            fw_pkg_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)).split("ngts")[0],
+                MarsConstants.UPDATED_FW_TAR_PATH
+            )
+            logger.warning(f"No fw_pkg_path provided, falling back to default: {fw_pkg_path}")
+
+        hostname = platform_params.get('host_name', '')
+        assert hostname, 'No hostname provided, aborting BIOS version check'
+        if hostname in BIOS_RESTORE_SKIP_HOSTS:
+            logger.info(f'Host {hostname} is in BIOS restore skip list, skipping BIOS version check')
+            return
+
+        fw_data = extract_fw_data(fw_pkg_path)
+        chassis = normalize_firmware_chassis_name(platform_params.filtered_platform)
+
+        # Get component definitions (merge host-level overrides)
+        chassis_data = fw_data.get('chassis', {}).get(chassis, {})
+        component = dict(chassis_data.get('component', {}))
+        if 'host' in fw_data and hostname in fw_data['host']:
+            for comp_type in list(fw_data['host'][hostname]['component'].keys()):
+                component[comp_type] = fw_data['host'][hostname]['component'][comp_type]
+
+        # Target = index 0 (latest) version
+        bios_revisions = component['BIOS']
+        target_version = bios_revisions[0]['version']
+        target_firmware_url = bios_revisions[0]['firmware']
+        logger.info(f'Target BIOS version for chassis {chassis}: {target_version}')
+
+        cli.cli_obj.general.verify_dockers_are_up(platform_params=platform_params)
+
+        # Get current BIOS version from DUT
+        fwutil_output = engine.run_cmd('sudo fwutil show status')
+        parsed = generic_sonic_output_parser(fwutil_output)
+        component_versions = dict(zip(parsed[0]['Component'], parsed[0]['Version']))
+        current_bios = component_versions.get('BIOS')
+
+        logger.info(f'Current BIOS version: {current_bios}, Target BIOS version: {target_version}')
+
+        if current_bios == target_version:
+            logger.info('BIOS version matches target. No restore needed')
+            return
+
+        # --- BIOS mismatch detected, perform restore ---
+        with allure.step(f'Restoring BIOS from {current_bios} to {target_version}'):
+            logger.info(f'BIOS version mismatch detected. Restoring from {current_bios} to {target_version}')
+
+            # Download on the NGTS host because wget and /auto are unavailable on the DUT.
+            fw_filename = os.path.basename(target_firmware_url.rstrip('/'))
+            local_fw_path = f'/tmp/{fw_filename}'
+            dut_fw_path = local_fw_path
+            logger.info(f'Downloading BIOS firmware from {target_firmware_url} to NGTS:{local_fw_path}')
+            try:
+                subprocess.run(
+                    ['wget', '--timeout=60', '--continue', '-O', local_fw_path, target_firmware_url],
+                    check=True)
+                logger.info(f'Copying BIOS firmware from NGTS:{local_fw_path} to DUT:{dut_fw_path}')
+                engine.copy_file(source_file=local_fw_path, dest_file=os.path.basename(dut_fw_path),
+                                 file_system='/tmp/', direction='put')
+            finally:
+                if os.path.exists(local_fw_path):
+                    os.remove(local_fw_path)
+
+            # fwutil install triggers automatic cold reboot after BIOS update.
+            install_cmd = f'sudo fwutil install chassis component BIOS fw {dut_fw_path} -y'
+            logger.info(f'Running: {install_cmd}')
+
+            port_check_delay = 10
+            port_check_tries = BIOS_INSTALL_REBOOT_TIMEOUT // port_check_delay
+
+            # Step 1: Send fwutil install command (will trigger automatic reboot)
+            engine.engine.send_config_set([install_cmd], exit_config_mode=False, cmd_verify=False)
+
+            # Step 2: Wait for SSH port to close (device starting reboot)
+            logger.info(f'Waiting for switch shutdown after BIOS install (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)')
+            check_port_status_till_alive(False, engine.ip, engine.ssh_port)
+
+            # Step 3: Disconnect current session
+            engine.disconnect()
+
+            # Step 4: Wait for SSH port to open (device boot complete)
+            logger.info(f'Waiting for switch bring-up after BIOS install (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)')
+            check_port_status_till_alive(True, engine.ip, engine.ssh_port,
+                                         tries=port_check_tries, delay=port_check_delay)
+
+            # Step 5: Wait for CLI to be ready
+            retry_call(
+                engine.run_cmd, fargs=[""],
+                tries=80, delay=2, logger=logger,
+            )
+
+            cli.cli_obj.general.verify_dockers_are_up(platform_params=platform_params)
+
+            # Verify BIOS version after reboot
+            fwutil_output = engine.run_cmd('sudo fwutil show status')
+            parsed = generic_sonic_output_parser(fwutil_output)
+            component_versions = dict(zip(parsed[0]['Component'], parsed[0]['Version']))
+            new_bios = component_versions.get('BIOS')
+            assert new_bios == target_version, \
+                f'BIOS version after restore is {new_bios}, expected {target_version}'
+            logger.info(f'BIOS successfully restored to {target_version}')
+
+    @staticmethod
     def post_installation_steps(topology_obj, sonic_topo, recover_by_reboot, setup_name, platform_params,
                                 apply_base_config, target_version, is_shutdown_bgp, reboot_after_install,
                                 deploy_only_target, fw_pkg_path, reboot, additional_apps, setup_info, dut_alias,
@@ -580,6 +715,15 @@ class SonicInstallationSteps:
         """
         ansible_path = setup_info['ansible_path']
         cli = SonicInstallationSteps.get_dut_cli(setup_info)
+
+        if not is_air:
+            # BIOS version check and restore - ensure target BIOS version before applying config
+            for dut in setup_info['duts']:
+                dut_engine = topology_obj.players[dut['dut_alias']]['engine']
+                with allure.step(f'Check and restore BIOS version on {dut["dut_name"]}'):
+                    SonicInstallationSteps.restore_bios_if_needed(
+                        dut_engine, fw_pkg_path, platform_params, cli=dut['cli_obj'])
+
         for dut in setup_info['duts']:
             cli = dut['cli_obj']
             # for the smartswitch, need to make sure all DPUs are aligned in admin status and oper status

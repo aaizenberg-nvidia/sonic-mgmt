@@ -6,15 +6,23 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
+from typing import Callable
+
+from retry.api import retry_call
 
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 
 import ngts.tools.test_utils.allure_utils as allure
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.ngts_types import EnginesT
 from ngts.nvos_constants.constants_nvos import ClusterApps, ClusterConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.DutUtilsTool import RebootParams
 from ngts.nvos_tools.infra.NvBridgeTool import verify_nv_bridge_has_connection
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.system.System import System
@@ -42,6 +50,7 @@ from ngts.tests_nvos.general.security.nmx_cert.constants import (
     SYSTEM_INTERNAL_JSON_PATH,
     ClusterInternalJsonFields,
     Defaults,
+    EncryptionMode,
     FieldsInShowOf,
     SystemInternalJsonFields,
 )
@@ -62,6 +71,55 @@ CLUSTER_INTERNAL_KEY_PATH = "/etc/{}/int_cert/{}.key"
 CLUSTER_INTERNAL_CACERT_PATH = "/etc/{}/int_ca_cert/{}.crt"
 CLUSTER_INTERNAL_ALTERNATE_CERT_PATH = "/etc/{}/int_alt_cert/{}.crt"
 CLUSTER_INTERNAL_ALTERNATE_KEY_PATH = "/etc/{}/int_alt_cert/{}.key"
+
+
+@dataclass(frozen=True)
+class BridgeSpiffeParams:
+    """SPIFFE values for primary/alternate and system/cluster override use-cases."""
+
+    primary_cert_spiffe: str
+    alternate_cert_spiffe: str
+    system_cert_spiffe: str | None = None
+    cluster_cert_spiffe: str | None = None
+
+    @property
+    def system_primary_spiffe(self) -> str:
+        return self.system_cert_spiffe or self.primary_cert_spiffe
+
+    @property
+    def cluster_primary_spiffe(self) -> str:
+        return self.cluster_cert_spiffe or self.primary_cert_spiffe
+
+
+@dataclass(frozen=True)
+class BridgeSpiffeCerts:
+    """SPIFFE certs for nv-bridge tests."""
+
+    system_primary_cert: CertInfo
+    system_alt_cert: CertInfo
+    cluster_primary_cert: CertInfo
+    cluster_alt_cert: CertInfo
+    certs_dir: str
+    params: BridgeSpiffeParams
+
+    @property
+    def all_certs(self) -> list[CertInfo]:
+        return [self.system_primary_cert, self.system_alt_cert, self.cluster_primary_cert, self.cluster_alt_cert]
+
+
+@dataclass(frozen=True)
+class BridgeCrlCerts:
+    """CRL-focused cert set for nv-bridge tests."""
+
+    primary_cert: CertInfo
+    alt_cert: CertInfo
+    revoked_primary_cert: CertInfo
+    revoked_alt_cert: CertInfo
+    certs_dir: str
+
+    @property
+    def all_certs(self) -> list[CertInfo]:
+        return [self.primary_cert, self.alt_cert, self.revoked_primary_cert, self.revoked_alt_cert]
 
 
 def normalize_cluster_app_name(app_name: str) -> str:
@@ -111,8 +169,8 @@ def verify_component_show(
                 return
         out = OutputParsingTool.parse_json_str_to_dictionary(output).verify_result()
         ValidationTool.verify_all_fields_value_exist_in_output_dictionary(out, required_fields, check_empty_values=False).verify_result()
-        for field, expected in value_expectations.items():
-            ValidationTool.verify_field_value_in_output(out, field, expected).verify_result()
+        for field_name, expected in value_expectations.items():
+            ValidationTool.verify_field_value_in_output(out, field_name, expected).verify_result()
 
 
 def verify_system_internal_show(
@@ -441,6 +499,97 @@ def wait_for_cluster_app_update(cluster: Cluster, engine: LinuxSshEngine):
         time.sleep(1)
 
 
+def save_config_and_reboot(engines: EnginesT, settle_time: int = 0) -> None:
+    """Persist config and force-reboot the DUT, waiting reliably for NVOS to become functional.
+
+    The reboot is issued with ``RebootParams(topology_obj=...)`` so readiness is gated on the
+    serial-console "System is ready" banner. Without a topology object, ``action_reboot`` falls
+    back to a CLI probe (``wait_until_cli_is_up``) that a slow NVUE init can satisfy prematurely:
+    a ``nv show system`` read-timeout is swallowed as success, yielding a false "ready" that is
+    immediately followed by ``Error: NVOS CLI is unavailable`` during the health check. Gating on
+    the serial banner avoids that race.
+
+    Args:
+        engines: Test engines (uses ``engines.dut``).
+        settle_time: Optional extra seconds to sleep after NVOS is functional, to let cluster /
+            nmx-c services finish converging before further commands (e.g. syslog error scans).
+    """
+    with allure.step("Save config and reboot DUT"):
+        NvueGeneralCli.save_config(engines.dut)
+        System().action_reboot(
+            "force",
+            engine=engines.dut,
+            reboot_params=RebootParams(topology_obj=getattr(TestToolkit, "topology_obj", None)),
+        ).verify_result()
+        engines.dut.disconnect()
+        if settle_time:
+            time.sleep(settle_time)
+
+
+def restore_internal_config_with_retry(
+    restore_actions: list[Callable[[], ResultObj]],
+    fallback_action: Callable[[], ResultObj],
+    scope_name: str,
+    retries: int = 3,
+    delay: int = 10,
+    fallback_settle_time: int = 0,
+) -> None:
+    """Restore internal-encryption config items robustly during test teardown.
+
+    When a test fails to restore its internal config, the certificate/CA stays
+    bound to the configuration. A bound certificate cannot be deleted, so it
+    lingers on the DUT and the next test fails while re-importing a certificate/CA
+    with the same name (the leftover CA no longer matches the freshly generated
+    certificate).
+
+    Each restore action is retried independently. Restoring an already-default
+    value is idempotent, so retrying is safe. If any item still fails after all
+    retries, a last-resort full-node restore is attempted so the DUT is left in a
+    clean, cert-free state for the next test. The teardown only fails when this
+    fallback also fails, so a genuinely broken teardown is not hidden while a
+    recoverable one no longer cascades into unrelated tests.
+
+    Args:
+        restore_actions: Ordered restore functions to run first. Encryption must
+            come before certificate/ca-certificate so the certs get unbound. Each
+            function returns a ResultObj.
+        fallback_action: Callable that restores the whole internal node at once,
+            used only when per-item restore keeps failing.
+        scope_name: Human-readable scope for logs/allure (e.g. "system" or an app
+            name).
+        retries: Attempts per restore action.
+        delay: Seconds to wait between attempts.
+        fallback_settle_time: Seconds to wait before the fallback restore, used to
+            let the system settle when a known bug is active. 0 disables the wait.
+    """
+    def _restore_once(action: Callable[[], ResultObj]) -> None:
+        action().verify_result()
+
+    with allure.step(f"restore {scope_name} internal config (with retry)"):
+        failed_items: list[str] = []
+        for action in restore_actions:
+            try:
+                retry_call(_restore_once, fargs=[action], tries=retries, delay=delay, logger=logger)
+            except AssertionError as e:
+                logger.warning("Failed to restore a %s internal item after %d tries: %s", scope_name, retries, e)
+                failed_items.append(str(e))
+
+        if not failed_items:
+            return
+
+        with allure.step(f"fallback: full {scope_name} internal node restore"):
+            logger.warning(
+                "Per-item restore of %s internal config failed (%s). Falling back to full node restore.",
+                scope_name, "; ".join(failed_items),
+            )
+            if fallback_settle_time:
+                logger.info(
+                    "Waiting %ds for %s to settle before fallback restore", fallback_settle_time, scope_name,
+                )
+                time.sleep(fallback_settle_time)
+            retry_call(_restore_once, fargs=[fallback_action], tries=retries, delay=delay, logger=logger)
+
+
 def verify_system_internal_has_empty_defaults(dut_engine: LinuxSshEngine | None = None):
     """Verify system internal show has default empty values."""
     verify_system_internal_show(
@@ -516,7 +665,7 @@ def import_internal_certs(engines: EnginesT, bridge_certs: list[CertInfo], bridg
         import_cas_safely(bridge_ca_certs, scp_player)
 
 
-def reset_cluster_app(cluster, app_name: str, engine: LinuxSshEngine, wait_time: int = 5) -> None:
+def reset_cluster_app(cluster, app_name: str, engine: LinuxSshEngine) -> None:
     """
     Reset a cluster app's internal connections.
 
@@ -524,7 +673,6 @@ def reset_cluster_app(cluster, app_name: str, engine: LinuxSshEngine, wait_time:
         cluster: Cluster object
         app_name: Name of the app to reset (e.g., nmx-controller)
         engine: Engine to connect to
-        wait_time: Seconds to wait after reset (kept for compatibility, unused)
     """
     with allure.step(f"Reset cluster app {app_name} internal connections"):
         full_app_name = normalize_cluster_app_name(app_name)
@@ -663,3 +811,50 @@ def nv_bridge_internal_factory_reset_no_params_check():
 
     with allure.step("verify NV Bridge internal config wiped after factory reset"):
         verify_system_internal_has_empty_defaults()
+
+
+BRIDGE_CROSS_FUNC_REBOOT_SETTLE_TIME = 60
+
+
+def update_cluster_internal_encryption(
+    cluster: Cluster,
+    app_name: str,
+    encryption_mode: str,
+    engine: LinuxSshEngine,
+) -> None:
+    """Update cluster app internal encryption and wait for the app to settle."""
+    app = cluster.apps.app_name[app_name]
+    app.internal.encryption.action_update(encryption_mode, dut_engine=engine).verify_result()
+    wait_for_cluster_app_update(cluster, engine)
+
+
+def configure_bridge_internal_mtls(
+    system: System,
+    cluster: Cluster,
+    app_name: str,
+    bridge_cert: CertInfo,
+    engine: LinuxSshEngine,
+) -> None:
+    """Bind system/cluster internal certs, enable mTLS, and reset the app connection."""
+    app = cluster.apps.app_name[app_name]
+    with allure.step("Configure system + cluster internal mTLS"):
+        system.internal.certificate.action_update(bridge_cert.name).verify_result()
+        system.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
+        app.internal.certificate.action_update(bridge_cert.name).verify_result()
+        app.internal.ca_certificate.action_update(bridge_cert.cacert_name).verify_result()
+        system.internal.encryption.action_update(EncryptionMode.MTLS).verify_result()
+        update_cluster_internal_encryption(cluster, app_name, EncryptionMode.MTLS, engine)
+        reset_cluster_app(cluster, app_name, engine)
+    verify_system_internal_show(
+        expect_cert=bridge_cert.name,
+        expect_cacert=bridge_cert.cacert_name,
+        expect_encryption=EncryptionMode.MTLS,
+        dut_engine=engine,
+    )
+    verify_cluster_app_internal_show(
+        app_name,
+        expect_cert=bridge_cert.name,
+        expect_cacert=bridge_cert.cacert_name,
+        expect_encryption=EncryptionMode.MTLS,
+        dut_engine=engine,
+    )

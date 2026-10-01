@@ -18,6 +18,10 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.SerialConsoleTool import SerialConsoleTool
 from ngts.nvos_tools.infra.FilesTool import FilesTool
 
+
+cumulus_owner = "gpazbenitzha"
+
+
 logger = logging.getLogger(__name__)
 
 """

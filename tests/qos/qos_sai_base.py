@@ -62,7 +62,7 @@ class QosBase:
                           "t1-isolated-d448u16", "t1-isolated-v6-d448u16", "t1-isolated-d224u8",
                           "t1-isolated-d128", "t1-isolated-d32",
                           "t1-isolated-d448u15-lag", "t1-isolated-v6-d448u15-lag",
-                          't1-d118u8s2', 't0-d96-u30s2']
+                          't1-d118u8s2', 't1-d96u4', 't0-d96-u30s2']
     SUPPORTED_PTF_TOPOS = ['ptf32', 'ptf64']
     SUPPORTED_ASIC_LIST = ["pac", "gr", "gr2", "gr2x", "gb", "p200", "td2", "th", "th2", "spc1", "spc2", "spc3",
                            "spc4", "spc5", "spc6", "td3", "th3", "j2c+", "jr2", "th5", "th6", "q3d"]
@@ -3830,7 +3830,7 @@ def set_queue_pir(interface, queue, rate):
     @pytest.fixture(scope='class', autouse=True)
     def is_supported_per_dir(self, get_src_dst_asic_and_duts, tbinfo):  # noqa F811
         supported_per_dir_platform = ["Mellanox-SN5640-C448O16", "Mellanox-SN5640-C512S2",
-                                      "Mellanox-SN5640-C508O1X2", "Mellanox-SN5640-O128X2", "Mellanox-SN5640-C512X2",
+                                      "Mellanox-SN5640-C508O1X2", "Mellanox-SN5640-C512X2",
                                       "Mellanox-SN5600-C224O8", "Mellanox-SN5600-C256S1",
                                       "Arista-7060X6-16PE-384C-B-O128S2"]
         is_supported_per_dir = \

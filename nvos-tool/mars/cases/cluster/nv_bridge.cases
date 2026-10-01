@@ -81,5 +81,104 @@
         </cmd>
     </case>
 
+    <case>
+        <name> NV Bridge Revertive Config Ingestion </name>
+        <info></info>
+        <tout> 1800 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_config_ingestion and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Automatic Switchover </name>
+        <info></info>
+        <tout> 3600 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_automatic_switchover and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Modes </name>
+        <info></info>
+        <tout> 5400 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_revertive_modes and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive RTT Tiebreaker </name>
+        <info></info>
+        <tout> 3600 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_revertive_mode_rtt_tiebreaker and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Manual Switchover Rejections </name>
+        <info></info>
+        <tout> 5400 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_manual_switchover_rejections and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Switchover Error Flows </name>
+        <info></info>
+        <tout> 1800 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_switchover_error_flows and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Config Rebuild And Schema Compat </name>
+        <info></info>
+        <tout> 1800 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_config_rebuild_and_schema_compat and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Upgrade Downgrade </name>
+        <info></info>
+        <tout> 5400 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_upgrade_downgrade and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 4500   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Revertive Network Info History Log </name>
+        <info></info>
+        <tout> 1800 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_system_nv_bridge_revertive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k=\"test_nvbridge_network_info_history_log and not ipv6\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
 </CASEDEF>
 

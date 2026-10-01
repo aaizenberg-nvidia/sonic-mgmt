@@ -7,9 +7,10 @@ import allure
 import netmiko
 import glob
 import subprocess
+
 from ngts.cli_wrappers.interfaces.interface_general_clis import GeneralCliInterface
 from ngts.cli_wrappers.sonic.sonic_onie_clis import SonicOnieCli
-from ngts.constants.constants import InfraConst, SSHConsts, Sonic_Cache
+from ngts.constants.constants import InfraConst, SSHConsts, Sonic_Cache, BmcDeployConstants, SonicDeployConstants
 from ngts.constants.performance_constants import PerfConsts
 from ngts.helpers.run_process_on_host import run_process_on_host
 from ngts.helpers.secure_boot_helper import SecureBootHelper
@@ -23,6 +24,8 @@ from ngts.cli_wrappers.common.sdk_clis_common import SdkCliCommon
 logger = logging.getLogger()
 
 DUMMY_COMMAND = 'echo dummy_command'
+FIRST_BOOT_SSH_TIMEOUT = 600
+FIRST_BOOT_SSH_INTERVAL = 10
 
 
 class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
@@ -30,8 +33,50 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
     This class hosts methods which are implemented identically for Linux and SONiC
     """
 
+    ONIE_GRUB_ARROW_UP_KEY = "\x1b[A"
+    ONIE_GRUB_ARROW_DOWN_KEY = "\x1b[B"
+    ONIE_GRUB_ENTER_KEY = '\r'
+
     def __init__(self, engine, cli_obj=None, dut_alias=None):
         SdkCliCommon.__init__(self, engine, cli_obj, dut_alias)
+
+    @staticmethod
+    def _ssh_is_ready(engine, timeout=20):
+        """Return whether the installed NOS accepts an SSH command."""
+        try:
+            engine.disconnect()
+            engine.run_cmd("true", timeout=timeout, retry_run=False, validate=False)
+            return True
+        except Exception as err:
+            logger.info("SSH is not ready yet on %s: %s", engine.ip, err)
+            return False
+
+    def complete_first_boot_after_onie(self, topology_obj, dut_alias='dut'):
+        """Wait for a manually installed NOS to finish its first boot.
+
+        Args:
+            topology_obj: Test topology containing the DUT.
+            dut_alias: DUT alias in the topology.
+
+        Raises:
+            TimeoutError: If the NOS does not accept SSH before the timeout.
+        """
+        del topology_obj, dut_alias
+        deadline = time.monotonic() + FIRST_BOOT_SSH_TIMEOUT
+        with allure.step('Waiting for SSH after ONIE installation'):
+            while True:
+                remaining_time = deadline - time.monotonic()
+                if remaining_time <= 0:
+                    break
+                if self._ssh_is_ready(self.engine, timeout=min(20, remaining_time)):
+                    logger.info("%s is reachable over SSH; first boot is complete", self.engine.ip)
+                    return
+                remaining_time = deadline - time.monotonic()
+                if remaining_time > 0:
+                    time.sleep(min(FIRST_BOOT_SSH_INTERVAL, remaining_time))
+
+        raise TimeoutError(
+            f"NOS on {self.engine.ip} did not accept SSH within {FIRST_BOOT_SSH_TIMEOUT} seconds")
 
     def start_service(self, service):
         # lldpad is managed by supervisorctl
@@ -317,8 +362,9 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
 
         return dut_is_alive
 
-    def prepare_for_installation(self, topology_obj, dut_alias='dut'):
-        logger.info(f"prepare_for_installation: starting for dut_alias={dut_alias} ip={self.engine.ip}")
+    def prepare_for_installation(self, topology_obj, dut_alias='dut', force_uninstall=False):
+        logger.info(f"prepare_for_installation: starting for dut_alias={dut_alias} ip={self.engine.ip} "
+                    f"force_uninstall={force_uninstall}")
         switch_in_onie = False
         is_alive = self.check_dut_is_alive()
         in_dvs = self.check_if_in_dvs()
@@ -334,12 +380,12 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
                 # it can cover the following scenarios
                 # 1. user/password doesn't match the default one
                 # 2. ping and ssh switch are ok, but cannot login into it
-                if self.switch_dut_to_onie_by_remote_reboot(topology_obj, dut_alias):
+                if self.switch_dut_to_onie_by_remote_reboot(topology_obj, dut_alias, uninstall=force_uninstall):
                     switch_in_onie = True
         else:
             logger.info(f"prepare_for_installation: ip={self.engine.ip} taking serial/remote-reboot path "
                         f"(alive={is_alive}, in_dvs={in_dvs})")
-            if self.switch_dut_to_onie_by_remote_reboot(topology_obj, dut_alias):
+            if self.switch_dut_to_onie_by_remote_reboot(topology_obj, dut_alias, uninstall=force_uninstall):
                 switch_in_onie = True
             elif self.switch_dut_to_onie_by_serial_on_dut_stuck_on_selecting_os_page(topology_obj, dut_alias):
                 switch_in_onie = True
@@ -348,44 +394,214 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         logger.info(f"prepare_for_installation: ip={self.engine.ip} done, switch_in_onie={switch_in_onie}")
         return switch_in_onie
 
-    def boot_into_onie_by_serial_on_remote_reboot(self, topology_obj, dut_alias='dut'):
+    def boot_into_onie_by_serial_on_remote_reboot(self, topology_obj, dut_alias='dut',
+                                                  onie_target_entry='install'):
         serial_engine = SecureBootHelper.get_serial_engine_instance(topology_obj, dut_alias)
         serial_engine.create_serial_engine(login_to_switch=False)
-        arrow_down_key = "\x1b[B"
-        arrow_up_key = "\x1b[A"
-        enter_key = '\r'
 
         logger.info("Wait for GNU GRUB  version")
         output, respond = serial_engine.run_cmd(
             '', ['GRUB loading.', 'GNU GRUB  version'], timeout=240, send_without_enter=True)
         logger.info(f"GNU GRUB  version is ready.\n output:{output} \n respond:{respond}")
 
+        self.enter_onie_from_grub_menu_by_serial(serial_engine, onie_target_entry)
+
+        if onie_target_entry == 'uninstall':
+            self.wait_for_onie_uninstall_complete(serial_engine)
+            # after uninstall ONIE reboots back to grub; re-enter and continue to install
+            logger.info("Wait for GNU GRUB  version after uninstall reboot")
+            serial_engine.run_cmd(
+                '', ['GRUB loading.', 'GNU GRUB  version'], timeout=240, send_without_enter=True)
+            self.enter_onie_from_grub_menu_by_serial(serial_engine, 'install', already_in_onie_submenu=True)
+
+    def wait_for_onie_uninstall_complete(self, serial_engine, timeout=300, num_retry=3):
+        """
+            Wait over serial for ONIE to finish uninstall mode.
+        """
+        with allure.step("Wait for ONIE uninstall to complete"):
+            logger.info("Waiting for ONIE uninstall to complete")
+            retries_left = num_retry
+            while retries_left > 0:
+                try:
+                    serial_engine.run_cmd('', ['Uninstall complete'], timeout=timeout, send_without_enter=True)
+                    logger.info("ONIE uninstall completion banner matched")
+                    return
+                except Exception as err:
+                    retries_left -= 1
+                    logger.info(f"No 'Uninstall complete' banner yet after {timeout}s ({err}), "
+                                f"{retries_left} retries left")
+
+        with allure.step("ONIE uninstall completion banner not confirmed - proceeding anyway (best effort)"):
+            logger.warning("Did not see 'Uninstall complete' within "
+                           f"{num_retry * timeout}s - proceeding anyway (best effort)")
+
+    def enter_onie_from_grub_menu_by_serial(self, serial_engine, target_entry='install',
+                                            already_in_onie_submenu=False):
+        """
+        Boot into a specific ONIE grub sub-entry from a (SONiC) GRUB menu shown
+        on the serial console, in a way that works for every BIOS/UEFI x
+        bookworm/trixie grub combo.
+
+        target_entry: which ONIE grub sub-entry to select, e.g. 'install'
+        (default) or 'uninstall'.
+
+        already_in_onie_submenu: after an uninstall, the ESC out of the grub
+        shell lands directly in the ONIE 5-entry submenu (no NOS left to show
+        an outer SONiC/ONIE chooser) - set True to skip the outer-menu nav
+        that would otherwise misnavigate inside that submenu.
+
+        The classic approach of selecting the ONIE entry inside the SONiC grub
+        menu chainloads ONIE, which is broken on trixie grub 2.12+ under UEFI
+        Secure Boot (sonic-buildimage#24249). Instead we always:
+          1. Press 'c' to drop into the grub command shell.
+          2. Read $grub_platform to tell UEFI (efi) from legacy BIOS (pc).
+          3. efi -> from the grub shell load the ONIE partition's grub.cfg with
+                    'configfile' (located via 'search --label ONIE-BOOT'). This
+                    enters ONIE without chainloading the shim and independent of
+                    the UEFI BootOrder (sonic-buildimage#24249, Redmine #5261704).
+                    Then select the requested ONIE entry (default: auto-boot).
+             pc  -> no chainload issue; go back to the menu and select the
+                    requested ONIE entry the classic way.
+        This single path is a safe superset of the old flow, so it is used
+        unconditionally for all platforms.
+        """
+        # Drop into the grub command line ('c'). Wait for the grub> prompt.
+        logger.info("Pressing 'c' to drop into the grub shell")
+        serial_engine.run_cmd('c', expected_value=['grub>'],
+                              timeout=15, send_without_enter=True)
+
+        # Detect the platform via $grub_platform. run_cmd returns
+        # (output, matched_index) where matched_index is the position of the
+        # matched pattern in the expected_value list (pexpect.expect semantics).
+        # We must key off that index, NOT a substring search of 'output', because
+        # 'output' holds the text BEFORE the match (the echoed command / banner),
+        # not the matched value itself. $grub_platform is 'efi' on UEFI and 'pc'
+        # on legacy BIOS.
+        #
+        # IMPORTANT: on some rcon/serial-console gateways, sending a multi-char
+        # command as a single write (pexpect.sendline / send) drops trailing
+        # characters at the grub end. Observed on this setup: the last byte of
+        # 'echo $grub_platform' ('m') never reaches grub, so grub sits with an
+        # unterminated command string in its input buffer and no Enter is
+        # ever registered - pexpect then hangs waiting for 'efi'/'pc'. Sending
+        # one byte at a time with a small inter-char delay matches how the
+        # classic arrow-key flow drives grub reliably (single-byte writes).
+        # Send Enter ('\r') separately, and also use it as the trigger to wait
+        # for the 'efi'/'pc' output pattern.
+        grub_platform_patterns = ['efi', 'pc']
+        efi_idx = grub_platform_patterns.index('efi')
+        pc_idx = grub_platform_patterns.index('pc')
+        logger.info("Detecting grub platform via 'echo $grub_platform' (typed char-by-char)")
+        self._grub_type_command(serial_engine, 'echo $grub_platform')
+        _, platform_idx = serial_engine.run_cmd(self.ONIE_GRUB_ENTER_KEY,
+                                                expected_value=grub_platform_patterns,
+                                                timeout=15, send_without_enter=True)
+        logger.info(f"grub_platform matched index: {platform_idx} "
+                    f"(efi={efi_idx}, pc={pc_idx})")
+
+        if platform_idx == pc_idx:
+            # Legacy BIOS: no secure boot / chainload issue. Leave the shell and
+            # select the requested ONIE entry in the menu the classic way.
+            logger.info(f"Legacy BIOS (pc) detected - returning to grub menu "
+                        f"to select ONIE '{target_entry}'")
+            serial_engine.run_cmd('\x1b', expected_value=['GNU GRUB'],
+                                  timeout=10, send_without_enter=True)
+            if already_in_onie_submenu:
+                self._pick_onie_submenu_entry_by_serial(serial_engine, target_entry)
+            else:
+                self._select_onie_in_grub_menu_by_serial(serial_engine, target_entry)
+            return
+
+        # UEFI (efi): load the ONIE partition's grub.cfg directly from the grub
+        # shell. 'search --label ONIE-BOOT' finds the ONIE partition on any
+        # platform (no hard-coded partition number), then 'configfile' hands
+        # control to ONIE's grub menu - without chainloading the shim (broken on
+        # trixie grub, sonic-buildimage#24249) and independent of the UEFI
+        # BootOrder (which 'exit' depends on, Redmine #5261704). Type char-by-char
+        # for the same reason as 'echo' above. The transient 'terminal `serial'
+        # isn't found' errors are harmless.
+        logger.info("UEFI (efi) detected - loading ONIE grub via "
+                    "'search ONIE-BOOT' + 'configfile'")
+        self._grub_type_command(serial_engine, 'search --no-floppy --label --set=root ONIE-BOOT')
+        serial_engine.run_cmd(self.ONIE_GRUB_ENTER_KEY, expected_value=['grub>'],
+                              timeout=15, send_without_enter=True)
+        self._grub_type_command(serial_engine, 'configfile ($root)/grub/grub.cfg')
+
+        if target_entry == 'install':
+            # ONIE auto-boots its default entry (usually Install OS) - just
+            # confirm we landed somewhere in ONIE's boot sequence.
+            serial_engine.run_cmd(self.ONIE_GRUB_ENTER_KEY,
+                                  expected_value=['ONIE: Install OS', 'ONIE: Rescue',
+                                                  'ONIE: Uninstall', 'ONIE Rescue Mode',
+                                                  'ONIE: OS Install Mode', 'Booting `ONIE'],
+                                  timeout=90, send_without_enter=True)
+        else:
+            serial_engine.run_cmd(self.ONIE_GRUB_ENTER_KEY, expected_value=['ONIE', 'grub>'],
+                                  timeout=30, send_without_enter=True)
+            self._pick_onie_submenu_entry_by_serial(serial_engine, target_entry)
+
+    def _grub_type_command(self, serial_engine, cmd, inter_char_delay=0.05):
+        """
+        Type a command into the grub shell one character at a time.
+
+        Grub's command shell is a TUI: every keystroke is echoed and the cursor
+        is repositioned via ANSI escape sequences. Sending a whole string in one
+        pexpect.sendline() write causes grub to drop trailing characters over an
+        SSH-tunneled serial link. Sending one byte at a time with a small delay
+        matches how the classic arrow-key/Enter flow drives grub reliably.
+
+        The Enter key is NOT sent here; the caller is expected to send '\\r'
+        via serial_engine.run_cmd(..., send_without_enter=True) so it can also
+        wait for the command output pattern.
+        """
+        for ch in cmd:
+            serial_engine.serial_engine.send(ch)
+            time.sleep(inter_char_delay)
+
+    def _select_onie_in_grub_menu_by_serial(self, serial_engine, target_entry='install'):
+        """
+        Classic flow: select a specific ONIE entry directly in the
+        (SONiC/ONIE) grub menu. Only used on legacy BIOS systems (no
+        chainload issue), and also for non-default entries on UEFI.
+        """
         logger.info("Select ONIE by pressing arrow down")
-        # press the arrow up several times to ensure the item is selected
-        for i in range(3):
+        # press the arrow down several times to ensure the item is selected
+        for _ in range(3):
             logger.info("Sending one arrow down")
-            serial_engine.run_cmd(arrow_down_key, expected_value='.*', send_without_enter=True)
+            serial_engine.run_cmd(self.ONIE_GRUB_ARROW_DOWN_KEY, expected_value='.*', send_without_enter=True)
             time.sleep(0.5)
         logger.info("Onie option selected")
 
         logger.info("Pressing Enter to enter ONIE grub menu")
-        serial_engine.run_cmd(enter_key, expected_value='.*', timeout=30, send_without_enter=True)
+        serial_engine.run_cmd(self.ONIE_GRUB_ENTER_KEY, expected_value='.*', timeout=30, send_without_enter=True)
 
-        logger.info("Select 'ONIE: Install OS' by entering arrow up")
-        # press the arrow up several times to ensure the item is selected
-        for i in range(2):
-            logger.info("Sending one arrow up")
-            serial_engine.run_cmd(arrow_up_key, expected_value='.*', send_without_enter=True)
+        self._pick_onie_submenu_entry_by_serial(serial_engine, target_entry)
+
+    def _pick_onie_submenu_entry_by_serial(self, serial_engine, target_entry='install'):
+        """Select target_entry, assuming the ONIE 5-entry submenu is already open."""
+        # default highlighted entry is unreliable (observed 'Rescue' once) - over-press up, then down N steps
+        logger.info("Pressing arrow up several times to land on the first entry (Install OS)")
+        for _ in range(5):
+            serial_engine.run_cmd(self.ONIE_GRUB_ARROW_UP_KEY, expected_value='.*', send_without_enter=True)
             time.sleep(0.5)
 
-        logger.info("Pressing Enter to enter ONIE: Install OS")
+        down_count = SonicDeployConstants.ONIE_GRUB_ENTRY_DOWN_COUNT_FROM_TOP[target_entry]
+        logger.info(f"Select '{target_entry}' by entering arrow down x{down_count}")
+        for _ in range(down_count):
+            logger.info("Sending one arrow down")
+            serial_engine.run_cmd(self.ONIE_GRUB_ARROW_DOWN_KEY, expected_value='.*', send_without_enter=True)
+            time.sleep(0.5)
+
+        logger.info(f"Pressing Enter to enter ONIE: {target_entry}")
         serial_engine.run_cmd('\r', expected_value='.*', timeout=30, send_without_enter=True)
 
-    def switch_dut_to_onie_by_remote_reboot(self, topology_obj, dut_alias='dut'):
+    def switch_dut_to_onie_by_remote_reboot(self, topology_obj, dut_alias='dut', uninstall=False):
         with allure.step('Do remote reboot because dut is not alive'):
             try:
                 logger.info("Do remote reboot ...")
-                self.remote_reboot(topology_obj, dut_alias=dut_alias, boot_into_onie=True)
+                onie_target_entry = 'uninstall' if uninstall else 'install'
+                self.remote_reboot(topology_obj, dut_alias=dut_alias, boot_into_onie=True,
+                                   onie_target_entry=onie_target_entry)
             except Exception as err:
                 logger.info(f"remote reboot err:{err}")
 
@@ -403,20 +619,89 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
                         format(self.engine.username, self.engine.password))
             return False
 
-    def remote_reboot(self, topology_obj, dut_alias='dut', boot_into_onie=False, wait_till_alive=True):
+    def remote_reboot(self, topology_obj, dut_alias='dut', boot_into_onie=False, wait_till_alive=True,
+                      onie_target_entry='install'):
         ip = self.engine.ip
         port = self.engine.ssh_port
         logger.info('Executing remote reboot')
-        cmd = topology_obj.players[dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
-            'remote_reboot']
-        _, _, rc = run_process_on_host(cmd)
+        # On a SONiC BMC setup, boot the switch into ONIE by power-cycling only the switch
+        # host CPU from the BMC. A whole-board power cycle would reset the shared serial
+        # console mux back to the BMC, leaving the host GRUB menu off the serial console.
+        bmc_player = topology_obj.players.get('bmc', {})
+        if boot_into_onie and self._is_sonic_bmc(bmc_player):
+            self._reboot_switch_host_via_bmc(topology_obj)
+            rc = InfraConst.RC_SUCCESS
+        else:
+            # If sonic BMC is unreachable, it will block later steps
+            if boot_into_onie and bmc_player and not self._is_bmc_reachable(bmc_player):
+                raise Exception('BMC is not reachable, cannot boot the switch into ONIE')
+            cmd = topology_obj.players[dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
+                'remote_reboot']
+            _, _, rc = run_process_on_host(cmd)
         if rc == InfraConst.RC_SUCCESS:
             if boot_into_onie:
-                self.boot_into_onie_by_serial_on_remote_reboot(topology_obj, dut_alias)
+                self.boot_into_onie_by_serial_on_remote_reboot(topology_obj, dut_alias, onie_target_entry)
             if wait_till_alive:
                 check_port_status_till_alive(should_be_alive=True, destination_host=ip, destination_port=port)
         else:
             raise Exception('Remote reboot rc is other then 0')
+
+    @staticmethod
+    def _is_sonic_bmc(bmc_player):
+        """
+        Check whether the BMC attached to this setup runs SONiC BMC.
+
+        Probe the BMC over SSH for hw-management-bmc-powerctrl.sh, which is shipped only by
+        SONiC BMC. Returns False when there is no BMC player or when the probe fails.
+        """
+        if not bmc_player:
+            return False
+        try:
+            output = bmc_player['engine'].run_cmd(
+                f"test -f {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} && echo yes")
+            return 'yes' in output
+        except Exception as err:
+            logger.warning(f'BMC probe failed, using NOGA remote_reboot: {err}')
+            return False
+
+    @staticmethod
+    def _is_bmc_reachable(bmc_player):
+        """
+        Check whether the BMC answers on the network.
+
+        Tells "this setup has no SONiC BMC" apart from "the SONiC BMC is down": an OpenBMC
+        setup answers ping but rejects the SONiC BMC credentials, so _is_sonic_bmc() returns
+        False in both cases.
+        """
+        bmc_ip = bmc_player['engine'].ip
+        return subprocess.call(['ping', '-c', '2', '-W', '3', bmc_ip],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+    @staticmethod
+    def _reboot_switch_host_via_bmc(topology_obj):
+        """
+        Point the shared serial console at the host switch CPU and cold-boot it
+        through the BMC.
+        """
+        engine = topology_obj.players['bmc']['engine']
+        with allure.step('Cold power-cycle host switch CPU via BMC'):
+            engine.run_cmd(f"sudo {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} power_off")
+            time.sleep(BmcDeployConstants.BMC_HOST_POWER_OFF_SETTLE)
+            engine.run_cmd(f"sudo {BmcDeployConstants.BMC_POWERCTRL_SCRIPT} power_on")
+            time.sleep(BmcDeployConstants.BMC_HOST_POWER_ON_SETTLE)
+
+        # The 'powerctrl.sh power_off' resets the CPLD uart_sel register back to 0 (BMC),
+        # so uart_sel MUST be selected after the power cycle.
+        with allure.step('Set the serial console to host switch'):
+            engine.run_cmd(
+                f"echo {BmcDeployConstants.BMC_UART_SEL_HOST} | "
+                f"sudo tee {BmcDeployConstants.BMC_UART_SEL_PATH}"
+            )
+            # Check the uart_sel value
+            uart_sel = engine.run_cmd(f"cat {BmcDeployConstants.BMC_UART_SEL_PATH}").strip()
+            if uart_sel != str(BmcDeployConstants.BMC_UART_SEL_HOST):
+                raise Exception(f'Failed to switch the serial console to the host CPU, '
+                                f'uart_sel is {uart_sel}')
 
     def switch_dut_to_onie_by_serial_on_dut_stuck_on_selecting_os_page(self, topology_obj, dut_alias='dut'):
         """
@@ -431,33 +716,11 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
                 logger.error(f"Create serial engine error: {err}")
         with allure.step('switch dut to onie by serial'):
             try:
-                time_out = 10
-                wait_serial_take_effect = 2
-                cmd_enter = "\n"
-                cmd_press_esc = "\33"
-
-                # before selecting onie, press esc and enter key to make sure the page is in the os selected page
-                logger.info("Press esc ")
-                serial_engine.run_cmd(cmd_press_esc, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-                logger.info("Press enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Select the last item: ONIE")
-                cmd_last_one = "\03"
-                serial_engine.run_cmd(cmd_last_one, expected_value="ONIE", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Boot into ONIE by pressing enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
-
-                logger.info("Boot into ONIE install by pressing enter")
-                serial_engine.run_cmd(cmd_enter, expected_value=" ", timeout=time_out)
-                time.sleep(wait_serial_take_effect)
+                # The DUT is stuck on the grub OS-selection page. Use the unified
+                # Trixie-safe grub-shell flow to enter ONIE (works for every
+                # BIOS/UEFI x bookworm/trixie grub combo, sonic-buildimage#24249).
+                self.enter_onie_from_grub_menu_by_serial(serial_engine)
                 logger.info("DUT is switched to onie by serial")
-
             except Exception as err:
                 logger.error(f"Switching dut to onie by serial failed. {err}")
 
@@ -477,13 +740,20 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         with allure.step('Switch dut from sonic to onie by serial'):
             try:
                 time_out = 10
-                logger.info("Set next_entry=ONIE in grub")
-                cmd_set_next_entry = "sudo grub-editenv /host/grub/grubenv set next_entry=ONIE"
-                serial_engine.run_cmd(cmd_set_next_entry, timeout=time_out)
-
+                # NOTE: do NOT use "grub-editenv set next_entry=ONIE" here. On
+                # trixie grub 2.12+ under UEFI Secure Boot that makes SONiC grub
+                # chainload ONIE, which is broken (sonic-buildimage#24249).
+                # Instead just reboot and enter ONIE from the grub menu using the
+                # unified Trixie-safe flow (grub-shell 'exit' on UEFI).
                 logger.info("Do reboot ")
                 cmd_reboot = "sudo reboot"
                 serial_engine.run_cmd(cmd_reboot, expected_value=" ", timeout=time_out)
+
+                logger.info("Wait for GNU GRUB version after reboot")
+                serial_engine.run_cmd(
+                    '', ['GRUB loading.', 'GNU GRUB  version'], timeout=240, send_without_enter=True)
+
+                self.enter_onie_from_grub_menu_by_serial(serial_engine)
                 logger.info("DUT is switched to onie by serial")
             except Exception as err:
                 logger.error(f"Switching dut to onie by serial failed. {err}")
@@ -518,10 +788,10 @@ class GeneralCliCommon(GeneralCliInterface, SdkCliCommon):
         dut_ip = engine.ip
         dut_ssh_port = engine.ssh_port
 
-        logger.info(f"install_image_onie: ip={dut_ip} starting onie-nos-install with image_path={image_path}")
-        with allure.step('Installing image by "onie-nos-install"'):
+        logger.info(f"install_image_onie: ip={dut_ip} starting ONIE image install with image_path={image_path}")
+        with allure.step('Installing image via ONIE (onie-nos-install or SBAT-repack sh path)'):
             SonicOnieCli(dut_ip, dut_ssh_port).install_image(image_path=image_path)
-        logger.info(f"install_image_onie: ip={dut_ip} onie-nos-install returned, switch will reboot into new image")
+        logger.info(f"install_image_onie: ip={dut_ip} ONIE install returned, switch will reboot into new image")
 
         with allure.step('Waiting for switch shutdown after reload command'):
             logger.info('Waiting for switch shutdown after reload command')

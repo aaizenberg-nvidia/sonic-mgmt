@@ -41,12 +41,13 @@ def invocation_type(request):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def set_max_time_for_interfaces(duthost):
+def set_max_time_for_interfaces(duthosts, enum_rand_one_per_hwsku_hostname):
     """
     For chassis testbeds, we need to specify plt_reboot_ctrl in inventory file,
     to let MAX_TIME_TO_REBOOT to be overwritten by specified timeout value
     """
     global MAX_WAIT_TIME_FOR_INTERFACES
+    duthost = duthosts[enum_rand_one_per_hwsku_hostname]
     plt_reboot_ctrl = get_plt_reboot_ctrl(duthost, 'test_reboot.py', 'cold')
     if plt_reboot_ctrl:
         MAX_WAIT_TIME_FOR_INTERFACES = plt_reboot_ctrl.get('timeout', MAX_WAIT_TIME_FOR_INTERFACES)
@@ -115,6 +116,12 @@ def check_interfaces_and_services(dut, interfaces, xcvr_skip_list,
     if dut.is_supervisor_node():
         logging.info("skipping interfaces related check for supervisor")
     else:
+        # Only check administratively up ports. Admin-down ports in conn_graph/minigraph
+        # are expected to stay down and should not fail interface status checks.
+        admin_up_ports = set(dut.get_admin_up_ports())
+        interfaces = {k: v for k, v in interfaces.items() if k in admin_up_ports}
+        logging.info("Admin-up interfaces to check: %s", list(interfaces))
+
         logging.info("Wait {} seconds for all the transceivers to be detected".format(
             interfaces_wait_time))
         result = wait_until(interfaces_wait_time, 20, 0, check_all_interface_information, dut, interfaces,
@@ -135,7 +142,7 @@ def check_interfaces_and_services(dut, interfaces, xcvr_skip_list,
         if dut.facts["platform"] == "x86_64-cel_e1031-r0":
             result = wait_until(300, 20, 0, check_pmon_daemon_status, dut)
         else:
-            result = check_pmon_daemon_status(dut)
+            result = wait_until(60, 5, 0, check_pmon_daemon_status, dut)
         assert result, "Not all pmon daemons running."
 
     if dut.facts["asic_type"] in ["mellanox"]:
@@ -236,7 +243,7 @@ def test_fast_reboot(duthosts, enum_rand_one_per_hwsku_hostname,
 
 
 def test_warm_reboot(duthosts, enum_rand_one_per_hwsku_hostname,
-                     localhost, conn_graph_facts, xcvr_skip_list):      # noqa: F811
+                     localhost, conn_graph_facts, xcvr_skip_list, invocation_type, gnmi_tls):      # noqa: F811
     """
     @summary: This test case is to perform warm reboot and check platform status
     """
@@ -255,7 +262,8 @@ def test_warm_reboot(duthosts, enum_rand_one_per_hwsku_hostname,
                 "ISSU is not supported on this DUT, skip this test case")
 
     reboot_and_check(localhost, duthost, conn_graph_facts.get("device_conn", {}).get(duthost.hostname, {}),
-                     xcvr_skip_list, reboot_type=REBOOT_TYPE_WARM, duthosts=duthosts)
+                     xcvr_skip_list, reboot_type=REBOOT_TYPE_WARM, duthosts=duthosts,
+                     invocation_type=invocation_type, ptf_gnoi=gnmi_tls.gnoi)
 
 
 def test_watchdog_reboot(duthosts, enum_rand_one_per_hwsku_hostname,

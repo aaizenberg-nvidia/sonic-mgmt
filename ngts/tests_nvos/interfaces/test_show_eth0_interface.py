@@ -8,6 +8,10 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.tools.test_utils import allure_utils as allure
 
+
+cumulus_owner = "bravindranat"
+
+
 logger = logging.getLogger()
 
 

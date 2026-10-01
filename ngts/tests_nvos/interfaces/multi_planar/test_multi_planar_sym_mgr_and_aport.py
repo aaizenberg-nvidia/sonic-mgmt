@@ -57,7 +57,7 @@ def test_fae_interface_commands(engines, devices, random_api, start_sm, setup_na
     4. Validate show fae interface <interface-id> link counters
     5. Validate show fae interface <interface-id> link diagnostics
     6. Validate show fae interface <interface-id> link state
-    7. Validate show fae interface <interface-id> link plan-ports
+    7. Validate show fae interface <interface-id> link plane-ports
     8. Validate set fae interface <interface-id> link lanes <1X/2X/4X>
     9. Validate unset fae interface <interface-id> link lanes
     """
@@ -149,9 +149,9 @@ def test_fae_interface_commands(engines, devices, random_api, start_sm, setup_na
                                                 selected_fae_port.interface.link.state.show,
                                                 selected_fae_plane_port.interface.link.state.show)
 
-        with allure.independent_step("Validate show fae interface <port-id> plan-ports command"):
+        with allure.independent_step("Validate show fae interface <port-id> plane-ports command"):
             output_fae_port = OutputParsingTool.parse_json_str_to_dictionary(
-                selected_fae_port.interface.plan_ports.show()).get_returned_value()
+                selected_fae_port.interface.plane_ports.show()).get_returned_value()
             fae_port_plane_ports = list(output_fae_port.keys())
             for plane in range(dut_device.num_of_plane_ports):
                 full_plane_name = selected_fae_port.name + 'pl' + str(plane + 1)
@@ -673,7 +673,7 @@ def test_fae_invalid_commands(engines, devices, test_api):
     3. nv show fae interface <unknown interface-id> counters
     4. nv show fae interface <unknown interface-id> link diagnostics
     5. nv show fae interface <unknown interface-id> link state
-    6. nv show fae interface <unknown interface-id> plan-ports
+    6. nv show fae interface <unknown interface-id> plane-ports
     7. nv action clear fae interface <unknown interface-id> counters
     8. nv show interface <internal-fnm-id>
     """
@@ -695,8 +695,8 @@ def test_fae_invalid_commands(engines, devices, test_api):
     with allure.step("Validate show fae interface link state with unknown interface-id"):
         Fae(port_name='unknown').port.interface.link.state.show(should_succeed=False)
 
-    with allure.step("Validate show fae interface link plan-ports with unknown interface-id"):
-        Fae(port_name='unknown').port.interface.link.plan_ports.show(should_succeed=False)
+    with allure.step("Validate show fae interface link plane-ports with unknown interface-id"):
+        Fae(port_name='unknown').port.interface.link.plane_ports.show(should_succeed=False)
 
     with allure.step("Validate action clear fae interface counters command with unknown interface-id"):
         Fae(port_name='unknown').port.interface.counters.clear_counters(dut_engine=engines.dut, fae_param="fae").\

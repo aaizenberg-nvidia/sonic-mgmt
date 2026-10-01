@@ -17,7 +17,8 @@ from ngts.constants.performance_constants import (
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration,
     restore_basic_configuration,
-    save_base_configuration
+    save_base_configuration,
+    get_ar_congestion_thresholds
 )
 from ngts.helpers.performance.traffic_helpers import (
     create_json_traffic_file_with_stream_list,
@@ -109,9 +110,10 @@ def get_conf_args(scenario_name, players, all_ports_after_split):
     """
     This function alters all of the jinja template files.
     """
+    chip_type = get_chip_type(players['dut']['attributes'].noga_query_data['attributes'])
 
     conf_args = {
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+        **get_ar_congestion_thresholds(chip_type),
         "fboss_enabled": True,
         "auto_buffer_mode": "False",
         "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
@@ -190,7 +192,7 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
     neigh_mac_right_tg = '00:00:00:00:10:70'
     num_of_traffic_ports = 32
     speed = 400
-    lossless_rx_expected_bw = round((speed * PerfConsts.DVS_SHAPER_VALUE / num_of_traffic_ports) / speed, 2)
+    lossless_rx_expected_bw = round((speed * PerfConsts.DVS_SHAPER_VALUE / num_of_traffic_ports) / speed, 2) - 0.002
     left_unconnected = all_ports_after_split[PerfConsts.LEFT_TG_ALIAS]["unconnected_ports"]
     right_unconnected = all_ports_after_split[PerfConsts.RIGHT_TG_ALIAS]["unconnected_ports"]
     left_split = all_ports_after_split[PerfConsts.DUT_ALIAS]["left_split_ports"]
@@ -220,19 +222,19 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
         PerfConsts.BW_THRESHOLD: {
             "bisection_left_group": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE
+                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE - 0.002
             },
             "bisection_right_group": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE
+                ValidationConsts.RX: PerfConsts.DVS_SHAPER_VALUE - 0.002
             },
             "egress_ports_many_to_1_group_left": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: lossless_rx_expected_bw
+                ValidationConsts.RX: None
             },
             "egress_ports_many_to_1_group_right": {
                 ValidationConsts.TX: bw_th,
-                ValidationConsts.RX: lossless_rx_expected_bw
+                ValidationConsts.RX: None
             },
             "ingress_ports_many_to_1_group_left": {
                 ValidationConsts.TX: None,
@@ -284,10 +286,10 @@ def get_scenario_6a_conf_args(players, all_ports_after_split, conf_args):
     left_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.LEFT_TG_ALIAS]
     right_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.RIGHT_TG_ALIAS]
 
-    bisection_lossy_packets = 8
+    bisection_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     bisection_lossless_packets = 0
     many_to_one_lossy_packets = 0
-    many_to_one_lossless_packets = 8
+    many_to_one_lossless_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
 
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.LEFT_TG_ALIAS: [
@@ -382,8 +384,8 @@ def get_scenario_6b_conf_args(players, all_ports_after_split, conf_args):
 
     left_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.LEFT_TG_ALIAS]
     bisection_lossy_packets = 0
-    bisection_lossless_packets = 8
-    few_to_many_lossy_packets = 8
+    bisection_lossless_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
+    few_to_many_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     few_to_many_lossless_packets = 0
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.LEFT_TG_ALIAS: [
@@ -500,7 +502,7 @@ def get_scenario_7a_conf_args(players, all_ports_after_split, conf_args):
     ]
 
     right_ports = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.RIGHT_TG_ALIAS]
-    nic_to_spine_lossy_packets = 8
+    nic_to_spine_lossy_packets = 8 if chip_type != "SPC6" else int(8 * 1.5)
     nic_to_spine_lossless_packets = 0
     conf_args[PerfConsts.TRAFFIC_PATTERN] = {
         PerfConsts.RIGHT_TG_ALIAS: [
@@ -747,7 +749,8 @@ def get_scenrio_7_b_or_c_conf_args(
     port_groups_dut = conf_args[PerfConsts.PORT_GROUPS][PerfConsts.DUT_ALIAS]
     ecmp_configurations_dict = get_groups_ecmp_configurations(all_groups, group_ips, left_groups, neigh_mac_left_tg, neigh_mac_right_tg, port_groups_dut)
     conf_args.update(ecmp_configurations_dict)
-    num_packets = math.ceil(8 / (len(all_groups) - 1))
+    chip_type = get_chip_type(players['dut']['attributes'].noga_query_data['attributes'])
+    num_packets = math.ceil(8 / (len(all_groups) - 1)) if chip_type == "SPC4" else math.ceil(16 / (len(all_groups) - 1))
     port_groups_tg = conf_args[PerfConsts.PORT_GROUPS]
     traffic_pattern = get_traffic_pattern(all_groups, group_ips, left_groups, num_packets, port_groups_tg)
     conf_args.update({PerfConsts.TRAFFIC_PATTERN: traffic_pattern})

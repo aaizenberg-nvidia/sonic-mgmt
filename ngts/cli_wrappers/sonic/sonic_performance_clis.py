@@ -34,14 +34,10 @@ class SonicPerformanceCli(PerformanceCommon):
     """
     This class is for Performance cli commands for sonic only
     """
+    PORT_STYLE = "ethernet"
 
     def __init__(self, topology_obj, engine, dut_alias, cli_obj):
-        self.topology_obj = topology_obj
-        self.engine = engine
-        self.dut_alias = dut_alias
-        self.hostname = self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Common'][
-            'Name']
-        self.cli_obj = cli_obj
+        super().__init__(topology_obj, engine, dut_alias, cli_obj)
         self.chip_type = \
             self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Specific']['chip_type']
         self.mac = self.topology_obj.players[self.dut_alias]['attributes'].noga_query_data['attributes']['Specific'][
@@ -75,6 +71,7 @@ class SonicPerformanceCli(PerformanceCommon):
         docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
         variables = " ".join(env_variables)
         new_cmd = f"{docker_exec_syncd_cmd} '{PerfConsts.EXPORT_PYTHONPATH} {variables} && {cmd}'"
+        self._log_sdk_cmd(new_cmd)
         return new_cmd
 
     def get_sensors_data(self):
@@ -342,6 +339,79 @@ class SonicPerformanceCli(PerformanceCommon):
             self.unconnected_ports, self.connected_ports = ports_list[:middle], ports_list[middle:]
         else:
             self.connected_ports, self.unconnected_ports = ports_list, []
+        self.apply_forced_unconnected_to_sku_ports(sku_ports_dict)
+        self.check_connected_unconnected_balance(self.connected_ports, self.unconnected_ports)
+
+    def apply_forced_unconnected_to_sku_ports(self, sku_ports_dict):
+        """Force this switch's externally-cabled ports into the unconnected role.
+
+        SONiC classifies ports by HWSKU ordering rather than transceiver state, so a port cabled to
+        an external traffic generator (Ixia) keeps whatever role its position gives it. Which role
+        that is depends on which half of the port list the cage falls in and on whether this switch
+        is left_tg or right_tg, so declaring it is what makes the role deterministic instead of
+        leaving it to the port ordering.
+
+        Front-panel label ports are matched through the HWSKU ``alias`` (``etp<label>`` plus an
+        optional split-lane letter), which is the SONiC name for the same physical cage, so one
+        label port covers every split sub-port behind it.
+
+        Args:
+            sku_ports_dict: The HWSKU ``PORT`` table, mapping port name to its attributes.
+
+        Raises:
+            TestIssue: When a declared label port has no matching port in the HWSKU, or its cage
+                holds no transceiver — either way forced_unconnected_ports.yaml no longer describes
+                this switch.
+        """
+        if not self.forced_unconnected_label_ports:
+            return
+        forced_ports_by_label = defaultdict(list)
+        for port, port_info in sku_ports_dict.items():
+            alias_match = re.match(r"etp(\d+)", port_info.get(ConfigDbJsonConst.ALIAS, ""))
+            if not alias_match or int(alias_match.group(1)) not in self.forced_unconnected_label_ports:
+                continue
+            forced_ports_by_label[int(alias_match.group(1))].append(port)
+        missing_label_ports = sorted(self.forced_unconnected_label_ports - set(forced_ports_by_label))
+        if missing_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config lists front-panel label port(s) "
+                            f"{missing_label_ports} for {self.hostname}, but no HWSKU port carries the matching "
+                            f"etp<label> alias. Fix forced_unconnected_ports.yaml to match the switch.")
+        self._validate_forced_unconnected_transceivers(forced_ports_by_label)
+        forced_ports = {port for ports in forced_ports_by_label.values() for port in ports}
+        forced_connected = [port for port in self.connected_ports if port in forced_ports]
+        if not forced_connected:
+            logging.info(f"[{self.dut_alias}] Forced-unconnected label port(s) "
+                         f"{sorted(self.forced_unconnected_label_ports)} on {self.hostname} are already unconnected")
+            return
+        logging.info(f"[{self.dut_alias}] Forcing label port(s) {sorted(self.forced_unconnected_label_ports)} on "
+                     f"{self.hostname} to unconnected: moved port(s) {forced_connected}")
+        self.connected_ports = [port for port in self.connected_ports if port not in forced_ports]
+        self.unconnected_ports = self.unconnected_ports + forced_connected
+
+    def _validate_forced_unconnected_transceivers(self, forced_ports_by_label):
+        """Fail when a declared forced-unconnected cage holds no transceiver.
+
+        The declaration asserts a physical fact: this cage is cabled to an external traffic
+        generator. SONiC cannot see that from the HWSKU, so the transceiver presence table is what
+        confirms the cable is still there. An empty cage means forced_unconnected_ports.yaml no
+        longer describes the lab, and the run would generate MLOOP traffic from a dead port. This is
+        the SONiC counterpart of the PLUGGED check the ports-dump classifier does on DVS and Cumulus.
+
+        Args:
+            forced_ports_by_label: Declared front-panel label port to its HWSKU port names.
+
+        Raises:
+            TestIssue: When a declared label port has no port reporting a present transceiver.
+        """
+        presence_table = self.cli_obj.interface.parse_interfaces_transceiver_presence()
+        unplugged_label_ports = sorted(label_port for label_port, ports in forced_ports_by_label.items()
+                                       if not any(presence_table.get(port, {}).get("Presence") == "Present"
+                                                  for port in ports))
+        if unplugged_label_ports:
+            raise TestIssue(msg=f"[{self.dut_alias}] forced-unconnected config declares front-panel label port(s) "
+                            f"{unplugged_label_ports} on {self.hostname} as cabled to an external traffic "
+                            f"generator, but their transceiver is not present. The cable was removed, or "
+                            f"forced_unconnected_ports.yaml is stale.")
 
     def remove_service_ports(self, ports_list, chip_type):
         if chip_type == "SPC4":
@@ -379,8 +449,10 @@ class SonicPerformanceCli(PerformanceCommon):
         return {'connected_ports': self.connected_ports,
                 'unconnected_ports': self.unconnected_ports}
 
-    def configure_mloops(self, validate_mloops=True, is_simx=False):
+    def configure_mloops(self, validate_mloops=True, is_simx=False, burst_config=None):
         logging.info(f"Configure Mloop on {self.dut_alias}")
+        if burst_config:
+            raise NotImplementedError(f"Bonus port burst is not supported on {self.dut_alias}")
         self.update_mloops_conf_on_syncd()
         self.execute_cmd(self.get_cmd_for_sdk(f"python3 {PerfConsts.DISABLE_MAC_SCRIPT}"))
         self.cli_obj.mac.clear_fdb()
@@ -709,7 +781,7 @@ class SonicPerformanceCli(PerformanceCommon):
             self.execute_cmd(f"sudo /usr/sbin/logrotate -f /etc/logrotate.d/{daemon}  > /dev/null 2>&1")
 
     def add_ports_connectivity_to_dut(self, conf_args, selected_connected_ports=None):
-        ports_file = "ports.json"
+        ports_file = PerfConsts.PORTS_JSON_FILENAME
         full_path = os.path.join(PerfConsts.CONFIG_FILES_DIR, ports_file)
         connected_ports = selected_connected_ports if selected_connected_ports else self.connected_ports
         ports_connectivity_dict = {
@@ -718,6 +790,11 @@ class SonicPerformanceCli(PerformanceCommon):
             "speed": conf_args["speed"]}
         with open(full_path, 'w') as f:
             json.dump(ports_connectivity_dict, f)
+        # No pre-delete here: docker cp overwrites a same-named file in the destination
+        # directory, and deleting first (before the host->container copy pipeline below)
+        # would risk leaving the syncd container with no /ports.json at all if any step of
+        # that copy fails. The "class skips this publish step" staleness case is already
+        # covered by clear_stale_ports_json() at the start of apply_configuration_file.
         copy_files_to_syncd(self.engine, [ports_file], PerfConsts.CONFIG_FILES_DIR)
 
     def configure_ports_shaper(self, shaper_value):

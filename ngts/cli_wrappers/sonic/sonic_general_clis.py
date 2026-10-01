@@ -266,14 +266,23 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # See Redmine #5134692. Detach reboot from the SSH session and give
         # `reload()` extra headroom to detect shutdown.
         if sanitizer:
+            reboot_bin = None
+            for candidate in (f"/usr/local/bin/{reboot_type}", f"/sbin/{reboot_type}"):
+                exists = self.engine.run_cmd(
+                    f"test -x {candidate} && echo yes || echo no", validate=False)
+                if exists and "yes" in exists:
+                    reboot_bin = candidate
+                    break
+            if not reboot_bin:
+                raise Exception(f"Reboot command '{reboot_type}' not found in /usr/local/bin or /sbin")
             reboot_cmd = (
-                "nohup sudo /sbin/{rt} "
+                "nohup sudo {} "
                 "</dev/null >/dev/null 2>&1 & disown"
-            ).format(rt=reboot_type)
+            ).format(reboot_bin)
             effective_wait_after_ping = wait_after_ping + SANITIZER_REBOOT_EXTRA_WAIT_SEC
             logger.info("ASAN/sanitizer image detected: using detached reboot "
-                        "and extending wait_after_ping %ss -> %ss",
-                        wait_after_ping, effective_wait_after_ping)
+                        "(%s) and extending wait_after_ping %ss -> %ss",
+                        reboot_bin, wait_after_ping, effective_wait_after_ping)
         else:
             reboot_cmd = f'sudo {reboot_type}'
             effective_wait_after_ping = wait_after_ping
@@ -554,14 +563,15 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             output = self.engine.run_cmd('sudo generate_dump -s \"-{} seconds\"'.format(duration), validate=True)
             return output.splitlines()[-1]
 
-    def do_installation(self, topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias='dut'):
+    def do_installation(self, topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias='dut',
+                        force_uninstall=False):
         if deploy_type == 'onie':
             if 'simx' in platform_params.platform:
                 in_onie = True
             else:
                 with allure.step('Preparing switch for installation'):
                     logger.info("Begin: Preparing switch for installation ")
-                    in_onie = self.prepare_for_installation(topology_obj, dut_alias)
+                    in_onie = self.prepare_for_installation(topology_obj, dut_alias, force_uninstall=force_uninstall)
                     logger.info("End: Preparing switch for installation ")
             self.deploy_onie(image_path, in_onie, fw_pkg_path, platform_params, topology_obj, dut_alias)
 
@@ -597,7 +607,9 @@ class SonicGeneralCliDefault(GeneralCliCommon):
                 self.remote_reboot(topology_obj, dut_alias)
                 logger.info('Sleeping %s seconds to handle ssh flapping' % InfraConst.SLEEP_AFTER_RRBOOT)
                 time.sleep(InfraConst.SLEEP_AFTER_RRBOOT)
-                self.do_installation(topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias)
+                # first attempt already failed - force uninstall+reinstall on this retry
+                self.do_installation(topology_obj, image_path, deploy_type, fw_pkg_path, platform_params, dut_alias,
+                                     force_uninstall=True)
 
     def modify_init_cfg_timezone(self, timezone):
         """
@@ -626,7 +638,8 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # will be verified after config_db is updated
         if not deploy_chipless:
 
-            if not is_air:
+            # Chipless setup swss/syncd container never come up
+            if not is_air and setup_name not in SonicDeployConstants.CHIPLESS_SETUPS:
                 with allure.step('Verify dockers are up'):
                     self.verify_dockers_are_up()
 
@@ -1264,42 +1277,12 @@ class SonicGeneralCliDefault(GeneralCliCommon):
 
         logger.info("✓ Multi-ASIC configuration applied successfully")
 
-    def _copy_sn5640_simx_sku_from_physical_to_simx_and_update_simx_specific_files(self, sn5640_simx_platform):
-        """
-        After copying Mellanox-SN5640-C512S2 from physical to simx, align simx-specific files:
-        drop independent-module SAI mode from sai.profile, and skip xcvrd in PMON (not CMIS mgr).
-        """
-        # This is a workaround to copy the SN5640 default sku from physical to simx
-        # The default sku is Mellanox-SN5640-C512S2
-        # and it is not available in the simx
-        # so we need to copy it from the physical platform folder to the simx platform folder
-        logger.info("Copying 5640 default sku from physical to simx")
-        cp_5640_default_sku_from_physic_to_simx = f"sudo cp -rf /usr/share/sonic/device/x86_64-nvidia_sn5640-r0/Mellanox-SN5640-C512S2 /usr/share/sonic/device/{sn5640_simx_platform}/"
-        self.engine.run_cmd(cp_5640_default_sku_from_physic_to_simx)
-
-        logger.info("Updating simx-specific files")
-        sku_path = f'/usr/share/sonic/device/{sn5640_simx_platform}/Mellanox-SN5640-C512S2'
-        logger.info('Removing SAI_INDEPENDENT_MODULE_MODE=1 from simx sai.profile if present')
-        self.engine.run_cmd(f"sudo sed -i '/^SAI_INDEPENDENT_MODULE_MODE=1$/d' {sku_path}/sai.profile")
-        logger.info('Updating pmon_daemon_control.json: remove skip_xcvrd_cmis_mgr, set skip_xcvrd true')
-        self.engine.run_cmd(
-            f"sudo python3 -c \"import json; p='{sku_path}/pmon_daemon_control.json'; "
-            f"d=json.load(open(p)); d.pop('skip_xcvrd_cmis_mgr', None); d['skip_xcvrd']=True; "
-            f"f=open(p,'w'); json.dump(d, f, indent=4); f.write('\\n'); f.close()\""
-        )
-
     def apply_config_files(self, topology_obj, setup_name, platform_params, is_air, custom_config_db_air_path=None,
                            deploy_chipless=False):
         platform = platform_params['platform']
         hwsku = platform_params['hwsku']
         shared_path = '{}{}'.format(InfraConst.MARS_TOPO_FOLDER_PATH, setup_name)
         config_db = None
-
-        # this is a workaround to copy the SN5640 default sku from physical to simx
-        # when image implementation supports SN5640-C512S2, this will be removed
-        sn5640_simx_platform = PlatformTypesConstants.PLATFORM_BISON_SIMX
-        if platform == sn5640_simx_platform:
-            self._copy_sn5640_simx_sku_from_physical_to_simx_and_update_simx_specific_files(sn5640_simx_platform)
 
         if is_air:
             if custom_config_db_air_path:
@@ -2213,7 +2196,7 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             for sub_key in sub_keys:
                 self.engine.run_cmd(f'sudo sonic-db-cli CONFIG_DB HDEL "{key}" "{sub_key}"')
 
-    def install_traffic_generator(self, latest_version=True, cli_type=CliType.SONIC):
+    def install_traffic_generator(self, latest_version=False, cli_type=CliType.SONIC, perf_sys_sdk_change=None):
         """
         Function verifies the traffic generator is functional post deploy on SONiC OS
 
@@ -2223,13 +2206,17 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         is running traffic generation script.
         :return: None
         """
+        logger.info(
+            f"install_traffic_generator (SONiC): latest_version={latest_version}, "
+            f"perf_sys_sdk_change={perf_sys_sdk_change!r}"
+        )
+        perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         with allure.step('Get SDK_VER git'):
-            sdk_version = self.get_sdk_version()
-            sdk_branch = self.get_sdk_branch(sdk_version)
-            if latest_version:
-                sdk_version = self.get_latest_sdk_version(cur_sdk_version=sdk_version, sdk_branch=sdk_branch)
-            docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
+            sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
+                latest_version=latest_version)
             sdk_deb_path = self.resolve_sdk_git_deb_path(sdk_version, cli_type=cli_type)
+            logger.info(f"Resolved SDK package for traffic generator installation: '{sdk_deb_path}'")
+            docker_exec_syncd_cmd = InfraConst.DOCKER_EXEC_BASH_CMD.format(DOCKER=InfraConst.SYNCD_DOCKER)
             sdk_deb_dir = os.path.dirname(sdk_deb_path)
             sdk_deb_file = os.path.basename(sdk_deb_path)
             sdk_dev_deb_file = sdk_deb_file.replace('sys-sdk-git', 'sys-sdk').replace('_amd64.deb', '_amd64-dev.deb')
@@ -2255,7 +2242,9 @@ class SonicGeneralCliDefault(GeneralCliCommon):
                 f"--break-system-packages --root-user-action=ignore'")
 
         with allure.step('Prepare SDK_VER git to run tests'):
-            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, is_in_syncd=True)
+            self.overlay_perf_sys_sdk_to_sys_sdk(sdk_branch, is_in_syncd=True,
+                                                 perf_sys_sdk_branch=perf_sys_sdk_branch,
+                                                 perf_sys_sdk_gerrit_change=perf_sys_sdk_gerrit_change)
             self.engine.run_cmd(f"{docker_exec_syncd_cmd} '{PerfConsts.EXPORT_PYTHONPATH} "
                                 f"&& {PerfConsts.DVS_RUN_TEST_PATH} -si'")
 
@@ -2374,7 +2363,8 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             threads_dict, context.destination_hwsku, context.is_performance,
             parallel=context.deploy_testbed_in_parallel, deploy_image_only=context.deploy_image_only,
             deploy_chipless=context.deploy_chipless,
-            deploy_sequential=context.deploy_sequential
+            deploy_sequential=context.deploy_sequential,
+            skip_add_remove_topo=context.skip_add_remove_topo
         )
 
     def post_installation_steps(self, context, image_helper=None):

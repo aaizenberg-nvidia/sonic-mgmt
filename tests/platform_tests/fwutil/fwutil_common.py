@@ -40,6 +40,19 @@ def find_pattern(lines, pattern):
     return False
 
 
+def _dpu_admin_oper_aligned(duthost):
+    """True when each DPU's oper-status matches admin-status (down/offline or up/online)."""
+    for module_status in duthost.show_and_parse("show chassis module status"):
+        if "DPU" not in module_status.get("name", "").upper():
+            continue
+        admin = module_status.get("admin-status", "").lower()
+        oper = module_status.get("oper-status", "").lower()
+        if (admin == "down" and oper != "offline") or (admin != "down" and oper != "online"):
+            logger.info("DPU %s not aligned: admin=%s oper=%s", module_status.get("name"), admin, oper)
+            return False
+    return True
+
+
 def get_hw_revision(duthost):
     out = duthost.command("show platform summary")
     rev_line = out["stdout"].splitlines()[6]
@@ -113,40 +126,30 @@ def complete_install(duthost, localhost, boot_type, res, pdu_ctrl, component, au
         else:
             # For auto reboot scenario, it takes some time in ONIE to update the firmware
             logger.info("Waiting on switch to shutdown after auto reboot...")
-            if 'FPGA' in component:
-                # For FPGA update, no reboot is needed.
-                logger.info("Waiting for switch update result...")
-                res.get(timeout)
-                if res._value['failed']:
-                    pytest.fail(f"The component installation is not successful: {res._value}")
-                logger.info("FPGA update is successful")
+            if 'CPLD' in component or 'FPGA' in component:
+                # For CPLD update, most time is spend before the reboot
+                pre_reboot_timeout = timeout
+                post_reboot_timeout = COMMON_REBOOT_TIMEOUT
             else:
-                if 'CPLD' in component:
-                    # For CPLD update, most time is spend before the reboot
-                    pre_reboot_timeout = timeout
-                    post_reboot_timeout = COMMON_REBOOT_TIMEOUT
-                else:
-                    # For BIOS/ONIE, most time is spend after the reboot in ONIE
-                    pre_reboot_timeout = 120
-                    if duthost.facts["platform"] == "x86_64-nvidia_sn4280-r0":
-                        pre_reboot_timeout += 240
-                    post_reboot_timeout = timeout
-                localhost.wait_for(host=hn, port=22, state='stopped', delay=1, timeout=pre_reboot_timeout)
-                # Wait for 30s in case there is ssh flap
-                time.sleep(30)
-                logger.info("Waiting on switch to come up in SONiC....")
-                localhost.wait_for(
-                    host=hn, port=22, state='started', search_regex=SONIC_SSH_REGEX, delay=10,
-                  timeout=post_reboot_timeout)
+                # For BIOS/ONIE, most time is spend after the reboot in ONIE
+                pre_reboot_timeout = 120
+                if duthost.facts["platform"] == "x86_64-nvidia_sn4280-r0":
+                    pre_reboot_timeout += 240
+                post_reboot_timeout = timeout
+            localhost.wait_for(host=hn, port=22, state='stopped', delay=1, timeout=pre_reboot_timeout)
+            # Wait for 30s in case there is ssh flap
+            time.sleep(30)
+            logger.info("Waiting on switch to come up in SONiC....")
+            localhost.wait_for(
+                host=hn, port=22, state='started', search_regex=SONIC_SSH_REGEX, delay=10,
+                timeout=post_reboot_timeout)
 
-        # Only wait for critical systems when a reboot actually occurred (FPGA update does not reboot).
-        if (not auto_reboot) or ('FPGA' not in component):
-            logger.info("Waiting for docker service to start")
-            pytest_assert(wait_until(300, 10, 0, duthost.is_host_service_running, "docker"),
-                          "Docker service failed to start")
-            logger.info("Waiting on critical systems to come online...")
-            wait_until(300, 30, 0, duthost.critical_services_fully_started)
-            time.sleep(60)
+        logger.info("Waiting for docker service to start")
+        pytest_assert(wait_until(300, 10, 0, duthost.is_host_service_running, "docker"),
+                        "Docker service failed to start")
+        logger.info("Waiting on critical systems to come online...")
+        wait_until(300, 30, 0, duthost.critical_services_fully_started)
+        time.sleep(60)
 
         # Reboot back into original image if neccesary
         if next_image and auto_reboot:
@@ -199,8 +202,10 @@ def _resolve_flavor_components(component, defined_fw, chassis, duthost):
     """Resolve any flavor-dict entries (e.g. BMC) into revision lists."""
     for comp, revs in list(component.items()):
         if comp == "BMC" and isinstance(revs, dict):
-            bmc_ip = get_bmc_ip(duthost)
-            bmc_user, bmc_password = load_bmc_creds()
+            bmc_ip = bmc_user = bmc_password = None
+            if len(revs) > 1:
+                bmc_ip = get_bmc_ip(duthost)
+                bmc_user, bmc_password = load_bmc_creds()
             flavor = resolve_bmc_flavor(defined_fw, chassis, duthost, bmc_ip,
                                         bmc_user, bmc_password)
             component[comp] = revs.get(flavor, [])
@@ -273,6 +278,11 @@ def validate_versions(final, config, chassis, boot):
 
 def call_fwutil(request, duthost, localhost, pdu_ctrl, fw_pkg,
                 component=None, next_image=None, boot=None, basepath=None):
+    # Wait for DPU admin/oper states to be aligned before FPGA update
+    if component and "FPGA" in component:
+        pytest_assert(wait_until(360, 10, 0, _dpu_admin_oper_aligned, duthost),
+                      "DPU admin/oper states not aligned before FPGA update")
+
     allure.step("Collect firmware versions")
     logger.info("Calling fwutil with component: {} | next_image: {} | boot: {} | basepath: {}".format(component,
                                                                                                       next_image,

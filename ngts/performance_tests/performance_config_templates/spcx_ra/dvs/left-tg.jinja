@@ -25,6 +25,17 @@
             "returned_mac_addr": ["00:00:00:00:10:70", "00:00:00:00:10:90"],
             "vlan": {% if dut_alias=="left-tg" %} 3 {% else %} 5 {% endif %},
 
+            {% if conf_args.use_incremental_dips is defined and conf_args.use_incremental_dips %}
+            {# Multi-destination IP support via MultiDipsTG #}
+            {% set split_ports = get_split_ports(conf_args.split_right, conf_args.split_left) %}
+            {% set right_split_ports = split_ports["right_split_ports"] %}
+            "is_ipv4": "{{ conf_args.is_ipv4 }}",
+            "start_dip_ipv4_list": {{ conf_args.dip_left_to_right_start_ipv4_list | tojson }},
+            "start_dip_ipv6_list": {{ conf_args.dip_left_to_right_start_ipv6_list | tojson }},
+            "num_dip_ipv4_to_send": "{{ right_split_ports | length }}",
+            "num_dip_ipv6_to_send": "{{ right_split_ports | length }}",
+            {% endif %}
+
             {# Configure port groups - either from provided config or default mapping #}
             {% if conf_args.port_groups is defined %}
             "{{ PerfConsts.PORT_GROUPS }}": {{ conf_args.port_groups[PerfConsts.LEFT_TG_ALIAS] | tojson }}

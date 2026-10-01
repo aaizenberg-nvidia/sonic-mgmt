@@ -20,8 +20,8 @@
             <!-- daily case -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> != </op>
-                <value> yes </value>
+                <op> == </op>
+                <value> no </value>
             </condition>
         </ignore>
         <info> BMP configdb test Case </info>
@@ -37,8 +37,8 @@
             <!-- daily case -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> != </op>
-                <value> yes </value>
+                <op> == </op>
+                <value> no </value>
             </condition>
         </ignore>
         <info> BMP redis instance test Case </info>
@@ -54,8 +54,8 @@
             <!-- daily case -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> != </op>
-                <value> yes </value>
+                <op> == </op>
+                <value> no </value>
             </condition>
         </ignore>
         <info> BMP statedb test Case </info>
@@ -71,8 +71,8 @@
             <!-- daily case -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> != </op>
-                <value> yes </value>
+                <op> == </op>
+                <value> no </value>
             </condition>
         </ignore>
         <info> BMP docker restart test Case </info>
@@ -88,8 +88,8 @@
             <!-- daily case -->
             <condition>
                 <key> skip_weekend_cases </key>
-                <op> != </op>
-                <value> yes </value>
+                <op> == </op>
+                <value> no </value>
             </condition>
         </ignore>
         <info> FRR BMP sanity test Case </info>

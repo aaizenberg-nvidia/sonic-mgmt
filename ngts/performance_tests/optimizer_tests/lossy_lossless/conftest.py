@@ -17,7 +17,8 @@ from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration,
-                                                                dynamic_configuration_helper)
+                                                                dynamic_configuration_helper,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts
 from ngts.constants.nv_optimizer_constant import NvOptimizerEnvVariables
 import os
@@ -48,13 +49,15 @@ def basic_setup_configuration(players, conf_args, init, performance_parameters, 
 
 
 @pytest.fixture(scope='session', autouse=True)
-def conf_args(players):
+def conf_args(players, chip_type):
     """
     This function alters all of the jinja template files.
     """
 
-    conf_args = {"congestion_thresh_lo": 190,
+    conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "auto_buffer_mode": "False",
+                 # Pass thresholds 4-7 here to run SPC6 extended grading.
+                 **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],
                  "is_ipv6": False,
                  "split_right": 2,

@@ -634,10 +634,10 @@ def is_bgp_route_synced(duthost):
     output = duthost.command(cmd)['stdout']
     bgp_info = json.loads(output)
     for neighbor, info in bgp_info.items():
+        if info.get('bgpState') != 'Established':
+            logger.info(f"BGP neighbor {neighbor} is not Established (state={info.get('bgpState')})")
+            return False
         if 'gracefulRestartInfo' in info:
-            if info.get('bgpState') != 'Established':
-                logger.info(f"BGP neighbor {neighbor} is not Established (state={info.get('bgpState')})")
-                return False
             if "ipv4Unicast" in info['gracefulRestartInfo']:
                 if not info['gracefulRestartInfo']["ipv4Unicast"]['endOfRibStatus']['endOfRibSend']:
                     logger.info(f"BGP neighbor {neighbor} is sending updates")

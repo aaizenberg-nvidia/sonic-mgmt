@@ -48,9 +48,15 @@ class TestSRv6Leaf(TestSRv6Base):
         self.dut_interfaces_ipv6_configuration_dict = self.cli_object.performance.get_dut_interfaces_ipv6_configuration()
         self.vlan_interface_configuration_dict = self.tg_cli_object.performance.get_tg_interfaces_vlan_configuration()
         self.cli_object.performance.configure_interfaces_mac_neighbor(self.vlan_interface_configuration_dict)
-        self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
-        self.opt_ts = os.getenv(MRCConsts.OPT_TS, default=MRCConsts.OPT_TS_DEFAULT)
-        self.cli_object.trimming.configure_custom_dwrr_weights()
+        trimming_size = int(os.getenv(MRCConsts.OPT_TS,
+                                      MRCConsts.get_opt_ts_default(self.chip_type)))
+        if isinstance(self.cli_object, NvueCli):
+            self.cli_object.trimming.configure_trimming_size(trimming_size)
+        else:
+            self.cli_object.trimming.config_optimal_trimming_size(self.chip_type)
+        self.opt_ts = trimming_size
+        if MRCConsts.DWRR_WEIGHTS_CONFIG != "DEFAULT":
+            self.cli_object.trimming.configure_custom_dwrr_weights()
         self.shaper_value = shaper_value
 
     @pytest.mark.parametrize("workload", MRCConsts.MRC_REGRESSION_WORKLOADS_LIST)
@@ -99,15 +105,19 @@ class TestSRv6Leaf(TestSRv6Base):
             self.wait_for_traffic_to_stabilize("bisection")  # TODO: see wait_for_traffic_to_stabilize — replace fixed sleep
 
         with allure.step("Verifying the traffic for all egress ports"):
-            additional_validations = self.get_additional_validations(traffic_type,
-                                                                     tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
-                                                                     drop_over_max_sample_port=upstream[0] if is_drop_over_max else None)
+            tc_occ_reference_offset = MRCConsts.BISECTION_SRV6_OCC_OVERHEAD_BY_CHIP_TYPE[self.chip_type]
+            additional_validations = self.get_additional_validations(
+                traffic_type,
+                tc_occ_allowed_deviation=MRCConsts.TC_OCC_ALLOWED_DEVIATION_BISECTION,
+                drop_over_max_sample_port=upstream[0] if is_drop_over_max else None,
+                tc_occ_reference_offset=tc_occ_reference_offset,
+                validate_pg_total_occ=True)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
-                                      tc_occ_threshold=MRCConsts.OCC_TH_DICT,
+                                      tc_occ_threshold=MRCConsts.OCC_TH_DICT_BY_CHIP_TYPE[self.chip_type],
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       run_validate_counters=not is_drop_over_max,
                                       run_validate_no_drops_on_tg_ports=not is_drop_over_max,
@@ -173,6 +183,10 @@ class TestSRv6Leaf(TestSRv6Base):
     def test_leaf_srv6_trimming_many_to_few(self, request, traffic_type, workload, M):
         condition, skip_message = get_srv6_tests_skip_condition(self.cli_object, self.chip_type)
         skip_performance_test_conditionally(condition, skip_message)
+        skip_performance_test_conditionally(
+            self.chip_type == "SPC4" and isinstance(self.cli_object, NvueCli),
+            f"This test is not supported on SPC4 Cumulus - SPC4 trimming capacity "
+            f"limitation at this scale, Redmine issue 5241120")
         test_name = get_perf_test_name(request)
         num_of_ports = MRCConsts.UPSTREAM_DOWNSTREAM_NUM_OF_PORTS_BY_CHIP_TYPE[self.chip_type]
         egress_ports, ingress_ports, port_group_df = self.cli_object.performance.get_leaf_many_to_few_port_group_df(M, num_of_ports)
@@ -255,8 +269,10 @@ class TestSRv6Leaf(TestSRv6Base):
             raise TestIssue("\n".join(violations_list))
 
     def get_victim_flow_additional_validations(self):
+        tc_occ_threshold = MRCConsts.OCC_TH_DICT_BY_CHIP_TYPE[self.chip_type].copy()
+        tc_occ_threshold[ValidationConsts.OCC_AVG] = MRCConsts.VICTIM_FLOW_OCC_AVG_TH_BY_CHIP_TYPE[self.chip_type]
         additional_validations = {
-            'validate_per_tc': Validation(validate_per_tc, {'tc_occ_threshold': MRCConsts.OCC_TH_DICT,
+            'validate_per_tc': Validation(validate_per_tc, {'tc_occ_threshold': tc_occ_threshold,
                                                             'tc_to_validate': MRCConsts.MRC_DATA_ONLY_WORKLOAD_TC_LIST,
                                                             'tolerance': None,
                                                             'port_group_name_to_validate_list': []})

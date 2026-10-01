@@ -91,14 +91,14 @@ def test_main_flow(random_api, available_spdm_components, devices: DevicesT):
         5.  show component measurements
         6,  verify fields [HashingAlgorithm, SignedMeasurements, SigningAlgorithm, Version] exist
         7.  check initial values
-            - available device:     default values
+            - available device:     default algo/version (SignedMeasurements may be empty)
             - unavailable device:   N/As
         8.  sanity check on values
     3.  generate
     4.  verify inner outputs after generate
         1-6.sub steps 1-6 same as before generate (3)
         7.  check values
-            - available device:     same certificate, non-default measurements
+            - available device:     same certificate, non-empty SignedMeasurements
             - unavailable device:   N/As
         8.  sanity check on values
     """
@@ -211,6 +211,7 @@ def test_generate_give_different_measurement(available_spdm_components):
                 ValidationTool.compare_dictionaries(measurements1, measurements2).verify_result(False)
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.bmc
 @pytest.mark.erot
 @pytest.mark.security

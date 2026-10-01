@@ -10,7 +10,7 @@ import re
 import time
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Generator, List, Optional, Tuple
 
 import pytest
 
@@ -31,10 +31,10 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
 from ngts.tests_nvos.system.gnmi.helpers import (
-    _is_gnmi_unavailable,
     get_infiniband_name_from_port_name,
     get_port_oid_from_infiniband_port,
     is_gnmi_failure,
+    is_gnmi_unavailable,
     parse_gnmi_output,
     verify_msg_not_in_out_or_err,
 )
@@ -60,17 +60,47 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     LINK_RECOVERY_POLL_SEC,
     LINK_RECOVERY_TIMEOUT_SEC,
     LINK_STATE_RECOVERY_LEAVES,
+    NMXT_CONNECTION_ERROR_TOKEN,
+    NMXT_CONNECTOR_SOCKET,
     NMXT_CONTROL_SOCKET,
     NMXT_IB_CONTAINER,
     NMXT_IB_SERVICE,
     NMXT_XCSET_ENDPOINT,
     NMXT_XCSET_SOCKET,
     NMXT_XCSET_TO_DB_FIELD,
+    NvueShowNode,
     NvuePaths,
     OTEL_PENDING_MSG,
+    PEER_PORT_BER_MAX_RATIO,
+    PEER_PORT_BER_ZERO_FLOOR,
+    PEER_PORT_COUNTERS_LINK_TO_DB_FIELD,
+    PEER_PORT_COUNTERS_TO_DB_FIELD,
+    PEER_PORT_DIRECTION_NA,
+    PEER_PORT_HISTOGRAM_BUCKET_COUNT,
+    PEER_PORT_HISTOGRAM_DB_FMT,
+    PEER_PORT_HISTOGRAM_LEAF,
+    PEER_PORT_LANE_COUNT,
+    PEER_PORT_LANE_LEAF_SPECS,
+    PEER_PORT_LANE_LEAVES,
+    PEER_PORT_LANES_DB_FIELD,
+    PEER_PORT_PHY_DETAIL_TO_DB_FIELD,
+    PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD,
+    PEER_PORT_PHY_HEALTH_TO_DB_FIELD,
+    PEER_PORT_PLANE_ROOT_PENDING_LEAVES,
+    PEER_PORT_PLR_BW_LOSS_DIVISOR,
+    PEER_PORT_PLR_BW_LOSS_LEAF,
+    PEER_PORT_PLR_CODES_LOSS_LEAF,
+    PEER_PORT_SPEED_DB_FIELD,
+    PEER_PORT_SPEED_LEAF,
+    PEER_PORT_SPEED_MBPS_PER_GBPS,
+    PEER_PORT_WIDTH_LEAF,
     PEER_TELEMETRY_SAMPLING_SEC,
     PEER_TELEMETRY_SERVICE,
+    PeerPortContainer,
+    PeerPortDbPair,
     PeerPortFields,
+    PeerPortNvueSub,
+    PeerPortTargetRole,
     PeerTelemetryHealth,
     PeerType,
     PlanePortState,
@@ -84,6 +114,28 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Lab prerequisites
+# ============================================================================
+
+
+def report_wrong_lab(message: str, skip: bool) -> None:
+    """
+    Fail on an absent lab prerequisite, or skip when the caller is non-gating extra coverage.
+
+    The peer-port and plane-port suites proper fail: a missing HCA, Subnet Manager or plane-port
+    there means the feature under test was never exercised, so a skip would green the run. The
+    gNMI subscribe-heartbeat cases layer extra coverage on top of those suites and skip instead,
+    because they need a fuller lab (external HCA cables, an SM, live planes) than the surface they
+    extend and are not meant to hold back a setup that cannot host them.
+    """
+    if skip:
+        pytest.skip(f"{message} Skipped rather than failed: this case is additional gNMI "
+                    f"subscribe-heartbeat coverage and is not mandatory on a setup that cannot "
+                    f"host it.")
+    pytest.fail(message)
 
 
 # ============================================================================
@@ -451,7 +503,7 @@ def dut_hostname(topology_obj, devices) -> str:
 
 def is_gnmi_server_unavailable(err: Optional[str]) -> bool:
     """True when the DUT gNMI server is down/unreachable (skip, do not false-pass)."""
-    return _is_gnmi_unavailable(err)
+    return is_gnmi_unavailable(err)
 
 
 def wait_for_gnmi_reachable(
@@ -885,8 +937,8 @@ def get_aport_oid(engines, port_name: str) -> str:
     return get_port_oid_from_infiniband_port(engines.dut, ib_name)
 
 
-# Memoized ``plan-ports`` map of an Aport, keyed by (engine, Aport). The no-arg
-# bulk ``nv show fae interface`` only exposes link+type, so plan-ports/key detail
+# Memoized ``plane-ports`` map of an Aport, keyed by (engine, Aport). The no-arg
+# bulk ``nv show fae interface`` only exposes link+type, so plane-ports/key detail
 # must come from the per-Aport ``nv show fae interface <aport>`` form. Caching per
 # Aport keeps it at one show per active Aport, never one per plane.
 _FAE_APORT_PLAN_PORTS_CACHE: Dict[Tuple[int, str], Dict[str, dict]] = {}
@@ -894,7 +946,7 @@ _FAE_APORT_PLAN_PORTS_CACHE: Dict[Tuple[int, str], Dict[str, dict]] = {}
 
 def _fae_aport_plan_ports(engine, aport_name: str) -> Dict[str, dict]:
     """
-    Return one Aport's ``plan-ports`` map from ``nv show fae interface <aport>``,
+    Return one Aport's ``plane-ports`` map from ``nv show fae interface <aport>``,
     memoized per (engine, Aport).
 
     ``Port.show_interface`` returns the raw JSON string (no error-keyword
@@ -913,7 +965,7 @@ def _fae_aport_plan_ports(engine, aport_name: str) -> Dict[str, dict]:
         plan_ports: Dict[str, dict] = {}
     else:
         parsed = res.get_returned_value()
-        plan_ports = parsed.get("plan-ports", {}) if isinstance(parsed, dict) else {}
+        plan_ports = parsed.get("plane-ports", {}) if isinstance(parsed, dict) else {}
         if not isinstance(plan_ports, dict):
             plan_ports = {}
     _FAE_APORT_PLAN_PORTS_CACHE[cache_key] = plan_ports
@@ -963,8 +1015,8 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # Fallback: resolve via the FAE plan-ports "key" from the per-Aport
-    # `nv show fae interface <aport>` form (the no-arg bulk lacks plan-ports),
+    # Fallback: resolve via the FAE plane-ports "key" from the per-Aport
+    # `nv show fae interface <aport>` form (the no-arg bulk lacks plane-ports),
     # cached per Aport so a multi-plane caller hits one show per Aport, not per
     # plane. A miss is just "not in the map" - no failed ResultObj leaking to
     # teardown.
@@ -973,13 +1025,13 @@ def get_plane_port_oid(engines, plane_port_name: str) -> str:
     port_key_with_suffix = plane_entry.get("key", "") if isinstance(plane_entry, dict) else ""
     if not port_key_with_suffix:
         raise AssertionError(
-            f"No FAE plan-ports key for {plane_port_name}; "
-            f"Aport {aport_name!r} plan-ports keys={list(plan_ports.keys())}"
+            f"No FAE plane-ports key for {plane_port_name}; "
+            f"Aport {aport_name!r} plane-ports keys={list(plan_ports.keys())}"
         )
     # FAE's 'key' carries a 3-char tail we strip; the trimmed value is the
     # IB-internal port name fed into COUNTERS_PORT_NAME_MAP.
     if len(port_key_with_suffix) <= 3:
-        raise AssertionError(f"unexpected FAE plan-ports key, too short to trim: {port_key_with_suffix!r}")
+        raise AssertionError(f"unexpected FAE plane-ports key, too short to trim: {port_key_with_suffix!r}")
     port_key = port_key_with_suffix[:-3]
     output = Tools.DatabaseTool.sonic_db_cli_hget(
         engine=engines.dut, asic="",
@@ -1548,43 +1600,321 @@ def nvue_peer_port_shows_no_data(engines) -> bool:
     return "no data" in out.lower()
 
 
+def nvue_peer_port_show(engines, peer_id: str, sub: str = "") -> Dict:
+    """`nv show peer-port <id> [sub]` returning the nested JSON as-is (not flattened)."""
+    op_param = f"{peer_id} {sub}".strip()
+    body = _PEER_PORT_RESOURCE.parse_show(op_param=op_param, dut_engine=engines.dut)
+    return body if isinstance(body, dict) else {}
+
+
 def nvue_show_peer_port(engines, peer_id: str) -> Dict[str, str]:
     """`nv show peer-port <id>` via the framework wrapper; returns a flat dict."""
-    body = _PEER_PORT_RESOURCE.parse_show(op_param=peer_id, dut_engine=engines.dut)
-    return _flatten_dict(body) if isinstance(body, dict) else {}
+    return _flatten_dict(nvue_peer_port_show(engines, peer_id))
 
 
-def nvue_show_peer_port_raw(engines, peer_id: str) -> Dict:
-    """`nv show peer-port <id>` returning the nested JSON as-is (not flattened)."""
-    body = _PEER_PORT_RESOURCE.parse_show(op_param=peer_id, dut_engine=engines.dut)
-    return body if isinstance(body, dict) else {}
+def peer_port_show_containers(body: Dict) -> Dict[str, Dict]:
+    """Child containers of a peer-port show payload as ``{name: sub-payload}``."""
+    return {str(k): v for k, v in (body or {}).items() if isinstance(v, dict)}
 
 
-def peer_port_counters(entry_raw: Dict) -> Dict[str, str]:
-    """Flat ``{leaf: value}`` of a peer-port ``counters`` subtree from a raw nv-show dict."""
-    return _flatten_dict(entry_raw.get("counters", {})) if isinstance(entry_raw, dict) else {}
+def peer_port_show_leaves(body: Dict) -> Dict[str, str]:
+    """Direct (non-container) leaves of a peer-port show payload, stringified (null -> "")."""
+    return {str(k): "" if v is None else str(v)
+            for k, v in (body or {}).items() if not isinstance(v, dict)}
 
 
-def nvue_peer_port_phy_raw(engines, peer_id: str) -> Dict:
-    """`nv show peer-port <id> link phy` JSON (BER ``health`` + PLR ``detail`` subtree)."""
-    body = _PEER_PORT_RESOURCE.parse_show(op_param=f"{peer_id} link phy", dut_engine=engines.dut)
-    return body if isinstance(body, dict) else {}
+def select_nvue_peer_port_targets(engines) -> List[Tuple[str, str]]:
+    """Pick one aggregated HCA peer (preferring a switch-cabled one) plus one of its plane rows."""
+    peers = nvue_show_peer_ports(engines)
+    assert peers, (
+        "No peer-ports listed via NVUE (`nv show peer-port`). Enable the knob and confirm "
+        "peers are attached and their links are Active (an SM must be running)."
+    )
+    aggregated = aggregated_peer_entries(filter_peer_entries_by_type(peers, PeerType.HCA))
+    assert aggregated, f"No aggregated peer-type={PeerType.HCA} entries via NVUE"
+    # Prefer a peer cabled to a switch port: an FNM-connected HCA only gains its peer
+    # transceiver / asic containers in a later drop.
+    switch_cabled = sorted(pid for pid, fields in aggregated.items()
+                           if peer_entry_aport(fields).lower().startswith("sw"))
+    parent = (switch_cabled or sorted(aggregated))[0]
+    targets = [(PeerPortTargetRole.AGGREGATED, parent)]
+    plane_ids = plane_peer_ids_for_parent(set(peers), parent)
+    if plane_ids:
+        targets.append((PeerPortTargetRole.PLANE, plane_ids[0]))
+    return targets
 
 
-def peer_port_phy(phy_raw: Dict) -> Dict[str, str]:
-    """Flat ``{leaf: value}`` of a peer-port ``link phy`` subtree (BER ``health`` + PLR ``detail``)."""
-    return _flatten_dict(phy_raw) if isinstance(phy_raw, dict) else {}
+def leaf_problems(leaves: Dict[str, Any], expected: Dict[str, str],
+                  allow_not_available: bool = False,
+                  tolerated_missing: FrozenSet[str] = frozenset(),
+                  where: str = "") -> List[str]:
+    """Missing / mistyped leaves against an ``{leaf: GnmiTypeKind}`` expectation.
+
+    Shared by the NVUE show-surface walk and the gNMI schema sweeps: both need the same
+    case-insensitive presence check, the same known-gap tolerance and the same typecheck.
+    A tolerated leaf that has started reporting is logged as a warning rather than as a
+    problem, so the tolerance is noticed once the build delivers the leaf.
+    """
+    problems: List[str] = []
+    leaves_ci = {k.lower(): v for k, v in leaves.items()}
+    tolerated_ci = {leaf.lower() for leaf in tolerated_missing}
+    location = f" under {where}" if where else ""
+    for leaf, kind in expected.items():
+        if leaf.lower() not in leaves_ci:
+            if leaf.lower() in tolerated_ci:
+                logger.info("Tolerated leaf %r is absent%s (known gap)", leaf, location)
+            else:
+                problems.append(f"missing leaf {leaf!r}{location}")
+            continue
+        if leaf.lower() in tolerated_ci:
+            logger.warning(
+                "Tolerated leaf %r is now reported%s - drop it from the tolerated set so "
+                "the check enforces it again", leaf, location,
+            )
+        value = leaves_ci[leaf.lower()]
+        if allow_not_available and str(value).strip().lower() == PEER_PORT_DIRECTION_NA:
+            continue
+        err = gnmi_typecheck(kind, value)
+        if err:
+            problems.append(f"leaf {leaf!r}: {err}")
+    return problems
 
 
-def peer_port_planes(entry_raw: Dict) -> Dict[str, Dict[str, str]]:
-    """``{plane_id: {leaf: value}}`` of a peer-port ``plane-ports`` map from a raw nv-show dict."""
-    planes = {}
-    if isinstance(entry_raw, dict):
-        planes = entry_raw.get("plane-ports") or entry_raw.get("plane_ports") or {}
-    out: Dict[str, Dict[str, str]] = {}
-    for plane_id, body in (planes or {}).items():
-        out[str(plane_id)] = _flatten_dict(body) if isinstance(body, dict) else {}
-    return out
+def _peer_port_lane_problems(lane_body: Dict) -> List[str]:
+    """Per-lane problems under `link phy health`; a lane past the operational width may be null."""
+    lanes = peer_port_show_containers(lane_body)
+    if not lanes:
+        return [f"missing '{PeerPortContainer.LANE}' members"]
+    problems: List[str] = []
+    populated = 0
+    for lane_id, member in sorted(lanes.items()):
+        leaves = peer_port_show_leaves(member)
+        problems += [f"lane {lane_id} {problem}"
+                     for problem in leaf_problems(leaves, PEER_PORT_LANE_LEAVES)]
+        if any(leaves.get(leaf, "").strip() for leaf in PEER_PORT_LANE_LEAVES):
+            populated += 1
+    if not populated:
+        problems.append(
+            f"every '{PeerPortContainer.LANE}' member is empty; the operational lanes must report"
+        )
+    return problems
+
+
+def _peer_port_histogram_problems(buckets_body: Dict) -> List[str]:
+    """Per-bucket problems under `link phy health histogram`."""
+    buckets = peer_port_show_containers(buckets_body)
+    problems: List[str] = []
+    missing = [str(b) for b in range(PEER_PORT_HISTOGRAM_BUCKET_COUNT) if str(b) not in buckets]
+    if missing:
+        problems.append(f"histogram missing bucket(s) {missing!r}")
+    for bucket_id, member in sorted(buckets.items()):
+        problems += [
+            f"histogram bucket {bucket_id} {problem}"
+            for problem in leaf_problems(
+                peer_port_show_leaves(member), {PEER_PORT_HISTOGRAM_LEAF: GnmiTypeKind.COUNTER})
+        ]
+    return problems
+
+
+def peer_port_show_problems(body: Dict, node: NvueShowNode,
+                            role: str = PeerPortTargetRole.AGGREGATED) -> List[str]:
+    """Contract problems for one `nv show peer-port <id> <sub>` payload (empty list when clean).
+
+    The peer's tier labels every problem and every tolerated-leaf log, because a leaf that is
+    absent on a plane row while the aggregated row reports it is the interesting case.
+    """
+    containers = peer_port_show_containers(body)
+    problems = [f"missing child container {name!r}"
+                for name in sorted(node.containers) if name not in containers]
+    tolerated = (PEER_PORT_PLANE_ROOT_PENDING_LEAVES
+                 if role == PeerPortTargetRole.PLANE and node.sub == PeerPortNvueSub.ROOT
+                 else frozenset())
+    problems += leaf_problems(peer_port_show_leaves(body), node.leaves,
+                              tolerated_missing=tolerated, where=role)
+    for name in sorted(node.containers):
+        if name not in containers:
+            continue
+        problems += [
+            f"member {name!r} {problem}"
+            for problem in leaf_problems(
+                peer_port_show_leaves(containers[name]), node.member_leaves,
+                allow_not_available=True, where=role)
+        ]
+    # The keyed lists have no sub-command of their own, so each is verified together with
+    # the node that carries it.
+    if node.sub == PeerPortNvueSub.LINK_PHY_HEALTH:
+        problems += _peer_port_lane_problems(containers.get(PeerPortContainer.LANE, {}))
+    if node.sub == PeerPortNvueSub.LINK_PHY_HEALTH_HISTOGRAM:
+        problems += _peer_port_histogram_problems(
+            containers.get(PeerPortContainer.HISTOGRAM_BUCKETS, {}))
+    return problems
+
+
+def _peer_port_lane_db_pairs(lane_body: Dict) -> List[PeerPortDbPair]:
+    """Per-lane NVUE leaves paired with their COUNTERS_DB lane fields."""
+    lanes = peer_port_show_containers(lane_body)
+    pairs: List[PeerPortDbPair] = []
+    for lane in range(PEER_PORT_LANE_COUNT):
+        leaves = peer_port_show_leaves(lanes.get(str(lane), {}))
+        for leaf, (kind, db_fmt) in PEER_PORT_LANE_LEAF_SPECS.items():
+            pairs.append(PeerPortDbPair(f"lane {lane} {leaf}", leaves.get(leaf),
+                                        db_fmt.format(lane=lane), kind))
+    return pairs
+
+
+def _peer_port_histogram_db_pairs(buckets_body: Dict) -> List[PeerPortDbPair]:
+    """Per-bucket histogram counts paired with their COUNTERS_DB RS-histogram fields."""
+    buckets = peer_port_show_containers(buckets_body)
+    pairs: List[PeerPortDbPair] = []
+    for bucket in range(PEER_PORT_HISTOGRAM_BUCKET_COUNT):
+        value = peer_port_show_leaves(buckets.get(str(bucket), {})).get(PEER_PORT_HISTOGRAM_LEAF)
+        pairs.append(PeerPortDbPair(f"histogram bucket {bucket}", value,
+                                    PEER_PORT_HISTOGRAM_DB_FMT.format(bucket=bucket),
+                                    GnmiTypeKind.COUNTER))
+    return pairs
+
+
+def peer_port_db_comparison_pairs(engines, peer_id: str) -> List[PeerPortDbPair]:
+    """Every NVUE peer-port leaf that has a COUNTERS_DB field, paired with that field."""
+    pairs: List[PeerPortDbPair] = []
+    for sub, field_map in (
+        (PeerPortNvueSub.COUNTERS, PEER_PORT_COUNTERS_TO_DB_FIELD),
+        (PeerPortNvueSub.COUNTERS_LINK, PEER_PORT_COUNTERS_LINK_TO_DB_FIELD),
+        (PeerPortNvueSub.LINK_PHY_DETAIL, PEER_PORT_PHY_DETAIL_TO_DB_FIELD),
+    ):
+        leaves = peer_port_show_leaves(nvue_peer_port_show(engines, peer_id, sub))
+        pairs += [PeerPortDbPair(f"{sub} {leaf}", leaves.get(leaf), db_field, GnmiTypeKind.COUNTER)
+                  for leaf, db_field in field_map.items()]
+
+    health = nvue_peer_port_show(engines, peer_id, PeerPortNvueSub.LINK_PHY_HEALTH)
+    health_leaves = peer_port_show_leaves(health)
+    for field_map, kind in ((PEER_PORT_PHY_HEALTH_TO_DB_FIELD, GnmiTypeKind.COUNTER),
+                            (PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD, GnmiTypeKind.DECIMAL)):
+        pairs += [PeerPortDbPair(f"{PeerPortNvueSub.LINK_PHY_HEALTH} {leaf}",
+                                 health_leaves.get(leaf), db_field, kind)
+                  for leaf, db_field in field_map.items()]
+    pairs += _peer_port_lane_db_pairs(
+        peer_port_show_containers(health).get(PeerPortContainer.LANE, {}))
+
+    histogram = nvue_peer_port_show(engines, peer_id, PeerPortNvueSub.LINK_PHY_HEALTH_HISTOGRAM)
+    pairs += _peer_port_histogram_db_pairs(
+        peer_port_show_containers(histogram).get(PeerPortContainer.HISTOGRAM_BUCKETS, {}))
+    return pairs
+
+
+def _peer_port_ber_problem(pair: PeerPortDbPair, db_raw: str) -> Optional[str]:
+    """Problem comparing one BER pair numerically, or None when the two surfaces agree."""
+    def parse(raw) -> Optional[Decimal]:
+        try:
+            value = Decimal(str(raw).strip())
+        except InvalidOperation:
+            return None
+        return value if value.is_finite() else None
+
+    cli_val, db_val = parse(pair.cli_value), parse(db_raw)
+    if cli_val is None or db_val is None:
+        label, raw = ((pair.label, pair.cli_value) if cli_val is None
+                      else (pair.db_field, db_raw))
+        return f"{label}={raw!r} is not a finite decimal"
+    shown = f"{pair.label}={pair.cli_value!r} against {pair.db_field}={db_raw!r}"
+    zeros = [abs(value) <= PEER_PORT_BER_ZERO_FLOOR for value in (cli_val, db_val)]
+    if all(zeros):
+        return None
+    if any(zeros):
+        return f"{shown}: the two surfaces disagree on whether the link has any errors"
+    hi, lo = max(abs(cli_val), abs(db_val)), min(abs(cli_val), abs(db_val))
+    if hi / lo > PEER_PORT_BER_MAX_RATIO:
+        return f"{shown}: more than a decade apart"
+    return None
+
+
+def peer_port_db_pair_problems(
+    pairs: List[PeerPortDbPair],
+    db_row: Dict[str, str],
+    tolerance_pct: float = SAMPLING_JITTER_TOLERANCE_PCT,
+) -> Tuple[List[str], int]:
+    """Problems and compared-count for NVUE-vs-DB pairs (absent on both sides is consistent)."""
+    problems: List[str] = []
+    compared = 0
+    for pair in pairs:
+        cli_present = pair.cli_value is not None and str(pair.cli_value).strip() != ""
+        db_raw = db_row.get(pair.db_field)
+        db_present = db_raw is not None and str(db_raw).strip() != ""
+        if not cli_present and not db_present:
+            # A lane past the operational width: neither surface reports it.
+            continue
+        if not cli_present:
+            problems.append(f"{pair.label}: absent in NVUE while {pair.db_field}={db_raw!r}")
+            continue
+        if not db_present:
+            problems.append(f"{pair.label}={pair.cli_value!r} has no {pair.db_field} in the DB row")
+            continue
+        if pair.kind == GnmiTypeKind.DECIMAL:
+            # A BER is a ratio rather than a counter, so it is compared as a parsed decimal
+            # within a decade instead of within the counter sampling tolerance.
+            problem = _peer_port_ber_problem(pair, db_raw)
+            if problem:
+                problems.append(problem)
+            compared += 1
+            continue
+        try:
+            cli_val = parse_counter_value(pair.cli_value)
+            db_val = parse_counter_value(db_raw)
+        except (AssertionError, ValueError) as exc:
+            problems.append(f"{pair.label}: unparseable counter (NVUE={pair.cli_value!r}, "
+                            f"{pair.db_field}={db_raw!r}): {exc}")
+            continue
+        if not values_within_tolerance(cli_val, db_val, tolerance_pct):
+            problems.append(f"{pair.label}={cli_val} differs from {pair.db_field}={db_val} "
+                            f"beyond the {tolerance_pct:.0%} sampling tolerance")
+        compared += 1
+    return problems, compared
+
+
+def peer_port_link_db_problems(link_body: Dict, db_row: Dict[str, str]) -> List[str]:
+    """Problems comparing `link` speed / width against the DB operational speed and lane count."""
+    leaves = peer_port_show_leaves(link_body)
+    problems: List[str] = []
+    for leaf, db_field, per_unit in (
+        (PEER_PORT_SPEED_LEAF, PEER_PORT_SPEED_DB_FIELD, PEER_PORT_SPEED_MBPS_PER_GBPS),
+        (PEER_PORT_WIDTH_LEAF, PEER_PORT_LANES_DB_FIELD, 1),
+    ):
+        shown = leaves.get(leaf, "").strip()
+        digits = re.search(r"\d+", shown)
+        if not digits:
+            problems.append(f"link {leaf}={shown!r} carries no numeric value")
+            continue
+        try:
+            db_val = parse_counter_value(db_row.get(db_field))
+        except (AssertionError, ValueError):
+            problems.append(f"link {leaf}={shown!r} has no usable {db_field} in the DB row "
+                            f"({db_row.get(db_field)!r})")
+            continue
+        expected = db_val // per_unit
+        if int(digits.group()) != expected:
+            problems.append(f"link {leaf}={shown!r} does not match {db_field}={db_val} "
+                            f"(expected {expected})")
+    return problems
+
+
+def peer_port_plr_bw_loss_problems(detail_body: Dict) -> List[str]:
+    """Problems when `plr-bw-loss-percent` does not match `plr-codes-loss` / the documented divisor."""
+    leaves = peer_port_show_leaves(detail_body)
+    shown = leaves.get(PEER_PORT_PLR_BW_LOSS_LEAF, "").strip()
+    codes_loss = leaves.get(PEER_PORT_PLR_CODES_LOSS_LEAF, "").strip()
+    if not shown or not codes_loss:
+        return [f"phy detail is missing {PEER_PORT_PLR_BW_LOSS_LEAF!r} / "
+                f"{PEER_PORT_PLR_CODES_LOSS_LEAF!r} (got {shown!r} / {codes_loss!r})"]
+    try:
+        measured = float(shown)
+        expected = float(codes_loss) / PEER_PORT_PLR_BW_LOSS_DIVISOR
+    except ValueError as exc:
+        return [f"{PEER_PORT_PLR_BW_LOSS_LEAF} / {PEER_PORT_PLR_CODES_LOSS_LEAF} unparseable "
+                f"({shown!r} / {codes_loss!r}): {exc}"]
+    if not values_within_tolerance(measured, expected, SAMPLING_JITTER_TOLERANCE_PCT):
+        return [f"{PEER_PORT_PLR_BW_LOSS_LEAF}={measured} != {PEER_PORT_PLR_CODES_LOSS_LEAF} "
+                f"({codes_loss}) / {PEER_PORT_PLR_BW_LOSS_DIVISOR:.0e} = {expected}"]
+    return []
 
 
 def list_peer_ports_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[str, Dict[str, str]]:
@@ -1788,11 +2118,11 @@ def classify_peer_health(raw: Dict[str, str]) -> str:
         vals = list(raw.values())
     text = " ".join(str(v).strip().lower() for v in vals)
     if any(token in text for token in PeerTelemetryHealth.DEGRADED_VALUES):
-        return "degraded"
+        return PeerTelemetryHealth.DEGRADED
     tokens = set(text.split())
     if any(h in tokens or h == text.strip() for h in PeerTelemetryHealth.HEALTHY_VALUES):
-        return "healthy"
-    return "unknown"
+        return PeerTelemetryHealth.HEALTHY
+    return PeerTelemetryHealth.UNKNOWN
 
 
 def read_peer_telemetry_health(engines) -> Tuple[str, Dict[str, str]]:
@@ -1804,10 +2134,23 @@ def read_peer_telemetry_health(engines) -> Tuple[str, Dict[str, str]]:
     return classify_peer_health(raw), raw
 
 
-def read_gpu_telemetry_log(engines, tail: int = 400) -> str:
-    """Return the last `tail` lines of the peer-telemetry (consumer) journal."""
-    cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager -n {tail} 2>&1"
+def read_gpu_telemetry_log(engines, tail: int = 400, since: Optional[str] = None) -> str:
+    """Return peer-telemetry (consumer) journal lines.
+
+    With ``since`` (a ``journalctl``-compatible timestamp) only entries from that moment on
+    are returned - use it to scope a search to a specific window and skip stale history.
+    Otherwise the last ``tail`` lines are returned.
+    """
+    if since:
+        cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager --since '{since}' 2>&1"
+    else:
+        cmd = f"sudo journalctl -u {PEER_TELEMETRY_SERVICE} --no-pager -n {tail} 2>&1"
     return engines.dut.run_cmd(cmd) or ""
+
+
+def dut_journal_since_marker(engines) -> str:
+    """DUT-local timestamp (``YYYY-MM-DD HH:MM:SS``) usable as a ``journalctl --since`` boundary."""
+    return (engines.dut.run_cmd("date '+%Y-%m-%d %H:%M:%S'") or "").strip()
 
 
 def restart_gpu_telemetry(engines, settle_sec: int = 15) -> None:
@@ -1911,13 +2254,16 @@ def restore_nmxt_lite(engines) -> None:
 
 
 # HTTP-over-unix-socket server impersonating NMX-T-for-IB (fronts telemetry +
-# control sockets). Argv: ctrl_sock tele_sock csv.
+# control sockets) plus a bare listener on the gRPC connector socket. Without a
+# live connector the daemon times out and wipes the last-good rows, so we only
+# need to accept and hold the connection open (no gRPC responses - dev-confirmed,
+# Joe). Argv: ctrl_sock tele_sock csv connector_sock.
 _NMXT_FAKE_SERVER = r'''
-import os, sys, threading, time
+import os, sys, socket, threading, time
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn, UnixStreamServer
 
-CTRL, TELE, CSV = sys.argv[1], sys.argv[2], sys.argv[3]
+CTRL, TELE, CSV, CONN = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 HEALTH = b'{"message":"OK","status":0}'
 with open(CSV, "rb") as fh:
     BODY = fh.read()
@@ -1957,8 +2303,36 @@ def serve(path):
     os.chmod(path, 0o666)
     srv.serve_forever()
 
+def serve_connector(path):
+    # gRPC connector: the daemon only needs a live peer to avoid the connect
+    # timeout that would wipe the rows, so accept and hold connections open
+    # without ever replying. Each connection is held on its own thread and
+    # closed once the peer goes away, so reconnect churn can't leak FDs.
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(path)
+    os.chmod(path, 0o666)
+    sock.listen(128)
+
+    def hold(conn):
+        try:
+            while conn.recv(4096):
+                pass  # drain and ignore - never reply
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    while True:
+        conn, _ = sock.accept()
+        threading.Thread(target=hold, args=(conn,), daemon=True).start()
+
 for _p in (CTRL, TELE):
     threading.Thread(target=serve, args=(_p,), daemon=True).start()
+threading.Thread(target=serve_connector, args=(CONN,), daemon=True).start()
 time.sleep(3600)
 '''
 
@@ -2003,8 +2377,8 @@ def inject_malformed_hca_xcset(engines) -> None:
         time.sleep(3)  # let the real daemon release its sockets
         engines.dut.run_cmd(
             f"sudo bash -c 'nohup python3 {_NMXT_FAKE_SCRIPT_PATH} {NMXT_CONTROL_SOCKET} "
-            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} >{_NMXT_FAKE_LOG_PATH} 2>&1 "
-            f"< /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
+            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} {NMXT_CONNECTOR_SOCKET} "
+            f">{_NMXT_FAKE_LOG_PATH} 2>&1 < /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
         )
 
 
@@ -2015,7 +2389,9 @@ def restore_valid_hca_xcset(engines) -> None:
             f"sudo bash -c 'kill $(cat {_NMXT_FAKE_PID_PATH} 2>/dev/null) 2>/dev/null; "
             "pkill -f \"[p]eerport_nmxt_fake.py\" 2>/dev/null; true'"
         )
-        engines.dut.run_cmd(f"sudo rm -f {NMXT_XCSET_SOCKET} {NMXT_CONTROL_SOCKET}")
+        engines.dut.run_cmd(
+            f"sudo rm -f {NMXT_XCSET_SOCKET} {NMXT_CONTROL_SOCKET} {NMXT_CONNECTOR_SOCKET}"
+        )
         engines.dut.run_cmd(
             f"sudo rm -f {_NMXT_FAKE_CSV_PATH} {_NMXT_FAKE_PID_PATH} "
             f"{_NMXT_FAKE_SCRIPT_PATH} {_NMXT_FAKE_LOG_PATH}"
@@ -2061,7 +2437,7 @@ def wait_for_peer_telemetry_healthy(
     bound = timeout_sec or (10 + PEER_TELEMETRY_SAMPLING_SEC * 5)
     deadline = time.time() + bound
     health, raw = read_peer_telemetry_health(engines)
-    while health != "healthy" and time.time() < deadline:
+    while health != PeerTelemetryHealth.HEALTHY and time.time() < deadline:
         time.sleep(min(5, max(1, bound // 10)))
         health, raw = read_peer_telemetry_health(engines)
     return health, raw
@@ -2080,6 +2456,30 @@ def wait_for_nmxt_ib_active(engines, timeout_sec: int = 120) -> bool:
             engines.dut.run_cmd(f"sudo systemctl unmask {NMXT_IB_SERVICE}")
         engines.dut.run_cmd(f"sudo systemctl start {NMXT_IB_SERVICE} 2>/dev/null")
         time.sleep(5)
+    return False
+
+
+def wait_for_nmxt_backend_reachable(engines, timeout_sec: int = 120, quiet_sec: int = 10) -> bool:
+    """Wait until nmx-t-ib is up and peer-telemetry has stopped logging backend connection errors.
+
+    ``systemctl start nmx-t-ib`` returns before the unit's sockets accept connections, and until
+    they do the daemon keeps logging ``Connection error: GET ... on /var/run/nmx-t/ib/*.sock`` at
+    error level. Callers restoring the backend use this to hold a LogAnalyzer ignore window open
+    until the recovery is genuinely quiet, so those expected errors are not attributed to the
+    post-recovery validation. Returns False if the unit does not reach active or the journal
+    does not go quiet within ``timeout_sec`` total (the whole call is bounded by it).
+    """
+    deadline = time.time() + timeout_sec
+    if not wait_for_nmxt_ib_active(engines, timeout_sec=timeout_sec):
+        return False
+    # Only probe while a FULL quiet window still fits: a truncated one would read a few
+    # error-free seconds as quiet and let the caller close its ignore window too early.
+    while deadline - time.time() >= quiet_sec:
+        since = dut_journal_since_marker(engines)
+        time.sleep(quiet_sec)
+        log = (read_gpu_telemetry_log(engines, since=since) or "").lower()
+        if NMXT_CONNECTION_ERROR_TOKEN not in log:
+            return True
     return False
 
 

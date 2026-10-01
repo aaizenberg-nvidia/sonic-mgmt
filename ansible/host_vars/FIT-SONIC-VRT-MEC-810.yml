@@ -1,0 +1,6 @@
+# Host variables for fit-sonic-vrt-mec-161
+
+mgmt_bridge: br0
+mgmt_prefixlen: 22
+mgmt_gw: 10.220.188.119
+external_port: p2p1

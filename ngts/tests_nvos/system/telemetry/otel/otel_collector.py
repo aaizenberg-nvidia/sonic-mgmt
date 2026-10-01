@@ -32,6 +32,11 @@ from ngts.tests_nvos.system.telemetry.otel.constants import OtelCollectorConst, 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_config(text: str) -> str:
+    """Strip per-line trailing whitespace and CRs so remote/local YAML compare cleanly."""
+    return "\n".join(line.rstrip() for line in (text or "").strip().splitlines())
+
+
 class OtelCollector:
     """OTel collector remote-control handle. Identical lifecycle for primary and secondary instances."""
 
@@ -109,6 +114,30 @@ class OtelCollector:
             self._write_config()
             self._restart_collector_process()
             self._wait_until_listening()
+
+    def ensure_config_applied(self, install_if_missing: bool = False) -> bool:
+        """Rewrite + restart only when the live collector drifted from ``config_yaml``.
+
+        The insecure and secured suites build separate objects over the same host,
+        config path and port, so whichever suite initializes last owns the running
+        receiver. A secured test running after an insecure one must restore its own
+        TLS receiver or the DUT handshake fails against a plaintext listener.
+
+        Returns True when the collector had to be reconfigured.
+        """
+        remote_config = self.engine.run_cmd(
+            f"{self._sudo_prefix}cat {shlex.quote(self.config_path)}",
+            validate=False,
+            print_output=False,
+        )
+        # Containment, not equality: run_cmd may prepend a command echo, and line
+        # endings differ across the collector hosts.
+        expected = _normalize_config(self.config_yaml)
+        if expected and expected in _normalize_config(remote_config) and self.is_server_active():
+            return False
+        with allure.step(f"Restore {self.label.value} collector config (drifted)"):
+            self.ensure_running(install_if_missing=install_if_missing)
+        return True
 
     def is_server_active(self) -> bool:
         """True when this collector process is running (SSIM ``is_otelcol_server_active``)."""

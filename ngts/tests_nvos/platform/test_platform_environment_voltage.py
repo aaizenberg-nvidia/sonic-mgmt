@@ -1,26 +1,24 @@
 import logging
-import re
 import pytest
 import random
+import re
 
-from ngts.nvos_tools.infra.Simulator import HWSimulator
+from ngts.nvos_constants.constants_nvos import DatabaseConst, HealthConsts, PlatformConsts
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
-from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.infra.Simulator import HWSimulator
 from ngts.nvos_tools.platform.Platform import Platform
+from ngts.nvos_tools.system.System import System
+from ngts.ngts_types import EnginesT, DevicesT
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.constants import MINUTE
-from ngts.tests_nvos.platform.helpers import (
-    filter_eligible_sensors,
-    is_sensor_for_absent_psu,
-    validate_health,
-    validate_health_issues,
-    validate_invalid_voltage_value_logged,
-    validate_sensor_state,
-)
-from ngts.nvos_constants.constants_nvos import DatabaseConst, HealthConsts, PlatformConsts
 
-logger = logging.getLogger()
+from . import helpers as platform_helpers
+
+cumulus_owner = "hiept"
+
+
+logger = logging.getLogger(__name__)
 
 VOLTAGE_BASE_PATH = PlatformConsts.VOLTAGE_FILES_PATH
 HEALTH_STABILIZE_DELAY = 10
@@ -34,7 +32,7 @@ VOLTAGE_MARGIN_FACTOR = 1.5
 @pytest.mark.nvos_chipsim_ci
 @pytest.mark.air
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
-def test_show_platform_environment_voltage(engines, devices):
+def test_show_platform_environment_voltage(engines: EnginesT, devices: DevicesT):
     """
     Show platform environment test
     """
@@ -56,7 +54,7 @@ def test_show_platform_environment_voltage(engines, devices):
         available_psu_list = platform.environment.get_available_psus() if devices.dut.psu_list else []
         for sensor in devices.dut.voltage_sensors:
             if voltage_output[sensor]['state'] != 'ok':
-                if is_sensor_for_absent_psu(sensor, available_psu_list):
+                if platform_helpers.is_sensor_for_absent_psu(sensor, available_psu_list):
                     # Ignore absence of sensor for absent PSU
                     continue
                 sensors_absent.append(sensor)
@@ -71,7 +69,7 @@ def test_show_platform_environment_voltage(engines, devices):
         mismatch = False
         err = []
         for sensor in devices.dut.voltage_sensors:
-            if is_sensor_for_absent_psu(sensor, available_psu_list):
+            if platform_helpers.is_sensor_for_absent_psu(sensor, available_psu_list):
                 # Ignore absence of sensor for for absent PSU
                 continue
             sensor_output = Tools.OutputParsingTool.parse_json_str_to_dictionary(
@@ -112,7 +110,7 @@ def test_show_platform_environment_voltage(engines, devices):
 @pytest.mark.skynet
 @pytest.mark.simx
 @pytest.mark.timeout(1 * MINUTE, func_only=True)
-def test_show_voltage_bad_flow(engines, devices):
+def test_show_voltage_bad_flow(engines: EnginesT, devices: DevicesT):
     """
     For Each Sensor we have DB (should be part of init flow)
     """
@@ -129,7 +127,7 @@ def test_show_voltage_bad_flow(engines, devices):
 @pytest.mark.simx
 @pytest.mark.skynet
 @pytest.mark.timeout(1 * MINUTE, func_only=True)
-def test_database_platform_environment_voltage(engines, devices):
+def test_database_platform_environment_voltage(engines: EnginesT, devices: DevicesT):
     """
     For Each Sensor we have DB (should be part of init flow)
     """
@@ -145,10 +143,10 @@ def test_database_platform_environment_voltage(engines, devices):
 
         logger.info("the sensors from switch's CLI are: {}".format(cli_sensors_list))
 
-    with allure.step("get all the tabled with SENSOR in STATE_DB"):
+    with allure.step("get all VOLTAGE_INFO tables in STATE_DB"):
         database_output = Tools.DatabaseTool.sonic_db_cli_get_keys(engine=engines.dut, asic="",
                                                                    db_name=DatabaseConst.STATE_DB_NAME,
-                                                                   grep_str="VOLTAGE").splitlines()
+                                                                   grep_str="VOLTAGE_INFO").splitlines()
 
     with allure.step("Check the Sensors output from CLI and db tables"):
         # Normalize sensor names by removing all non-alphanumeric characters
@@ -195,7 +193,7 @@ def test_database_platform_environment_voltage(engines, devices):
             ).verify_result()
 
 
-def get_random_sensor_max_min(sensors_dic):
+def get_random_sensor_max_min(sensors_dic: dict[str, dict[str, str]]) -> str:
     """
         get random sensor out of all the sensors with: ok state and have max, min values
     :param sensors_dic:
@@ -209,7 +207,7 @@ def get_random_sensor_max_min(sensors_dic):
     return random.choice(sensors_list)
 
 
-def check_voltage_in_range(sensor, sensor_output):
+def check_voltage_in_range(sensor: str, sensor_output: dict[str, str]) -> str:
     """
     :param sensor
     :param sensor_output:
@@ -227,13 +225,13 @@ def check_voltage_in_range(sensor, sensor_output):
 
 # --- Voltage simulation helpers ---
 
-def _pick_sensor(engine, devices):
+def _pick_sensor(engine: EnginesT, devices: DevicesT) -> tuple[str, dict[str, str], str]:
     """Pick a random ok-state voltage sensor with max/min thresholds, including PSU sensors."""
     platform = Platform()
     voltage_output = Tools.OutputParsingTool.parse_json_str_to_dictionary(
         platform.environment.voltage.show()).verify_result()
     available_psu_list = platform.environment.get_available_psus() if devices.dut.psu_list else []
-    eligible_sensors = filter_eligible_sensors(
+    eligible_sensors = platform_helpers.filter_eligible_sensors(
         devices.dut.voltage_sensors, voltage_output, available_psu_list,
         required_keys=('max', 'min', 'actual'))
     assert eligible_sensors, "No voltage sensors with max/min/actual found for simulation"
@@ -261,7 +259,7 @@ FAULT_SCENARIOS = [
 @pytest.mark.platform
 @pytest.mark.disable_loganalyzer
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_simulate_voltage_faults(engines, devices):
+def test_simulate_voltage_faults(engines: EnginesT, devices: DevicesT):
     """
     @summary: Inject various bad voltage values into a sensor and verify the system
               detects each fault and recovers after restore. Validates sensor state,
@@ -282,7 +280,7 @@ def test_simulate_voltage_faults(engines, devices):
 
     with allure.step("Pick sensor and validate initial health"):
         sensor_name, sensor_data, sensor_input_path = _pick_sensor(engines.dut, devices)
-        validate_health(system, HealthConsts.OK)
+        platform_helpers.validate_health(system, HealthConsts.OK)
 
     with allure.step("Simulate voltage faults"):
         for fault_name, compute_value in FAULT_SCENARIOS:
@@ -290,12 +288,12 @@ def test_simulate_voltage_faults(engines, devices):
 
             with allure.independent_step(f"Simulate voltage fault: {fault_name} (value={fault_value})"):
                 with HWSimulator.simulate_sensor(engines.dut, sensor_input_path, fault_value, HEALTH_STABILIZE_DELAY):
-                    validate_sensor_state(voltage_show, sensor_name, 'failed')
-                    validate_health(system, HealthConsts.NOT_OK)
-                    validate_health_issues(system, sensor_name, expected_present=True)
+                    platform_helpers.validate_sensor_state(voltage_show, sensor_name, 'failed')
+                    platform_helpers.validate_health(system, HealthConsts.NOT_OK)
+                    platform_helpers.validate_health_issues(system, sensor_name, expected_present=True)
                     if fault_name == 'gibberish':
-                        validate_invalid_voltage_value_logged(system, engines.dut)
+                        platform_helpers.validate_invalid_voltage_value_logged(system, engines.dut)
 
-                validate_sensor_state(voltage_show, sensor_name, 'ok')
-                validate_health(system, HealthConsts.OK)
-                validate_health_issues(system, sensor_name, expected_present=False)
+                platform_helpers.validate_sensor_state(voltage_show, sensor_name, 'ok')
+                platform_helpers.validate_health(system, HealthConsts.OK)
+                platform_helpers.validate_health_issues(system, sensor_name, expected_present=False)

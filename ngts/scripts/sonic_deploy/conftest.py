@@ -6,14 +6,114 @@ Defines the methods and fixtures which will be used by pytest
 
 """
 
+import argparse
 import pytest
 import logging
 import re
 import os
 
-from ngts.constants.constants import MarsConstants
+from ngts.constants.constants import MarsConstants, SonicMgmtChangeConstants
 
 logger = logging.getLogger()
+
+SDK_SOURCE_OPTIONS = {
+    "latest": "Resolve the newest published SDK package for the DUT SDK branch "
+              "(lastrc DEBS lookup).",
+    "image": "Use the SDK version already installed on the DUT/image; skip the "
+             "latest-SDK lookup.",
+}
+
+
+def _parse_sdk_source(value):
+    """Validate ``--sdk_source`` and return a normalized option name.
+
+    Args:
+        value (str): User-provided ``--sdk_source`` value.
+
+    Returns:
+        str: ``'latest'`` or ``'image'``.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` is not one of the supported options.
+    """
+    if value in SDK_SOURCE_OPTIONS:
+        return value
+
+    options_help = "\n".join(
+        f"  {name}: {description}" for name, description in SDK_SOURCE_OPTIONS.items()
+    )
+    raise argparse.ArgumentTypeError(
+        f"Invalid --sdk_source={value!r}. Supported values: {', '.join(SDK_SOURCE_OPTIONS)}.\n"
+        f"Options:\n{options_help}\n"
+        f"If omitted, the platform default is used (SONiC: latest, Cumulus: image)."
+    )
+
+
+PERF_SYS_SDK_CHANGE_BRANCH_PREFIX = "branch_"
+
+
+def _parse_perf_sys_sdk_change(value):
+    """Validate ``--perf_sys_sdk_change`` and return it unchanged.
+
+    Args:
+        value (str): User-provided ``--perf_sys_sdk_change`` value.
+
+    Returns:
+        str | None: The validated value, either ``'branch_<name>'`` or a numeric Gerrit
+        change number. ``None`` if ``value`` is empty/whitespace-only, so that MARS
+        `.steps` templates can pass this flag unconditionally with a
+        ``[[conf:extra_info.perf_sys_sdk_change: ]]``-style blank default and have it
+        behave the same as omitting the flag entirely.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` is neither ``'branch_<name>'`` nor all digits.
+    """
+    value = value.strip()
+    if not value:
+        return None
+
+    if value.startswith(PERF_SYS_SDK_CHANGE_BRANCH_PREFIX) or value.isdigit():
+        return value
+
+    raise argparse.ArgumentTypeError(
+        f"Invalid --perf_sys_sdk_change={value!r}. Must be either "
+        f"'{PERF_SYS_SDK_CHANGE_BRANCH_PREFIX}<branch_name>' to clone a specific perf_sys_sdk "
+        f"branch, or a numeric Gerrit change number to fetch an unmerged CR's latest patchset."
+    )
+
+
+def _parse_sonic_mgmt_change(value):
+    """Validate ``--sonic_mgmt_change`` and return it unchanged.
+
+    Args:
+        value (str): User-provided ``--sonic_mgmt_change`` value.
+
+    Returns:
+        str | None: The validated value: ``'branch_<name>'``, ``'tag_<name>'``, or a
+        numeric Gerrit change number. ``None`` if ``value`` is empty/whitespace-only,
+        so that MARS `.steps` templates can pass this flag unconditionally with a
+        ``[[conf:extra_info.sonic_mgmt_change: ]]``-style blank default and have it
+        behave the same as omitting the flag entirely.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` starts with neither prefix and is not
+            all digits.
+    """
+    value = value.strip()
+    if not value:
+        return None
+
+    if (value.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX) or
+            value.startswith(SonicMgmtChangeConstants.TAG_PREFIX) or
+            value.isdigit()):
+        return value
+
+    raise argparse.ArgumentTypeError(
+        f"Invalid --sonic_mgmt_change={value!r}. Must be either "
+        f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}<branch_name>' to check out that branch, "
+        f"'{SonicMgmtChangeConstants.TAG_PREFIX}<tag_name>' to check out that tag, "
+        f"or a numeric Gerrit change number to check out an unmerged CR's latest patchset."
+    )
 
 
 def pytest_addoption(parser):
@@ -106,6 +206,9 @@ def pytest_addoption(parser):
     logger.info('Parsing deploy_image_only')
     parser.addoption("--deploy_image_only", action="store", default='no', choices=["yes", "no"], required=False,
                      help="Deploy the image only, skip add-topo and remove-topo")
+    logger.info('Parsing post_install_only')
+    parser.addoption("--post_install_only", action="store_true", default=False,
+                     help="Skip image deployment and run first-boot and post-installation steps only")
     logger.info('Parsing deploy_chipless')
     parser.addoption("--deploy_chipless", help="Specify whether to do chipless deployment. Default is 'no'",
                      choices=["no", "yes"], action="store", default="no")
@@ -122,6 +225,61 @@ def pytest_addoption(parser):
     logger.info('Parsing neighbor_mode')
     parser.addoption("--neighbor_mode", action="store", default="",
                      help="Neighbor mode to use for the dual-tor deployment")
+    logger.info('Parsing sdk_source')
+    parser.addoption(
+        "--sdk_source",
+        action="store",
+        default=None,
+        type=_parse_sdk_source,
+        metavar="{latest,image}",
+        help=(
+            "Where to take the SDK package from for traffic generator installation. "
+            "Supported values: "
+            "'latest' - resolve the newest published SDK for the DUT branch; "
+            "'image' - use the SDK version from the installed DUT/image. "
+            "If omitted, use the platform default (SONiC: latest, Cumulus: image)."
+        ),
+    )
+    logger.info('Parsing perf_sys_sdk_change')
+    parser.addoption(
+        "--perf_sys_sdk_change",
+        action="store",
+        default=None,
+        type=_parse_perf_sys_sdk_change,
+        metavar="{branch_<name>,<change_number>}",
+        help=(
+            "Explicit perf_sys_sdk source to clone and overlay onto sys_sdk for traffic "
+            "generator installation, overriding the branch derived from the DUT's installed "
+            "SDK version. Supported formats: "
+            "'branch_<name>' - clone that branch (falls back to 'master' if it doesn't exist "
+            "on the remote); "
+            "'<change_number>' - fetch and check out the latest patchset of that Gerrit change "
+            "(e.g. an unmerged CR). "
+            "If omitted, the DUT-derived branch is used."
+        ),
+    )
+    logger.info('Parsing sonic_mgmt_change')
+    parser.addoption(
+        "--sonic_mgmt_change",
+        action="store",
+        default=None,
+        type=_parse_sonic_mgmt_change,
+        metavar="{tag_<name>,branch_<name>,<change_number>}",
+        help=(
+            "Check out the given tag, branch, or Gerrit change in the local sonic-mgmt "
+            "working copy that is running this test, before the deploy flow starts. "
+            "Supported formats: "
+            "'tag_<name>' - check out that tag; "
+            "'branch_<name>' - check out that branch; "
+            "'<change_number>' - fetch and check out the latest patchset of that Gerrit "
+            "change (e.g. an unmerged CR). "
+            "If omitted, no checkout is performed and the current working-copy ref is used "
+            "as-is. Note: pytest has already imported this test module by the time the "
+            "checkout runs, so it does not hot-swap the Python code of the running test "
+            "process; it affects files read from disk at runtime and any subprocess spawned "
+            "afterward."
+        ),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -398,6 +556,19 @@ def deploy_image_only(request):
 
 
 @pytest.fixture(scope="module")
+def post_install_only(request):
+    """Return whether only first-boot and post-installation steps should run.
+
+    Args:
+        request: The pytest builtin request fixture.
+
+    Returns:
+        bool: True when ``--post_install_only`` is specified.
+    """
+    return request.config.getoption('--post_install_only')
+
+
+@pytest.fixture(scope="module")
 def deploy_sequential(request):
     """
     Retrieves the deploy_sequential value from pytest arguments.
@@ -456,3 +627,54 @@ def neighbor_mode(request):
     :return: neighbor mode; empty string when not provided
     """
     return request.config.getoption('--neighbor_mode')
+
+
+@pytest.fixture(scope="module")
+def sdk_source(request):
+    """
+    Where to take the SDK package from for traffic generator installation.
+
+    Controlled by ``--sdk_source``:
+
+    - ``latest``: resolve the newest published SDK package for the DUT branch.
+    - ``image``: use the SDK version already installed on the DUT/image.
+    - omitted: keep the platform default (SONiC: latest, Cumulus: image).
+
+    Invalid values raise an argparse error that lists the supported options.
+
+    Returns:
+        str | None: ``'latest'`` or ``'image'`` when set; otherwise ``None``.
+    """
+    return request.config.getoption('--sdk_source')
+
+
+@pytest.fixture(scope="module")
+def perf_sys_sdk_change(request):
+    """
+    Explicit perf_sys_sdk source to clone and overlay onto sys_sdk for traffic
+    generator installation.
+
+    Controlled by ``--perf_sys_sdk_change``: ``'branch_<name>'`` clones that branch, a
+    numeric Gerrit change number fetches that change's latest patchset. Omitted (None)
+    keeps the branch derived from the DUT's installed SDK version.
+
+    Returns:
+        str | None: The validated ``--perf_sys_sdk_change`` value, or None.
+    """
+    return request.config.getoption('--perf_sys_sdk_change')
+
+
+@pytest.fixture(scope="module")
+def sonic_mgmt_change(request):
+    """
+    Tag, branch, or Gerrit change to check out in the local sonic-mgmt working copy
+    before the deploy flow starts.
+
+    Controlled by ``--sonic_mgmt_change``: ``'tag_<name>'`` checks out that tag,
+    ``'branch_<name>'`` checks out that branch, a numeric Gerrit change number checks
+    out that change's latest patchset. Omitted (None) performs no checkout.
+
+    Returns:
+        str | None: The validated ``--sonic_mgmt_change`` value, or None.
+    """
+    return request.config.getoption('--sonic_mgmt_change')

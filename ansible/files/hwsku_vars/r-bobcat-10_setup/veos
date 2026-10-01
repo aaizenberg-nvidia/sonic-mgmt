@@ -15,6 +15,7 @@ all:
           - t0
           - t0-28
           - t0-88-o8c80
+          - t1-d96u4
       children:
         server_2:
 
@@ -115,6 +116,119 @@ vms_2:
       ansible_host: 10.215.40.38
     VM0244:
       ansible_host: 10.215.40.39
+
+    VM0245:
+      ansible_host: 10.215.40.40
+    VM0246:
+      ansible_host: 10.215.40.41
+    VM0247:
+      ansible_host: 10.215.40.42
+    VM0248:
+      ansible_host: 10.215.40.43
+    VM0249:
+      ansible_host: 10.215.40.44
+    VM0250:
+      ansible_host: 10.215.40.45
+    VM0251:
+      ansible_host: 10.215.40.46
+    VM0252:
+      ansible_host: 10.215.40.47
+    VM0253:
+      ansible_host: 10.215.40.48
+    VM0254:
+      ansible_host: 10.215.40.49
+    VM0255:
+      ansible_host: 10.215.40.50
+    VM0256:
+      ansible_host: 10.215.40.51
+    VM0257:
+      ansible_host: 10.215.40.52
+    VM0258:
+      ansible_host: 10.215.40.53
+    VM0259:
+      ansible_host: 10.215.40.54
+    VM0260:
+      ansible_host: 10.215.40.55
+    VM0261:
+      ansible_host: 10.215.40.56
+    VM0262:
+      ansible_host: 10.215.40.57
+    VM0263:
+      ansible_host: 10.215.40.58
+    VM0264:
+      ansible_host: 10.215.40.59
+    VM0265:
+      ansible_host: 10.215.40.60
+    VM0266:
+      ansible_host: 10.215.40.61
+    VM0267:
+      ansible_host: 10.215.40.62
+    VM0268:
+      ansible_host: 10.215.40.63
+    VM0269:
+      ansible_host: 10.215.40.64
+    VM0270:
+      ansible_host: 10.215.40.65
+    VM0271:
+      ansible_host: 10.215.40.66
+    VM0272:
+      ansible_host: 10.215.40.67
+    VM0273:
+      ansible_host: 10.215.40.68
+    VM0274:
+      ansible_host: 10.215.40.69
+    VM0275:
+      ansible_host: 10.215.40.70
+    VM0276:
+      ansible_host: 10.215.40.71
+    VM0277:
+      ansible_host: 10.215.40.72
+    VM0278:
+      ansible_host: 10.215.40.73
+    VM0279:
+      ansible_host: 10.215.40.74
+    VM0280:
+      ansible_host: 10.215.40.75
+    VM0281:
+      ansible_host: 10.215.40.76
+    VM0282:
+      ansible_host: 10.215.40.77
+    VM0283:
+      ansible_host: 10.215.40.78
+    VM0284:
+      ansible_host: 10.215.40.79
+    VM0285:
+      ansible_host: 10.215.40.80
+    VM0286:
+      ansible_host: 10.215.40.81
+    VM0287:
+      ansible_host: 10.215.40.82
+    VM0288:
+      ansible_host: 10.215.40.83
+    VM0289:
+      ansible_host: 10.215.40.84
+    VM0290:
+      ansible_host: 10.215.40.85
+    VM0291:
+      ansible_host: 10.215.40.86
+    VM0292:
+      ansible_host: 10.215.40.87
+    VM0293:
+      ansible_host: 10.215.40.88
+    VM0294:
+      ansible_host: 10.215.40.89
+    VM0295:
+      ansible_host: 10.215.40.90
+    VM0296:
+      ansible_host: 10.215.40.91
+    VM0297:
+      ansible_host: 10.215.40.92
+    VM0298:
+      ansible_host: 10.215.40.93
+    VM0299:
+      ansible_host: 10.215.40.94
+    VM0300:
+      ansible_host: 10.215.40.95
 
 
 server_2:

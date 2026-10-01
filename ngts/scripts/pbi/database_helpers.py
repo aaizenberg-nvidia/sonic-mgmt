@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ngts.nvos_constants.constants_nvos import OperationTimeConsts
-from ngts.scripts.pbi.models import Args, Summary, TestResult, LABug
+from ngts.scripts.pbi.models import Args, Summary, TestResult, TestRuntime
 
 if TYPE_CHECKING:
     from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL
@@ -48,26 +48,37 @@ _REGRESSION_MATRIX_COLUMNS_QUERY = f"""\
 """
 
 
-_LA_BUG_COLUMNS_QUERY = f"""\
-INSERT INTO la_bugs (
+_TESTS_RUNTIME_COLUMNS_QUERY = f"""\
+INSERT INTO tests_runtime (
     test_name,
     test_url,
-    test_runtime_mins,
-    session_id,
     {OperationTimeConsts.SETUP_COL},
+    nvos_version,
+    session_id,
+    test_runtime_mins,
     setup_mins,
     test_body_mins,
     teardown_mins,
     la_runtime_mins,
-    nvos_version,
     branch,
-    {OperationTimeConsts.DATE_COL},
+    {OperationTimeConsts.DATE_COL}
+)
+VALUES {{values}};
+"""
 
-    -- Bug Level Data (The "Nested" Data)
+_LOGANALYZER_BUGS_COLUMNS_QUERY = f"""\
+INSERT INTO loganalyzer_bugs (
+    test_name,
+    test_url,
     bug_id,
     bug_url,
     occurrences,
-    bug_handler_runtime_mins
+    bug_handler_runtime_mins,
+    branch,
+    session_id,
+    {OperationTimeConsts.SETUP_COL},
+    nvos_version,
+    {OperationTimeConsts.DATE_COL}
 )
 VALUES {{values}};
 """
@@ -115,21 +126,44 @@ def insert_test_analytics_data_to_pbi_db(args: Args, mssql_connection_obj: Conne
             print(f"FAILED TO INSERT DATA TO TEST_ANALYTICS, ERROR: {e}")
 
 
-def insert_loganalyzer_bugs_data_to_pbi_db(
+def insert_test_runtime_data_to_pbi_db(
     args: Args,
     mssql_connection_obj: ConnectMSSQL,
-    loganalyzer_bugs_summary: list[LABug],
+    test_runtimes: list[TestRuntime],
 ) -> None:
     values = ""
-    for bug in loganalyzer_bugs_summary:
-        value = bug.to_db_values(args.session_id, args.setup_name, args.target_version, args.branch)
+    for test_runtime in test_runtimes:
+        value = test_runtime.to_db_values(args.session_id, args.setup_name, args.target_version, args.branch)
         values = f"{values}, {value}" if values else value
 
     if values:
-        logger.info("Inserting data to loganalyzer_bug table")
+        logger.info("Inserting data to tests_runtime table")
         try:
-            mssql_connection_obj.query_insert(q := _LA_BUG_COLUMNS_QUERY.format(values=values))
+            mssql_connection_obj.query_insert(q := _TESTS_RUNTIME_COLUMNS_QUERY.format(values=values))
             logger.info(f"Query: {q}")
-            logger.info("--------- insert to loganalyzer_bug DB table successfully ---------\n")
+            logger.info("--------- insert to tests_runtime DB table successfully ---------\n")
         except Exception as e:
-            print(f"FAILED TO INSERT DATA TO LOGANALYZER_BUG, ERROR: {e}")
+            print(f"FAILED TO INSERT DATA TO TESTS_RUNTIME, ERROR: {e}")
+
+
+def insert_loganalyzer_bugs_data_to_pbi_db(
+    args: Args,
+    mssql_connection_obj: ConnectMSSQL,
+    test_runtimes: list[TestRuntime],
+) -> None:
+    values = ""
+    for test_runtime in test_runtimes:
+        for bug in test_runtime.bugs:
+            value = bug.to_db_values(
+                test_runtime.test_name, args.session_id, args.setup_name, args.target_version, args.branch
+            )
+            values = f"{values}, {value}" if values else value
+
+    if values:
+        logger.info("Inserting data to loganalyzer_bugs table")
+        try:
+            mssql_connection_obj.query_insert(q := _LOGANALYZER_BUGS_COLUMNS_QUERY.format(values=values))
+            logger.info(f"Query: {q}")
+            logger.info("--------- insert to loganalyzer_bugs DB table successfully ---------\n")
+        except Exception as e:
+            print(f"FAILED TO INSERT DATA TO LOGANALYZER_BUGS, ERROR: {e}")

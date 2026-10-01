@@ -20,7 +20,8 @@ import re
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration)
+                                                                apply_test_configuration,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, BwFairnessThreshold
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 
@@ -183,7 +184,8 @@ def get_many_to_1_traffic(conf_args, num_lossy_packets, num_lossless_packets, nu
                                                 traffic_parameters=traffic_parameters,
                                                 json_path=traffic_script_path,
                                                 num_lossy_packets=num_lossy_packets,
-                                                num_lossless_packets=num_lossless_packets)
+                                                num_lossless_packets=num_lossless_packets,
+                                                chip_type=conf_args["chip_type"])
 
         traffic_jsons[tg_alias] = traffic_script_path
 
@@ -220,7 +222,7 @@ def conf_args(players, chip_type, test_config, split_left, split_right, num_of_t
 
     num_of_downlink_ports = num_downlink_ports if num_downlink_ports else num_of_left_ports + num_of_right_ports
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "sdk_test_name": "LossyLosslessDynamicPortsTo1PortDut",
                  "auto_buffer_mode": auto_buffer_mode,
                  "packet_size": packet_size,
@@ -234,6 +236,7 @@ def conf_args(players, chip_type, test_config, split_left, split_right, num_of_t
                  "effective_test_id": effective_test_id,
                  "num_of_traffic_ports": num_of_traffic_ports,
                  "num_of_downlink_ports": num_of_downlink_ports,
+                 "chip_type": chip_type,
                  "two_sided_ar": False,
                  "scenario": TESTS_SCENARIO,
                  "left_num_packets": 0,  # Override in the test
@@ -257,6 +260,6 @@ def conf_args(players, chip_type, test_config, split_left, split_right, num_of_t
                              all_ports_after_split[PerfConsts.DUT_ALIAS]["right_split_ports"][num_of_right_ports + 1:]
                          )
                      }
-                 }
-                 }
+    }
+    }
     return conf_args

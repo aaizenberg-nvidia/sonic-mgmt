@@ -38,6 +38,7 @@ from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_config_utils import clear_conf
 from retry import retry
+from retry.api import retry_call
 from ngts.tests_nvos.platform.firmware_telemetry_helpers import (
     assert_gnmi_firmware_version_matches_nvue,
 )
@@ -225,7 +226,7 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
             player, dut_engine, dut_device, target_version)
 
     with allure.step('Pre issu installation steps'):
-        (traffic_start_time, interface_dict, ip_list, mtu_info,
+        (traffic_start_time, interface_dict, ip_list, mtu_info, ssd_should_auto_update,
          json_acl_rules, cp_acl_bindings, acl_persist_mangle_state) = pre_issu_installation_steps(
             engines, devices, target_version, scp_host_creds, issu_base_version=issu_base_version)
 
@@ -246,7 +247,7 @@ def test_system_issu_positive_flow_with_traffic(engines, devices, pytestconfig, 
     with allure.step('Post issu installation steps'):
         post_issu_installation_steps(engines, devices, target_version, fw_version,
                                      interface_dict, traffic_start_time, ip_list, test_name,
-                                     mtu_info=mtu_info,
+                                     mtu_info=mtu_info, ssd_should_auto_update=ssd_should_auto_update,
                                      json_acl_rules=json_acl_rules, cp_acl_bindings=cp_acl_bindings,
                                      acl_persist_mangle_state=acl_persist_mangle_state)
 
@@ -880,7 +881,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         that matches the running image's NVUE schema. Falls back to ``target_version`` only when
         the caller did not supply it (legacy callers).
     :return: ``traffic_start_time``, ``interface_output``, ``ip_list``, ``mtu_info``,
-        ``json_acl_rules``, ``cp_acl_bindings``, ``acl_persist_mangle_state``.
+        ``ssd_should_auto_update``, ``json_acl_rules``, ``cp_acl_bindings``, ``acl_persist_mangle_state``.
     """
     system = System()
     interface = Interface(parent_obj=None)
@@ -933,6 +934,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         assert issu_status == IssuConsts.IssuStatus.NO_ISSU.value, \
             f"ISSU status is {issu_status}, instead of: {IssuConsts.IssuStatus.NO_ISSU.value}"
 
+    ssd_should_auto_update = False
     with allure.step('Downgrade SSD firmware to test auto-upgrade during ISSU'):
         _, _, latest_version_name = FWComponentsTool.get_fw_component_version_latest(FW_COMPONENT_SSD)
         if latest_version_name is not None:
@@ -943,6 +945,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
             # Downgrade SSD firmware to previous version
             _, previous_filename, previous_version_name = FWComponentsTool.get_fw_component_version_previous(FW_COMPONENT_SSD)
             SSDTool.downgrade_ssd_firmware(engines, ssd_component, previous_filename, previous_version_name)
+            ssd_should_auto_update = True
         else:
             logger.info('SSD downgrade skipped: non supported SSD model')
 
@@ -962,6 +965,7 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
         # traffic_start_time = time.time()
 
     with allure.step('Run show interface and save its output'):
+        time.sleep(30)
         interface_output = Tools.OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
             interface.show()).get_returned_value()
 
@@ -979,13 +983,13 @@ def pre_issu_installation_steps(engines, devices, target_version, scp_host_creds
             dut_engine=dut_engine, mangle_state=acl_persist_mangle_state)
         logger.info("Control-plane ACL bindings captured: %s", cp_acl_bindings)
 
-    return (traffic_start_time, interface_output, ip_list, mtu_info,
+    return (traffic_start_time, interface_output, ip_list, mtu_info, ssd_should_auto_update,
             json_acl_rules, cp_acl_bindings, acl_persist_mangle_state)
 
 
 def post_issu_installation_steps(engines, devices, target_version, fw_expected,
                                  interface_dict, traffic_start_time, ip_list, test_name='',
-                                 mtu_info=None,
+                                 mtu_info=None, ssd_should_auto_update=False,
                                  json_acl_rules=None, cp_acl_bindings=None,
                                  acl_persist_mangle_state=None):
     """
@@ -1057,6 +1061,31 @@ def post_issu_installation_steps(engines, devices, target_version, fw_expected,
                 target_version_num = target_version.split('/')[-1].replace('amd64-', '').replace('.bin', '')
                 assert system_version == target_version_num, (f'system image is: {system_version}, '
                                                               f'instead of {target_version_num}')
+
+                image_show = OutputParsingTool.parse_json_str_to_dictionary(
+                    system.image.show()).get_returned_value()
+
+                def _partition_build_id(slot):
+                    slot_val = image_show.get(slot)
+                    if isinstance(slot_val, dict):
+                        return slot_val.get(ImageConsts.BUILD_ID)
+                    return slot_val
+
+                partition2_build = _partition_build_id(ImageConsts.PARTITION2_IMG)
+                assert partition2_build == target_version_num, (
+                    f'partition2 build-id is {partition2_build}, expected {target_version_num} '
+                    f'(recent ISSU should land in partition2). Full image show: {image_show}')
+
+                current_val = image_show.get(ImageConsts.CURRENT_IMG)
+                next_val = image_show.get(ImageConsts.NEXT_IMG)
+                if current_val in ('1', '2'):
+                    assert current_val == '2' and next_val == '2', (
+                        f"After ISSU, current/next should point to partition2. Got "
+                        f"current={current_val}, next={next_val}")
+                else:
+                    assert current_val == target_version_num and next_val == target_version_num, (
+                        f"After ISSU, current/next build-id should equal {target_version_num}. Got "
+                        f"current={current_val}, next={next_val}")
 
             if fw_expected:
                 with (allure.step('Verify fw versions')):
@@ -1258,9 +1287,11 @@ def wait_for_image_status_update(system, status):
 
 def set_opensm_response_status(dut_engine, dut_device, value):
     for asic_num in range(dut_device.asic_amount):
+        # force=True: this deliberately pre-seeds/clears the request-issu table before
+        # NVOS ISSU orchestration has created it, so bypass the hset existence guard.
         DatabaseTool.sonic_db_cli_hset(
             dut_engine, f'asic{asic_num}', db_name=DatabaseConst.STATE_DB_NAME,
-            db_config=IssuConsts.DB_REQUEST_ISSU, param=IssuConsts.DB_STATUS, value=value)
+            db_config=IssuConsts.DB_REQUEST_ISSU, param=IssuConsts.DB_STATUS, value=value, force=True)
 
 
 def run_install_system_image_issu(dut_engine, dut_device, recovery_engine, image_filename, param_value, should_succeed):

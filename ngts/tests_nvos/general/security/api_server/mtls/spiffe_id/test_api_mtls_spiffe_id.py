@@ -20,7 +20,7 @@ from ngts.tests_nvos.general.security.api_server.mtls.spiffe_id.helpers import g
 from ngts.tests_nvos.general.security.certificate.CertInfo import CertInfo
 from ngts.tests_nvos.system.gnmi.conftest import scp_player
 from ngts.tests_nvos.general.security.helpers import import_certs_safely, get_test_certs_dir_location, \
-    set_new_random_users, import_cas_safely, generate_certs
+    set_new_random_users, import_cas_safely, generate_certs, cleanup_aaa_users
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tests_nvos.helpers.general_helpers import generate_rand_str, verify_result_obj_failure, run_cmd
 from ngts.tests_nvos.system.gnmi.helpers import get_scp_player
@@ -295,15 +295,20 @@ def setup_test(dut_hostname, engines, scp_player, save_users: bool = False, cert
         generate_certs(server_certs_dir, server_certs)
 
     with allure.step('set local users'):
-        admins = set_new_random_users(1, UserRole.ADMIN)
-        monitors = set_new_random_users(2, UserRole.MONITOR)
+        # Stage the admin user and apply once together with the monitors: a single apply, and the
+        # pending revision never holds incomplete AAA users that poison a later apply (e.g. TACACS
+        # auth-order) with "User must have a password".
+        admins = set_new_random_users(1, UserRole.ADMIN, apply=False, engine=dut_engine)
+        try:
+            monitors = set_new_random_users(2, UserRole.MONITOR, apply=True, engine=dut_engine)
+        except Exception:
+            cleanup_aaa_users(admins, engine=dut_engine)  # else the staged admin poisons the next apply
+            raise
         user1: UserInfo = admins[0]
         user2: UserInfo = monitors[0]
         user3: UserInfo = monitors[1]
 
     if save_users:
-        with allure.step('apply config'):
-            system._general_cli_wrapper.apply_config(dut_engine, verify_execution=True)
         with allure.step('save config'):
             NvueGeneralCli.save_config(engines.dut)
 
@@ -327,6 +332,12 @@ def setup_test(dut_hostname, engines, scp_player, save_users: bool = False, cert
 
     return TestSetup(user1, user2, user3, cert_no_spif, cert_2_spifs, cert_spif_not_exists, cert_spif_of_user1_1,
                      cert_spif_of_user1_2, cert_spif_of_user2, server_cert, clients_certs[0], spiffes_info)
+
+
+def spiffe_setup_users(setup: Optional[TestSetup]) -> Optional[List[UserInfo]]:
+    if setup is None:
+        return None
+    return [setup.user1, setup.user2, setup.user3]
 
 
 @pytest.mark.security
@@ -615,7 +626,7 @@ def api_spiffe_factory_reset_no_params_check():
 
             check_spiffe_negative(engines, revision_num, setup, users_should_exist=False)
     finally:
-        cleanup_spiffe()
+        cleanup_spiffe(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -671,7 +682,7 @@ def api_spiffe_factory_reset_keep_basic_check():
 
             check_spiffe_positive(engines, revision_num, setup, verify_config=False)
     finally:
-        cleanup_spiffe()
+        cleanup_spiffe(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -712,7 +723,7 @@ def api_spiffe_factory_reset_keep_all_config_check():
 
             check_spiffe_positive(engines, revision_num, setup)
     finally:
-        cleanup_spiffe()
+        cleanup_spiffe(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call
 
@@ -749,6 +760,6 @@ def api_spiffe_upgrade_check():
 
             check_spiffe_positive(engines, revision_num, setup)
     finally:
-        cleanup_spiffe()
+        cleanup_spiffe(spiffe_setup_users(setup))
 
     yield  # to prevent StopIteration on the 2nd next() call

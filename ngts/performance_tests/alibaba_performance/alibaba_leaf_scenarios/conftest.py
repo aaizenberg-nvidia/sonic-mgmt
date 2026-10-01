@@ -16,7 +16,9 @@ from ngts.constants.constants import BugHandlerConst, CliType
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
                                                                 apply_test_configuration,
-                                                                skip_test_on_unsupported_os)
+                                                                skip_test_on_unsupported_os,
+                                                                skip_dvs_leaf_scenario_on_active_bug,
+                                                                get_ar_congestion_thresholds)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.performance_tests.conftest import get_all_players_ports
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts, MultiNosSharedData
@@ -50,6 +52,7 @@ TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_2 = "ali_pws_spine_ar_enabled_split_2_hos
 TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_4 = "ali_pws_spine_ar_enabled_split_4_host_ports"
 TEST_ID_ALI_PWS_SPINE_AR_ENABLED_ASYM_SPLIT = "ali_pws_spine_ar_enabled_asymmetric_split"
 ALI_PWS_TESTS_LIST = [TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_2, TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_4, TEST_ID_ALI_PWS_SPINE_AR_ENABLED_ASYM_SPLIT]
+HIGH_NUM_DIPS = 64000
 
 # Dictionary mapping PacketSizeKey to packet_size
 PACKET_SIZE_MAPPING = {
@@ -235,11 +238,21 @@ def get_super_spine_to_leaf_port_groups(players, conf_args, split_right=2, split
     return conf_args
 
 
+def adjust_num_dips_for_chip(num_dips, chip_type):
+    """Double DIP count on SPC6 unless already at the high-DIP scale."""
+    if chip_type == "SPC6" and num_dips != HIGH_NUM_DIPS:
+        return num_dips * 2
+    return num_dips
+
+
 @pytest.fixture(scope='class', autouse=True)
-def conf_args(players, test_id, shaper_value, ar_enabled, split_host_ports, split_left, num_left_dips, num_right_dips, ipv4_enabled, ipv6_enabled, is_leaf_scenario, adjust_buffer_config):
+def conf_args(players, chip_type, test_id, shaper_value, ar_enabled, split_host_ports, split_left, num_left_dips, num_right_dips, ipv4_enabled, ipv6_enabled, is_leaf_scenario, adjust_buffer_config):
+
+    num_left_dips = adjust_num_dips_for_chip(num_left_dips, chip_type)
+    num_right_dips = adjust_num_dips_for_chip(num_right_dips, chip_type)
 
     conf_args = {"auto_buffer_mode": "False",
-                 "congestion_thresh_lo": 190,
+                 **get_ar_congestion_thresholds(chip_type),
                  "two_sided_ar": False,
                  "ar_enabled": ar_enabled,
                  "split_right": split_host_ports,
@@ -249,9 +262,9 @@ def conf_args(players, test_id, shaper_value, ar_enabled, split_host_ports, spli
                  "get_acl_dump": False,
                  "scenario": TESTS_SCENARIO,
                  "packet_size": get_packet_size_for_test(test_id, ipv4_enabled == "ipv4_enabled", ipv6_enabled == "ipv6_enabled"),
-                 "left_num_packets": SPCXRAConsts.PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS // 2,
+                 "left_num_packets": SPCXRAConsts.PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS[chip_type] // 2,
                  "left_num_dip_to_send": num_left_dips,
-                 "right_num_packets": SPCXRAConsts.PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS // split_host_ports,
+                 "right_num_packets": SPCXRAConsts.PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS[chip_type] // split_host_ports,
                  "right_num_dip_to_send": num_right_dips,
                  "num_routes_ipv4": 64000,
                  "num_routes_ipv6": 64000,
@@ -286,7 +299,7 @@ def conf_args(players, test_id, shaper_value, ar_enabled, split_host_ports, spli
         conf_args['right_num_packets'] = conf_args['right_num_packets'] // 2
 
     # Reduce scale in case of 64K dips in IPv6- not enough space in KVD.
-    if ipv4_enabled == "ipv4_disabled" and ipv6_enabled == "ipv6_enabled" and conf_args['left_num_dip_to_send'] == 64000:
+    if ipv4_enabled == "ipv4_disabled" and ipv6_enabled == "ipv6_enabled" and conf_args['left_num_dip_to_send'] == HIGH_NUM_DIPS:
         conf_args['left_num_dip_to_send'] = 55000
         conf_args['right_num_dip_to_send'] = 55000
         conf_args['num_routes_ipv6'] = 55000
@@ -396,11 +409,14 @@ def move_alibaba_acl_dump(players):
     )
 
 
-def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations):
+def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations, dut_cli_obj, chip_type):
     """
     Apply all skip conditions for alibaba leaf scenario tests.
     Must be called before apply_test_configuration so skips happen without configuring the DUT.
     """
+    if test_params.is_leaf_scenario:
+        skip_dvs_leaf_scenario_on_active_bug(dut_cli_obj, chip_type)
+
     if test_params.test_id in ALI_PWS_TESTS_LIST and ip_combinations.ipv6_enabled == "ipv6_enabled":
         pytest.skip(f"Skipping PWS test {test_params.test_id} with IPv6 enabled")
 
@@ -416,6 +432,18 @@ def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations):
             is_redmine_issue_active([4662379])[0]):
         pytest.skip("Skipping Ali scenario 3, IPv4 enabled and IPv6 enabled")
 
+    if (test_params.test_id == TEST_ID_SUPER_SPINE_TO_LEAF_AR_ENABLED_SPLIT_2_64K_DIPS and
+        ip_combinations.ipv4_enabled == "ipv4_enabled" and ip_combinations.ipv6_enabled == "ipv6_disabled" and
+            is_redmine_issue_active([5310407])[0]):
+        pytest.skip("Skipping Ali scenario super_spine_to_leaf, IPv4 enabled and IPv6 disabled - "
+                    "bandwidth/utilization validation failure")
+
+    if (test_params.test_id == TEST_ID_SUPER_SPINE_TO_LEAF_AR_ENABLED_SPLIT_2_64K_DIPS and
+        ip_combinations.ipv4_enabled == "ipv4_disabled" and ip_combinations.ipv6_enabled == "ipv6_enabled" and
+            is_redmine_issue_active([5310407])[0]):
+        pytest.skip("Skipping Ali scenario super_spine_to_leaf, IPv4 disabled and IPv6 enabled - "
+                    "bandwidth/utilization validation failure")
+
     if is_redmine_issue_active([4662378])[0] and test_params.test_id == TEST_ID_SHAPER_99_9_AR_ENABLED_SPLIT_4_128_DIPS:
         pytest.skip("Skipping test for 99.9 percent shaper value")
 
@@ -425,8 +453,8 @@ def _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations):
 
 
 @pytest.fixture(scope='class', autouse=True)
-def basic_setup_configuration(players, conf_args, test_params, ip_combinations):
-    _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations)
+def basic_setup_configuration(players, conf_args, test_params, ip_combinations, chip_type):
+    _apply_alibaba_leaf_skip_conditions(test_params, ip_combinations, players['dut']['cli'], chip_type)
 
     try:
         with allure.step('Save Players initial Configuration'):

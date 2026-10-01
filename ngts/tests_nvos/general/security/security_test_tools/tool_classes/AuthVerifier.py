@@ -7,7 +7,9 @@ import random
 import string
 from contextlib import contextmanager
 
-from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+from devts.infra.tools.connection_tools.serial_engine_factory import (
+    PexpectSerialEngine,
+)
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from devts.infra.tools.linux_tools.linux_tools import LinuxSshEngine, scp_file
 
@@ -349,21 +351,71 @@ class PKAAuthVerifier(AuthVerifier):
         self.private_key_path = private_key_path
         self.hostname = hostname
         self._dut_key_path = None
+        self._dut_key_dir = None
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        try:
+            self.cleanup()
+        finally:
+            self._remove_dut_key_dir()
+
+    def __del__(self):
+        try:
+            self.cleanup()
+            self._remove_dut_key_dir()
+        except Exception:
+            pass
 
     def _ensure_key_on_dut(self) -> str:
         """Copy the private key to the DUT so PKA ssh can run from the DUT (for IPv6 targets)."""
         if self._dut_key_path:
             return self._dut_key_path
         dut = self.engines.dut
-        remote_name = f'pka_{os.path.basename(self.private_key_path)}'
-        remote_path = f'/tmp/{remote_name}'
+        # Use a unique per-run directory so concurrent runs / stale leftovers can't
+        # collide on a deterministic /tmp path (and so it can be cleaned up wholesale).
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        remote_dir = f'/tmp/nvos_pka_{suffix}'
+        dut.run_cmd(f'mkdir -m 700 -p {remote_dir}')
+        remote_name = os.path.basename(self.private_key_path)
+        remote_path = f'{remote_dir}/{remote_name}'
         dut.copy_file(
-            source_file=self.private_key_path, file_system='/tmp',
+            source_file=self.private_key_path, file_system=remote_dir,
             dest_file=remote_name, direction='put',
         )
         dut.run_cmd(f'chmod 600 {remote_path}')
+
+        # Cert-auth tests sign the key, producing an adjacent "<key>-cert.pub" that
+        # OpenSSH auto-loads from beside the private key. Copy it too so the cert is
+        # presented when ssh runs from the DUT. The plain PKA test has no cert, so
+        # this is guarded by existence and leaves that flow unaffected.
+        cert_source = f'{self.private_key_path}-cert.pub'
+        if os.path.exists(cert_source):
+            dut.copy_file(
+                source_file=cert_source, file_system=remote_dir,
+                dest_file=f'{remote_name}-cert.pub', direction='put',
+            )
+            dut.run_cmd(f'chmod 644 {remote_path}-cert.pub')
+
+        self._dut_key_dir = remote_dir
         self._dut_key_path = remote_path
         return remote_path
+
+    def _remove_dut_key_dir(self) -> None:
+        """Remove the per-run key directory from the DUT.
+
+        Called only at end of life (context exit / GC), never from the per-spawn
+        ``cleanup()`` which runs mid-flow in ``_spawn_pka_engine`` while the key is
+        still needed by the about-to-be-spawned ssh.
+        """
+        if not self._dut_key_dir or self.engines is None:
+            return
+        try:
+            self.engines.dut.run_cmd(f'rm -rf {self._dut_key_dir}')
+        except Exception as err:
+            self._log.info("Failed to remove PKA key dir %s from DUT: %s", self._dut_key_dir, err)
+        finally:
+            self._dut_key_dir = None
+            self._dut_key_path = None
 
     def _spawn_pka_engine(self) -> None:
         if IpTool.is_address_ipv6(self.hostname) and self.engines is not None:

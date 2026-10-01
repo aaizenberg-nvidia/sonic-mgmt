@@ -1,14 +1,14 @@
 import pytest
 import logging
 
+from ngts.nvos_tools.Devices.IbDevice import RosalindSwitch
+from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.nvos_tools.nmx.Sdn import Sdn
-from ngts.nvos_tools.platform.Platform import Platform
-from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
-from ngts.nvos_tools.infra.RegressionConfigurations import Configurations
-from ngts.nvos_constants.constants_nvos import ChassisLocationConsts, OutputFormat
-from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.nvos_constants.constants_nvos import LinkTrainingConsts, OutputFormat
+from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, summarize_ports
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
+from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
 
@@ -28,33 +28,47 @@ def cluster_and_sdn(setup_name, devices, standalone_system):
         cluster, cluster_expected_state='disabled', nmx_c_expected_state='down')
 
 
-@pytest.fixture(scope="module")
-def chassis_info():
-    """Get chassis serial number and slot number from platform."""
-    platform = Platform()
-    chassis_location = OutputParsingTool.parse_show_output_to_dict(
-        platform.chassis_location.show()).get_returned_value()
-    return {
-        'slot-number': chassis_location.get(ChassisLocationConsts.SLOT_NUM),
-        'chassis-sn': chassis_location.get(ChassisLocationConsts.CHAS_SN),
-    }
-
-
-@pytest.fixture(scope="module")
-def tray_topology_config(setup_name):
-    """
-    Per-setup tray model from RegressionConfigurations.tray_topology.
-
-    Missing setup_name: pytest.skip (not a failure). Tests that need a lab model
-    must list the setup there before running.
-    """
-    tray_info = Configurations.tray_topology.get(setup_name)
-    if not tray_info:
-        pytest.skip(f"No tray topology defined for setup '{setup_name}'")
-    return tray_info
-
-
+# chassis_info and tray_topology_config live in ngts/tests_nvos/cluster/conftest.py
+# so that cluster-level tests (e.g. test_cluster_reboot) can use them too.
 @pytest.fixture(scope="module")
 def expected_tray_count(tray_topology_config):
-    """Expected len(nv show sdn trays) == switch_nodes + compute_nodes from lab config."""
+    """
+    Expected len(nv show sdn trays) == switch_nodes + compute_nodes from lab config.
+
+    Since the 6623822 fix (0.8 >= 25.03.0722) the trays view lists ALL trays again:
+    switch trays with a real maintenance-state, compute trays with 'N/A' (compute-tray
+    admin state is not released to customers — update/restore stay rejected). Observed
+    on rtf2 (25.03.0723): trays 1/2 (computes) 'N/A', tray 3 (switch) 'up'.
+    """
     return tray_topology_config['switch_nodes'] + tray_topology_config['compute_nodes']
+
+
+@pytest.fixture(scope="module")
+def ltx_force_max_iterations(cluster_and_sdn, tray_topology_config, devices):
+    """
+    Arm LTX force-max-iterations on all access ports for the tray admin-state flows.
+
+    Coverage for the 6480024 class (NVL6 PHY LTX retry broke only under nmx_diag):
+    with the knob armed, every tray-admin-driven retrain (down->diag, restore after
+    'down') walks ALL link-training iterations instead of finishing on the first
+    successful round (~1min -> ~5min per bring-up), stressing the LTX/admin-state
+    interaction. Arming is hitless — it only affects future training, so the
+    link-up snapshot taken by get_acp_ports_for_tray is not disturbed.
+
+    Yields True when armed; tests use this to widen their port-verify retry budget
+    (see TRAY_PORT_VERIFY_TRIES_LTX_FORCED in helpers.py).
+    """
+    if not isinstance(devices.dut, RosalindSwitch):
+        logger.info("force-max-iterations is an NVL6/Rosalind knob — not arming on this device")
+        yield False
+        return
+    ports_range = Port(summarize_ports(devices.dut.nvl_access_ports_list))
+    with allure.step(f"Enable LTX force-max-iterations on all access ports ({ports_range.name})"):
+        ports_range.interface.link.link_training.set(
+            op_param_name=LinkTrainingConsts.FORCE_MAX_ITERATIONS,
+            op_param_value=LinkTrainingConsts.ForceMaxIterations.ENABLED.value,
+            apply=True, ask_for_confirmation=True).verify_result()
+    yield True
+    with allure.step(f"Cleanup: unset LTX force-max-iterations on all access ports ({ports_range.name})"):
+        ports_range.interface.link.link_training.unset(
+            apply=True, ask_for_confirmation=True).verify_result()

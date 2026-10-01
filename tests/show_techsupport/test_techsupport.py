@@ -430,7 +430,7 @@ def validate_dump_file_content(duthost, dump_folder_path, is_bmc_present):
             bmc_dump = duthost.command(f"ls {dump_folder_path}/bmc/")["stdout_lines"]
             logger.info("BMC is present, validate BMC dump files existence")
             assert len(bmc_dump), "Folder 'bmc_dump' in dump archive is empty. Expected not empty folder"
-            bmc_regex = re.compile(r'bmc_[\w-]+\.tar.xz')
+            bmc_regex = re.compile(r'bmc_[\w-]+\.tar\.zst')
             assert any(bmc_regex.fullmatch(file_name) for file_name in bmc_dump), "No BMC dump file found in bmc folder"
 
     assert len(dump) > MIN_FILES_NUM, "Seems like not all expected files available in 'dump' folder in dump archive. " \
@@ -581,7 +581,7 @@ def commands_to_check(duthosts, enum_rand_one_per_hwsku_hostname):
                     add_asic_arg("{}", cmds.broadcom_cmd_misc, num),
             }
         )
-        if duthost.topo_type in ["mx", "m0", "m1"]:
+        if duthost.topo_type in ["mx", "m0", "m1", "uma", "lma"]:
             cmds_to_check.update(
                 {
                     "copy_config_cmds":

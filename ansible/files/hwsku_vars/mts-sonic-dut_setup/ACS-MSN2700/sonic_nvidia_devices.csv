@@ -1,5 +1,0 @@
-Hostname,ManagementIp,HwSku,Type,Protocol,Os
-mts-sonic-dut,10.9.74.46,Mellanox-2700,DevSonic,,sonic
-mts-sonic-fanout,10.9.74.16,MLNX-OS,FanoutLeaf,,
-mts-sai-host-3,10.9.78.60,TestServ,Server,,
-s-rcs01,10.9.72.21,,ConsoleServer,ssh,sonic

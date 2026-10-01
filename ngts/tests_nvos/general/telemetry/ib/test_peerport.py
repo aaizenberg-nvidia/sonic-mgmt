@@ -7,10 +7,30 @@ from typing import Dict, List, Tuple
 import pytest
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
+from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.constants import MINUTE
+from ngts.tests_nvos.system.gnmi.constants import (
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_INTERVAL_SHORT,
+    HEARTBEAT_PERTURBATION_AT_SEC,
+    HEARTBEAT_SAMPLE_INTERVAL,
+    HEARTBEAT_STATIC_INTERFACE_LEAVES,
+    GnmiStreamMode,
+)
+from ngts.tests_nvos.system.gnmi.helpers import (
+    StreamSubscription,
+    get_gnmic_engine,
+    heartbeat_window_sec,
+    run_stream_subscribers,
+    verify_heartbeat_drove_delivery,
+    verify_leaf_heartbeat_continuity,
+    verify_subscribers_streamed,
+)
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
 from ngts.tests_nvos.general.telemetry.ib.constants import (
@@ -23,15 +43,16 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     NvuePaths,
     PEER_PORT_ADDITIVE_FIELDS,
     PEER_PORT_API_TO_DB_FIELD,
-    PEER_PORT_BER_FIELDS,
-    PEER_PORT_COUNTER_FIELDS,
     PEER_PORT_DB_ADDITIVE_FIELDS,
+    PEER_PORT_GNMI_ADDITIVE_FIELDS,
+    PEER_PORT_GNMI_STATIC_LEAVES,
     PEER_PORT_LIST_SCHEMA_GROUPS,
-    PEER_PORT_PLANE_FIELDS,
-    PEER_PORT_PLR_FIELDS,
+    PEER_PORT_NVUE_SHOW_NODES,
     PEER_PORT_SCHEMA_GROUPS,
     PEER_TELEMETRY_SAMPLING_SEC,
     PeerPortFields,
+    PeerPortNvueSub,
+    PeerTelemetryHealth,
     PeerType,
     SAMPLING_JITTER_TOLERANCE_PCT,
 )
@@ -97,6 +118,26 @@ def _enable_peer_port_for_hca(engines, **list_kwargs) -> Dict[str, Dict[str, str
     return rows
 
 
+def _recycle_peer_port_for_hca(engines, **list_kwargs) -> Dict[str, Dict[str, str]]:
+    """Enable peer-port from a disabled state (disabling first if needed) and return the HCA rows.
+
+    The daemon latches its 'backend unrecoverable' declaration for the lifetime of its
+    monitor thread: once declared, neither the backend coming back nor a later outage
+    re-arms it. Only the enable path, which starts the monitor thread, clears the latch.
+    Tests that assert on the declaration must therefore recycle the knob instead of
+    inheriting an enabled feature from whatever ran before them.
+    """
+    system = System()
+    state = str(system.peer_port.parse_show().get(NvuePaths.KEY_STATE, "")).lower()
+    if state == NvuePaths.STATE_ENABLED:
+        with allure.step("Disable peer-port so the enable below restarts the daemon's monitor thread"):
+            system.peer_port.unset(
+                op_param=NvuePaths.KEY_STATE, apply=True, ask_for_confirmation='-y',
+            ).verify_result()
+            _wait_for_peer_ports(engines, present=False)
+    return _enable_peer_port_for_hca(engines, **list_kwargs)
+
+
 _XCSET_PARSE_FAIL_TOKENS = ("malformed row", "csv parse failed", "parse error", "parse failed")
 
 
@@ -118,6 +159,36 @@ def _wait_for_xcset_parse_failure(engines, baseline: int,
     return False
 
 
+# NMX-T-for-IB outage: the daemon retries the backend a few times, then declares it
+# unrecoverable and keeps serving the last-good snapshot, flagged stale. Key off the log
+# wording rather than the attempt count so the check survives the count changing.
+NMXT_UNRECOVERABLE_TOKEN = "nmx-t backend unrecoverable after"
+NMXT_UNRECOVERABLE_DEADLINE_SEC = 3 * MINUTE
+
+
+def _nmxt_unrecoverable_logged(engines, since: str) -> bool:
+    """True once peer-telemetry declares the backend unrecoverable in the journal after ``since``."""
+    log = (ibh.read_gpu_telemetry_log(engines, since=since) or "").lower()
+    return NMXT_UNRECOVERABLE_TOKEN in log
+
+
+def _wait_for_nmxt_unrecoverable(engines, since: str,
+                                 deadline_sec: int = NMXT_UNRECOVERABLE_DEADLINE_SEC) -> bool:
+    """Poll until a 'backend unrecoverable' declaration is logged after ``since``.
+
+    Scoping the search to the outage window keeps a stale line from an earlier outage - the
+    journal spans prior runs - from satisfying the wait too early, without the tail-scrolling
+    fragility of counting occurrences in a fixed-size tail.
+    """
+    interval = _peer_port_interval_sec()
+    deadline = time.time() + deadline_sec
+    while time.time() < deadline:
+        if _nmxt_unrecoverable_logged(engines, since):
+            return True
+        time.sleep(min(interval, 5))
+    return False
+
+
 def _require_hca_topology(setup_topology) -> List:
     """Return the connectivity-derived HCA peers, or FAIL with an actionable message."""
     hca = setup_topology.hca_peers()
@@ -132,36 +203,58 @@ def _require_hca_topology(setup_topology) -> List:
     return hca
 
 
-def _require_external_hca_topology(setup_topology) -> List:
-    """Return connectivity-derived *external* HCA peers (server cables), or FAIL."""
+def _require_external_hca_topology(setup_topology, skip_on_wrong_lab: bool = False) -> List:
+    """
+    Return connectivity-derived *external* HCA peers (server cables), or report the lab.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     hca = setup_topology.external_hca_peers()
     if not hca:
-        pytest.fail(
+        ibh.report_wrong_lab(
             "WRONG LAB SETUP / TOPOLOGY: the connectivity JSON for "
             f"{setup_topology.setup_name!r} lists no external HCA cables "
             "(connected_to an ib*HCA* port), so the HCA peer-port listing "
             "cannot be exercised here. Run on a setup with at least one "
-            "server HCA cabled to the fabric."
+            "server HCA cabled to the fabric.",
+            skip_on_wrong_lab,
         )
     return hca
 
 
-def _require_active_fabric_and_traffic(engines, request, setup_name):
-    """FAIL (not skip) when HFNM/SM or the traffic harness are missing."""
+def _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab: bool = False):
+    """
+    Bring the fabric Active by starting the Subnet Manager, or report the lab.
+
+    An IB port stays in Initialize until an SM configures it, and NVOS only discovers peer HCAs
+    over an Active fabric - so without this the peer-port surface is simply empty, which reads as
+    a missing feature rather than a missing SM.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     if not hasattr(engines, "hfnm"):
-        pytest.fail(
+        ibh.report_wrong_lab(
             f"WRONG LAB SETUP: setup {setup_name!r} has no Host Fabric Node "
             "Manager (HFNM), so the Subnet Manager cannot be started to bring the "
             "fabric Active - this test cannot be exercised here. Run on an "
-            "HFNM-capable setup with traffic hosts."
+            "HFNM-capable setup with traffic hosts.",
+            skip_on_wrong_lab,
         )
     try:
         request.getfixturevalue("start_sm")
     except Exception as exc:  # noqa: BLE001
-        pytest.fail(
+        ibh.report_wrong_lab(
             "WRONG LAB SETUP: Subnet Manager could not be started on setup "
-            f"{setup_name!r} ({exc}); an active fabric is required here."
+            f"{setup_name!r} ({exc}); an active fabric is required here.",
+            skip_on_wrong_lab,
         )
+
+
+def _require_active_fabric_and_traffic(engines, request, setup_name):
+    """FAIL (not skip) when HFNM/SM or the traffic harness are missing."""
+    _require_active_fabric(engines, request, setup_name)
     try:
         players = request.getfixturevalue("players")
         interfaces = request.getfixturevalue("interfaces")
@@ -276,14 +369,21 @@ def _assert_hca_ingestion_directly_on_dut(engines, setup_topology) -> None:
     )
 
 
-def _select_peer_port_targets(gnmi_client) -> List[Tuple[str, str]]:
-    """Pick up to two live HCA peer-ports to sweep (fallback: first listed); FAILS if none exposed."""
+def _select_peer_port_targets(gnmi_client, skip_on_wrong_lab: bool = False) -> List[Tuple[str, str]]:
+    """
+    Pick up to two live HCA peer-ports to sweep (fallback: first listed), or report the lab.
+
+    ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
+    coverage rather than gating - see ``ibh.report_wrong_lab``.
+    """
     entries = ibh.gnmi_get_peer_port_list(gnmi_client)
-    assert entries, (
-        "No peer-ports exposed via gNMI under "
-        f"{GnmiYangPaths.PEER_PORT_INTERFACES}. Enable the peer-port knob and "
-        "confirm gpu-telemetry is running / the feature build is delivered."
-    )
+    if not entries:
+        ibh.report_wrong_lab(
+            "No peer-ports exposed via gNMI under "
+            f"{GnmiYangPaths.PEER_PORT_INTERFACES}. Enable the peer-port knob and "
+            "confirm gpu-telemetry is running / the feature build is delivered.",
+            skip_on_wrong_lab,
+        )
     hca = ibh.filter_peer_entries_by_type(entries, PeerType.HCA)
     targets = [("hca-peer", pid) for pid in sorted(hca)[:2]]
     if not targets:
@@ -303,17 +403,10 @@ def _live_nvue_peers(engines) -> Dict[str, Dict[str, str]]:
     return peers
 
 
-# (family-id, leaf list, expected type, raw-subtree accessor name).
-_NVUE_FAMILY_SPECS = [
-    ("counters", PEER_PORT_COUNTER_FIELDS, GnmiTypeKind.COUNTER, "counters"),
-    ("ber", PEER_PORT_BER_FIELDS, GnmiTypeKind.DECIMAL, "phy"),
-    ("plr", PEER_PORT_PLR_FIELDS, GnmiTypeKind.UINT, "phy"),
-]
-
-
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
+@pytest.mark.nvos_build
 def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
     """Every NVUE-listed peer carries an identity, an associated switch port, and classifies as HCA."""
     peers = _live_nvue_peers(engines)
@@ -333,39 +426,101 @@ def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.parametrize("family", _NVUE_FAMILY_SPECS, ids=lambda f: f[0])
-def test_peer_port_nvue_fields_present_and_typed(engines, devices, setup_topology, family):
-    """Each documented NVUE peer-port family is present and correctly typed on every live peer."""
-    fam_id, fields, kind, subtree = family
-    peers = _live_nvue_peers(engines)
-    problems: List[str] = []
+def test_peer_port_nvue_show_surface(engines, devices, setup_topology):
+    """Every `nv show peer-port <id>` sub-command exposes its documented containers and typed leaves.
 
-    for pid in sorted(peers):
-        if subtree == "counters":
-            sub = ibh.peer_port_counters(ibh.nvue_show_peer_port_raw(engines, pid))
-        else:
-            sub = ibh.peer_port_phy(ibh.nvue_peer_port_phy_raw(engines, pid))
-        ibh.attach_dict(f"{fam_id} {pid}", sub)
-        sub_ci = {k.lower(): v for k, v in sub.items()}
-        for leaf in fields:
-            if leaf.lower() not in sub_ci:
-                problems.append(f"[{pid}] missing {fam_id} leaf {leaf!r}")
-                continue
-            err = ibh.gnmi_typecheck(kind, sub_ci[leaf.lower()])
-            if err:
-                problems.append(f"[{pid}] {fam_id} leaf {leaf!r}: {err}")
+    Each node is read with its own sub-command rather than by flattening a parent payload, so a
+    sub-command that does not resolve is a failure instead of an incidentally-covered leaf.
+    """
+    _enable_peer_port(engines)
+    targets = ibh.select_nvue_peer_port_targets(engines)
 
-    assert not problems, (
-        f"NVUE peer-port {fam_id} sweep found {len(problems)} problem(s):\n  " +
-        "\n  ".join(problems)
-    )
+    with allure.step(f"Walk the peer-port show surface on {len(targets)} peer(s)"):
+        for role, pid in targets:
+            for node in PEER_PORT_NVUE_SHOW_NODES:
+                cmd = f"nv show peer-port {pid} {node.sub}".strip()
+                with allure.independent_step(f"Verify {role} `{cmd}`"):
+                    body = ibh.nvue_peer_port_show(engines, pid, node.sub)
+                    ibh.attach_dict(cmd, body)
+                    ResultObj(
+                        bool(body),
+                        f"`{cmd}` returned no data",
+                        issue_type=IssueType.PossibleBug,
+                    ).verify_result()
+                    problems = ibh.peer_port_show_problems(body, node, role=role)
+                    ResultObj(
+                        not problems,
+                        f"`{cmd}` has {len(problems)} contract problem(s):\n  " +
+                        "\n  ".join(problems),
+                        issue_type=IssueType.PossibleBug,
+                    ).verify_result()
+
+
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+def test_peer_port_nvue_matches_system_db(engines, devices, setup_topology):
+    """Every NVUE peer-port leaf backed by COUNTERS_DB agrees with the ingested row."""
+    _enable_peer_port(engines)
+    targets = ibh.select_nvue_peer_port_targets(engines)
+
+    for role, pid in targets:
+        with allure.step(f"Compare {role} {pid} NVUE leaves against its COUNTERS_DB row"):
+            db_row = ibh.read_peer_port_row(engines, pid)
+            ibh.attach_dict(f"COUNTERS_DB row {pid}", db_row)
+            ResultObj(
+                bool(db_row),
+                f"No COUNTERS_DB PEER_COUNTERS row for peer-port {pid!r}, so nothing to compare",
+                issue_type=IssueType.PossibleBug,
+            ).verify_result()
+
+            pairs = ibh.peer_port_db_comparison_pairs(engines, pid)
+            ibh.attach_dict(f"{pid} NVUE-to-DB pairs",
+                            {pair.label: [pair.cli_value, pair.db_field] for pair in pairs})
+            problems, compared = ibh.peer_port_db_pair_problems(pairs, db_row)
+
+            with allure.independent_step(f"Verify {compared} DB-backed leaf value(s) of {pid}"):
+                ResultObj(
+                    not problems,
+                    f"{pid} disagrees with its COUNTERS_DB row in {len(problems)} place(s):\n  " +
+                    "\n  ".join(problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} exposes DB-backed leaves at all"):
+                ResultObj(
+                    compared > 0,
+                    f"{pid} exposed no DB-backed leaf out of {len(pairs)} mapped one(s)",
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} link speed and width match the DB row"):
+                link_problems = ibh.peer_port_link_db_problems(
+                    ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK), db_row)
+                ResultObj(
+                    not link_problems,
+                    f"{pid} link attributes disagree with the DB row:\n  " +
+                    "\n  ".join(link_problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+            with allure.independent_step(f"Verify {pid} derives plr-bw-loss-percent from plr-codes-loss"):
+                plr_problems = ibh.peer_port_plr_bw_loss_problems(
+                    ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK_PHY_DETAIL))
+                ResultObj(
+                    not plr_problems,
+                    f"{pid} PLR bandwidth-loss derivation problems:\n  " +
+                    "\n  ".join(plr_problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
 
 
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
-    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's."""
+    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's.
+
+    Plane rows are siblings of the aggregated row rather than a nested subtree (by design), so
+    the fan-out is verified across the listing.
+    """
     peers = _live_nvue_peers(engines)
     all_ids = set(peers)
     problems: List[str] = []
@@ -388,18 +543,6 @@ def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
                 problems.append(
                     f"[{pid}] plane peer {plane_id!r} switch-port {plane_sw!r} is not under "
                     f"aggregated switch-port {peer_sw!r}"
-                )
-
-        raw = ibh.nvue_show_peer_port_raw(engines, pid)
-        for plane_id, pf in sorted(ibh.peer_port_planes(raw).items()):
-            for leaf in PEER_PORT_PLANE_FIELDS:
-                if leaf not in pf:
-                    problems.append(f"[{pid}] nested plane {plane_id} missing leaf {leaf!r}")
-            plane_sw = str(pf.get("associated-switch-port", "")).strip()
-            if peer_sw and plane_sw and not plane_sw.startswith(peer_sw):
-                problems.append(
-                    f"[{pid}] nested plane {plane_id} switch-port {plane_sw!r} is not under "
-                    f"the peer switch-port {peer_sw!r}"
                 )
 
     assert not problems, (
@@ -853,7 +996,7 @@ def test_peer_telemetry_health_steady_state_healthy(engines, devices, setup_topo
             "PEER_PORT_TELEMETRY_HEALTH is not present in STATE_DB; gpu-telemetry should "
             "publish an initial health state (HLD §6.1.2). Confirm the key with dev."
         )
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"Steady-state PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}); expected healthy."
         )
 
@@ -882,8 +1025,6 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
     _enable_peer_port(engines)
     targets = _select_peer_port_targets(gnmi_client)
     problems: List[str] = []
-    # `pending` leaves (known build gap): tolerated-missing but still type-checked.
-    pending = {leaf.lower() for leaf in getattr(group, "pending", frozenset())}
 
     # A peer that doesn't implement this container (an FNM-connected HCA with no
     # transceiver/component, or a plane leg whose link is down) answers the subscribe
@@ -907,26 +1048,12 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
                     raise
                 exposed += 1
                 ibh.attach_dict(f"{group.group_id} {role} {pid}", payload)
-                payload_ci = {k.lower(): v for k, v in payload.items()}
-                for leaf, kind in group.leaves.items():
-                    if leaf.lower() not in payload_ci:
-                        if leaf.lower() in pending:
-                            logger.info(
-                                "[%s %s] pending leaf %r absent under %s (known build gap, tolerated)",
-                                role, pid, leaf, prefix,
-                            )
-                            continue
-                        problems.append(f"[{role} {pid}] missing leaf {leaf!r} under {prefix}")
-                        continue
-                    if leaf.lower() in pending:
-                        logger.warning(
-                            "[%s %s] pending leaf %r is now exposed under %s - drop it from "
-                            "the group's `pending` set so the sweep enforces it again",
-                            role, pid, leaf, prefix,
-                        )
-                    err = ibh.gnmi_typecheck(kind, payload_ci[leaf.lower()])
-                    if err:
-                        problems.append(f"[{role} {pid}] leaf {leaf!r}: {err}")
+                # `pending` leaves (known build gap) are tolerated-missing but still typed.
+                problems += [
+                    f"[{role} {pid}] {problem}"
+                    for problem in ibh.leaf_problems(
+                        payload, group.leaves, tolerated_missing=group.pending, where=prefix)
+                ]
 
     if exposed == 0:
         pytest.skip(
@@ -965,21 +1092,236 @@ def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, g
                     )
                     continue
                 for member_key, leaves in members.items():
-                    for leaf, kind in group.leaves.items():
-                        present = next((v for k, v in leaves.items() if k.lower() == leaf.lower()), None)
-                        if present is None:
-                            problems.append(
-                                f"[{role} {pid}] member [{member_key}] missing leaf {leaf!r} under {prefix}"
-                            )
-                            continue
-                        err = ibh.gnmi_typecheck(kind, present)
-                        if err:
-                            problems.append(f"[{role} {pid}] member [{member_key}] leaf {leaf!r}: {err}")
+                    problems += [
+                        f"[{role} {pid}] member [{member_key}] {problem}"
+                        for problem in ibh.leaf_problems(leaves, group.leaves, where=prefix)
+                    ]
 
     assert not problems, (
         f"peer-port gNMI list-subtree sweep for {group.group_id!r} found "
         f"{len(problems)} problem(s):\n  " + "\n  ".join(problems)
     )
+
+
+# ---------------------------------------------------------------------------
+# gNMI subscribe heartbeat on the peer-port surface (Redmine 5230671 item 1)
+# ---------------------------------------------------------------------------
+
+
+def _require_link_up_port(purpose: str):
+    """
+    A link-up switch Port, or skip because the lab cannot host this coverage.
+
+    Skips rather than fails for the same reason the fabric and HCA gates above do when called
+    from these cases: a DUT with no live link cannot show a switch-side leaf heartbeating.
+    """
+    port_result = Tools.RandomizationTool.select_random_port(
+        requested_ports_state=NvosConsts.LINK_STATE_UP)
+    if not port_result.result:
+        port_result.ignore_result()
+        ibh.report_wrong_lab(
+            f"WRONG LAB SETUP: no link-up port available to {purpose} on this DUT, so the "
+            f"switch-side leaves this case watches cannot be streamed: {port_result.info}",
+            skip=True,
+        )
+    return port_result.get_returned_value()
+
+
+def _peer_port_counter_paths(targets: List[Tuple[str, str]]) -> List[str]:
+    """Absolute gNMI paths of the additive counters of each selected peer-port."""
+    return [
+        f"{GnmiYangPaths.PEER_PORT_STATE_COUNTERS.format(name=pid)}/{field}"
+        for _, pid in targets
+        for field in PEER_PORT_GNMI_ADDITIVE_FIELDS
+    ]
+
+
+def _peer_port_static_paths(targets: List[Tuple[str, str]]) -> List[str]:
+    """Absolute gNMI paths of the unchanging identity leaves of each selected peer-port."""
+    return [
+        f"{GnmiYangPaths.PEER_PORT_STATE.format(name=pid)}/{leaf}"
+        for _, pid in targets
+        for leaf in PEER_PORT_GNMI_STATIC_LEAVES
+    ]
+
+
+@pytest.mark.skip_clear_config
+@pytest.mark.gnmi
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(10 * MINUTE, func_only=True)
+def test_peer_port_gnmi_counters_heartbeat_under_suppress_redundant(
+    engines, devices, gnmi_client, setup_topology, request, setup_name
+):
+    """
+    Peer-port identity leaves must keep being resent while suppress-redundant is on.
+
+    Redmine 5230671 item 1 on the peer-port subtree. The subscription deliberately targets the
+    identity leaves rather than the additive counters: gpu-telemetry re-ingests the counters every
+    PEER_TELEMETRY_SAMPLING_SEC, which is well under any heartbeat, so a counter is always
+    delivered by a change before its heartbeat comes due and the heartbeat is never exercised. The
+    identity leaves never change while the peer is present, so suppress-redundant drops every
+    sample of them and only the heartbeat can deliver them - which is what makes a dropped
+    heartbeat observable here at all.
+
+    Extra coverage layered on the peer-port suite, so an unmet lab prerequisite skips rather than
+    fails: this case needs an external HCA cable and a running SM on top of what the surface it
+    extends requires.
+    """
+    _require_external_hca_topology(setup_topology, skip_on_wrong_lab=True)
+    _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab=True)
+    _enable_peer_port(engines)
+    targets = _select_peer_port_targets(gnmi_client, skip_on_wrong_lab=True)
+    paths = _peer_port_static_paths(targets)
+    window_sec = heartbeat_window_sec(HEARTBEAT_INTERVAL)
+    subscription = StreamSubscription(
+        paths=paths,
+        stream_mode=GnmiStreamMode.SAMPLE,
+        sample_interval=HEARTBEAT_SAMPLE_INTERVAL,
+        suppress_redundant=True,
+        heartbeat_interval=HEARTBEAT_INTERVAL,
+        label="peer-port identity leaves",
+    )
+    ibh.attach_dict(
+        "peer-port heartbeat subscription",
+        {
+            "peers": [pid for _, pid in targets],
+            "paths": len(paths),
+            "sample_interval": HEARTBEAT_SAMPLE_INTERVAL,
+            "heartbeat_interval": HEARTBEAT_INTERVAL,
+            "peer_sampling_interval_sec": _peer_port_interval_sec(),
+            "window_sec": window_sec,
+        },
+    )
+
+    with allure.step(
+        f"Stream {len(paths)} peer-port identity leaves with suppress-redundant and a "
+        f"{HEARTBEAT_INTERVAL} heartbeat for {window_sec}s"
+    ):
+        results = run_stream_subscribers(
+            target_ip=engines.dut.ip,
+            subscriptions=[subscription],
+            window_sec=window_sec,
+            username=gnmi_client.username,
+            password=gnmi_client.password,
+            engine=get_gnmic_engine(engines),
+        )
+        verify_subscribers_streamed(results)
+
+    # Expected leaves are the subscribed paths themselves, so the check is per peer and per leaf:
+    # a leaf arriving for one peer must not cover for the same leaf going silent on another, and a
+    # peer dropping out of the subscription surfaces as all of its leaves never being delivered.
+    with allure.step(f"Verify every identity leaf of all {len(targets)} subscribed peer(s) kept being resent"):
+        timeline = verify_leaf_heartbeat_continuity(
+            results[0].notifications,
+            HEARTBEAT_INTERVAL,
+            expected_leaf_paths=paths,
+            window_sec=window_sec,
+            context="peer-port identity leaves",
+        )
+
+    with allure.step(f"Verify delivery was driven by the {HEARTBEAT_INTERVAL} heartbeat, not the "
+                     f"{HEARTBEAT_SAMPLE_INTERVAL} sample interval"):
+        verify_heartbeat_drove_delivery(
+            timeline, window_sec, HEARTBEAT_INTERVAL, context="peer-port identity leaves",
+        )
+
+
+@pytest.mark.skip_clear_config
+@pytest.mark.gnmi
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+def test_peer_port_heartbeat_survives_peer_port_disable(
+    engines, devices, gnmi_client, setup_topology, request, setup_name
+):
+    """
+    Disabling peer-port mid-subscription must not silence the rest of the subscription.
+
+    Disabling the knob removes the whole peer-port subtree while a subscription is streaming it -
+    the bluntest available way to kill leaves under a live RPC, which is the failure shape
+    Redmine 5230671 item 1 is about: leaves going silent under a subscription that stays up. The
+    switch-side leaves in the same subscription must keep heartbeating throughout, and the RPC
+    itself must not abort when part of its path set disappears.
+
+    Extra coverage layered on the peer-port suite, so an unmet lab prerequisite skips rather than
+    fails: this case needs an external HCA cable, a running SM and a live switch-side link on top
+    of what the surface it extends requires.
+    """
+    _require_external_hca_topology(setup_topology, skip_on_wrong_lab=True)
+    _require_active_fabric(engines, request, setup_name, skip_on_wrong_lab=True)
+    _enable_peer_port(engines)
+    targets = _select_peer_port_targets(gnmi_client, skip_on_wrong_lab=True)
+    switch_port = _require_link_up_port('watch across the peer-port disable')
+    switch_paths = [
+        f"{GnmiYangPaths.INTERFACE_BY_NAME.format(name=switch_port.name)}/{leaf}"
+        for leaf in HEARTBEAT_STATIC_INTERFACE_LEAVES
+    ]
+    paths = switch_paths + _peer_port_counter_paths(targets)
+    window_sec = heartbeat_window_sec(HEARTBEAT_INTERVAL_SHORT, epochs=5)
+    subscription = StreamSubscription(
+        paths=paths,
+        stream_mode=GnmiStreamMode.SAMPLE,
+        sample_interval=HEARTBEAT_SAMPLE_INTERVAL,
+        suppress_redundant=True,
+        heartbeat_interval=HEARTBEAT_INTERVAL_SHORT,
+        label="switch-side + peer-port leaves across a peer-port disable",
+    )
+    ibh.attach_dict(
+        "peer-port disable perturbation",
+        {
+            "switch_port": switch_port.name,
+            "switch_paths": len(switch_paths),
+            "peer_paths": len(paths) - len(switch_paths),
+            "heartbeat_interval": HEARTBEAT_INTERVAL_SHORT,
+            "window_sec": window_sec,
+            "disable_at_sec": HEARTBEAT_PERTURBATION_AT_SEC,
+        },
+    )
+
+    def _disable_peer_port():
+        System().peer_port.unset(
+            op_param=NvuePaths.KEY_STATE, apply=True, ask_for_confirmation='-y',
+        ).verify_result()
+
+    with allure.step(
+        f"Stream {len(paths)} leaves for {window_sec}s, disabling peer-port after "
+        f"{HEARTBEAT_PERTURBATION_AT_SEC}s"
+    ):
+        try:
+            results = run_stream_subscribers(
+                target_ip=engines.dut.ip,
+                subscriptions=[subscription],
+                window_sec=window_sec,
+                username=gnmi_client.username,
+                password=gnmi_client.password,
+                mid_window_action=_disable_peer_port,
+                action_at_sec=HEARTBEAT_PERTURBATION_AT_SEC,
+                engine=get_gnmic_engine(engines),
+            )
+        finally:
+            with allure.step("Re-enable peer-port"):
+                _enable_peer_port(engines)
+        verify_subscribers_streamed(results)
+
+    # The peer-port leaves are expected to stop: the feature that produced them was turned off.
+    # What must not happen is the switch-side leaves stopping along with them.
+    with allure.step(
+        f"Verify {switch_port.name}'s leaves kept heartbeating across the peer-port disable"
+    ):
+        switch_side = [
+            notification for notification in results[0].notifications
+            if GnmiYangPaths.PEER_PORT_PREFIX not in str(notification.get("prefix", ""))
+        ]
+        verify_leaf_heartbeat_continuity(
+            switch_side,
+            HEARTBEAT_INTERVAL_SHORT,
+            expected_leaf_paths=list(HEARTBEAT_STATIC_INTERFACE_LEAVES),
+            window_sec=window_sec,
+            context=f"{switch_port.name} while the peer-port subtree was removed",
+        )
 
 
 # 9.2 test_hca_ingestion_persists_across_reboot (nice-to-have)
@@ -999,7 +1341,7 @@ def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, set
         _enable_peer_port_for_hca(engines, tier=PeerPortFields.TIER_AGGREGATED)
         health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
         ibh.attach_dict("peer telemetry health before reboot", {"classification": health, "raw": raw})
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before reboot; "
             "expected healthy so the baseline rows come from a live xcset feed"
         )
@@ -1151,67 +1493,130 @@ def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology
 @pytest.mark.multiplanar
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
 def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
-    """On an NMX-T-for-IB outage: rows preserved, health -> degraded, recovery logged; health -> healthy on return."""
+    """NMX-T-for-IB outage: last-good rows retained while the backend is down, refreshed on its return."""
     _require_hca_topology(setup_topology)
-    _enable_peer_port_for_hca(engines)
+    _recycle_peer_port_for_hca(engines)
 
     with allure.step("Snapshot HCA rows and confirm health is healthy"):
         snapshot = ibh.list_hca_peer_rows(engines)
         assert snapshot, "No HCA peer-port rows in System DB (HCA feature build delivered?)"
         health, raw = ibh.read_peer_telemetry_health(engines)
         ibh.attach_dict("initial health", {"classification": health, "raw": raw})
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before the outage; "
             "expected healthy. Confirm the health key/values with dev (HLD §6.1.2)."
         )
 
-    with allure.step("Make NMX-T Lite unreachable"):
-        ibh.make_nmxt_lite_unreachable(engines)
+    # Negative flow: while NMX-T-for-IB is down the daemon retries the backend and logs the
+    # outage; once the failure is deemed persistent it logs "nmx-t backend unrecoverable
+    # after ..." (kept at error level by design) and goes on serving the last-good snapshot
+    # flagged stale. Suppress LogAnalyzer over the whole deliberate outage window;
+    # LogAnalyzer stays active for the pre-outage setup above.
+    with loganalyzer_ignore():
+        with allure.step("Make NMX-T Lite unreachable"):
+            # Mark the outage start so the unrecoverable-declaration search is scoped to this
+            # window and can't be satisfied by a stale line from an earlier outage.
+            outage_since = ibh.dut_journal_since_marker(engines)
+            ibh.make_nmxt_lite_unreachable(engines)
 
-    try:
-        with allure.step("After >= 2 sampling cycles: rows preserved, health degraded, backoff logged"):
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            during = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows during outage", during)
-            # Retention: the row SET must match the pre-outage snapshot.
-            assert set(during) == set(snapshot), (
-                "HCA rows were added/dropped during the NMX-T Lite outage; FS §6.1.2 "
-                "requires the last-good rows to be retained. "
-                f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
-            )
-            # Frozen within the outage: re-sample and require byte-identical rows.
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            during_b = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows later in outage", during_b)
-            drift = "were WIPED" if not during_b else "kept changing"
-            assert during_b == during, (
-                f"HCA rows {drift} across the NMX-T Lite outage window "
-                f"(during={len(during)} rows, ~{2 * PEER_TELEMETRY_SAMPLING_SEC}s later="
-                f"{len(during_b)} rows): with the backend unreachable the daemon must "
-                "retain the last-good rows (stale but consistent, FS §6.1.2), not drop "
-                "or keep updating them."
-            )
-            health, raw = ibh.read_peer_telemetry_health(engines)
-            assert health == "degraded", (
-                f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
-            )
-            log = ibh.read_gpu_telemetry_log(engines)
-            lowered = log.lower()
-            assert "unreachable" in lowered or "nmx" in lowered, (
-                "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
-            )
-            # Recovery action: auto-restart or retry/backoff wording.
-            assert any(tok in lowered for tok in ("retry", "backoff", "restart")), (
-                "peer-telemetry log shows no retry/backoff/restart recovery attempt during the outage"
-            )
-    finally:
-        with allure.step("Restore NMX-T Lite"):
-            ibh.restore_nmxt_lite(engines)
+        try:
+            with allure.step("While the outage is still transient: last-good rows retained, health degraded"):
+                time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
+                # Sample rows, health and log before asserting: the three checks are
+                # independent facets of the same state, so one failing must not stop the
+                # others from being reported.
+                during = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows during transient outage", during)
+                health, raw = ibh.read_peer_telemetry_health(engines)
+                log = ibh.read_gpu_telemetry_log(engines)
+                lowered = log.lower()
 
+                with allure.independent_step("Last-good rows are retained while the outage is transient"):
+                    # Retention while transient: the row SET must still match the pre-outage snapshot.
+                    assert set(during) == set(snapshot), (
+                        "HCA rows were added/dropped while the NMX-T Lite outage was still transient; "
+                        "the last-good rows must be retained until the failure is deemed persistent. "
+                        f"before={sorted(snapshot)!r}, during={sorted(during)!r}"
+                    )
+                with allure.independent_step("Health is degraded while the outage is transient"):
+                    assert health == PeerTelemetryHealth.DEGRADED, (
+                        f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the outage; expected degraded"
+                    )
+                with allure.independent_step("The outage is reported in the peer-telemetry log"):
+                    assert "unreachable" in lowered or "nmx" in lowered, (
+                        "peer-telemetry log shows no NMX-T-for-IB unreachable error during the outage"
+                    )
+
+            with allure.step("Once the failure is deemed persistent: last-good rows are still retained"):
+                # The daemon gives up restarting the backend but keeps the last-good snapshot
+                # rather than blanking the listing, so consumers keep reading data flagged
+                # stale. Key off the log wording (robust to the restart-attempt count
+                # changing), then give the rows two more cycles to prove they are not drained.
+                assert _wait_for_nmxt_unrecoverable(engines, outage_since), (
+                    "peer-telemetry never logged 'nmx-t backend unrecoverable after ...' during the "
+                    f"outage (waited {NMXT_UNRECOVERABLE_DEADLINE_SEC}s); expected the daemon to declare "
+                    "the NMX-T-for-IB failure persistent"
+                )
+                time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
+                # Retention and health are independent facets of the same post-declaration
+                # state, so sample both before asserting and report them separately.
+                remaining = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows after persistence declared", remaining)
+                health, raw = ibh.read_peer_telemetry_health(engines)
+
+                with allure.independent_step("Last-good rows are retained after persistence is declared"):
+                    assert set(remaining) == set(snapshot), (
+                        "HCA rows changed after the NMX-T-for-IB failure was declared unrecoverable; "
+                        "the last-good snapshot must be retained for the whole outage. "
+                        f"before={sorted(snapshot)!r}, remaining={sorted(remaining)!r}"
+                    )
+                with allure.independent_step("Health is still degraded after persistence is declared"):
+                    assert health == PeerTelemetryHealth.DEGRADED, (
+                        f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after the failure was "
+                        "declared unrecoverable; expected degraded while the backend is still down"
+                    )
+        finally:
+            with allure.step("Restore NMX-T Lite"):
+                ibh.restore_nmxt_lite(engines)
+                # `systemctl start` returns before nmx-t-ib accepts connections, and the daemon
+                # keeps logging backend connection errors until it does. Stay inside the ignore
+                # window until the journal goes quiet, otherwise those tail-end outage errors
+                # land on the post-recovery validation and fail LogAnalyzer in teardown.
+                backend_quiet = ibh.wait_for_nmxt_backend_reachable(engines)
+                if not backend_quiet:
+                    ibh.attach_dict("journal tail while still not quiet",
+                                    {"peer_telemetry": ibh.read_gpu_telemetry_log(engines)})
+
+    # Verified here rather than in the finally above: raising from a finally would replace a
+    # failure raised by the outage checks and hide the real cause. Reaching this line means
+    # those checks passed, so a still-noisy backend is the only thing left to report.
+    assert backend_quiet, (
+        "nmx-t-ib did not come back and stop logging backend connection errors after "
+        "restore; the LogAnalyzer ignore window has now closed, so those expected outage "
+        "errors will also be attributed to the post-recovery validation"
+    )
+
+    # LogAnalyzer is re-enabled here (outside the ignore): recovery is quiet by this point, so
+    # any unexpected error log during the post-restore validation is a real regression to catch.
     with allure.step("After recovery: ingestion resumes and health is healthy again"):
-        time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
-        health, raw = ibh.read_peer_telemetry_health(engines)
-        assert health == "healthy", (
+        # Wait for the full pre-outage peer set to return, not just any row - a partial
+        # re-ingestion would otherwise pass the "restored on return" claim. Size the
+        # deadline off the live sampling interval, but never below the constant so a
+        # smaller configured interval can't starve the nmx-t-ib restart + rediscovery.
+        interval = max(_peer_port_interval_sec(), PEER_TELEMETRY_SAMPLING_SEC)
+        resumed, still_missing = ibh.wait_for_hca_peer_rows(
+            engines, required=set(snapshot),
+            timeout_sec=PEER_PORT_ENABLE_GRACE_SEC + 2 * interval,
+        )
+        ibh.attach_dict("rows after recovery", resumed)
+        # Poll for health rather than a one-shot read: the classification can lag row
+        # reappearance and pass through transient states during the daemon's warm-up.
+        health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
+        assert not still_missing, (
+            "HCA rows did not fully resume after NMX-T Lite was restored; "
+            f"missing peers={sorted(still_missing)!r}, snapshot={sorted(snapshot)!r}"
+        )
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
 
@@ -1239,60 +1644,68 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
             "PEER_PORT_TELEMETRY_HEALTH is not present in STATE_DB before injection; "
             "gpu-telemetry should publish an initial health state (FS §6.1.2)."
         )
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) before injection; expected healthy"
         )
         parse_fail_baseline = _count_xcset_parse_failures(engines)
 
-    with allure.step("Serve a malformed HCA xcset from NMX-T-for-IB"):
-        ibh.inject_malformed_hca_xcset(engines)
+    # Negative flow: the malformed feed makes the daemon log expected parse-failure
+    # warnings (Redmine 5159311). Ignore them for LogAnalyzer over the deliberate
+    # malformed-feed window; LogAnalyzer stays active for the pre-injection setup above.
+    with loganalyzer_ignore():
+        with allure.step("Serve a malformed HCA xcset from NMX-T-for-IB"):
+            ibh.inject_malformed_hca_xcset(engines)
 
-    try:
-        with allure.step("Wait for the malformed feed to take effect (a new CSV parse failure is logged)"):
-            assert _wait_for_xcset_parse_failure(engines, parse_fail_baseline), (
-                "No CSV parse-failure logged after serving a malformed xcset; the interceptor "
-                "may not have taken over the telemetry socket (injection ineffective)"
-            )
+        try:
+            with allure.step("Wait for the malformed feed to take effect (a new CSV parse failure is logged)"):
+                assert _wait_for_xcset_parse_failure(engines, parse_fail_baseline), (
+                    "No CSV parse-failure logged after serving a malformed xcset; the interceptor "
+                    "may not have taken over the telemetry socket (injection ineffective)"
+                )
 
-        with allure.step("During the malformed feed: rows are frozen (stale but consistent), none dropped"):
-            # Baseline the freeze after the feed is unparseable; compare within the window.
-            frozen_a = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows at start of malformed feed", frozen_a)
-            assert set(frozen_a) == set(snapshot), (
-                "HCA rows were added/dropped during the malformed feed; FS §6.1.2 requires the "
-                f"last-good rows to be retained. before={sorted(snapshot)!r}, during={sorted(frozen_a)!r}"
-            )
-            time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
-            frozen_b = ibh.list_hca_peer_rows(engines)
-            ibh.attach_dict("rows later in malformed feed", frozen_b)
-            assert frozen_b == frozen_a, (
-                "HCA rows changed across the malformed-feed window; on a parse failure the daemon "
-                "must not write the batch (stale but consistent / no partial writes, FS §6.1.2). "
-                "Expected the journal's 'retaining last ... snapshot' behaviour to hold the rows steady."
-            )
+            with allure.step("During the malformed feed: rows are frozen (stale but consistent), none dropped"):
+                # Baseline the freeze after the feed is unparseable; compare within the window.
+                frozen_a = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows at start of malformed feed", frozen_a)
+                assert set(frozen_a) == set(snapshot), (
+                    "HCA rows were added/dropped during the malformed feed; FS §6.1.2 requires the "
+                    f"last-good rows to be retained. before={sorted(snapshot)!r}, during={sorted(frozen_a)!r}"
+                )
+                time.sleep(2 * PEER_TELEMETRY_SAMPLING_SEC)
+                frozen_b = ibh.list_hca_peer_rows(engines)
+                ibh.attach_dict("rows later in malformed feed", frozen_b)
+                assert frozen_b == frozen_a, (
+                    "HCA rows changed across the malformed-feed window; on a parse failure the daemon "
+                    "must not write the batch (stale but consistent / no partial writes, FS §6.1.2). "
+                    "Expected the journal's 'retaining last ... snapshot' behaviour to hold the rows steady."
+                )
 
-        with allure.step("Parse failure is logged"):
-            log = ibh.read_gpu_telemetry_log(engines)
-            assert any(tok in log.lower() for tok in ("malformed", "parse", "invalid")), (
-                "peer-telemetry log shows no parse-failure error for the malformed xcset"
-            )
+            with allure.step("Parse failure is logged"):
+                log = ibh.read_gpu_telemetry_log(engines)
+                assert any(tok in log.lower() for tok in ("malformed", "parse", "invalid")), (
+                    "peer-telemetry log shows no parse-failure error for the malformed xcset"
+                )
 
-        with allure.step("Health reflects the parse failure (FS §6.1.2: update health state -> degraded)"):
-            health, raw = ibh.read_peer_telemetry_health(engines)
-            assert health == "degraded", (
-                f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the malformed "
-                "feed; FS §6.1.2 requires the daemon to update health state to degraded."
-            )
-    finally:
-        with allure.step("Restore a valid HCA xcset"):
-            ibh.restore_valid_hca_xcset(engines)
+            with allure.step("Health reflects the parse failure (FS §6.1.2: update health state -> degraded)"):
+                health, raw = ibh.read_peer_telemetry_health(engines)
+                assert health == PeerTelemetryHealth.DEGRADED, (
+                    f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) during the malformed "
+                    "feed; FS §6.1.2 requires the daemon to update health state to degraded."
+                )
+        finally:
+            with allure.step("Restore a valid HCA xcset"):
+                ibh.restore_valid_hca_xcset(engines)
 
+    # LogAnalyzer is re-enabled here (outside the ignore): recovery should be clean, so any
+    # unexpected error log during the post-restore validation is a real regression to catch.
     with allure.step("After recovery: ingestion resumes and health is healthy again"):
         time.sleep(PEER_TELEMETRY_SAMPLING_SEC)
         during = ibh.list_hca_peer_rows(engines)
         assert during, "HCA rows did not resume after a valid xcset was restored"
-        health, raw = ibh.read_peer_telemetry_health(engines)
-        assert health == "healthy", (
+        # Poll for health rather than a one-shot read: the classification can lag row
+        # reappearance and pass through transient states during the daemon's warm-up.
+        health, raw = ibh.wait_for_peer_telemetry_healthy(engines)
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
 
@@ -1352,6 +1765,6 @@ def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, se
 
     with allure.step("PEER_PORT_TELEMETRY_HEALTH is healthy again after recovery"):
         health, raw = ibh.read_peer_telemetry_health(engines)
-        assert health == "healthy", (
+        assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after gpu-telemetry restart; expected healthy"
         )

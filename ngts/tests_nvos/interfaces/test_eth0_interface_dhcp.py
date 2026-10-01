@@ -7,6 +7,7 @@ from retry.api import retry_call
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_constants.constants_nvos import SystemConsts, ActionConsts, NvosConst
+from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import *
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_tools.infra.HostMethods import HostMethods
@@ -21,10 +22,15 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tests_nvos.constants import MINUTE
 
+
+cumulus_owner = "lharo"
+
+
 logger = logging.getLogger()
 
 
 @pytest.mark.eth0
+@pytest.mark.simx
 @pytest.mark.system
 @pytest.mark.timeout(4 * MINUTE, func_only=True)
 def test_interface_eth0_enable_disable(engines, topology_obj, serial_engine):
@@ -213,7 +219,7 @@ def test_interface_eth0_speed_duplex_autoneg(engines, devices, topology_obj, ser
 @pytest.mark.eth0
 @pytest.mark.system
 @pytest.mark.simx
-def test_interface_eth0_mtu(engines, topology_obj):
+def test_interface_eth0_mtu(engines, topology_obj, test_name):
     """
     Verify default mtu configuration(1500), check that we can configure possible values(1280-9216),
     negative check(1279, 9000), check changes, unset it to default
@@ -245,14 +251,12 @@ def test_interface_eth0_mtu(engines, topology_obj):
     with allure.step('Set validation with supported for eth mtu 9000'):
         mgmt_port.interface.link.set(op_param_name='mtu', op_param_value='9000',
                                      apply=True, ask_for_confirmation=True).verify_result()
-        logger.info('Check port status, should be up')
-        check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port)
+        wait_for_mgmt_bounce(engines.dut, operation_name='mgmt bounce (mtu set 9000)', test_name=test_name)
         wait_for_mtu_changed(mgmt_port, 9000)
 
     with allure.step('Unset mtu validation'):
         mgmt_port.interface.link.unset(op_param='mtu', apply=True, ask_for_confirmation=True).verify_result()
-        logger.info('Check port status, should be up')
-        check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port)
+        wait_for_mgmt_bounce(engines.dut, operation_name='mgmt bounce (mtu unset)', test_name=test_name)
         wait_for_mtu_changed(mgmt_port, 1500)
 
 
@@ -822,6 +826,54 @@ def wait_for_mtu_changed(port_obj, mtu_to_verify):
         assert current_mtu == mtu_to_verify, "Current mtu {} is not as expected {}".format(current_mtu, mtu_to_verify)
 
 
+def wait_for_mgmt_bounce(dut_engine, operation_name=None, test_name=None,
+                         down_tries=15, down_delay=1, up_tries=60, up_delay=2):
+    """
+    Bracket a mgmt-link-bouncing config apply with a DOWN->UP observation.
+
+    After ``nv config apply`` on a change that resets the mgmt link (mtu, ip,
+    dhcp, unset, ...), the DUT drops SSH for a short window and comes back.
+    A bare ``check_port_status_till_alive(True, ...)`` right after apply can
+    return instantly because the port is still open for a heartbeat before it
+    actually drops, so the next command lands in the outage and pexpect times
+    out on the first SSH attempt.
+
+    This helper waits for the port to first be observed CLOSED (proving the
+    apply took effect) and then OPEN again. If the down window is missed
+    entirely (very fast apply, or change did not bounce the link), it still
+    falls through to the up-check so we do not fail spuriously.
+
+    When ``operation_name`` and ``test_name`` are provided, the observed
+    downtime is appended to ``pytest.operation_list`` via ``OperationTime``
+    so that mgmt-bounce durations can be tracked for regression across runs.
+
+    Returns the measured downtime in seconds (0.0 if the down window was
+    never observed).
+    """
+    with allure.step(f"Wait for mgmt port {dut_engine.ip}:{dut_engine.ssh_port} to bounce (down then up)"):
+        down_observed_at = None
+        try:
+            check_port_status_till_alive(False, dut_engine.ip, dut_engine.ssh_port,
+                                         tries=down_tries, delay=down_delay)
+            down_observed_at = time.time()
+            logger.info(f"Mgmt port {dut_engine.ip}:{dut_engine.ssh_port} observed CLOSED after apply")
+        except Exception:
+            logger.info(
+                f"Mgmt port {dut_engine.ip}:{dut_engine.ssh_port} did not go CLOSED within "
+                f"{down_tries * down_delay}s - apply may not have bounced the link, continuing"
+            )
+        check_port_status_till_alive(True, dut_engine.ip, dut_engine.ssh_port,
+                                     tries=up_tries, delay=up_delay)
+        up_observed_at = time.time()
+        logger.info(f"Mgmt port {dut_engine.ip}:{dut_engine.ssh_port} back OPEN")
+
+        downtime = round(up_observed_at - down_observed_at, 2) if down_observed_at else 0.0
+        if operation_name and test_name:
+            OperationTime.save_manual_operation_duration_to_db(operation_name, downtime, test_name)
+        logger.info(f"Mgmt bounce downtime: {downtime}s")
+        return downtime
+
+
 @retry(Exception, tries=15, delay=2)
 def wait_for_hostname_changed(system, dhcp_hostname):
     with (allure.step("Waiting for system hostname changed to {}".format(dhcp_hostname))):
@@ -860,6 +912,7 @@ def wait_for_param_changed(port_obj, param, param_to_verify, dut_engine=None):
         assert current_param == param_to_verify, f"Current {current_param} is not as expected {param_to_verify}"
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.eth0
 @pytest.mark.system
 @pytest.mark.timeout(8 * MINUTE, func_only=True)
@@ -876,54 +929,56 @@ def test_interface_eth0_show_after_reboot(engines, topology_obj, serial_engine):
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     logger.info(f"mgmt port: {mgmt_port_name}")
     mgmt_port = Port(mgmt_port_name)
+    system = System()
+
+    with allure.step('Get current IP address'):
+        ipv4_output = mgmt_port.interface.ipv4.parse_show()
+        validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
+        switch_ip_mask = [ip for ip in ipv4_output['address'] if engines.dut.ip in ip][0]
 
     try:
-        with allure.step('Get current IP address'):
-            ipv4_output = Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                mgmt_port.interface.ipv4.show()).get_returned_value()
-            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
-            switch_ip = [ip for ip in ipv4_output['address'] if engines.dut.ip in ip][0]
-
         with allure.step('Disable DHCP and set static IP'):
             mgmt_port.interface.ipv4.dhcp_client.set(
-                op_param_name='state', op_param_value='disabled',
-                dut_engine=serial_engine, apply=True, ask_for_confirmation=True).verify_result()
+                op_param_name='state',
+                op_param_value='disabled',
+                dut_engine=serial_engine, apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(False, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
             mgmt_port.interface.ipv4.address.set(
-                op_param_name=switch_ip, dut_engine=serial_engine,
-                apply=True, ask_for_confirmation=True).verify_result()
+                op_param_name=switch_ip_mask,
+                dut_engine=serial_engine,
+                apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
 
         with allure.step('Verify static IP, save and reboot'):
-            retry_call(lambda: validate_interface_ip_address(
-                switch_ip, Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                    mgmt_port.interface.ipv4.show()).get_returned_value(), True),
-                tries=10, delay=2)
+            ipv4_output = mgmt_port.interface.ipv4.parse_show()
+            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
             NvueGeneralCli.save_config(engine=engines.dut)
-            System().reboot.action_reboot()
+            system.reboot.action_reboot(params="force").verify_result()
             _reconnect_serial(serial_engine)
-
-            with allure.step('Wait for system to become ready after reboot'):
-                retry_call(lambda: mgmt_port.interface.ipv4.show(dut_engine=serial_engine),
-                           tries=60, delay=5)
 
             with allure.step('Verify mgmt interface shown after reboot'):
                 interface = Interface(None)
-                assert mgmt_port_name in interface.show(dut_engine=serial_engine), \
+                assert mgmt_port_name in interface.show(), \
                     f"Mgmt port {mgmt_port_name} not found in interface show"
-                assert mgmt_port_name in interface.lldp.show(dut_engine=serial_engine), \
+                assert mgmt_port_name in interface.lldp.show(), \
                     f"Mgmt port {mgmt_port_name} not found in interface lldp show"
 
     finally:
         with allure.step('Restore DHCP configuration'):
             _reconnect_serial(serial_engine)
             mgmt_port.interface.ipv4.unset(
-                dut_engine=serial_engine, apply=True, ask_for_confirmation=True).verify_result()
+                dut_engine=serial_engine,
+                apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
-            ipv4_output = Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                mgmt_port.interface.ipv4.show()).get_returned_value()
-            validate_interface_ip_address(engines.dut.ip, ipv4_output, validate_in=True, run_show=True, mgmt_port=mgmt_port)
-            NvueGeneralCli.save_config(engine=serial_engine)
+            ipv4_output = mgmt_port.interface.ipv4.parse_show()
+            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
+            NvueGeneralCli.save_config(engine=engines.dut)
 
 
 def _reconnect_serial(serial_engine):

@@ -22,6 +22,7 @@ from .token_signing import CRCSTokenSigner
 @pytest.mark.fae
 @pytest.mark.debug_token
 @pytest.mark.crcs
+@pytest.mark.dut_reboot
 @pytest.mark.functionality
 def test_crcs_complete_flow(engines, nv_command, test_name, random_api,
                             topology_obj, skip_if_prod_asics):

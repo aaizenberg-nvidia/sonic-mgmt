@@ -4,6 +4,7 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 import time
 import xmlrpc.client
 from typing import Tuple, List
@@ -13,20 +14,28 @@ class CmdRunner:
     """
     This class serves as a tool to run given commands directly on the running player,
         using subprocess/Popen module
+
+    spool_output writes command output to temp files instead of pipes, for commands whose output is
+    read only once they are closed: an undrained pipe buffer fills up and blocks the command. It
+    leaves process.stdout/stderr as None, so callers that read the process directly cannot use it.
     """
     DEFAULT_TIMEOUT = 30
+    MAX_LOGGED_OUTPUT = 100_000
 
-    def __init__(self, runner_name: str = '', default_timeout=DEFAULT_TIMEOUT, print_outputs: bool = True, kill_live_processes_on_delete: bool = True):
+    def __init__(self, runner_name: str = '', default_timeout=DEFAULT_TIMEOUT, print_outputs: bool = True,
+                 kill_live_processes_on_delete: bool = True, spool_output: bool = False):
         self._runner_name = runner_name
         self._default_timeout = default_timeout
         self._live_processes: List[subprocess.Popen] = []
+        self._own_processes: dict = {}  # process -> its spool files, or None when it uses pipes
         self._kill_live_processes_on_delete = kill_live_processes_on_delete
         self._print_outputs_to_log = print_outputs
+        self.spool_output = spool_output
 
     def __del__(self):
         if self._kill_live_processes_on_delete:
             self._log('close live processes')
-            for process in self._live_processes:
+            for process in list(self._live_processes):
                 self.kill_cmd_process(process, kill_only=True)
 
     def run_cmd(self, cmd: str, allowed_err: str = '') -> str:
@@ -65,7 +74,10 @@ class CmdRunner:
             - otherwise - return output, err of the command process
         """
         self._log(f"run: {cmd}")
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
+        spools = (tempfile.TemporaryFile(), tempfile.TemporaryFile()) if self.spool_output else None
+        stdout, stderr = spools or (subprocess.PIPE, subprocess.PIPE)
+        process = subprocess.Popen(cmd, shell=True, stdout=stdout, stderr=stderr, process_group=0)
+        self._own_processes[process] = spools
 
         if keep_process_alive:
             self._log(f"keeping process alive and returning it")
@@ -93,7 +105,9 @@ class CmdRunner:
         @param kill_only: if True, just kill the process, and don't get its output
         """
         if kill_only:
-            process.kill()
+            self._terminate(process, signal.SIGKILL)
+            process.wait()
+            self._forget(process)
             return '', ''
 
         self._log(f'wait for process done or kill it by {delay} seconds')
@@ -102,7 +116,7 @@ class CmdRunner:
             self._log('process finished normally')
         except subprocess.TimeoutExpired:
             self._log(f'{delay} seconds passed - kill the process')
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            self._terminate(process, signal.SIGTERM)
         return self.wait_for_cmd_process(process)
 
     def wait_for_cmd_process(self, process: subprocess.Popen) -> Tuple[str, str]:
@@ -111,13 +125,49 @@ class CmdRunner:
         @param process: given process to wait for
         @return: output, err of the command process
         """
-        output, err = process.communicate()
-        output = output.decode('utf-8')
-        err = err.decode('utf-8')
+        spools = self._own_processes.get(process)
+        if spools is None:  # communicate() drains the pipes; waiting first deadlocks on a full buffer
+            output, err = (stream.decode('utf-8') for stream in process.communicate())
+        else:
+            process.wait()
+            output, err = (self._read_spool(spool) for spool in spools)
+        self._forget(process)
         if self._print_outputs_to_log:
-            self._log(f"output: {output}")
-            self._log(f"err: {err}")
+            self._log(f"output: {self._shorten_for_log(output)}")
+            self._log(f"err: {self._shorten_for_log(err)}")
         return output, err
+
+    def _terminate(self, process: subprocess.Popen, sig: int):
+        """Signal our own processes by group so descendants die too; a foreign one shares our group."""
+        if process.poll() is not None:
+            return
+        if process not in self._own_processes:
+            process.kill()
+            return
+        try:
+            os.killpg(os.getpgid(process.pid), sig)
+        except ProcessLookupError:
+            pass  # exited between the poll and the signal
+
+    def _forget(self, process: subprocess.Popen):
+        """Drop a finished process, so it is not killed again once its pid can be reused."""
+        for spool in self._own_processes.pop(process, None) or ():
+            spool.close()
+        if process in self._live_processes:
+            self._live_processes.remove(process)
+
+    @staticmethod
+    def _read_spool(spool) -> str:
+        with spool:
+            spool.seek(0)
+            return spool.read().decode('utf-8', errors='replace')
+
+    @staticmethod
+    def _shorten_for_log(text: str) -> str:
+        """Shorten the logged copy only; the caller still gets the whole output."""
+        if len(text) <= CmdRunner.MAX_LOGGED_OUTPUT:
+            return text
+        return f'{text[:CmdRunner.MAX_LOGGED_OUTPUT]}\n... truncated for the log ({len(text)} chars total)'
 
     def _log(self, message: str):
         logging.info(f"{f'[{self._runner_name}] ' if self._runner_name else ''}{message}")
@@ -179,6 +229,7 @@ class EngineCmdRunner:
         self._default_timeout = default_timeout
         self._print_outputs_to_log = print_outputs
         self._kill_live_processes_on_delete = kill_live_processes_on_delete
+        self.spool_output = False  # no local pipe to fill: the remote process server holds the output
         self._live_handles: List[EngineProcessHandle] = []
         _ = engine.process_proxy  # makes sure the remote process server is up
         xml_rpc_port = getattr(engine, 'xml_rpc_port', 9999)

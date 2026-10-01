@@ -1,8 +1,5 @@
 #!/auto/app/Python-3.6.2/bin/python
 import argparse
-import logging
-import re
-logger = logging.getLogger()
 
 
 def init_parser():
@@ -42,7 +39,7 @@ def get_platform_filter_param(params):
     return new_params
 
 
-def update_param_list(params, replace_dict, params_idx_dict, command):
+def update_param_list(params, replace_dict, params_idx_dict):
     for old_str, new_str in replace_dict.items():
         params = params.replace(old_str, new_str)
     params_list = params.split(",")
@@ -59,16 +56,42 @@ def update_param_list(params, replace_dict, params_idx_dict, command):
     return params_list
 
 
+def parse_modify_params(params):
+    values = params.split(",")
+    parsed = []
+    if len(values) > 1 and values[1].strip():
+        parsed.extend(["--user_excel_table_path", values[1].strip()])
+
+    # Jenkins Active Choices emits:
+    # approval,excel_path,generate_upload_mail,update_redmine,redmine_json,...
+    if len(values) > 2 and values[2].strip().lower() == "true":
+        parsed.append("--generate_upload_mail")
+    if (
+        len(values) > 4 and
+        values[3].strip().lower() == "true" and
+        values[4].strip()
+    ):
+        parsed.extend(["--redmine_issues_to_update_path", values[4].strip()])
+    return parsed
+
+
 def parse_params(params, command):
     replace_dict = {"true,": "true ", "false,": "false "}
     params_idx_dict = {}
     if command == "collect":
-        collect_replace_dict = {"last_days,": "--last_days ", ",user_sessions,": "--user_sessions "}
+        collect_replace_dict = {
+            "last_days,": "--last_days ",
+            ",user_sessions,": "--user_sessions ",
+            "user_sessions,": "--user_sessions ",
+        }
         replace_dict.update(collect_replace_dict)
         params_idx_dict = {1: "--filter_sessions_started_by", 2: "--filter_platforms"}
-        params = get_platform_filter_param(params)
+        # Active Choices for user_sessions omits platform/started_by filter fields
+        if not params.lstrip(",").startswith("user_sessions"):
+            params = get_platform_filter_param(params)
     elif command == "modify":
-        params_idx_dict = {0: "--user_excel_table_path", 1: "--redmine_issues_to_update_path"}
+        print(" ".join(parse_modify_params(params)))
+        return
     elif command == "compare":
         params_idx_dict = {0: "--compare_excel", 1: "--msft_results_path"}
     elif command == "save":
@@ -79,7 +102,7 @@ def parse_params(params, command):
         export_replace_dict = {"true,true,": "true "}
         replace_dict = export_replace_dict
         params_idx_dict = {0: "--export_excel"}
-    params_list = update_param_list(params, replace_dict, params_idx_dict, command)
+    params_list = update_param_list(params, replace_dict, params_idx_dict)
     print(" ".join(params_list))
 
 

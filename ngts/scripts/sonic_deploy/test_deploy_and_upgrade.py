@@ -5,7 +5,7 @@ import allure
 import pytest
 
 from ngts.scripts.sonic_deploy.deploy_helper_methods import (
-    DeploymentContext, DeployOrchestrator, DeployConnectionHelper
+    DeploymentContext, DeployOrchestrator, DeployConnectionHelper, checkout_sonic_mgmt_change
 )
 
 logger = logging.getLogger()
@@ -25,7 +25,8 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
                             wjh_deb_url, verify_secure_boot, chip_type, destination_hwsku, show_setup_versions,
                             serial_log_analyzers, fanout_target_version, request, is_air,
                             deploy_testbed_in_parallel, deploy_image_only, deploy_chipless,
-                            deploy_sequential, base_version_bmc, neighbor_mode):
+                            post_install_only, deploy_sequential, base_version_bmc, neighbor_mode,
+                            sdk_source, perf_sys_sdk_change, sonic_mgmt_change):
     """
         Deploy SONiC/NVOS testing topology and upgrade switch
 
@@ -73,11 +74,33 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
         :param chip_type: chip_type fixture
         :param deploy_testbed_in_parallel: deploy_testbed_in_parallel fixture
         :param deploy_image_only: deploy_image_only fixture
+        :param post_install_only: post_install_only fixture
         :param deploy_sequential: deploy_sequential fixture
         :param neighbor_mode: neighbor_mode fixture
+        :param sdk_source: where to take the traffic generator SDK from
+            (``--sdk_source``): ``latest`` (newest published SDK for the DUT branch),
+            ``image`` (SDK from the installed DUT/image),
+            or None (platform default: SONiC=latest, Cumulus=image)
+        :param perf_sys_sdk_change: perf_sys_sdk fixture; explicit perf_sys_sdk source to clone
+            and overlay onto sys_sdk for traffic generator installation, overriding the
+            DUT-derived branch (``--perf_sys_sdk_change``): ``'branch_<name>'`` clones that
+            branch, a numeric Gerrit change number fetches that change's latest patchset;
+            omitted (None) keeps the DUT-derived branch
+        :param sonic_mgmt_change: sonic_mgmt_change fixture; tag, branch, or Gerrit change
+            to check out in the local sonic-mgmt working copy running this test, before
+            the deploy flow starts (``--sonic_mgmt_change``): ``'tag_<name>'`` checks out
+            that tag, ``'branch_<name>'`` checks out that branch, a numeric Gerrit change
+            number checks out that change's latest patchset; omitted (None) performs no
+            checkout. Note: pytest has already imported this test module by the time the
+            checkout runs, so it does not hot-swap the Python code of the running test
+            process; it affects files read from disk at runtime and any subprocess spawned
+            afterward.
         :raise AssertionError: in case of script failure.
     """
     try:
+        if sonic_mgmt_change:
+            checkout_sonic_mgmt_change(sonic_mgmt_change)
+
         # Create deployment context with all parameters and derived values
         context = DeploymentContext.from_function_params(
             topology_obj=topology_obj, is_simx=is_simx, is_performance=is_performance,
@@ -93,18 +116,25 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
             serial_log_analyzers=serial_log_analyzers, fanout_target_version=fanout_target_version,
             request=request, is_air=is_air, deploy_testbed_in_parallel=deploy_testbed_in_parallel,
             deploy_image_only=deploy_image_only, deploy_chipless=deploy_chipless,
-            deploy_sequential=deploy_sequential, base_version_bmc=base_version_bmc, neighbor_mode=neighbor_mode
+            deploy_sequential=deploy_sequential, base_version_bmc=base_version_bmc,
+            neighbor_mode=neighbor_mode,
+            sdk_source=sdk_source,
+            perf_sys_sdk_change=perf_sys_sdk_change
         )
 
         # Execute deployment using orchestrator
         orchestrator = DeployOrchestrator(context)
-        orchestrator.execute_full_deployment()
+        if post_install_only:
+            allure.dynamic.title('Post image installation steps only')
+            orchestrator.execute_post_install_only()
+        else:
+            orchestrator.execute_full_deployment()
 
     except Exception as err:
-        raise AssertionError(err)
+        raise AssertionError(err) from err
 
     finally:
-        DeployConnectionHelper.handle_serial_log_analyzers(context.serial_log_analyzers)
+        DeployConnectionHelper.handle_serial_log_analyzers(serial_log_analyzers)
 
 
 if 'base-version=/auto/sw_system_release/sonic' in ' '.join(sys.argv) and 'target_cli_type' not in ' '.join(sys.argv):

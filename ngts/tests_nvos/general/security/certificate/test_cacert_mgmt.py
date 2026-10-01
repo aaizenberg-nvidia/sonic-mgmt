@@ -351,7 +351,7 @@ def test_cert_mgmt_use_ca_for_rest_api_mtls(test_api, engines, scp_player, clear
                     TestToolkit.tested_api = ApiType.NVUE
                     system.api.unset(apply=True)
                     OpenApiRequest.update_client_certs_info(None)
-                    clear_existing_certs()
+                    clear_existing_certs(engines)
                     TestToolkit.tested_api = test_api
                 with allure.step('import server cert'):
                     security.certificate.cert_id[server_cert.name].action_import(uri_bundle=cert_bundle_uri, passphrase=server_cert.p12_password).verify_result()

@@ -1,0 +1,13 @@
+- conf-name: {{setup_name}}-dut-t1-isolated-d28u4
+  group-name: vm-t1
+  topo: t1-isolated-d28u4
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-{{setup_name}}
+  ptf_ip: {{ptf_ip}}/24
+  ptf_ipv6:
+  server: server_1
+  vm_base: VM0001
+  dut:
+    - {{setup_name}}-dut
+  inv_name: lab
+  comment: Air 6600 T1 v6 LAG (SKU Mellanox-SN6600_LD-P128C2, fanout SN6600_LD)

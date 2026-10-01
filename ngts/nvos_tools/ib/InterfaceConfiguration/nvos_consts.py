@@ -1,5 +1,7 @@
 from enum import Enum, StrEnum
 
+from ngts.ngts_types import LinkDiagnosticT
+
 
 class InternalNvosConsts:
     # Output dictionary
@@ -79,11 +81,12 @@ class IbInterfaceConsts:
     LINK_AUTO_NEG_ON = "enabled"
     LINK_AUTO_NEG_OFF = "disabled"
     LINK_DIAGNOSTICS = "diagnostics"
-    LINK_DIAGNOSTICS_UNPLUGGED_PORT = {"1024": {"status": "Cable is unplugged"}}
-    LINK_DIAGNOSTICS_CLOSED_BY_COMMAND_PORT = {"1": {"status": "Closed by command"}}
-    LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT = {"0": {"status": "No issue was observed"}}
-    LINK_DIAGNOSTICS_NEGOTIATION_FAILURE_PORT = {"2": {"status": "Negotiation failure"}}
-    LINK_DIAGNOSTICS_SIGNAL_NOT_DETECTED = {"57": {"status": "signal not detected"}}
+    LINK_DIAGNOSTICS_UNPLUGGED_PORT: LinkDiagnosticT = {'1024': {'status': 'Cable is unplugged'}}
+    LINK_DIAGNOSTICS_CLOSED_BY_COMMAND_PORT: LinkDiagnosticT = {'1': {'status': 'Closed by command'}}
+    LINK_DIAGNOSTICS_WITHOUT_ISSUE_PORT: LinkDiagnosticT = {'0': {'status': 'No issue was observed'}}
+    LINK_DIAGNOSTICS_NEGOTIATION_FAILURE_PORT: LinkDiagnosticT = {'2': {'status': 'Negotiation failure'}}
+    LINK_DIAGNOSTICS_SIGNAL_NOT_DETECTED: LinkDiagnosticT = {'57': {'status': 'signal not detected'}}
+    LINK_DIAGNOSTICS_LOW_BER: LinkDiagnosticT = {'70': {'status': "link not healthy, BER doesn't meet criteria"}}
     LINK_BREAKOUT = "breakout"
     LINK_STATS_LINK_DOWNED = "carrier-down-count"
     LINK_IB_SPEED = "ib-speed"
@@ -220,7 +223,7 @@ class IbInterfaceConsts:
     # IB counters expected fields list (defined at end to reference constants defined above)
     IB_COUNTERS_EXPECTED_OPTIONS = [COUNTERS_ERRORS, COUNTERS_DROPS, COUNTERS_FAST_RECOVERY]
     NVL_COUNTERS_FIELDS = [LINK, NVL]
-    NVL_COUNTERS_LINK_FIELDS = [COUNTERS_ERRORS, COUNTERS_DROPS]
+    NVL_COUNTERS_NVL_FIELDS = [COUNTERS_ERRORS, COUNTERS_DROPS]
 
     # Non-IB interfaces forbidden options (should not have these sub-options under counters)
     # Note: 'nvl' is from NvlInterfaceConsts.NVL_PORT_TYPE, included as string to avoid cross-class reference
@@ -588,14 +591,50 @@ class PhyDiagConsts:
     BW-loss-monitor injection (PPBMP + PTER) on Mellanox switches.
     """
 
-    # Canonical NFS source path on the sonic-mgmt host. Not mounted on NVOS
-    # DUTs, so :meth:`PhyDiagTool.ensure_deployed` SCPs the package from
-    # here to the DUT before the test runs.
-    PHY_DIAG_SOURCE_DIR: str = "/auto/mswg/release/fwshared/phy/utils/phy_tools/phy_tools_last_stable/phy_package"
-    # Deployed location on the DUT (where the SCP push lands). The phy_diag
+    # Staged copy of the phy team's ``phy_package_lite`` tarball.
+    #
+    # The phy team's canonical release lives under
+    # ``/auto/mswg/release/fwshared/phy/utils/phy_tools/phy_tools_last_stable``,
+    # but that path is NOT bind-mounted into the sonic-mgmt container (only
+    # ``/auto/mswg/utils/bin/`` is), so it isn't readable at test time and the
+    # test used to self-skip on every run. We therefore stage the tarball under
+    # ``/auto/sw_system_project/NVOS_INFRA/verification_files`` -- part of
+    # COMMON_MOUNTPOINTS, so it is visible in the container -- the same place
+    # the debug-token feature keeps its firmware artifacts.
+    #
+    # We ship the ``_lite`` tarball (~205 MB) rather than the full package
+    # (~1.3 GB, of which ``phy_core_lib`` is 1.2 GB): it still carries the
+    # ``phy_diag/phy_diag.py`` entry-point and the
+    # ``phy_core_lib/src/network/dt/infra/dt_lib_path.py`` bootstrap it imports.
+    #
+    # Refresh with (from any host that mounts /auto/mswg):
+    #   cp <phy_tools_last_stable>/tarball/phy_package_lite-<ver>.tar.gz \
+    #      /auto/sw_system_project/NVOS_INFRA/verification_files/phy_tools/
+    #   ln -sfn phy_package_lite-<ver>.tar.gz \
+    #      /auto/sw_system_project/NVOS_INFRA/verification_files/phy_tools/phy_package_lite.tar.gz
+    PHY_DIAG_SOURCE_TARBALL: str = (
+        "/auto/sw_system_project/NVOS_INFRA/verification_files/"
+        "phy_tools/phy_package_lite.tar.gz"
+    )
+    # Deployed location on the DUT (where the tarball is unpacked). The phy_diag
     # entry-point lives under ``phy_diag/phy_diag.py`` inside the package.
     PHY_DIAG_DUT_DIR: str = "/tmp/phy_package"
     PHY_DIAG_BIN: str = f"{PHY_DIAG_DUT_DIR}/phy_diag/phy_diag.py"
+    # Where the tarball lands on the DUT before it is unpacked.
+    PHY_DIAG_DUT_TARBALL: str = "/tmp/phy_package_lite.tar.gz"
+    # Sentinel echoed by the sonic-mgmt player when the staged tarball is
+    # reachable there (checked via the engine because inside the MARS ngts
+    # docker the bind-mount can be a dead autofs stub while the player's
+    # autofs works fine).
+    PHY_DIAG_SOURCE_OK: str = "PHY_DIAG_SOURCE_OK"
+    # Unpacking ~960 MB over a slow root-overlay can take a while.
+    PHY_DIAG_UNTAR_TIMEOUT: int = 600
+    # First launch pip-installs ~236 MB of deps into the package's own
+    # .local_packages dir, so the smoke check needs a generous budget.
+    PHY_DIAG_BOOTSTRAP_TIMEOUT: int = 900
+    # Sentinel echoed after a successful phy_diag.py invocation, so we can tell
+    # "ran fine" from "printed something" over an SSH channel with no exit code.
+    PHY_DIAG_SMOKE_OK: str = "PHY_DIAG_SMOKE_OK"
 
     # Register names as phy_diag.py knows them. Note these differ from the
     # bare ``mlxreg --reg_name`` form — phy_diag's ADB exposes specialized
@@ -608,10 +647,13 @@ class PhyDiagConsts:
 
     # PPBMC ``monitor_cntl`` bitmask — bit 5 (``0x20``) enables the literal
     # ``Tx_BW_loss`` monitor type (phy_diag decodes it as enum ``Tx_BW_loss``).
-    # The FW default is ``0x24`` (bits 5+2 -- general BER monitoring) which
-    # does NOT classify our injection as a BW-loss event on the local port.
-    # We override to pure ``0x20`` so the local linkdown-reason-code is 45.
+    # Note the FW default ``0x24`` is bits 5+2, i.e. it already *includes*
+    # Tx_BW_loss (phy_diag decodes it as ``Symbol_FEC_monitor_Tx_BW_loss``);
+    # setting pure ``0x20`` just narrows monitoring to that one type.
     PPBMC_MONITOR_CNTL_TX_BW_LOSS: int = 0x20
+    # PPBMC ``clr``: reverts monitor_cntl / e / event_ctrl /
+    # event_generation_cooldown_admin to FW defaults for the selected monitor.
+    PPBMC_CLR_RESTORE_DEFAULTS: int = 1
 
     # PPBMP ``monitor_group`` enum values discovered on Quantum3 (mt54004)
     # firmware 35.2016.4994-002. Groups 0/1/2/5 are BER source enums and
@@ -623,10 +665,37 @@ class PhyDiagConsts:
     PPBMP_MONITOR_GROUP_SYMBOL_BER: int = 5
     PPBMP_MONITOR_GROUP_TX_BW_LOSS: int = 8
 
-    # PPBMP knobs for the "trip-immediately" injection setup.
-    PPBMP_BW_LOSS_THRESHOLD_LOW: int = 1
-    PPBMP_TIME_WINDOW_DEFAULT: int = 100
-    PPBMP_TIME_WINDOW_W_EN: int = 1
+    # PPBMP BW-loss alarm threshold for the injection test.
+    #
+    # Units: ``bw_loss_threshold`` is a percentage in 0.01 granularity over
+    # [0, 10000] -- so 500 = 5%, and 1 means 0.01%, NOT 1%. The FW default is
+    # 9500 (95%) for both the alarm and the warning threshold, and writing the
+    # alarm threshold drags the warning threshold down with it.
+    #
+    # 100 (1%) is derived from measurement on BlackMamba DGX (ASIC FW
+    # 35.2020.1094): the PTER Effective_BER injection (mantissa=1, exp=4)
+    # produces a Tx BW loss (Delta plr_xmit_retry_codes / Delta
+    # plr_xmit_codes) that VARIES PER PLANE with the plane's codeword rate --
+    # measured 9.2% on sw21p1pl1 (48.5M codes/s) but only ~2.1% on sw5p1pl3
+    # (24.2M codes/s). An idle link measures exactly 0% on every plane
+    # checked. The threshold must sit below the weakest plane's signal and
+    # above noise:
+    #   - at the FW default 9500 (95%): 10/10 injections -> no event at all;
+    #   - at the historical value 1 (0.01%): re-training noise also trips it,
+    #     so attribution was a random mix of codes 45/22/2;
+    #   - at 500 (5%): strong planes trip, weak planes (2.1% < 5%) never do
+    #     -- the test outcome depended on which plane was randomly picked;
+    #   - at 100 (1%): both the weakest and strongest measured planes tripped
+    #     in exactly 10s with code 45 / BW_LOSS_THRESHOLD_EXCEEDED.
+    #
+    # These writes PERSIST across link flaps -- callers must restore FW
+    # defaults afterwards (PPBMP_CLR_RESTORE_DEFAULTS). ``time_window`` is
+    # deliberately not overridden; every validated run used the FW default.
+    PPBMP_BW_LOSS_THRESHOLD_INJECTION: int = 100
+    # PPBMP ``clr`` = ``set_fw_default_thresholds``: restores this monitor
+    # group's thresholds/time-window to the FW defaults (9500 / 9500 / 1).
+    # These writes PERSIST across link flaps, so cleanup is mandatory.
+    PPBMP_CLR_RESTORE_DEFAULTS: int = 1
 
     # PTER ``error_type_admin`` enum (also reported as ``error_type_cap`` bitmap).
     PTER_ERROR_TYPE_NONE: int = 0

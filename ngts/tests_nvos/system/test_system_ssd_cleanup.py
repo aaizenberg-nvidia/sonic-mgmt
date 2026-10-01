@@ -172,6 +172,7 @@ def _check_disk_issue_with_retry(system: System, /, *, no_disk_issue: bool = Tru
     return _check_disk_issue_with_retry_inner()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.system
 def test_ssd_cleanup_reboot_with_high_ssd_usage(engines, devices):
     """

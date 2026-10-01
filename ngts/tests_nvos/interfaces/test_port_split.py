@@ -20,6 +20,15 @@ from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 from retry.api import retry_call
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import PortRequirements
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
+from ngts.tests_nvos.general.telemetry.ib import umf_churn_helpers as umf_churn
+from ngts.tests_nvos.general.telemetry.ib.constants import (
+    NVBUG_5768072,
+    NVBUG_6152581,
+    NVBUG_6152697,
+    STUCK_SPLIT_LANES_RE,
+    STUCK_SPLIT_STATE_DB_MARKER,
+)
+from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 
 invalid_cmd_str = ['Invalid config', 'Error', 'command not found', 'Bad Request', 'Not Found', "unrecognized arguments",
                    "error: unrecognized arguments", "invalid choice", "Action failed", "Invalid Command",
@@ -39,10 +48,12 @@ def test_ib_split_port_no_breakout_profile(engines, interfaces, start_sm, device
         3. Try to split port, eth0, ib0 in not breakout profile
         4. Try to split already splitted port
         5. Unset
+        6. Assert no empty-IB-speed UMF ERROR during churn (NVBug 6152581 / UMF !191)
     """
     if not devices.dut.split_ports_supported:
         pytest.skip("Split is not supported on this setup")
 
+    umf_marker = umf_churn.place_umf_churn_marker(engines, "split-no-breakout-profile")
     system = System(None)
     with allure.step("Verify default system profile"):
         system_profile_output = OutputParsingTool.parse_json_str_to_dictionary(system.profile.show()) \
@@ -145,6 +156,11 @@ def test_ib_split_port_no_breakout_profile(engines, interfaces, start_sm, device
 
     with allure.step("Unset parent port"):
         child_port.interface.link.unset(op_param='breakout', apply=True, ask_for_confirmation=True).verify_result()
+
+    with allure.step(
+        f"NVBug {NVBUG_6152581} / UMF !191: no empty-IB-speed ParseFloat ERROR during split churn"
+    ):
+        umf_churn.assert_no_empty_ib_speed_parse_errors(engines, umf_marker)
 
 
 @pytest.mark.ib_interfaces
@@ -447,11 +463,14 @@ def test_split_all_ports_together(engines, interfaces, start_sm, devices):
         3. Check if show command for port work
         4. Get all ports
         5. Unset
+        6. Assert 'nv config apply' after unset not rejected (NVBug 5768072)
+        7. Assert no empty-IB-speed UMF ERROR during churn (NVBug 6152581 / UMF !191)
     """
     if not devices.dut.split_ports_supported:
         pytest.skip("Split is not supported on this setup")
 
     marker = TestToolkit.get_loganalyzer_marker(engines.dut)
+    umf_marker = umf_churn.place_umf_churn_marker(engines, "split-all-ports-together")
 
     with allure.step("Get all up and down ports"):
         ports_down_state = Tools.RandomizationTool.select_random_ports(requested_ports_state=NvosConsts.LINK_STATE_DOWN,
@@ -482,7 +501,36 @@ def test_split_all_ports_together(engines, interfaces, start_sm, devices):
     with allure.step("Unset all ports"):
         NvueSystemCli.unset(TestToolkit.engines.dut, 'interface')
         TestToolkit.add_loganalyzer_marker(engines.dut, marker)
-        NvueGeneralCli.apply_config(engine=TestToolkit.engines.dut, option='--assume-yes')
+        apply_output = NvueGeneralCli.apply_config(
+            engine=TestToolkit.engines.dut, option='--assume-yes'
+        )
+
+    with allure.step(
+        f"NVBug {NVBUG_5768072}: 'nv config apply' after breakout unset must not be rejected"
+    ):
+        # 5768072 reproduces as: apply after 'nv unset interface' fails with
+        # 'Invalid config [rev_id: N]: lanes NX is not supported' / 'failed
+        # to get supported values from STATE_DB' because STATE_DB / lane
+        # bookkeeping was not restored during the unset. Framework teardown
+        # then recovers via 'nv config replace', so the rejection is silent
+        # in the test body unless we assert on the apply output here.
+        output_text = apply_output or ""
+        hits = []
+        if STUCK_SPLIT_LANES_RE.search(output_text):
+            hits.append(STUCK_SPLIT_LANES_RE.pattern)
+        if STUCK_SPLIT_STATE_DB_MARKER in output_text:
+            hits.append(STUCK_SPLIT_STATE_DB_MARKER)
+        ResultObj(
+            not hits,
+            f"NVBug {NVBUG_5768072}: 'nv config apply' after breakout unset "
+            f"was rejected. Hits: {hits}. Full output: {output_text!r}",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step(
+        f"NVBug {NVBUG_6152581} / UMF !191: no empty-IB-speed ParseFloat ERROR during split churn"
+    ):
+        umf_churn.assert_no_empty_ib_speed_parse_errors(engines, umf_marker)
 
 
 @pytest.mark.system_profile_cleanup
@@ -495,12 +543,16 @@ def test_split_all_ports(engines, interfaces, start_sm, devices):
         2. Split it
         3. Check if show command for port work
         4. Get all ports
-        5. Unset
+        5. Assert ALIAS_PORT_MAP consistency for live split ports (NVBug 6152697 / UMF !195)
+        6. Unset
+        7. Assert 'nv config apply' after unset not rejected (NVBug 5768072)
+        8. Assert no UMF alias Data-index-out-of-range ERROR during churn (NVBug 6152697 / UMF !195)
     """
     if not devices.dut.split_ports_supported:
         pytest.skip("Split is not supported on this setup")
 
     marker = TestToolkit.get_loganalyzer_marker(engines.dut)
+    umf_marker = umf_churn.place_umf_churn_marker(engines, "split-all-ports")
 
     with allure.step("Get all up and down ports"):
         ports_down_state = Tools.RandomizationTool.select_random_ports(requested_ports_state=NvosConsts.LINK_STATE_DOWN,
@@ -538,10 +590,51 @@ def test_split_all_ports(engines, interfaces, start_sm, devices):
     with allure.step("Check if we can to get splitted ports"):
         _get_split_ports()
 
+    with allure.step(
+        f"NVBug {NVBUG_6152697} / UMF !195: ALIAS_PORT_MAP consistent for live split ports"
+    ):
+        live_ib_up = Tools.RandomizationTool.select_random_ports(
+            requested_ports_state=NvosConsts.LINK_STATE_UP,
+            requested_ports_type="ib",
+            num_of_ports_to_select=0,
+        ).get_returned_value() or []
+        live_names = umf_churn.sample_port_names([p.name for p in live_ib_up])
+        if live_names:
+            umf_churn.assert_alias_port_map_consistent(engines, live_names)
+
     with allure.step("Unset all ports"):
         NvueSystemCli.unset(TestToolkit.engines.dut, 'interface')
         TestToolkit.add_loganalyzer_marker(engines.dut, marker)
-        NvueGeneralCli.apply_config(engine=TestToolkit.engines.dut, option='--assume-yes')
+        apply_output = NvueGeneralCli.apply_config(
+            engine=TestToolkit.engines.dut, option='--assume-yes'
+        )
+
+    with allure.step(
+        f"NVBug {NVBUG_5768072}: 'nv config apply' after breakout unset must not be rejected"
+    ):
+        # 5768072 reproduces as: apply after 'nv unset interface' fails with
+        # 'Invalid config [rev_id: N]: lanes NX is not supported' / 'failed
+        # to get supported values from STATE_DB' because STATE_DB / lane
+        # bookkeeping was not restored during the unset. Framework teardown
+        # then recovers via 'nv config replace', so the rejection is silent
+        # in the test body unless we assert on the apply output here.
+        output_text = apply_output or ""
+        hits = []
+        if STUCK_SPLIT_LANES_RE.search(output_text):
+            hits.append(STUCK_SPLIT_LANES_RE.pattern)
+        if STUCK_SPLIT_STATE_DB_MARKER in output_text:
+            hits.append(STUCK_SPLIT_STATE_DB_MARKER)
+        ResultObj(
+            not hits,
+            f"NVBug {NVBUG_5768072}: 'nv config apply' after breakout unset "
+            f"was rejected. Hits: {hits}. Full output: {output_text!r}",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step(
+        f"NVBug {NVBUG_6152697} / UMF !195: no alias Data-index-out-of-range ERROR during split churn"
+    ):
+        umf_churn.assert_no_alias_data_index_errors(engines, umf_marker)
 
 
 @pytest.mark.ib_interfaces

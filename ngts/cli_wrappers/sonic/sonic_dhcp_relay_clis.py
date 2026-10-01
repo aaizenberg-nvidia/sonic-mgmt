@@ -1,4 +1,5 @@
 import logging
+import re
 import ipaddress
 import json
 
@@ -110,12 +111,32 @@ class SonicDhcpRelayCliMaster(SonicDhcpRelayCliDefault):
         self.cli_obj = cli_obj
 
     def is_dhcp_relay_ready(self):
-        cmd = 'docker exec dhcp_relay supervisorctl status | grep dhc | awk \'{print $2}\''
-        output = self.engine.run_cmd(cmd, validate=True).splitlines()
-        is_ready = len(output) != 0 and all(element == 'RUNNING' for element in output)
-        if not is_ready:
-            logger.info(f'DHCP relay is not ready: {output}')
-        return is_ready
+        """
+        Check that the dhcp_relay container is fully ready by verifying that at
+        least one actual relay forwarding process (isc-dhcpv4-relay-<Vlan> or
+        dhcp6relay) is registered in supervisord and all such entries are RUNNING.
+        """
+        try:
+            status_output = self.engine.run_cmd(
+                'docker exec dhcp_relay supervisorctl status',
+                validate=False
+            )
+        except Exception:
+            logger.info('supervisorctl status check failed')
+            return False
+
+        relay_lines = [
+            line for line in status_output.splitlines()
+            if re.search(r'(?:^|:)(isc-dhcpv4-relay-\S*|dhcp6relay)\b', line.strip())
+        ]
+        if not relay_lines:
+            logger.info('No relay forwarding processes found in supervisord - dhcprelayd not yet ready')
+            return False
+        not_running = [line for line in relay_lines if 'RUNNING' not in line]
+        if not_running:
+            logger.info(f'Some relay forwarding processes are not RUNNING: {not_running}')
+            return False
+        return True
 
     def add_dhcp_relay(self, vlan, dhcp_server, **kwargs):
         """

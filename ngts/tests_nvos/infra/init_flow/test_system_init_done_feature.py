@@ -14,13 +14,17 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.constants import MINUTE
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
+
+SYSTEM_STATE_DOWN_POLL_TIMEOUT = 30
+SYSTEM_STATE_DOWN_POLL_INTERVAL = 2
 
 
 @pytest.mark.check_log_size
 @pytest.mark.check_disk_usage
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.init_flow
+@pytest.mark.dut_reboot
 def test_system_ready_state_up(engines, devices, topology_obj, verify_no_kernel_errors):
     """
     Test flow:
@@ -101,6 +105,7 @@ def test_system_ready_state_up(engines, devices, topology_obj, verify_no_kernel_
 @pytest.mark.check_disk_usage
 @pytest.mark.timeout(25 * MINUTE, func_only=True)
 @pytest.mark.init_flow
+@pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer
 def test_system_ready_state_down(engines, devices, topology_obj):
     """
@@ -155,11 +160,11 @@ def test_system_ready_state_down(engines, devices, topology_obj):
             logs_to_find = ['Wait until the NOS signal we are ready to serve']
             system.log.verify_expected_logs(logs_to_find, logs_source=LogsSources.NVUED, engine=ssh_connection)
 
-            with allure.step('verify the system status is DOWN'):
-                output = Tools.DatabaseTool.sonic_db_cli_hgetall(engine=ssh_connection, asic="",
-                                                                 db_name=DatabaseConst.STATE_DB_NAME,
-                                                                 table_name='\"SYSTEM_READY|SYSTEM_STATE\"')
-                assert SystemConsts.STATUS_DOWN in output, "SYSTEM STATE SHOULD BE DOWN"
+            with allure.step(f'verify the system status is DOWN within {SYSTEM_STATE_DOWN_POLL_TIMEOUT}s'):
+                output = _wait_for_system_state_down(ssh_connection)
+                assert SystemConsts.STATUS_DOWN in output, (
+                    f"SYSTEM STATE SHOULD BE DOWN within {SYSTEM_STATE_DOWN_POLL_TIMEOUT}s; last output: {output}"
+                )
 
             with allure.step("verify we can run nvue command and the system status is not ok"):
                 Tools.ValidationTool.verify_field_value_in_output(Tools.OutputParsingTool.parse_json_str_to_dictionary(
@@ -169,6 +174,23 @@ def test_system_ready_state_down(engines, devices, topology_obj):
         with allure.step('start docker {} as a cleanup step'.format(docker_to_kill)):
             engines.dut.run_cmd('sudo systemctl start {}'.format(docker_to_kill))
             system.reboot.action_reboot(engines.dut)
+
+
+def _wait_for_system_state_down(ssh_connection):
+    deadline = time.monotonic() + SYSTEM_STATE_DOWN_POLL_TIMEOUT
+    while True:
+        output = Tools.DatabaseTool.sonic_db_cli_hgetall(engine=ssh_connection, asic="",
+                                                         db_name=DatabaseConst.STATE_DB_NAME,
+                                                         table_name='\"SYSTEM_READY|SYSTEM_STATE\"')
+        if SystemConsts.STATUS_DOWN in output:
+            return output
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return output
+
+        # Keep the grace period bounded so readiness delays beyond 30 seconds remain visible.
+        time.sleep(min(SYSTEM_STATE_DOWN_POLL_INTERVAL, remaining))
 
 
 def connect_before_ssh(topology_obj, engine):

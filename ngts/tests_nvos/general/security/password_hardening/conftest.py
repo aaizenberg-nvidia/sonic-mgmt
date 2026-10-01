@@ -10,6 +10,16 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_constants.constants_nvos import ApiType
 from ngts.nvos_tools.system.System import System
 from ngts.ngts_types import EnginesT, DevicesT
+from ngts.tools.test_utils import switch_recovery
+
+
+@pytest.fixture(scope='function', autouse=True)
+def verify_dut_connectivity(topology_obj, engines: EnginesT):
+    """
+    Verify DUT connectivity before each test; if the DUT is unreachable, run
+    the recovery flow (password-prompt handling, then remote reboot).
+    """
+    switch_recovery.check_switch_connectivity(topology_obj, engines)
 
 
 @pytest.fixture(scope='session')
