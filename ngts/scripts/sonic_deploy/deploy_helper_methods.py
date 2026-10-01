@@ -139,6 +139,14 @@ def get_image_fw_version(image_path):
     raise Exception(f'FW_VERSION_SWITCH not found in {readme_path}')
 
 
+def check_fw_version(image):
+    if image:
+        fw_version = get_image_fw_version(image)
+        if fw_version < "2020.1136":
+            pytest.exit(f"Deployment paused: SPC6 requires FW >= 2020.1136, "
+                        f"but image {image} contains {fw_version}")
+
+
 class DeploymentContext:
     """
     Encapsulates all deployment parameters and derived values.
@@ -815,10 +823,11 @@ class DeployOrchestrator:
     def execute_installation(self):
         """Execute installation phase for all DUTs"""
         if self.context.chip_type == "SPC6":
-            fw_version = get_image_fw_version(self.context.base_version)
-            if fw_version < "2020.1136":
-                pytest.exit(f"Deployment paused: SPC6 requires FW >= 2020.1136, "
-                            f"but image contains {fw_version}")
+            # deploy_only_target installs only the target image.
+            base_image = "" if self.context.deploy_only_target else self.context.base_version
+            target_image = self.context.target_version
+            check_fw_version(base_image)
+            check_fw_version(target_image)
 
         executor = None if self.context.deploy_sequential else concurrent.futures.ThreadPoolExecutor()
         use_GA_image = False
