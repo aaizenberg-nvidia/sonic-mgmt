@@ -1853,6 +1853,12 @@ tests/nightly/lag/test_lag.py::test_lag_members_scale:
     conditions:
     - "https://redmine.mellanox.com/issues/5252511"
 
+tests/nightly/lag/test_lag.py::test_core_functionality_with_reboot:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5315965"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5315965"
+
 platform_tests/test_reboot.py::test_warm_reboot:
   skip:
     reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
