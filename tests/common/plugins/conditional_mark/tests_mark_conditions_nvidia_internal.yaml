@@ -766,6 +766,12 @@ everflow/test_everflow_ipv6.py::TestEgressEverflowIPv6::test_everflow_egress_mir
     conditions:
     - https://redmine.mellanox.com/issues/5172208
 
+gnmi/test_gnmi_configdb.py:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5314606"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5314606 and 'dualtor' in topo_name"
+
 gnmi/test_gnmi_srv6.py:
   skip:
     reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303099"
