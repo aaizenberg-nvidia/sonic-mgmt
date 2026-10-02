@@ -221,6 +221,12 @@ class FaeCpldComponent(FaePlatformComponent):
                 raise
 
 
+class FaeNvme(BaseComponent):
+    def __init__(self, parent_obj=None):
+        super().__init__(parent=parent_obj, path='/nvme')
+        self.dump = BaseComponent(self, path='/dump')
+
+
 class FaeSystem(BaseComponent):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/system')
@@ -240,6 +246,7 @@ class FaeSystem(BaseComponent):
         self.peer_port = FaePeerPort(self)
         self.sto_event = StoEvent(self)
         self.mlid_event_snapshot = MlidEventSnapshot(self)
+        self.nvme = FaeNvme(self)
 
     def ssd_cleanup(self, expected_str="", dut_engine=None):
         """nv action run fae system ssd-cleanup """
