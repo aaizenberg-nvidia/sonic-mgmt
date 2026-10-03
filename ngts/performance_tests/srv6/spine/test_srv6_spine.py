@@ -65,7 +65,6 @@ class TestSRv6Spine(TestSRv6Base):
         In order to recreate this full mesh we just define all the spine downstream ports as both
         downstream and upstream this way get the traffic pattern as seen above.
         """
-        pytest.skip("This test is no longer supported on performance setup, due to infra limitation - Contact QA for test results using IXIA")
         test_name = get_perf_test_name(request)
         round_robin_dict = MRCConsts.SPINE_ROUND_ROBIN_PORTS_NUM_BY_CHIP_TYPE[self.chip_type]
         round_robin_ports_num, round_robin_groups_num = round_robin_dict['group_size'], round_robin_dict['group_num']

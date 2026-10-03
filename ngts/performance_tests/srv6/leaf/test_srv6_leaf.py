@@ -185,9 +185,9 @@ class TestSRv6Leaf(TestSRv6Base):
                                     f"(duration: {reload_end - reload_start:.3f}s)")
             set_shaper_on_traffic_gen(self.players, speed=self.conf_args["speed"], shaper_value=MRCConsts.SHAPER_VALUE_AFTER_TEST)
 
+    @pytest.mark.skip(reason="This test is no longer supported on performance setup, due to infra limitation - Contact QA for test results using IXIA")
     @pytest.mark.parametrize("traffic_type", MRCConsts.REGRESSION_TRAFFIC_TYPE_LIST)
     def test_leaf_round_robin_srv6(self, request, traffic_type):
-        pytest.skip("This test is no longer supported on performance setup, due to infra limitation - Contact QA for test results using IXIA")
         condition, skip_message = get_srv6_tests_skip_condition(self.cli_object, self.chip_type)
         skip_performance_test_conditionally(condition, skip_message)
         test_name = get_perf_test_name(request)
