@@ -136,7 +136,7 @@ pytest_plugins = ('ngts.tools.sysdumps',
                   'tests.common.plugins.parallel_fixture',
                   'tests.common.plugins.erspan_mirror',
                   'tests.common.plugins.allure_wrapper.ai_rca.per_test_analysis_attachment',
-                  )
+                  'tests.common.port_attributes.pytest_plugin')
 
 
 # NOTE: This is to backport fix https://github.com/python/cpython/pull/126098
