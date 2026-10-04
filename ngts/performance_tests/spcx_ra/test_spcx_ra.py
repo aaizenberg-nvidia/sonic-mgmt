@@ -382,8 +382,12 @@ def _with_lanes_allure_title(method):
     """
     @functools.wraps(method)
     def wrapper(self, request, *args, **kwargs):
-        allure.dynamic.title(
-            f"{request.node.name} {self.CONFIG.allure_title_suffix(self.chip_type)}")
+        title = f"{request.node.name} {self.CONFIG.allure_title_suffix(self.chip_type)}"
+        if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+            title += f" [{self.traffic_profile}]"
+        if self.conf_args.get("extended_grading"):
+            title += " [ar_extended_thresholds]"
+        allure.dynamic.title(title)
         return method(self, request, *args, **kwargs)
     return wrapper
 
