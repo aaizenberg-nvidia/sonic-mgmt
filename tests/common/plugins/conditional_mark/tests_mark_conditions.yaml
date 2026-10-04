@@ -2573,6 +2573,12 @@ everflow/test_everflow_testbed.py::TestEverflowV4IngressAclIngressMirror::test_e
 #######################################
 #####            fdb              #####
 #######################################
+fdb/test_fdb_churn.py::test_fdb_distinct_macs_bulk_learn:
+  xfail:
+    reason: "Xfail due to GitHub issue https://github.com/sonic-net/sonic-mgmt/issues/28049"
+    conditions:
+      - https://github.com/sonic-net/sonic-mgmt/issues/28049
+
 fdb/test_fdb_mac_expire.py:
   skip:
     reason: "Not supported on this DUT topology."
