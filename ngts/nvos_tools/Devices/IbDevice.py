@@ -3830,6 +3830,8 @@ class PortiaSwitch(RosalindSwitch):
 
     ACP_PORTS_PER_ASIC = 144
     FNM_PORTS_PER_ASIC = 2
+    MGMT_PORTS = ('eth0', 'eth1')
+    SMA_AMOUNT = 4
 
     def update_show_platform_output(self, platform_output):
         # no per-part-number asic-revision map for Portia yet - the revision
@@ -3848,8 +3850,10 @@ class PortiaSwitch(RosalindSwitch):
         self.components_list = [component for component in self.components_list if component != FW_COMPONENT_EROT]
         self.asic_type = NvosConst.NVL7
         self.mst_dev_name = tuple(f'/dev/mst/mt54010_pciconf{i}' for i in range(self.asic_amount))
-        self.core_count = 4
-        self.supported_nvl_speeds = ['200G']
+        self.core_count = 8
+        self.memory_speed = 4800  # in MT/s, DDR5
+        # NVL7 1X: 200G PoR, 187G/176G/169G fallbacks (100G is PRBS-only on the GPU side)
+        self.supported_nvl_speeds = ['200G', '187G', '176G', '169G']
         self.fae_supported_core_clocks = {
             core_clock: self.supported_nvl_speeds
             for core_clock in self.fae_supported_core_clocks
@@ -3872,7 +3876,8 @@ class PortiaSwitch(RosalindSwitch):
         self.constants.firmware[:] = expected_firmware_components
         self.cpld_amount = 2
         self._extend_firmware_by_cpld_amount()
-        self.sma_amount = 2
+        self.sma_amount = self.SMA_AMOUNT
+        self.sma_components = [f"{PlatformConsts.FW_SMA}{i if i else ''}" for i in range(0, self.sma_amount + 1)]
         self._extend_firmware_by_sma_amount()
 
     def _init_gnmi_consts(self):
@@ -3938,9 +3943,15 @@ class PortiaSwitch(RosalindSwitch):
             "PMIC-18-COMEX-VDD-MEM-Out-1",
         ])
 
+    def _init_interfaces_ib_lanes(self):
+        super()._init_interfaces_ib_lanes()
+        self.supported_lanes = '1X'  # NVL7 access links are simplex only
+
     def _init_interface_lists(self):
         super()._init_interface_lists()
-        self.mgmt_ports = ['eth0']
+        # no external FNM port on Portia - the inherited IbSwitch fnm1 speed never applies
+        del self.fnm_link_speed
+        self.mgmt_ports = list(self.MGMT_PORTS)
         self.network_ports = self.mgmt_ports + ['lo']
         self.nvl_access_ports_list = [f'acp{num}' for num in range(1, self.ACP_PORTS_PER_ASIC * self.asic_amount + 1)]
         self.nvl_trunk_ports_list = []
@@ -3955,11 +3966,24 @@ class PortiaSwitch(RosalindSwitch):
 
 
 class PortiaSimxDevice(SimxDevice):
-    """Emulation gaps shared by all Portia simx flavors: asic-power stats are not emulated."""
+    """Emulation gaps shared by all Portia simx flavors: asic-power stats are not emulated,
+    internal FNM ports come up as 100G 1X, chipsim exposes only eth0 and SMA1/SMA2."""
+
+    MGMT_PORTS = ('eth0',)
+    SMA_AMOUNT = 2
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         SwitchCapabilityHandler.apply_capability(self, NoAsicPowerCapability())
+
+    def _init_ib_speeds(self):
+        super()._init_ib_speeds()
+        self.supported_fnm_speeds = ['100G']
+        self.fnm_fae_link_speed = '100G'
+
+    def _init_interfaces_ib_lanes(self):
+        super()._init_interfaces_ib_lanes()
+        self.supported_internal_fnm_lanes = '1X'
 
 
 class PortiaSimx(PortiaSimxDevice, PortiaSwitch):
@@ -4064,10 +4088,10 @@ class PortiaCpoTASimx(PortiaSimxDevice, PortiaCpoSwitch):
 
 
 class PortiaNpoSwitch(PortiaSwitch):
-    """Expandable Portia NPO tray (N7400_LD): 576 internal and 512 external ports."""
+    """Expandable Portia NPO tray (N7400_LD): 576 internal and 448 external ports."""
 
     ACP_PORTS_PER_ASIC = 72
-    SW_GROUPS_PER_ASIC = 8
+    SW_GROUPS_PER_ASIC = 7
     SW_SUBPORTS_PER_GROUP = 8
 
     def __init__(self, asic_amount=8):
@@ -4117,7 +4141,7 @@ class PortiaNpoTASimx(PortiaSimxDevice, PortiaNpoSwitch):
 
 
 class PortiaSurrogateNex(PortiaSwitch):
-    """Four-ASIC Portia NEX surrogate tray (N7210_LD): no fans."""
+    """Four-ASIC Portia NEX surrogate tray (N7210_LD): two SWB floors of 2 ASICs, no fans."""
 
     ACP_PORTS_PER_ASIC = 72
 
@@ -4140,9 +4164,9 @@ class PortiaSurrogateNex(PortiaSwitch):
 
 
 class PortiaSurrogateNpo(PortiaNpoSwitch):
-    """Two-ASIC Portia NPO surrogate tray (N7410_LD): no fans."""
+    """Four-ASIC Portia NPO surrogate tray (N7410_LD): two SWB floors of 2 ASICs, no fans."""
 
-    def __init__(self, asic_amount=2):
+    def __init__(self, asic_amount=4):
         super().__init__(asic_amount=asic_amount)
 
     def _init_constants(self):
