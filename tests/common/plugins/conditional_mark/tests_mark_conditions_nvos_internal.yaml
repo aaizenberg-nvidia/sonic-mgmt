@@ -806,7 +806,7 @@ tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_re
     conditions:
       - "'rtf' in testbed"
 
-ngts/tests_nvos/general/config_commands/test_config_verify.py::test_verify_empty_applied:
+tests_nvos/general/config_commands/test_config_verify.py::test_verify_empty_applied:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5305123'
     conditions:
