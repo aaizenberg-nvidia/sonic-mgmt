@@ -1764,7 +1764,7 @@ class BugHandlerConst:
     BUG_HANDLER_PATH = {
         "SONiC-Design": BH_2026_6_PATH,
         "SONiC-Verification": BH_2026_6_PATH,
-        "'NVOS - Design'": "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_2/bin/",
+        "'NVOS - Design'": "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_9/bin/",
         "default": BH_1_5_2_PATH
     }
     BUG_HANDLER_SCRIPT = {}
