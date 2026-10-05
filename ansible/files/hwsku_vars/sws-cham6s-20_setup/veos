@@ -253,13 +253,29 @@ vms_30:
     VM3113:
       ansible_host: 10.220.189.19
     VM3114:
-      ansible_host: 10.220.189.20
+      ansible_host: 10.220.189.70
     VM3115:
-      ansible_host: 10.220.189.21
+      ansible_host: 10.220.189.71
     VM3116:
-      ansible_host: 10.220.189.22
+      ansible_host: 10.220.189.72
     VM3117:
-      ansible_host: 10.220.189.23
+      ansible_host: 10.220.189.73
+    VM3118:
+      ansible_host: 10.220.189.74
+    VM3119:
+      ansible_host: 10.220.189.75
+    VM3120:
+      ansible_host: 10.220.189.76
+    VM3121:
+      ansible_host: 10.220.189.77
+    VM3122:
+      ansible_host: 10.220.189.78
+    VM3123:
+      ansible_host: 10.220.189.79
+    VM3124:
+      ansible_host: 10.220.189.80
+    VM3125:
+      ansible_host: 10.220.189.81
 
 server_30:
   children:

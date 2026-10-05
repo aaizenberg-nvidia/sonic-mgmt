@@ -602,3 +602,58 @@ class NvosGitTool:
         except Exception as e:
             logger.error(f"Error finding previous FW image: {e}")
             return None
+
+    def find_previous_image_path(self, target_version: str, min_version: str | None = None) -> str | None:
+        """
+        Find the newest NVOS image on the target's branch that is older than the target.
+        Useful when the regression base image is too old to include a feature under test.
+
+        This method validates that the NVOS image file exists before returning.
+
+        Args:
+            target_version: Target NVOS version path or version string.
+            min_version: Oldest acceptable NVOS version (e.g., the first build that has the feature).
+
+        Returns:
+            Full path to the NVOS image, or None if no build on the branch qualifies.
+
+        Example:
+            >>> git_tool = NvosGitTool()
+            >>> path = git_tool.find_previous_image_path(
+            ...     "/auto/sw_system_release/nos/nvos/lastrc_nvos-25-03-2000/nvos-amd64-25.03.1950-005.bin",
+            ...     min_version="25.03.1950-000"
+            ... )
+            >>> print(path)
+            '/auto/sw_system_release/nos/nvos/25.03.1950-004/amd64/dev/nvos-amd64-25.03.1950-004.bin'
+        """
+        try:
+            version, image_type = self._parse_target_version(target_version)
+            self.fetch_tags()
+
+            branch_prefix = self.find_branch_prefix_for_version(version)
+            if not branch_prefix:
+                logger.warning(f"Could not determine branch prefix for: {version}")
+                return None
+
+            version_major_minor = '.'.join(version.split('.')[:2])
+            tags = (self.list_tags(f"{branch_prefix}_{version_major_minor}.*", sort_by_version=False) or
+                    self.list_tags(f"{branch_prefix}_*", sort_by_version=False))
+            tag_versions = {match.group(1) for tag in tags if (match := self.VERSION_TAG_PATTERN.search(tag))}
+
+            target_tuple = self._version_tuple(version)
+            min_tuple = self._version_tuple(min_version) if min_version else ()
+            for tag_version in sorted(tag_versions, key=self._version_tuple, reverse=True):
+                if not min_tuple <= self._version_tuple(tag_version) < target_tuple:
+                    continue
+                path = self.build_image_path(tag_version, image_type)
+                if Path(path).exists():
+                    logger.info(f"Found previous {image_type} image on {branch_prefix}: {path}")
+                    return path
+
+            logger.warning(f"No {image_type} image on {branch_prefix} is older than {version} "
+                           f"(min version: {min_version})")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding previous image: {e}")
+            return None

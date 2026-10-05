@@ -18,7 +18,7 @@ logger = logging.getLogger()
 
 SCENARIO_TO_PACKET_SIZE_DICT = {
     "p2_dut_no_acl": AlibabaScenarioToconfiguration(scenario_name="p2_dut_no_acl", packet_size=3200,
-                                                    num_left_packets=12, num_right_packets=12, ecmp_type_stateless=True,
+                                                    num_left_packets=12, num_left_packets_spc6=18, num_right_packets=12, ecmp_type_stateless=True,
                                                     ecmp_size=4096, create_acls=False, create_goto_acl=False, two_sided_ar=True),
 
     "p3_leaf_no_acl": AlibabaScenarioToconfiguration(scenario_name="p3_leaf_no_acl_hash_crc", packet_size=1600,

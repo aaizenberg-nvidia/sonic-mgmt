@@ -37,5 +37,3 @@
 # Setup nv_performance_r-bison-14 (SPC5, site MTR): both TGs have Ixia on some cages.
 r-bison-13: [43, 44]
 r-bison-15: [21, 22]
-slm-10: [33, 34]
-slm-253: [1, 2]

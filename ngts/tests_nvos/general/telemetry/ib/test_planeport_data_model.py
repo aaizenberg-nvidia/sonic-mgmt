@@ -12,7 +12,7 @@ import json
 import logging
 from functools import partial
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Set, Tuple
 
 import pytest
 
@@ -39,6 +39,8 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     CounterMgrdRule,
     EXPECTED_PLANE_PORT_DB_FIELDS,
     GnmiYangPaths,
+    IfaceType,
+    LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD,
     PlanePortState,
     PLANEPORT_SUM_AGGREGATION_MIN_DELTA,
     PLANEPORT_SUM_AGGREGATION_TOLERANCE_PCT,
@@ -229,41 +231,18 @@ def _assert_planeport_to_aport_max_aggregation(
 def _aggregation_capture_fns(
     gnmi_client,
     engines,
-) -> List[
-    Tuple[
-        str,
-        Optional[Callable[[str], Dict[str, int]]],
-        bool,
-        Optional[Callable[[str, List[Port]], Dict[str, Dict[str, int]]]],
-    ]
-]:
+) -> List[Tuple[str, Callable[[str, List[Port]], Dict[str, Dict[str, int]]]]]:
     """
-    (api_label, snapshot_for_port, may_skip, read_snapshot_window) for section 6.3.
+    (api_label, read_snapshot_window) for section 6.3.
 
     gNMI reads all ports in one wildcard subscribe-once snapshot. NVUE uses
     per-port ``counters -o json`` reads in one window (no inter-port sleep).
-    OTEL uses may_skip=True so pytest.skip in capture_otel_counter_snapshot
-    does not abort gNMI/NVUE.
+    OTEL reads every port at one export cycle of a collection window.
     """
     return [
-        (
-            API_LABEL_GNMI,
-            None,
-            False,
-            partial(ibh.capture_gnmi_aggregation_snapshot_window, gnmi_client),
-        ),
-        (
-            API_LABEL_NVUE,
-            None,
-            False,
-            partial(ibh.read_nvue_aggregation_snapshot_window, engines),
-        ),
-        (
-            API_LABEL_OTEL,
-            partial(ibh.capture_otel_counter_snapshot, engines),
-            True,
-            None,
-        ),
+        (API_LABEL_GNMI, partial(ibh.capture_gnmi_aggregation_snapshot_window, gnmi_client)),
+        (API_LABEL_NVUE, partial(ibh.read_nvue_aggregation_snapshot_window, engines)),
+        (API_LABEL_OTEL, ibh.read_otel_aggregation_snapshot_window),
     ]
 
 
@@ -272,48 +251,17 @@ def _run_planeport_aggregation_phase(
     aport: Port,
     planes: List[Port],
     api_label: str,
-    may_skip: bool = False,
-    snapshot_for_port: Optional[Callable[[str], Dict[str, int]]] = None,
-    read_snapshot_window: Optional[
-        Callable[[str, List[Port]], Dict[str, Dict[str, int]]]
-    ] = None,
+    read_snapshot_window: Callable[[str, List[Port]], Dict[str, Dict[str, int]]],
 ) -> None:
     """
     Read counter window and run shared SUM/MAX asserts for one API surface.
 
-    Uses independent_step so a gNMI failure still runs NVUE (and OTEL stub)
+    Uses independent_step so a gNMI failure still runs NVUE and OTEL
     in the same phase; failures roll up when the parent aggregation step ends.
     """
-    if read_snapshot_window is not None:
-        assert snapshot_for_port is None, (
-            f"{api_label}: pass read_snapshot_window or snapshot_for_port, not both"
-        )
-    else:
-        assert snapshot_for_port is not None, (
-            f"{api_label}: snapshot_for_port required when read_snapshot_window is None"
-        )
-
     with allure.independent_step(f"{api_label} aggregation check {phase_title}"):
         with allure.step(f"{api_label} read counter snapshot window {phase_title}"):
-            try:
-                if read_snapshot_window is not None:
-                    readings = read_snapshot_window(aport.name, planes)
-                else:
-                    readings = ibh.read_counter_snapshot_window(
-                        aport.name,
-                        planes,
-                        snapshot_for_port,
-                        inter_plane_sleep_sec=0,
-                    )
-            except pytest.skip.Exception:
-                if may_skip:
-                    logger.info(
-                        "%s aggregation %s skipped (OTEL not exposed yet)",
-                        api_label,
-                        phase_title,
-                    )
-                    return
-                raise
+            readings = read_snapshot_window(aport.name, planes)
 
         with allure.independent_step(f"{api_label} verify snapshot window nonempty {phase_title}"):
             ibh.assert_counter_snapshot_window_nonempty(readings, aport.name, api_label)
@@ -329,19 +277,9 @@ def _run_planeport_aggregation_phases(
     gnmi_client,
     engines,
 ) -> None:
-    """Run gNMI, NVUE, and OTEL stub aggregation asserts on the live (non-frozen) counters."""
-    for api_label, capture_fn, may_skip, window_fn in _aggregation_capture_fns(
-        gnmi_client, engines
-    ):
-        _run_planeport_aggregation_phase(
-            phase_title,
-            aport,
-            planes,
-            api_label,
-            may_skip=may_skip,
-            snapshot_for_port=capture_fn,
-            read_snapshot_window=window_fn,
-        )
+    """Run gNMI, NVUE, and OTEL aggregation asserts on the live (non-frozen) counters."""
+    for api_label, window_fn in _aggregation_capture_fns(gnmi_client, engines):
+        _run_planeport_aggregation_phase(phase_title, aport, planes, api_label, window_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -350,14 +288,16 @@ def _run_planeport_aggregation_phases(
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_planeport_redis_rows_present(engines, devices, setup_topology):
+def test_planeport_redis_rows_present(engines, devices, setup_topology, ib_otel):
     """
     With the knob enabled, System DB must hold one COUNTERS:* row per
     plane-port, keyed by plane-port name (test plan section 6.1). Each row must
-    expose the per-plane additive counter fields.
+    expose the per-plane additive counter fields, and OTEL must export the same
+    plane-ports with those counters.
     """
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
 
@@ -403,6 +343,20 @@ def test_planeport_redis_rows_present(engines, devices, setup_topology):
     assert not missing_fields, (
         f"Plane-port row {sample_key} is missing expected fields: {missing_fields!r}"
     )
+
+    with allure.step("OTEL exports one plane-port per row, each with the per-plane counters"):
+        snap = ib_otel.snapshot("plane-rows")
+        otel_planes = sorted(name for name, iface_type in ibh.otel_interface_types(snap).items()
+                             if iface_type == IfaceType.OTEL_PLANE)
+        ibh.attach_dict("OTEL plane-ports", {"planes": otel_planes})
+        assert len(otel_planes) == len(keys), (
+            f"OTEL exports {len(otel_planes)} plane-port(s) but the DB holds {len(keys)} row(s)"
+        )
+        counter_metrics = {LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD[f] for f in EXPECTED_PLANE_PORT_DB_FIELDS}
+        lacking = {name: sorted(counter_metrics - set(ibh.otel_interface_metrics(snap, name)))
+                   for name in otel_planes}
+        lacking = {name: metrics for name, metrics in lacking.items() if metrics}
+        assert not lacking, f"OTEL plane-ports lacking per-plane counter metrics: {lacking!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -494,21 +448,23 @@ def test_planeport_to_aport_aggregation(
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.requires_hfnm
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
 def test_gnmi_nvue_planeport_to_aport_aggregation(
-    engines, devices, gnmi_client, setup_topology, topology_obj, players, setup_name, request
+    engines, devices, gnmi_client, setup_topology, topology_obj, players, setup_name, request,
+    ib_otel,
 ):
     """
-    Plane-port -> Aport counter aggregation on gNMI and NVUE CLI (test plan
+    Plane-port -> Aport counter aggregation on gNMI, NVUE CLI and OTEL (test plan
     section 6.3 / R-NVOS-1). Flow: pick Aport -> drive IB traffic (link up) ->
     read gNMI/NVUE/OTEL in one atomic snapshot window and assert SUM+MAX.
-    Missing leaves on either API is treated as a product bug.
+    Missing leaves on any API is treated as a product bug.
     """
-    with allure.step("gNMI and NVUE plane-port to Aport counter aggregation"):
+    with allure.step("gNMI, NVUE and OTEL plane-port to Aport counter aggregation"):
         with allure.independent_step("Verify HFNM-capable setup"):
             if not hasattr(engines, "hfnm"):
                 pytest.skip(
@@ -549,7 +505,7 @@ def test_gnmi_nvue_planeport_to_aport_aggregation(
                 f"No plane-ports could be enumerated for Aport {aport.name}"
             )
 
-        with allure.step("Counter aggregation checks (gNMI, NVUE, OTEL stub)"):
+        with allure.step("Counter aggregation checks (gNMI, NVUE, OTEL)"):
             phase_title = "after IB traffic warm-up"
             with allure.step("Drive IB traffic while link is up"):
                 try:
@@ -594,16 +550,18 @@ def _leaf_set(payload: Dict[str, str]) -> Set[str]:
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(8 * MINUTE, func_only=True)
 def test_planeport_path_coverage_for_all_aggregated_aport_leaves(
-    engines, devices, gnmi_client, setup_topology, topology_obj
+    engines, devices, gnmi_client, setup_topology, topology_obj, ib_otel
 ):
     """
     Every leaf currently aggregated on the Aport row must also be addressable
-    on every plane-port row (schema-completeness check).
+    on every plane-port row (schema-completeness check), over gNMI and as an
+    OTEL metric.
     """
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
     aport = _select_aport_for_aggregation(devices, setup_topology, topology_obj)
@@ -630,6 +588,18 @@ def test_planeport_path_coverage_for_all_aggregated_aport_leaves(
                     assert val is not None, (
                         f"Plane-port {plane.name} leaf {k!r} returned None - typing/format violation"
                     )
+
+    with allure.step(f"Verify every plane exports each OTEL metric of Aport {aport.name}"):
+        snap = ib_otel.snapshot("path-coverage")
+        aport_metrics = ibh.otel_interface_metric_names(snap, aport.name)
+        ibh.attach_dict(f"aport OTEL metrics {aport.name}", {"metrics": sorted(aport_metrics)})
+        assert aport_metrics, f"OTEL exported no metric for Aport {aport.name}"
+        for plane in planes:
+            with allure.independent_step(f"Plane {plane.name} exports every Aport OTEL metric"):
+                Tools.ValidationTool.validate_subset_in_superset(
+                    subset=aport_metrics,
+                    superset=ibh.otel_interface_metric_names(snap, plane.name),
+                ).verify_result()
 
 
 # ---------------------------------------------------------------------------
@@ -1017,11 +987,12 @@ def _read_live_nvue_schema(aport_name: str) -> Set[str]:
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_aport_backward_compat_schema_unchanged(
-    engines, devices, gnmi_client, setup_topology, topology_obj
+    engines, devices, gnmi_client, setup_topology, topology_obj, ib_otel
 ):
     """
     Aport schema (leaf-name set) must not regress relative to the pinned
@@ -1033,9 +1004,26 @@ def test_aport_backward_compat_schema_unchanged(
     The baseline lives at ``baselines/aport_schema_baseline[.nvue].json``
     alongside this test. When the schema legitimately changes (new release),
     update the baseline file in the same commit that exposes the new leaves.
+
+    OTEL has no pinned baseline: the Aport's metric set with the knob disabled is the
+    baseline the enabled one must keep.
     """
+    with allure.step("Read the Aport OTEL metric set with the plane-port knob disabled"):
+        ibh.unset_plane_port_state(engines, apply=True)
+        aport = _select_aport_for_aggregation(devices, setup_topology, topology_obj)
+        otel_baseline = ibh.otel_interface_metric_names(ib_otel.snapshot("schema-disabled"), aport.name)
+        ibh.attach_dict(f"OTEL baseline {aport.name}", {"metrics": sorted(otel_baseline)})
+        assert otel_baseline, f"OTEL exported no metric for Aport {aport.name} with the knob disabled"
+
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
-    aport = _select_aport_for_aggregation(devices, setup_topology, topology_obj)
+
+    with allure.step("The Aport OTEL metric set is kept with the plane-port knob enabled"):
+        otel_current = ibh.otel_interface_metric_names(ib_otel.snapshot("schema-enabled"), aport.name)
+        ibh.attach_dict("OTEL schema diff", {"removed": sorted(otel_baseline - otel_current),
+                                             "added": sorted(otel_current - otel_baseline)})
+        Tools.ValidationTool.validate_subset_in_superset(
+            subset=otel_baseline, superset=otel_current
+        ).verify_result()
 
     baseline = _load_baseline(devices.dut)
     assert baseline, (

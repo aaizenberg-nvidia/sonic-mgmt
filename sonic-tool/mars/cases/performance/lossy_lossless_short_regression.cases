@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> PERFORMANCE </group>
+      <name> Lossy Lossless short regression </name>
+      <info> Lossy Lossless short regression </info>
+      <owner> shahafb </owner>
+    </Test>
+    <Case>
+      <tags> performance </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/perf_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> lossy lossless short regression </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script "/root/mars/workspace/sonic-mgmt/ngts/performance_tests/lossy_lossless/lossy_lossless_basic_scenarios_1_2_3/test_lossy_lossless_basic_scenarios.py::TestLossyLossless::test_basic_loosy_lossless_tests_1_2_3[lossy_lossless_scenario_2-8-0]" --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

@@ -99,6 +99,18 @@ class NoPdbCapability(BaseCapability):
         )
 
 
+class NoLeakageCapability(BaseCapability):
+    """Capability for switches without leakage sensors (environment leakage leaf pruned)."""
+
+    def get_config(self) -> CapabilityConfig:
+        return CapabilityConfig(
+            name="NoLeakage",
+            cleared_lists={"list_of_leakages"},
+            unsupported_commands={"nv show platform environment leakage"},
+            set_attributes={"leakage_sensors_count": 0},
+        )
+
+
 class NoTransceiverCapability(BaseCapability):
     """Capability for switches without transceivers (transceivers stats category pruned)."""
 

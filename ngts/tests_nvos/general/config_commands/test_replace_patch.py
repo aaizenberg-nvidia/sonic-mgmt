@@ -14,7 +14,7 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.general.config_commands.helpers import verify_new_config_output
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 @pytest.mark.cumulus

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 
 _PARAMETERS = re.compile(r"\[[^\[\]]*\]$")
@@ -46,6 +46,11 @@ _PUBLIC_PR_URL = re.compile(
     r"https://github\.com/(?:sonic-net|nvidia-sonic)/[A-Za-z0-9_.-]+/pull/\d+",
     re.IGNORECASE,
 )
+_PUBLIC_REPOSITORY_WORK_ITEM = re.compile(
+    r"(?i)\b(sonic-[A-Za-z0-9_.-]+)\s*(?:/)?\s*"
+    r"(?:(issue|bug|pr|pull)\s*)?#\s*(\d+)\b"
+)
+_GITHUB_SHORTHAND_ISSUE = re.compile(r"(?i)\bGH\s*#\s*(\d+)\b")
 _INTERNAL_CHANGE_URL = re.compile(
     r"https://git-[A-Za-z0-9.-]+/r/c/[^\s<>()]+/\+/(\d+)(?!\d)",
     re.IGNORECASE,
@@ -115,13 +120,16 @@ def join_distinct_analysis_blocks(values: Iterable[object]) -> str:
     )
     selected: List[str] = []
     for block in blocks:
-        comparable = _analysis_comparable(block)
+        comparable = _analysis_identity(block)
         duplicate_index = next(
             (
                 index
                 for index, existing in enumerate(selected)
                 if comparable and
-                comparable == _analysis_comparable(existing)
+                _overlapping_analysis(
+                    comparable,
+                    _analysis_identity(existing),
+                )
             ),
             None,
         )
@@ -240,6 +248,27 @@ def extract_public_pr_urls(value: object) -> List[str]:
     )
 
 
+def expand_explicit_public_work_item_ids(value: object) -> List[str]:
+    """Expand only repository-qualified or GH# references already in analysis."""
+
+    text = str(value or "")
+    urls = extract_public_issue_urls(text) + extract_public_pr_urls(text)
+    for repository, kind, number in _PUBLIC_REPOSITORY_WORK_ITEM.findall(text):
+        path = "pull" if kind.casefold() in {"pr", "pull"} else "issues"
+        urls.append(
+            "https://github.com/sonic-net/{}/{}/{}".format(
+                repository,
+                path,
+                number,
+            )
+        )
+    urls.extend(
+        "https://github.com/sonic-net/sonic-mgmt/issues/{}".format(number)
+        for number in _GITHUB_SHORTHAND_ISSUE.findall(text)
+    )
+    return unique_sorted(urls)
+
+
 def extract_internal_change_urls(value: object) -> List[str]:
     return unique_sorted(
         match.group(0)
@@ -280,7 +309,29 @@ def strip_public_issue_urls(value: object) -> str:
     return text
 
 
-def _analysis_comparable(value: object) -> str:
-    text = _URL.sub("", str(value or "")).casefold()
+def _analysis_identity(value: object) -> Tuple[str, Tuple[str, ...]]:
+    source = str(value or "")
+    urls = tuple(sorted({
+        match.group(0).rstrip(".,;:)").casefold()
+        for match in _URL.finditer(source)
+    }))
+    text = _URL.sub("", source).casefold()
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    return normalize_text(text)
+    return normalize_text(text), urls
+
+
+def _overlapping_analysis(
+    first: Tuple[str, Tuple[str, ...]],
+    second: Tuple[str, Tuple[str, ...]],
+) -> bool:
+    first_text, first_urls = first
+    second_text, second_urls = second
+    if (first_urls or second_urls) and first_urls != second_urls:
+        return False
+    if not first_text or not second_text:
+        return bool(first_urls) and first_urls == second_urls
+    shorter, longer = sorted((first_text, second_text), key=len)
+    return shorter == longer or (
+        len(shorter) >= 80 and
+        longer.startswith(shorter + " ")
+    )

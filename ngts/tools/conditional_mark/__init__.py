@@ -10,7 +10,22 @@ from ngts.tools.infra import get_topology_from_noga
 
 update_sys_path_by_community_plugins_path()
 
+import plugins.conditional_mark as _community_conditional_mark  # noqa: E402
 from plugins.conditional_mark import pytest_addoption, pytest_collection, pytest_collection_modifyitems  # noqa: E402
+
+# Community strips a leading "tests/" before matching. NGTS YAML keys keep that
+# prefix (tests/nightly/...), so retry with it when the stripped nodeid misses.
+_find_all_matches = _community_conditional_mark.find_all_matches
+
+
+def find_all_matches(nodeid, *args, **kwargs):
+    matches = _find_all_matches(nodeid, *args, **kwargs)
+    if not matches and not nodeid.startswith("tests/"):
+        matches = _find_all_matches("tests/" + nodeid, *args, **kwargs)
+    return matches
+
+
+_community_conditional_mark.find_all_matches = find_all_matches
 
 
 def testbed_param_already_loaded(session):

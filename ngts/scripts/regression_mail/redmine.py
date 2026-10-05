@@ -372,6 +372,7 @@ def _ticket_context(ticket: Mapping[str, Any]) -> Mapping[str, Any]:
         "subject": subject,
         "status": status_name,
         "is_closed": _ticket_status_is_closed(status),
+        "closed_on": normalize_text(ticket.get("closed_on")),
         "evidence": _bounded_ticket_evidence(evidence),
         "github_issue_urls": extract_public_issue_urls(evidence),
         "github_pr_urls": unique_sorted(

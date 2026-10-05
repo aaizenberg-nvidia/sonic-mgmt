@@ -109,6 +109,9 @@ class WorkbookArtifactTest(unittest.TestCase):
             ["202605_RC.1-other_Internal", VERSION],
             snapshot.versions,
         )
+        self.assertEqual([], snapshot.issue_skipped)
+        self.assertIsNone(snapshot.coverage)
+        self.assertEqual(50.0, snapshot.pass_rate)
 
     def test_atomic_skip_mapping(self) -> None:
         snapshot = WorkbookLoader().load(self.path, VERSION)
@@ -134,6 +137,24 @@ class WorkbookArtifactTest(unittest.TestCase):
             json.loads(skips_path.read_text(encoding="utf-8")),
         )
         self.assertEqual(0o664, stat.S_IMODE(skips_path.stat().st_mode))
+
+    def test_remove_failed_testcase_rows_are_excluded_before_metrics(self) -> None:
+        workbook = openpyxl.load_workbook(self.path)
+        sheet = workbook["community_tests"]
+        headers = [cell.value for cell in sheet[1]]
+        if "modify_xml" not in headers:
+            modify_column = len(headers) + 1
+            sheet.cell(row=1, column=modify_column, value="modify_xml")
+        else:
+            modify_column = headers.index("modify_xml") + 1
+        sheet.cell(row=2, column=modify_column, value="REMOVE_FAILED_TESTCASE")
+        workbook.save(self.path)
+        workbook.close()
+
+        snapshot = WorkbookLoader().load(self.path, VERSION)
+
+        self.assertEqual({"fail": 0, "pass": 1, "skipped": 1}, snapshot.result_counts)
+        self.assertFalse(any(row.mars_key_id == "k1" for row in snapshot.selected_rows))
 
     def test_setup_names_are_replaced_in_semantic(self) -> None:
         snapshot = WorkbookLoader().load(self.path, VERSION)

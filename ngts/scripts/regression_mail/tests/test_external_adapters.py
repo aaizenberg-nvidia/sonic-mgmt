@@ -11,7 +11,7 @@ from ngts.scripts.regression_mail.ai import (
     generalize_error_logs,
     sanitize_error_logs,
 )
-from ngts.scripts.regression_mail.git_history import GitHubClient
+from ngts.scripts.regression_mail.git_history import GerritClient, GitHubClient, _parse_rc_status
 from ngts.scripts.regression_mail.models import PullRequest, SemanticGroup
 from ngts.scripts.regression_mail.normalization import (
     extract_redmine_urls,
@@ -24,6 +24,8 @@ from ngts.scripts.regression_mail.regression_api import (
     RegressionReportClient,
     _extract_coverage,
     _extract_pass_rate,
+    _dashboard_key_id,
+    _latest_records_by_key,
     _setup_maps,
 )
 from ngts.scripts.regression_mail.tests.helpers import (
@@ -81,6 +83,10 @@ class ExternalAdapterTest(unittest.TestCase):
 
     def test_ai_summaries_are_batched_strict_and_desensitized(self) -> None:
         def response(**kwargs):
+            self.assertIn(
+                "Merge repeated or overlapping statements",
+                kwargs["input"][0]["content"],
+            )
             payload = json.loads(kwargs["input"][1]["content"])
             return json.dumps({
                 item["group_id"]: (
@@ -1254,17 +1260,26 @@ class ExternalAdapterTest(unittest.TestCase):
             setup_testbeds["private-setup"],
         )
 
-    def test_dashboard_rejects_duplicate_analysis_keys(self) -> None:
+    def test_dashboard_uses_latest_duplicate_analysis_key(self) -> None:
         collection = {"records": [{"id": "1"}]}
         overlay = {
             "records": [
-                {"recordKey": "mars-1", "analysis": "first"},
-                {"recordKey": "mars-1", "analysis": "second"},
+                {
+                    "recordKey": "mars-1",
+                    "analysis": "first",
+                    "updatedAt": "2026-09-01 10:00:00",
+                },
+                {
+                    "recordKey": "mars-1",
+                    "analysis": "second",
+                    "updatedAt": "2026-09-02 10:00:00",
+                },
             ]
         }
 
-        with self.assertRaisesRegex(ValueError, "duplicate recordKey"):
-            RegressionReportClient._join_analyses(collection, overlay)
+        analyses = RegressionReportClient._join_analyses(collection, overlay)
+
+        self.assertEqual("second", analyses[0].analysis)
 
     def test_dashboard_preserves_records_without_engineer_analysis(self) -> None:
         collection = {
@@ -1287,17 +1302,39 @@ class ExternalAdapterTest(unittest.TestCase):
         self.assertEqual("", analyses[0].analysis)
         self.assertEqual("session", analyses[0].session_id)
 
-    def test_dashboard_metrics_use_sonic_prefixed_exact_version(self) -> None:
+    def test_dashboard_fetches_analysis_without_dashboard_metrics(self) -> None:
         calls = []
 
         def opener(request, timeout):
             calls.append(request.full_url)
             if "/api/failure-analysis?" in request.full_url:
-                payload = {"rows": []}
-            elif "/api/snapshot-summary?" in request.full_url:
-                payload = {"groups": [{"passed": 9, "failed": 1}]}
-            elif "/api/coverage?" in request.full_url:
-                payload = {"totals": {"coverage": 96.5}}
+                payload = {
+                    "rows": [{
+                        "recordKey": "mars-42",
+                        "analysis": "engineer analysis",
+                    }]
+                }
+            elif request.full_url.endswith("/api/collections"):
+                payload = {
+                    "collections": [{
+                        "name": "202605_RC.70",
+                        "filters": {
+                            "versions": [
+                                "SONiC.202605_RC.70-deadbeef_Internal",
+                            ],
+                        },
+                    }],
+                }
+            elif "/api/collections/202605_RC.70?rows=1" in request.full_url:
+                payload = {
+                    "records": [{
+                        "id": "42",
+                        "sessionId": "session",
+                        "keyId": "key",
+                        "name": "tests/a.py::test_a[param]",
+                        "version": "SONiC.202605_RC.70-deadbeef_Internal",
+                    }],
+                }
             else:
                 raise AssertionError(request.full_url)
             return _Response(json.dumps(payload).encode())
@@ -1307,18 +1344,52 @@ class ExternalAdapterTest(unittest.TestCase):
             opener=opener,
         ).fetch("202605_RC.70-deadbeef_Internal")
 
-        self.assertEqual(96.5, snapshot.coverage)
-        self.assertEqual(90.0, snapshot.pass_rate)
-        metric_calls = [
-            call
-            for call in calls
-            if "snapshot-summary" in call or "/coverage?" in call
-        ]
-        self.assertTrue(
-            all(
-                "version=SONiC.202605_RC.70-deadbeef_Internal" in call
-                for call in metric_calls
-            )
+        self.assertIsNone(snapshot.coverage)
+        self.assertIsNone(snapshot.pass_rate)
+        self.assertEqual(1, len(snapshot.analyses))
+        self.assertEqual("session", snapshot.analyses[0].session_id)
+        self.assertEqual("key", snapshot.analyses[0].key_id)
+        self.assertEqual("engineer analysis", snapshot.analyses[0].analysis)
+        self.assertEqual(
+            [
+                "https://dashboard.invalid/api/failure-analysis?version=SONiC.202605_RC.70-deadbeef_Internal",
+                "https://dashboard.invalid/api/collections",
+                "https://dashboard.invalid/api/collections/202605_RC.70?rows=1",
+            ],
+            calls,
+        )
+
+    def test_dashboard_collection_join_supports_overlay_without_metadata(self) -> None:
+        analyses = RegressionReportClient._join_analyses(
+            {
+                "records": [{
+                    "id": "42034588",
+                    "sessionId": "11507869",
+                    "keyId": "0.10.1.1.8.1.1.2.6.1.1",
+                    "name": (
+                        "arp/test_arp_update.py::"
+                        "test_kernel_asic_mac_mismatch[r-leopard-70-ipv4]"
+                    ),
+                    "version": "SONiC.202605_RC.100-f786f8ed07_Internal",
+                }],
+            },
+            {
+                "rows": [{
+                    "recordKey": "mars-42034588",
+                    "analysis": "Known arp_update issue",
+                    "rmUrl": "https://redmine.mellanox.com/issues/5273088",
+                    "updatedAt": "2026-09-16 08:20:22.436666",
+                }],
+            },
+        )
+
+        self.assertEqual(1, len(analyses))
+        self.assertEqual("11507869", analyses[0].session_id)
+        self.assertEqual("0.10.1.1.8.1.1.2.6.1.1", analyses[0].key_id)
+        self.assertEqual("Known arp_update issue", analyses[0].analysis)
+        self.assertEqual(
+            "202605_RC.100-f786f8ed07_Internal",
+            analyses[0].switch_version,
         )
 
     def test_dashboard_filters_overlay_by_exact_version(self) -> None:
@@ -1350,9 +1421,80 @@ class ExternalAdapterTest(unittest.TestCase):
             analyses[0].switch_version,
         )
 
+    def test_dashboard_keeps_latest_record_for_each_failure_key(self) -> None:
+        records = [
+            {
+                "recordKey": "mars-1",
+                "marsSessionId": "session",
+                "analysis": "old",
+                "updatedAt": "2026-09-01 10:00:00",
+            },
+            {
+                "recordKey": "mars-1",
+                "marsSessionId": "session",
+                "analysis": "current",
+                "updatedAt": "2026-09-02 10:00:00",
+            },
+        ]
+
+        self.assertEqual(
+            "current",
+            _latest_records_by_key(records)[0]["analysis"],
+        )
+
+    def test_dashboard_does_not_treat_record_key_as_mars_key_id(self) -> None:
+        self.assertEqual(
+            "",
+            _dashboard_key_id({"recordKey": "mars-42050773"}),
+        )
+        self.assertEqual(
+            "explicit-key",
+            _dashboard_key_id({
+                "keyId": "explicit-key",
+                "recordKey": "mars-42050773",
+            }),
+        )
+
     def test_dashboard_rejects_invalid_count_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "not an integer"):
             _extract_pass_rate({"groups": [{"passed": "unknown", "failed": 1}]})
+
+    def test_gerrit_change_title_uses_authenticated_detail_endpoint(self) -> None:
+        change = (
+            "https://git-nbu-sw.nvidia.com/r/c/switchx/sonic/"
+            "sonic-mgmt/+/338605"
+        )
+
+        def opener(request, timeout):
+            self.assertEqual(
+                "https://git-nbu-sw.nvidia.com/r/a/changes/338605/detail",
+                request.full_url,
+            )
+            self.assertTrue(request.headers["Authorization"].startswith("Basic "))
+            return _Response(
+                b")]}\'\n{\"subject\": \"Fix LLDP timing race\"}"
+            )
+
+        self.assertEqual(
+            {change: "Fix LLDP timing race"},
+            GerritClient("user", "token", opener=opener).describe_changes(
+                [change]
+            ),
+        )
+
+    def test_gerrit_rejects_untrusted_host_before_sending_credentials(self) -> None:
+        called = []
+
+        def opener(request, timeout):
+            called.append(request)
+            raise AssertionError("untrusted host must not be contacted")
+
+        with self.assertRaisesRegex(ValueError, "unsupported Gerrit host"):
+            GerritClient("user", "token", opener=opener).describe_changes(
+                ["https://git-attacker.example/r/c/project/+/123"]
+            )
+
+        self.assertEqual([], called)
 
     def test_github_uses_vault_token_for_exact_pr(self) -> None:
         def opener(request, timeout):
@@ -1433,18 +1575,21 @@ class ExternalAdapterTest(unittest.TestCase):
 
     def test_rc_status_uses_release_tag_when_ref_is_empty(self) -> None:
         markdown = """
-| Field | Value |
-| --- | --- |
-| Tag | 202605_RC.70 |
-| RC branch | 202605_RC |
-| Upstream base | deadbeef |
-https://github.com/sonic-net/sonic-buildimage/pull/123
+- **RC branch:** `202605_RC`
+- **Upstream base:** `deadbeef`
+| # | Kind | Module | Status | Source | Resolved SHA | Detail |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | APPLY | sonic-buildimage | APPLIED | https://github.com/sonic-net/sonic-buildimage/pull/123 | `abc` | |
+| 2 | APPLY | sonic-buildimage | SKIPPED | https://github.com/sonic-net/sonic-buildimage/pull/124 | `def` | |
+| 3 | REVERT | sonic-buildimage | REVERTED | https://github.com/sonic-net/sonic-buildimage/pull/125 | `ghi` | |
+| 4 | APPLY | sonic-buildimage | APPLIED | https://github.com/nvidia-sonic/sonic-buildimage/pull/126 | `jkl` | |
+| 5 | APPLY | sonic-swss | APPLIED | https://github.com/sonic-net/sonic-swss/pull/127 | `mno` | |
 """
 
         def opener(request, timeout):
             self.assertEqual("Bearer secret", request.headers["Authorization"])
             self.assertIn(
-                "ref=202605_RC.70",
+                "ref=202605_RC.70-deadbeef_Internal",
                 request.full_url,
             )
             payload = {
@@ -1458,9 +1603,31 @@ https://github.com/sonic-net/sonic-buildimage/pull/123
         self.assertEqual("202605_RC", result.image_branch)
         self.assertEqual("deadbeef", result.image_public_hash)
         self.assertEqual(
-            ["https://github.com/sonic-net/sonic-buildimage/pull/123"],
+            [
+                "https://github.com/sonic-net/sonic-buildimage/pull/123",
+                "https://github.com/sonic-net/sonic-swss/pull/127",
+            ],
             result.image_pr_urls,
         )
+
+    def test_github_fetches_metadata_for_public_rc_module_pr(self) -> None:
+        url = "https://github.com/sonic-net/sonic-swss/pull/127"
+
+        def opener(request, timeout):
+            self.assertTrue(request.full_url.endswith(
+                "/repos/sonic-net/sonic-swss/pulls/127"
+            ))
+            return _Response(json.dumps({
+                "html_url": url,
+                "title": "Fix production service",
+                "state": "closed",
+                "user": {"login": "owner"},
+            }).encode())
+
+        result = GitHubClient(opener=opener).get_image_prs([url])
+
+        self.assertEqual(url, result[0].url)
+        self.assertEqual("Fix production service", result[0].title)
 
     def test_rc_status_supports_matching_repository_and_ref_override(self) -> None:
         markdown = """
@@ -1490,6 +1657,49 @@ https://github.com/sonic-net/sonic-buildimage/pull/123
             rc_status_tag="202605_RC.70",
         ).fetch_rc_status("202605_RC.70-deadbeef_Internal")
 
+        self.assertEqual("deadbeef", result.image_public_hash)
+
+    def test_rc_status_falls_back_to_short_rc_tag(self) -> None:
+        calls = []
+        markdown = """
+- **RC branch:** `202605_RC`
+- **Upstream base:** `deadbeef`
+| # | Kind | Module | Status | Source | Resolved SHA | Detail |
+| ---: | --- | --- | --- | --- | --- | --- |
+"""
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            if "ref=202605_RC.70-deadbeef_Internal" in request.full_url:
+                raise OSError("full image tag is unavailable")
+            return _Response(json.dumps({
+                "content": base64.b64encode(markdown.encode()).decode(),
+            }).encode())
+
+        result = GitHubClient(opener=opener).fetch_rc_status(
+            "202605_RC.70-deadbeef_Internal"
+        )
+
+        self.assertEqual("deadbeef", result.image_public_hash)
+        self.assertEqual(2, len(calls))
+        self.assertIn("ref=202605_RC.70", calls[1])
+
+    def test_rc_status_accepts_script_generated_tag_for_matching_release(self) -> None:
+        markdown = """
+- **Release:** `202605_RC`
+- **RC branch:** `script_generated_202605_RC`
+- **Tag:** `script_generated_202605_RC.13`
+- **Upstream base:** `deadbeef`
+| # | Kind | Module | Status | Source | Resolved SHA | Detail |
+| ---: | --- | --- | --- | --- | --- | --- |
+"""
+
+        result = _parse_rc_status(
+            markdown,
+            "202605_RC.101-f786f8ed07_Internal",
+        )
+
+        self.assertEqual("script_generated_202605_RC", result.image_branch)
         self.assertEqual("deadbeef", result.image_public_hash)
 
     def test_rc_status_rejects_cross_release_tag_override(self) -> None:

@@ -1,5 +1,4 @@
 import logging
-import random
 import subprocess
 import re
 
@@ -161,6 +160,15 @@ def get_device_macs_list(devices):
     return SshHardeningConsts.VALUES[SshHardeningConsts.MACS]
 
 
+def drop_kex_signaling_markers(kex_algorithms: list) -> list:
+    """
+    @summary: Drop the OpenSSH signaling markers from a list of KEX-algorithms
+    @param kex_algorithms: list of KEX-algorithms
+    @return: the given KEX-algorithms, without the signaling markers (list of str)
+    """
+    return [algo for algo in kex_algorithms if algo not in SshHardeningConsts.KEX_SIGNALING_MARKERS]
+
+
 def get_ssh_server_kex_algorithms(server_engine: ProxySshEngine):
     """
     @summary: Get the SSH KEX-algorithms of the given SSH server
@@ -173,7 +181,9 @@ def get_ssh_server_kex_algorithms(server_engine: ProxySshEngine):
         substr_to_find='KEX algorithms:'
     )
     logging.info(f'Server KEX-algorithms: {server_ciphers}')
-    return server_ciphers.split(',')
+    kex_algorithms = drop_kex_signaling_markers(server_ciphers.split(','))
+    logging.info(f'Server KEX-algorithms without signaling markers: {kex_algorithms}')
+    return kex_algorithms
 
 
 def get_device_kex_algotithms_list(devices):
@@ -182,7 +192,7 @@ def get_device_kex_algotithms_list(devices):
     @param devices: devices
     @return: SSH KEX-algorithms list
     """
-    return devices.dut.kex_algorithms
+    return drop_kex_signaling_markers(devices.dut.kex_algorithms)
 
 
 def verify_switch_ssh_property(engines, property_name, expected_value, value_extraction_function):

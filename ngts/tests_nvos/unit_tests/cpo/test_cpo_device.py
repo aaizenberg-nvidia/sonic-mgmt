@@ -9,6 +9,8 @@ from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoCapable, CpoTopology, is_
 
 PORTIA_NVL72_HW_KEY = "N7200_LD - Portia"
 PORTIA_NVL72_SIMX_KEY = "N7200_LD_simx - Portia"
+PORTIA_NVL72_LEGACY_HW_KEY = "N7170_LD - Portia"
+PORTIA_NVL72_LEGACY_SIMX_KEY = "N7170_LD_simx - Portia"
 PORTIA_CPO_HW_KEY = "N7300_LD - Portia"
 PORTIA_CPO_SIMX_KEY = "N7300_LD_simx - Portia"
 PORTIA_CPO_TA_SIMX_KEY = "N7300_LD_TA_simx - Portia"
@@ -57,6 +59,8 @@ def switch_env_vars(monkeypatch):
     [
         (PORTIA_NVL72_HW_KEY, ("PortiaSwitch", 4, "N7200_LD", "920-9K51W-02L7-GS0", False)),
         (PORTIA_NVL72_SIMX_KEY, ("PortiaSimx", 4, "N7200_LD", "920-9K51W-02L7-GS0", True)),
+        (PORTIA_NVL72_LEGACY_HW_KEY, ("PortiaSwitchN7170", 4, "N7170_LD", "920-9K51W-02L7-GS0", False)),
+        (PORTIA_NVL72_LEGACY_SIMX_KEY, ("PortiaSimxN7170", 4, "N7170_LD", "920-9K51W-02L7-GS0", True)),
         (PORTIA_CPO_HW_KEY, ("PortiaCpoSwitch", 8, "N7300_LD", "920-9K57P-00L7-GS0", False)),
         (PORTIA_CPO_SIMX_KEY, ("PortiaCpoSimx", 8, "N7300_LD", "920-9K57P-00L7-GS0", True)),
         (PORTIA_CPO_TA_SIMX_KEY, ("PortiaCpoTASimx", 2, "N7300_LD_TA", "920-9K57P-00L7-GS0", True)),
@@ -76,6 +80,9 @@ def test_factory_resolves_portia_models(switch_type, expected):
     assert switch.require_mloop_setup is is_simx
     assert switch.show_platform_output["system-type"] == system_type
     assert switch.platform_inventory_switch_values["model"].regex.pattern == model
+    assert switch.leakage_sensors_count == 0
+    assert switch.list_of_leakages == []
+    assert "nv show platform environment leakage" in switch.unsupported_commands_list
 
 
 def test_simx_classes_are_thin_overlays_of_real_models():
@@ -189,8 +196,8 @@ def test_npo_port_model_is_not_cpo_capable(switch_type, asic_amount):
     switch = DeviceFactory.create_device(switch_type)
     assert not is_cpo_capable(switch)
     assert len(switch.nvl_access_ports_list) == 72 * asic_amount
-    assert len(switch.nvl_trunk_ports_list) == 64 * asic_amount
-    assert switch.nvl_trunk_ports_list[-1] == f"sw{8 * asic_amount}p1s8"
+    assert len(switch.nvl_trunk_ports_list) == 56 * asic_amount
+    assert switch.nvl_trunk_ports_list[-1] == f"sw{7 * asic_amount}p1s8"
     assert switch.nvl_trunk_port_speed == "200G"
     assert switch.nvl_internal_fnm_ports == [
         f"fnma{asic}p{port}" for asic in range(asic_amount) for port in range(1, 3)

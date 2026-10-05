@@ -31,19 +31,19 @@ class IbRouterTool:
         return IbRouterConsts.DEFAULT_SWID_NAME if swid_idx == 0 else IbRouterConsts.NON_DEFAULT_SWID_NAME.format(str(swid_idx))
 
     @staticmethod
-    def enable_ib_router_profile():
+    def enable_ib_router_profile(number_of_swids=IbRouterConsts.SWID_NUM):
         """
         helper function that will enable IB router profile in case it is disabled or has the incorrect number of swids
         """
-        with allure.step(f"changing profile to ib router with {IbRouterConsts.SWID_NUM} SWIDs"):
+        with allure.step(f"changing profile to ib router with {number_of_swids} SWIDs"):
             system = System(None)
             system_profile_output = OutputParsingTool.parse_json_str_to_dictionary(system.profile.show()).get_returned_value()
             current_system_profile = system_profile_output[SystemConsts.PROFILE_IB_ROUTING]
             current_swid_count = system_profile_output[SystemConsts.PROFILE_NUMBER_OF_SWIDS]
             logger.info(f"current setup router profile - {current_system_profile}\n, {current_swid_count} SWIDs")
-            if current_system_profile == SystemConsts.PROFILE_STATE_DISABLED or current_swid_count != IbRouterConsts.SWID_NUM:
+            if current_system_profile == SystemConsts.PROFILE_STATE_DISABLED or current_swid_count != number_of_swids:
                 params = {SystemConsts.PROFILE_IB_ROUTING: SystemConsts.PROFILE_STATE_ENABLED,
-                          SystemConsts.PROFILE_NUMBER_OF_SWIDS: IbRouterConsts.SWID_NUM}
+                          SystemConsts.PROFILE_NUMBER_OF_SWIDS: number_of_swids}
                 system.profile.action_profile_change(params_dict=params)
                 logger.info(f"sleeping a {GID_UPDATE_TIME} seconds as WA for ticket https://nvbugs/6048600 and to let GID update in the show commands")
                 time.sleep(GID_UPDATE_TIME)

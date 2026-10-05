@@ -42,6 +42,11 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(scope="module")
+def rand_selected_dut(duthosts, enum_rand_one_per_hwsku_hostname):
+    return duthosts[enum_rand_one_per_hwsku_hostname]
+
+
 @pytest.fixture(scope="class")
 def setup(request, duthosts, enum_rand_one_per_hwsku_hostname,
           xcvr_skip_list, conn_graph_facts, shutdown_ebgp):     # noqa: F811
@@ -196,10 +201,13 @@ class TestSfpApi(PlatformApiTestBase):
         'lasertemphighalarm'
     ]
 
-    # To get all the keys supported by QSFP-ZR modules
-    # below list should be appended with
-    # EXPECTED_XCVR_COMMON_THRESHOLD_INFO_KEYS + QSFPDD_EXPECTED_XCVR_THRESHOLD_INFO_KEYS
-    QSFPZR_EXPECTED_XCVR_THRESHOLD_INFO_KEYS = [
+    # VDM based thresholds which used to be reported by the
+    # get_transceiver_threshold_info() platform API for coherent (C-CMIS) modules.
+    # They were moved out of that API into the dedicated
+    # get_transceiver_vdm_thresholds() API by sonic-platform-common PR #556, so they
+    # are treated as optional here: branches which still expose them keep passing,
+    # while branches which no longer do are not reported as missing fields.
+    QSFPZR_OPTIONAL_XCVR_THRESHOLD_INFO_KEYS = [
         'prefecberhighalarm',
         'prefecberlowalarm',
         'prefecberhighwarning',
@@ -481,7 +489,7 @@ class TestSfpApi(PlatformApiTestBase):
         except Exception as e:
             logger.error("Failed to shutdown interfaces: {}".format(e))
 
-        shutdown_wait_scale_factor = max(1, len(intf_list)*0.01)
+        shutdown_wait_scale_factor = max(1, len(intf_list)*0.1)
         time.sleep(WAIT_TIME_AFTER_INTF_SHUTDOWN*shutdown_wait_scale_factor)
         try:
             if duthost.is_multi_asic:
@@ -664,6 +672,8 @@ class TestSfpApi(PlatformApiTestBase):
                     actual_keys = list(thold_info_dict.keys())
 
                     expected_keys = list(self.EXPECTED_XCVR_COMMON_THRESHOLD_INFO_KEYS)
+                    # Keys which are allowed to be reported, but are not required to be present
+                    optional_keys = []
                     if info_dict["type_abbrv_name"] in ["QSFP-DD", "OSFP-8X", "QSFP+C"]:
                         type = info_dict.get("type", "")
                         if "CPO" in type:
@@ -677,14 +687,14 @@ class TestSfpApi(PlatformApiTestBase):
                                 logger.info("INPHI CORP Transceiver is not populating the associated threshold fields \
                                              in redis TRANSCEIVER_DOM_THRESHOLD table. Skipping this transceiver")
                                 continue
-                            expected_keys += self.QSFPZR_EXPECTED_XCVR_THRESHOLD_INFO_KEYS
+                            optional_keys += self.QSFPZR_OPTIONAL_XCVR_THRESHOLD_INFO_KEYS
 
                     missing_keys = set(expected_keys) - set(actual_keys)
                     for key in missing_keys:
                         self.expect(
                             False, "Transceiver {} threshold info does not contain field: '{}'".format(i, key))
 
-                    unexpected_keys = set(actual_keys) - set(expected_keys)
+                    unexpected_keys = set(actual_keys) - set(expected_keys) - set(optional_keys)
                     for key in unexpected_keys:
                         self.expect(
                             False, "Transceiver {} threshold info contains unexpected field '{}'".format(i, key))
@@ -895,14 +905,13 @@ class TestSfpApi(PlatformApiTestBase):
             logger.info("No interfaces to flap after SFP reset")
         self.assert_expectations()
 
-    def test_tx_disable(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_tx_disable(self, rand_selected_dut, localhost,
                         platform_api_conn, is_sw_control_feature_enabled):    # noqa: F811
         """This function tests both the get_tx_disable() and tx_disable() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx"])
-        if is_mellanox_device(duthost):
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx"])
+        if is_mellanox_device(rand_selected_dut):
             port_indices_to_tested = self.get_port_indices_to_tested_for_mellanox_device(
-                duthost, is_sw_control_feature_enabled)
+                rand_selected_dut, is_sw_control_feature_enabled)
         else:
             port_indices_to_tested = self.sfp_setup["sfp_test_port_indices"]
 
@@ -928,14 +937,13 @@ class TestSfpApi(PlatformApiTestBase):
                                     "Transceiver {} TX disable data is incorrect".format(i))
         self.assert_expectations()
 
-    def test_tx_disable_channel(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_tx_disable_channel(self, rand_selected_dut, localhost,
                                 platform_api_conn, is_sw_control_feature_enabled):     # noqa: F811
         """This function tests both the get_tx_disable_channel() and tx_disable_channel() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx", "nokia"])
-        if is_mellanox_device(duthost):
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx", "nokia"])
+        if is_mellanox_device(rand_selected_dut):
             port_indices_to_tested = self.get_port_indices_to_tested_for_mellanox_device(
-                duthost, is_sw_control_feature_enabled)
+                rand_selected_dut, is_sw_control_feature_enabled)
         else:
             port_indices_to_tested = self.sfp_setup["sfp_test_port_indices"]
 
@@ -1029,11 +1037,10 @@ class TestSfpApi(PlatformApiTestBase):
                             .format(i, "enable" if state is True else "disable"))
         self.assert_expectations()
 
-    def test_power_override(self, duthosts, enum_rand_one_per_hwsku_hostname, localhost,
+    def test_power_override(self, rand_selected_dut, localhost,
                             platform_api_conn, is_sw_control_feature_enabled):    # noqa: F811
         """This function tests both the get_power_override() and set_power_override() APIs"""
-        duthost = duthosts[enum_rand_one_per_hwsku_hostname]
-        skip_release_for_platform(duthost, ["202012"], ["arista", "mlnx", "nokia"])
+        skip_release_for_platform(rand_selected_dut, ["202012"], ["arista", "mlnx", "nokia"])
 
         for i in self.sfp_setup["sfp_test_port_indices"]:
             info_dict = sfp.get_transceiver_info(platform_api_conn, i)
@@ -1051,9 +1058,11 @@ class TestSfpApi(PlatformApiTestBase):
             self.expect(power_override_bit_value_pretest is not None,
                         "Unable to retrieve transceiver {} power override data".format(i))
 
-            if is_mellanox_device(duthost) and not is_sw_control_feature_enabled:
+            if is_mellanox_device(rand_selected_dut) and (
+                    not is_sw_control_feature_enabled or not is_sw_control_enabled(rand_selected_dut, i)):
                 logger.warning(
-                    "Skipping set_power_override for transceiver {} (not supported on this platform)".format(i))
+                    "test_power_override: Skipping set_power_override for Mellanox transceiver {} "
+                    "(software control is not enabled for the device or port)".format(i))
                 continue
 
             # Enable power override in both low-power and high-power modes

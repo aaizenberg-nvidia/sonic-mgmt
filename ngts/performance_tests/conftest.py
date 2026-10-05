@@ -42,7 +42,8 @@ _players_cmd_log_run_timestamp = None
 
 def pytest_sessionstart(session):
     """Reset process-local performance recovery state for this pytest session."""
-    reset_performance_session_state()
+    state = reset_performance_session_state()
+    state.ar_extended_thresholds = session.config.getoption("--ar_extended_thresholds", default=False)
 
 
 def pytest_runtest_setup(item):

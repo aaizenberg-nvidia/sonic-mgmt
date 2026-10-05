@@ -13,7 +13,7 @@ from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.general.config_commands.helpers import *
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "skabir"
 
 
 logger = logging.getLogger()

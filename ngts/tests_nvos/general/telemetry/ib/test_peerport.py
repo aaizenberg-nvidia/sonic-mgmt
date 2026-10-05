@@ -7,7 +7,6 @@ from typing import Dict, List, Tuple
 import pytest
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
@@ -33,23 +32,55 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
+from ngts.tests_nvos.general.telemetry.ib import otel_helpers as ibo
 from ngts.tests_nvos.general.telemetry.ib.constants import (
     ALL_APIS,
     API_GNMIC,
     API_NVUE_CLI,
+    API_OTEL,
+    BER_MONITOR_LEAVES,
+    GNMI_PEER_LIST_POLL_SEC,
     GnmiTypeKind,
     GnmiYangPaths,
+    LOCAL_PORT_FAMILIES,
+    LocalPortFamilyId,
     NMXT_IB_SERVICE,
     NvuePaths,
+    OTEL_LINK_HEALTH_STATES,
+    OtelGroup,
+    OtelLabel,
+    PEER_ASIC_HOST_NAME_CANDIDATES,
+    PEER_PLATFORM_OTEL_EXTRA_GROUPS,
+    PEER_PLATFORM_OTEL_GROUPS,
+    PEER_PLATFORM_SHOW_NODES,
     PEER_PORT_ADDITIVE_FIELDS,
     PEER_PORT_API_TO_DB_FIELD,
     PEER_PORT_DB_ADDITIVE_FIELDS,
     PEER_PORT_GNMI_ADDITIVE_FIELDS,
     PEER_PORT_GNMI_STATIC_LEAVES,
     PEER_PORT_LIST_SCHEMA_GROUPS,
+    PEER_PORT_NVUE_ROOT_EXTENDED_LEAVES,
     PEER_PORT_NVUE_SHOW_NODES,
+    PEER_PORT_NVUE_TO_GNMI_ROOT_LEAF,
+    PEER_PORT_OTEL_ADDITIVE_LEAVES,
+    PEER_PORT_OTEL_BER_MONITOR_LEAVES,
+    PEER_PORT_OTEL_IDENTITY_DB_FIELD,
+    PEER_PORT_OTEL_IDENTITY_LEAVES,
+    PEER_PORT_OTEL_LINK_HEALTH,
+    PEER_PORT_OTEL_LIST_GROUPS,
+    PEER_PORT_OTEL_METRIC_BY_DB_FIELD,
+    PEER_PORT_OTEL_NODE_INFO,
+    PEER_PORT_OTEL_SCHEMA_GROUPS,
+    PEER_PORT_OTEL_UNEXPORTED_ROOT_LEAVES,
+    PEER_PORT_OTEL_UNEXPORTED_SCHEMA_LEAVES,
+    PEER_PORT_ROOT_EXTENDED_LEAVES,
+    PEER_PORT_ROOT_TIER_UNSPECIFIED_LEAVES,
     PEER_PORT_SCHEMA_GROUPS,
     PEER_TELEMETRY_SAMPLING_SEC,
+    PeerComponentXcsetColumn,
+    PeerPlatformKind,
+    PeerPlatformSub,
+    PeerPortComponentRef,
     PeerPortFields,
     PeerPortNvueSub,
     PeerTelemetryHealth,
@@ -93,6 +124,22 @@ def _wait_for_peer_ports(engines, *, present: bool,
         time.sleep(min(interval, 2))
         peers = ibh.nvue_show_peer_ports(engines)
     return peers
+
+
+def _wait_for_gnmi_peer_ports(gnmi_client) -> Dict[str, Dict[str, str]]:
+    """The gNMI peer-port list, asked again until it is non-empty or the settle time is over.
+
+    NVUE lists the rows before gNMI serves them, so the first read after the knob is enabled can
+    be empty. The settle time is the one the DB gets.
+    """
+    deadline = time.time() + PEER_PORT_ENABLE_GRACE_SEC + (
+        _peer_port_interval_sec() * PEER_PORT_SETTLE_INTERVALS)
+    entries = ibh.gnmi_get_peer_port_list(gnmi_client)
+    while not entries and time.time() < deadline:
+        logger.info("gNMI lists no peer-port yet; checking again in %ds", GNMI_PEER_LIST_POLL_SEC)
+        time.sleep(GNMI_PEER_LIST_POLL_SEC)
+        entries = ibh.gnmi_get_peer_port_list(gnmi_client)
+    return entries
 
 
 def _enable_peer_port(engines) -> None:
@@ -201,6 +248,24 @@ def _require_hca_topology(setup_topology) -> List:
             "host peers as HCA."
         )
     return hca
+
+
+def _require_listed_hca_peers(engines) -> Dict[str, Dict[str, str]]:
+    """The HCA peers `nv show peer-port` lists once the feature is enabled, failing on none.
+
+    For cases that inspect what the switch reports about an HCA peer, not whether every cabled
+    HCA is discovered: discovery is checked against the connectivity file by
+    test_peer_port_lists_hca, so choosing the peer from the listing does not weaken these.
+    """
+    peers = ibh.filter_peer_entries_by_type(ibh.nvue_show_peer_ports(engines), PeerType.HCA)
+    ibh.attach_dict("nv show peer-port HCA peers", peers)
+    ResultObj(
+        bool(peers),
+        "Peer-port is enabled but `nv show peer-port` lists no HCA peer, so there is no "
+        "peer to read the extended leaves from",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+    return peers
 
 
 def _require_external_hca_topology(setup_topology, skip_on_wrong_lab: bool = False) -> List:
@@ -376,7 +441,7 @@ def _select_peer_port_targets(gnmi_client, skip_on_wrong_lab: bool = False) -> L
     ``skip_on_wrong_lab`` is set only by the gNMI subscribe-heartbeat cases, which are extra
     coverage rather than gating - see ``ibh.report_wrong_lab``.
     """
-    entries = ibh.gnmi_get_peer_port_list(gnmi_client)
+    entries = _wait_for_gnmi_peer_ports(gnmi_client)
     if not entries:
         ibh.report_wrong_lab(
             "No peer-ports exposed via gNMI under "
@@ -391,7 +456,62 @@ def _select_peer_port_targets(gnmi_client, skip_on_wrong_lab: bool = False) -> L
     return targets
 
 
+def _peer_port_schema_targets(gnmi_client, group) -> List[Tuple[str, str]]:
+    """What a schema group's `{name}` is filled with: peer-port ids, or the components they name."""
+    if not group.component_ref:
+        return _select_peer_port_targets(gnmi_client)
+    targets = ibh.resolve_component_targets(gnmi_client, group.component_ref)
+    ResultObj(
+        bool(targets),
+        f"No gNMI-listed peer-port names a {group.component_ref!r} component, so the "
+        f"{group.group_id!r} container has no component to sweep (SR-4)",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+    return targets
+
+
 # NVUE-surface peer-port tests (live `nv show peer-port`).
+_OTEL_IDENTITY_GROUP = OtelGroup(OtelLabel.INTERFACE, PEER_PORT_OTEL_IDENTITY_LEAVES)
+
+
+def _otel_peer_rows(label: str) -> Dict[str, Dict[str, str]]:
+    """``{peer_id: {leaf: value}}`` of one fresh OTEL window, the shape of the NVUE listing."""
+    rows = ibh.otel_peer_port_rows(ibo.active_surface().snapshot(label, fresh=True))
+    ibh.attach_dict(f"peer-ports via {API_OTEL} ({label})", rows)
+    return rows
+
+
+def _otel_hca_rows(label: str) -> Dict[str, Dict[str, str]]:
+    return ibh.filter_peer_entries_by_type(_otel_peer_rows(label), PeerType.HCA)
+
+
+def _verify_otel_peer_identity(peers: Dict[str, Dict[str, str]],
+                               detailed: Dict[str, Dict[str, str]]) -> None:
+    """OTEL exports exactly the NVUE-listed peers, each with the identity NVUE shows (SR-1)."""
+    snap = ibo.active_surface().snapshot("peer-identity", fresh=True)
+    rows = ibh.otel_peer_port_rows(snap)
+    ibh.attach_dict(f"peer-ports via {API_OTEL}", rows)
+    problems = [f"[{pid}] is listed on NVUE but exports no {PEER_PORT_OTEL_NODE_INFO}"
+                for pid in sorted(set(peers) - set(rows))]
+    problems += [f"[{pid}] is exported over OTEL but not listed on NVUE"
+                 for pid in sorted(set(rows) - set(peers))]
+    for pid in sorted(set(peers) & set(rows)):
+        shown = ibh.remap_leaf_keys({**peers[pid], **detailed.get(pid, {})},
+                                    PEER_PORT_NVUE_TO_GNMI_ROOT_LEAF)
+        leaves = [leaf for leaf in PEER_PORT_OTEL_IDENTITY_LEAVES
+                  if leaf not in PEER_PORT_OTEL_UNEXPORTED_ROOT_LEAVES and
+                  not ibh.component_source_absent(shown.get(leaf))]
+        problems += ibo.cross_surface_problems(snap, _OTEL_IDENTITY_GROUP, pid, shown,
+                                               API_NVUE_CLI, leaves)
+    ResultObj(
+        not problems,
+        f"The OTEL peer-port export disagrees with the NVUE listing in {len(problems)} "
+        f"place(s); both publish the same neighbors with the same identity (SR-1):\n  " +
+        "\n  ".join(problems),
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+
+
 def _live_nvue_peers(engines) -> Dict[str, Dict[str, str]]:
     """Enable the knob and return the live NVUE peer listing; FAIL loud if empty."""
     _enable_peer_port(engines)
@@ -403,12 +523,65 @@ def _live_nvue_peers(engines) -> Dict[str, Dict[str, str]]:
     return peers
 
 
+def _verify_extended_peer_identity(engines, peers: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Verify port-number and the component names a peer-port points at, and no tray-id.
+
+    The HLD does not say which tier carries these, so a single row may lack one; the listing as
+    a whole must still carry each (see `extended_identity_tier_problems`). A GPU row has no
+    cable or chip of its own, so only HCA rows are examined, and tray-id is published for a GPU
+    peer-port only (SR-6). Each row is read with `nv show peer-port <peer>`, the command HLD
+    section 5.2 renders these leaves on; the bare listing is a summary that does not carry them.
+    Returns those per-peer shows.
+    """
+    candidates = {pid: ibh.nvue_show_peer_port(engines, pid)
+                  for pid in ibh.filter_peer_entries_by_type(peers, PeerType.HCA)}
+    component_names: Dict[str, str] = {}
+
+    with allure.step(f"Extended identity on {len(candidates)} HCA row(s)"):
+        problems = ibh.extended_identity_tier_problems(candidates)
+        for pid, fields in sorted(candidates.items()):
+            problems += ibh.leaf_problems(
+                fields, PEER_PORT_NVUE_ROOT_EXTENDED_LEAVES,
+                tolerated_missing=PEER_PORT_ROOT_TIER_UNSPECIFIED_LEAVES, where=pid,
+            )
+            for leaf, name in ibh.peer_component_refs(fields, nvue=True).items():
+                component_names.setdefault(name, leaf)
+        ibh.attach_dict("named peer components", component_names)
+        ResultObj(
+            not problems,
+            f"Extended peer identity has {len(problems)} problem(s). Every HCA neighbor must "
+            f"report its port number as a whole number, name the cable and the chip it belongs "
+            f"to (`transceiver`, `asic`) and omit tray-id (HLD Section 5.2, SR-4, SR-6):\n  " +
+            "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step(f"Resolve {len(component_names)} named component(s) via nv show peer-platform"):
+        unresolved = []
+        for name, leaf in sorted(component_names.items()):
+            kind = PeerPlatformKind.BY_COMPONENT_REF[leaf]
+            if not ibh.nvue_peer_platform_show(engines, kind, name):
+                unresolved.append(f"`nv show peer-platform {kind} {name}` resolved to nothing")
+        ResultObj(
+            not unresolved,
+            f"{len(unresolved)} component name(s) published on a peer-port do not resolve "
+            f"under nv show peer-platform (SR-4):\n  " +
+            "\n  ".join(unresolved),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+    return candidates
+
+
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.nvos_build
-def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
-    """Every NVUE-listed peer carries an identity, an associated switch port, and classifies as HCA."""
+def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology, ib_otel, random_api):
+    """Every NVUE-listed peer carries an identity, an associated switch port, and classifies as HCA.
+
+    OTEL exports the same peers with the same identity.
+    """
     peers = _live_nvue_peers(engines)
     problems: List[str] = []
     for pid, fields in sorted(peers.items()):
@@ -422,18 +595,26 @@ def test_peer_port_nvue_listing_and_identity(engines, devices, setup_topology):
         "NVUE peer-port listing problems:\n  " + "\n  ".join(problems)
     )
 
+    detailed = _verify_extended_peer_identity(engines, peers)
 
+    with allure.step("OTEL exports the same peers with the same identity"):
+        _verify_otel_peer_identity(peers, detailed)
+
+
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_peer_port_nvue_show_surface(engines, devices, setup_topology):
+def test_peer_port_nvue_show_surface(engines, devices, setup_topology, ib_otel, random_api):
     """Every `nv show peer-port <id>` sub-command exposes its documented containers and typed leaves.
 
     Each node is read with its own sub-command rather than by flattening a parent payload, so a
-    sub-command that does not resolve is a failure instead of an incidentally-covered leaf.
+    sub-command that does not resolve is a failure instead of an incidentally-covered leaf. The
+    OTEL export of each peer carries the same leaves, lanes and histogram buckets.
     """
     _enable_peer_port(engines)
     targets = ibh.select_nvue_peer_port_targets(engines)
+    bodies: Dict[Tuple[str, str], Dict] = {}
 
     with allure.step(f"Walk the peer-port show surface on {len(targets)} peer(s)"):
         for role, pid in targets:
@@ -441,6 +622,7 @@ def test_peer_port_nvue_show_surface(engines, devices, setup_topology):
                 cmd = f"nv show peer-port {pid} {node.sub}".strip()
                 with allure.independent_step(f"Verify {role} `{cmd}`"):
                     body = ibh.nvue_peer_port_show(engines, pid, node.sub)
+                    bodies[(pid, node.sub)] = body
                     ibh.attach_dict(cmd, body)
                     ResultObj(
                         bool(body),
@@ -455,12 +637,28 @@ def test_peer_port_nvue_show_surface(engines, devices, setup_topology):
                         issue_type=IssueType.PossibleBug,
                     ).verify_result()
 
+    snap = ibo.active_surface().snapshot("peer-show-surface", fresh=True)
+    with allure.step(f"The OTEL export carries the same surface on {len(targets)} peer(s)"):
+        for role, pid in targets:
+            for node in PEER_PORT_NVUE_SHOW_NODES:
+                cmd = f"nv show peer-port {pid} {node.sub}".strip()
+                with allure.independent_step(f"Verify {role} `{cmd}` over OTEL"):
+                    problems = ibh.peer_port_otel_show_problems(
+                        snap, pid, node, bodies.get((pid, node.sub), {}), role=role)
+                    ResultObj(
+                        not problems,
+                        f"The OTEL export of {pid} lacks {len(problems)} part(s) of `{cmd}`:\n  " +
+                        "\n  ".join(problems),
+                        issue_type=IssueType.PossibleBug,
+                    ).verify_result()
 
+
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_peer_port_nvue_matches_system_db(engines, devices, setup_topology):
-    """Every NVUE peer-port leaf backed by COUNTERS_DB agrees with the ingested row."""
+def test_peer_port_nvue_matches_system_db(engines, devices, setup_topology, ib_otel):
+    """Every NVUE and OTEL peer-port leaf backed by COUNTERS_DB agrees with the ingested row."""
     _enable_peer_port(engines)
     targets = ibh.select_nvue_peer_port_targets(engines)
 
@@ -510,18 +708,23 @@ def test_peer_port_nvue_matches_system_db(engines, devices, setup_topology):
                     "\n  ".join(plr_problems),
                     issue_type=IssueType.PossibleBug,
                 ).verify_result()
+            with allure.independent_step(f"Verify {pid} over OTEL agrees with its DB rows"):
+                label = f"peer-db-{pid}"
+                otel_problems, otel_compared = ibh.otel_peer_port_db_problems(engines, pid, label)
+                otel_problems += ibh.otel_peer_port_plr_bw_loss_problems(
+                    ibo.active_surface().snapshot(label), pid)
+                if not otel_compared:
+                    otel_problems.append(f"{pid}: its DB row carries no field with an OTEL metric")
+                ResultObj(
+                    not otel_problems,
+                    f"{pid} over OTEL disagrees with its COUNTERS_DB rows in "
+                    f"{len(otel_problems)} place(s):\n  " + "\n  ".join(otel_problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
 
 
-@pytest.mark.ib
-@pytest.mark.interfaces
-@pytest.mark.multiplanar
-def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
-    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's.
-
-    Plane rows are siblings of the aggregated row rather than a nested subtree (by design), so
-    the fan-out is verified across the listing.
-    """
-    peers = _live_nvue_peers(engines)
+def _plane_mapping_problems(peers: Dict[str, Dict[str, str]]) -> List[str]:
+    """Aggregated peers without plane rows, or plane rows outside the parent's switch-port."""
     all_ids = set(peers)
     problems: List[str] = []
 
@@ -544,17 +747,42 @@ def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology):
                     f"[{pid}] plane peer {plane_id!r} switch-port {plane_sw!r} is not under "
                     f"aggregated switch-port {peer_sw!r}"
                 )
+    return problems
 
+
+@pytest.mark.otel
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+def test_peer_port_nvue_plane_mapping(engines, devices, setup_topology, ib_otel):
+    """Each aggregated HCA peer fans out to per-plane rows with switch-ports under the parent's.
+
+    Plane rows are siblings of the aggregated row rather than a nested subtree (by design), so
+    the fan-out is verified across the listing, on NVUE and on the OTEL switch_info.
+    """
+    peers = _live_nvue_peers(engines)
+    problems = _plane_mapping_problems(peers)
     assert not problems, (
         "NVUE peer-port plane-mapping problems:\n  " + "\n  ".join(problems)
     )
 
+    with allure.step("OTEL exports the same fan-out"):
+        otel_peers = _otel_peer_rows("peer-plane-mapping")
+        otel_problems = _plane_mapping_problems(otel_peers)
+        if set(otel_peers) != set(peers):
+            otel_problems.append(
+                f"OTEL exports peers {sorted(otel_peers)!r} but NVUE lists {sorted(peers)!r}")
+        assert not otel_problems, (
+            "OTEL peer-port plane-mapping problems:\n  " + "\n  ".join(otel_problems)
+        )
 
+
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_peer_port_nvue_knob_and_interval_lifecycle(engines, devices, setup_topology):
-    """The peer-port knob round-trips: enable lists peers, interval is settable, disable drains."""
+def test_peer_port_nvue_knob_and_interval_lifecycle(engines, devices, setup_topology, ib_otel):
+    """The peer-port knob round-trips: enable lists peers, interval is settable, disable drains NVUE and OTEL."""
     system = System()
     peers = _live_nvue_peers(engines)
     assert peers, "No peers after enabling the knob"
@@ -587,9 +815,16 @@ def test_peer_port_nvue_knob_and_interval_lifecycle(engines, devices, setup_topo
             f"peer-ports still listed after disabling the knob: {sorted(drained)!r}"
         )
 
+    with allure.step("Disabling the knob stops the OTEL peer-port export"):
+        exported = _otel_peer_rows("peer-port-disabled")
+        assert not exported, (
+            f"peer-ports still exported over OTEL after disabling the knob: {sorted(exported)!r}"
+        )
+
 
 # 5.6 test_peer_port_lists_hca (plan §5.5)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
@@ -615,6 +850,22 @@ def test_peer_port_lists_hca(engines, devices, gnmi_client, setup_topology, api)
         assert hca_live, f"No peer-type={PeerType.HCA} entries via {api}"
         _assert_every_entry_references_an_aport(entries)
 
+    with allure.step("GPU and HCA node info stay separate; neither row is dropped or padded"):
+        gpu_live = ibh.filter_peer_entries_by_type(entries, PeerType.GPU)
+        if not gpu_live:
+            logger.info(
+                "No GPU rows via %s, so the GPU half of SR-6 is vacuous here; the HCA half "
+                "still runs against %d HCA row(s)", api, len(hca_live),
+            )
+        mixed = ibh.foreign_node_info_problems(entries)
+        ResultObj(
+            not mixed,
+            f"Peer rows via {api} mix GPU and HCA node info in {len(mixed)} place(s). Each "
+            f"entry must be listed in full with only its own type's node info, and must not be "
+            f"padded with the other type's fields (SR-6):\n  " + "\n  ".join(mixed),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
     with allure.step("Aggregated HCA peers cover external hosts from connectivity JSON"):
         # Compare on the aggregated tier only; reconcile hosts by node GUID.
         hca_aggr = ibh.aggregated_peer_entries(hca_live)
@@ -628,6 +879,8 @@ def test_peer_port_lists_hca(engines, devices, gnmi_client, setup_topology, api)
         _assert_peers_reference_known_aports(hca_aggr, valid_aports)
 
     one_pid = sorted(hca_aggr)[0]
+    # OTEL values are sampled across a collection window, so they are bracketed by DB reads.
+    db_before = ibh.read_peer_port_row(engines, one_pid) if api == API_OTEL else {}
     with allure.step(f"Show one HCA peer ({one_pid}) and validate its detail"):
         detail = ibh.get_peer_port_via_api(api, engines, gnmi_client, one_pid)
         ibh.attach_dict(f"hca peer detail {one_pid}", detail)
@@ -646,29 +899,192 @@ def test_peer_port_lists_hca(engines, devices, gnmi_client, setup_topology, api)
         db_row = ibh.read_peer_port_row(engines, one_pid)
         ibh.attach_dict(f"db row {one_pid}", db_row)
         assert db_row, f"No System DB row PEER_COUNTERS:{one_pid}"
-        # Pair API leaf and DB SAI field through the API->DB field map.
-        compared = ibh.assert_counters_within_tolerance(
-            detail, db_row, PEER_PORT_API_TO_DB_FIELD, SAMPLING_JITTER_TOLERANCE_PCT,
-            label=f"{api} vs DB for {one_pid}",
-        )
+        if api == API_OTEL:
+            fields = [f for f in dict.fromkeys(PEER_PORT_API_TO_DB_FIELD[leaf]
+                                               for leaf in PEER_PORT_ADDITIVE_FIELDS)
+                      if f in db_before and f in db_row]
+            problems = ibo.db_parity_problems(
+                ibo.active_surface().snapshot(f"peer-port-{one_pid}"), one_pid, db_before, db_row,
+                PEER_PORT_OTEL_METRIC_BY_DB_FIELD, fields)
+            assert not problems, (
+                f"{api} counters of {one_pid} are not values its DB row held:\n  " +
+                "\n  ".join(problems)
+            )
+            compared = len(fields)
+        else:
+            # Pair API leaf and DB SAI field through the API->DB field map.
+            compared = ibh.assert_counters_within_tolerance(
+                detail, db_row, PEER_PORT_API_TO_DB_FIELD, SAMPLING_JITTER_TOLERANCE_PCT,
+                label=f"{api} vs DB for {one_pid}",
+            )
         assert compared > 0, (
             f"Could not compare any counter for {one_pid} between {api} and DB "
             f"(api keys={sorted(detail)!r}, db keys={sorted(db_row)!r})"
         )
 
 
+def _verify_extended_leaf_parity(engines, gnmi_client, nvue_entries, gnmi_entries) -> None:
+    """Compare the extended peer leaves across NVUE and gNMI, and against a local switch port.
+
+    SR-1 is the cross-surface half: the same neighbor's new component-reference and
+    error-rate-monitor leaves must read the same on both interfaces.
+    SR-2 is the local half: a peer-port and the switch's own port read the same YANG
+    containers, so the leaf names must coincide and neither side may rescale the error rates.
+    Both halves are driven off the same leaf tables as the peer-port schema sweep, so a leaf
+    added there is compared here without touching this test.
+    """
+    rows_nvue = ibh.most_specific_peer_entries(
+        ibh.filter_peer_entries_by_type(nvue_entries, PeerType.HCA))
+    rows_gnmi = ibh.most_specific_peer_entries(
+        ibh.filter_peer_entries_by_type(gnmi_entries, PeerType.HCA))
+    shared_ids = sorted(set(rows_nvue) & set(rows_gnmi))
+    ResultObj(
+        bool(shared_ids),
+        f"No HCA row is listed on both surfaces, so the extended leaves cannot be compared "
+        f"(NVUE={sorted(rows_nvue)!r}, gNMI={sorted(rows_gnmi)!r})",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+    pid = shared_ids[0]
+
+    with allure.step(f"Extended leaves of {pid} agree across NVUE and gNMI"):
+        # The listing is a summary; HLD section 5.2 renders these leaves on the per-peer show,
+        # where the chip reference keeps its CLI name `asic`.
+        problems, compared = ibh.leaf_parity_problems(
+            PEER_PORT_ROOT_EXTENDED_LEAVES,
+            ibh.remap_leaf_keys(ibh.nvue_show_peer_port(engines, pid),
+                                PEER_PORT_NVUE_TO_GNMI_ROOT_LEAF),
+            rows_gnmi[pid], API_NVUE_CLI, API_GNMIC,
+        )
+        nvue_ber = ibh.leaf_lookup(ibh.flatten_nvue_leaves(
+            ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK_PHY_BER_MONITOR)))
+        gnmi_ber = ibh.gnmi_get_flat_relative(
+            gnmi_client, prefix=GnmiYangPaths.PEER_PORT_PHY_BER_MONITOR_STATE.format(name=pid))
+        ibh.attach_dict(f"{pid} ber-monitor across surfaces",
+                        {API_NVUE_CLI: nvue_ber, API_GNMIC: gnmi_ber})
+        ber_problems, ber_compared = ibh.leaf_parity_problems(
+            BER_MONITOR_LEAVES, nvue_ber, gnmi_ber, API_NVUE_CLI, API_GNMIC)
+        problems += ber_problems
+        compared += ber_compared
+        logger.info("Compared %d extended leaf value(s) of %s across both surfaces", compared, pid)
+        ResultObj(
+            not problems,
+            f"{pid} reports {len(problems)} extended leaf value(s) differently on NVUE and "
+            f"gNMI; only the encoding may differ (SR-1):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step("No HCA peer-port state publishes tray-id over gNMI (SR-6)"):
+        problems = ibh.hca_omitted_leaf_problems(rows_gnmi)
+        ResultObj(
+            not problems,
+            f"{len(problems)} HCA peer-port(s) publish a GPU-only leaf over gNMI (HLD Section "
+            f"5.2, SR-6):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    local_port = ibh.require_link_up_port("compare the peer-port PHY against", skip=False)
+
+    # The routing / pFRN counters are a local-only family, so SR-2 covers the PHY and
+    # error-rate containers the two trees genuinely share.
+    with allure.step(f"Local-versus-peer PHY symmetry on {pid} and {local_port.name} (SR-2)"):
+        for family in [f for f in LOCAL_PORT_FAMILIES
+                       if f.family_id != LocalPortFamilyId.ROUTING]:
+            with allure.independent_step(
+                    f"Verify {family.family_id} leaf names match on {pid} and {local_port.name}"):
+                local_leaves = ibh.gnmi_family_leaves(gnmi_client, local_port.name, family)
+                peer_leaves = ibh.gnmi_family_leaves(
+                    gnmi_client, pid, family, path_prefix=GnmiYangPaths.PEER_PORT_PREFIX)
+                ibh.attach_dict(f"{family.family_id} peer vs local",
+                                {"peer-port": peer_leaves, "local port": local_leaves})
+                problems, shared = ibh.phy_surface_symmetry_problems(
+                    family.leaves, peer_leaves, local_leaves)
+                logger.info("%s: %d leaf name(s) shared by the peer-port and the local port",
+                            family.family_id, shared)
+                ResultObj(
+                    not problems,
+                    f"The {family.family_id} container differs between peer-port {pid} and local "
+                    f"port {local_port.name} in {len(problems)} place(s); both read the same YANG "
+                    f"container, so names and units must match (SR-2):\n  " + "\n  ".join(problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+
+
+def _verify_otel_parity(engines, nvue_entries, nvue_hca) -> None:
+    """OTEL reports the same aggregated HCA peers as NVUE: Aport, counters and extended leaves."""
+    snap = ibo.active_surface().snapshot("peer-parity", fresh=True)
+    otel_entries = ibh.otel_peer_port_rows(snap)
+    otel_hca = ibh.aggregated_peer_entries(ibh.filter_peer_entries_by_type(otel_entries, PeerType.HCA))
+    ibh.attach_dict("otel hca", otel_hca)
+
+    with allure.step("NVUE and OTEL expose the same aggregated HCA peer ids"):
+        nvue_only = sorted(set(nvue_hca) - set(otel_hca))
+        otel_only = sorted(set(otel_hca) - set(nvue_hca))
+        assert not nvue_only and not otel_only, (
+            f"Aggregated HCA peer-id sets differ across surfaces: "
+            f"NVUE-only={nvue_only!r}, OTEL-only={otel_only!r}"
+        )
+
+    with allure.step("Per-peer parity: Aport and counters match across NVUE and OTEL"):
+        for pid in sorted(nvue_hca):
+            n_fields, o_fields = nvue_hca[pid], otel_hca[pid]
+            assert ibh.peer_entry_aport(n_fields) == ibh.peer_entry_aport(o_fields), (
+                f"HCA peer {pid!r} Aport differs: NVUE={ibh.peer_entry_aport(n_fields)!r}, "
+                f"OTEL={ibh.peer_entry_aport(o_fields)!r}"
+            )
+            compared = ibh.assert_counters_within_tolerance(
+                n_fields, o_fields, PEER_PORT_ADDITIVE_FIELDS, SAMPLING_JITTER_TOLERANCE_PCT,
+                label=f"NVUE vs OTEL for HCA peer {pid!r}",
+            )
+            assert compared > 0, (
+                f"No additive counter of HCA peer {pid!r} is shown on NVUE and exported over "
+                f"OTEL (NVUE keys={sorted(n_fields)!r}, OTEL keys={sorted(o_fields)!r})"
+            )
+
+    rows_nvue = ibh.most_specific_peer_entries(
+        ibh.filter_peer_entries_by_type(nvue_entries, PeerType.HCA))
+    shared_ids = sorted(set(rows_nvue) & set(otel_entries))
+    ResultObj(
+        bool(shared_ids),
+        f"No HCA row is listed on NVUE and exported over OTEL, so the extended leaves cannot be "
+        f"compared (NVUE={sorted(rows_nvue)!r}, OTEL={sorted(otel_entries)!r})",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+    pid = shared_ids[0]
+    with allure.step(f"Extended leaves of {pid} agree across NVUE and OTEL"):
+        problems, compared = ibh.otel_leaf_parity_problems(
+            snap, _OTEL_IDENTITY_GROUP, pid, PEER_PORT_ROOT_EXTENDED_LEAVES,
+            ibh.nvue_show_peer_port(engines, pid), API_NVUE_CLI)
+        nvue_ber = ibh.leaf_lookup(ibh.flatten_nvue_leaves(
+            ibh.nvue_peer_port_show(engines, pid, PeerPortNvueSub.LINK_PHY_BER_MONITOR)))
+        ber_problems, ber_compared = ibh.otel_leaf_parity_problems(
+            snap, OtelGroup(OtelLabel.INTERFACE, PEER_PORT_OTEL_BER_MONITOR_LEAVES), pid,
+            BER_MONITOR_LEAVES, nvue_ber, API_NVUE_CLI)
+        problems += ber_problems
+        compared += ber_compared
+        logger.info("Compared %d extended leaf value(s) of %s across NVUE and OTEL", compared, pid)
+        ResultObj(
+            not problems and compared > 0,
+            f"{pid} reports {len(problems)} extended leaf value(s) differently on NVUE and "
+            f"OTEL (compared {compared}); only the encoding may differ (SR-1):\n  " +
+            "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+
 # 5.7 test_peer_port_api_parity_nvue_vs_gnmi (nice-to-have)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_peer_port_api_parity_nvue_vs_gnmi(engines, devices, gnmi_client, setup_topology):
-    """The same HCA peer is reported identically by NVUE and gNMI (peer-type, Aport, counters)."""
-    _require_hca_topology(setup_topology)
+def test_peer_port_api_parity_nvue_vs_gnmi(engines, devices, gnmi_client, ib_otel):
+    """The same HCA peer is reported identically by NVUE, gNMI and OTEL (peer-type, Aport, counters)."""
     _enable_peer_port(engines)
+    _require_listed_hca_peers(engines)
 
     with allure.step("List peer-ports via NVUE and via gNMI"):
         nvue_entries = ibh.list_peer_ports_via_api(API_NVUE_CLI, engines, gnmi_client)
+        _wait_for_gnmi_peer_ports(gnmi_client)
         gnmi_entries = ibh.list_peer_ports_via_api(API_GNMIC, engines, gnmi_client)
         # Compare like-for-like on the aggregated tier only.
         nvue_hca = ibh.aggregated_peer_entries(ibh.filter_peer_entries_by_type(nvue_entries, PeerType.HCA))
@@ -677,6 +1093,11 @@ def test_peer_port_api_parity_nvue_vs_gnmi(engines, devices, gnmi_client, setup_
         ibh.attach_dict("gnmi hca", gnmi_hca)
         assert nvue_hca, "No HCA peers via NVUE"
         assert gnmi_hca, "No HCA peers via gNMI"
+        # The NVUE listing is a summary table (identity columns only); the counters are on the
+        # per-peer show.
+        nvue_hca = {pid: {**fields, **ibh.nvue_show_peer_port(engines, pid)}
+                    for pid, fields in nvue_hca.items()}
+        ibh.attach_dict("nvue hca with per-peer counters", nvue_hca)
 
     with allure.step("NVUE and gNMI expose the same aggregated HCA peer ids"):
         nvue_only = sorted(set(nvue_hca) - set(gnmi_hca))
@@ -693,21 +1114,240 @@ def test_peer_port_api_parity_nvue_vs_gnmi(engines, devices, gnmi_client, setup_
                 f"HCA peer {pid!r} Aport differs: NVUE={ibh.peer_entry_aport(n_fields)!r}, "
                 f"gNMI={ibh.peer_entry_aport(g_fields)!r}"
             )
-            ibh.assert_counters_within_tolerance(
+            compared = ibh.assert_counters_within_tolerance(
                 n_fields, g_fields, PEER_PORT_ADDITIVE_FIELDS, SAMPLING_JITTER_TOLERANCE_PCT,
                 label=f"NVUE vs gNMI for HCA peer {pid!r}",
             )
+            assert compared > 0, (
+                f"No additive counter of HCA peer {pid!r} is shown on NVUE and served over gNMI "
+                f"(NVUE keys={sorted(n_fields)!r}, gNMI keys={sorted(g_fields)!r})"
+            )
+
+    _verify_extended_leaf_parity(engines, gnmi_client, nvue_entries, gnmi_entries)
+    _verify_otel_parity(engines, nvue_entries, nvue_hca)
+
+
+def _verify_peer_asic_host_name(engines, topology_obj, devices, pid, leaves) -> None:
+    """The host name on a peer ASIC is the remote host from the xcset, never this switch (SR-5)."""
+    reported = ibh.peer_asic_host_name(leaves)
+    ResultObj(
+        bool(reported),
+        f"The peer ASIC payload carries no host name under any accepted spelling "
+        f"{PEER_ASIC_HOST_NAME_CANDIDATES!r} (SR-5)",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+
+    xcset_row = ibh.xcset_row_for_db_row(
+        ibh.read_peer_port_row(engines, pid),
+        ibh.xcset_rows_by_join_key(ibh.read_hca_xcset_rows(engines)),
+    )
+    expected = ibh.xcset_host_name(xcset_row)
+    switch_host = ibh.dut_hostname(topology_obj, devices)
+    ibh.attach_dict("peer ASIC host name", {"reported": reported, "xcset": expected,
+                                            "xcset row found": bool(xcset_row),
+                                            "this switch": switch_host})
+
+    problems = []
+    if switch_host and reported.lower() == switch_host.lower():
+        problems.append(f"the peer ASIC reports this switch's own hostname {reported!r}; it "
+                        f"must report the remote host")
+    if not xcset_row:
+        problems.append(f"no xcset row joins to {pid}, so the reported host name "
+                        f"{reported!r} has nothing to be compared against")
+    elif not expected:
+        problems.append(f"the xcset row behind {pid} names no host, in "
+                        f"{PeerComponentXcsetColumn.HOST_NAME!r} or "
+                        f"{PeerComponentXcsetColumn.NODE_DESCRIPTION!r}, to compare the reported "
+                        f"host name {reported!r} against")
+    elif reported.lower() != expected.lower():
+        problems.append(f"the peer ASIC reports host name {reported!r} while the xcset row "
+                        f"for {pid} says {expected!r}")
+    ResultObj(
+        not problems,
+        "Peer ASIC host name problems (SR-5):\n  " + "\n  ".join(problems),
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+
+
+def _verify_peer_platform_otel(node, name: str, body: Dict) -> None:
+    """The component exports the node's leaves over OTEL, reading the same as the CLI (SR-1)."""
+    snap = ibo.active_surface().snapshot("peer-platform", platform=True)
+    groups = [PEER_PLATFORM_OTEL_GROUPS[node.node_id]] + [
+        PEER_PLATFORM_OTEL_GROUPS[extra] for extra in PEER_PLATFORM_OTEL_EXTRA_GROUPS.get(node.node_id, ())
+    ]
+    problems: List[str] = []
+    compared = 0
+    if node.member_leaves:
+        cli_members = {ibh.list_member_index(key): ibh.peer_port_show_leaves(member)
+                       for key, member in ibh.peer_port_show_containers(body).items()}
+        for group in groups:
+            otel_members = ibh.otel_member_labels(snap, group, name)
+            missing = sorted(set(cli_members) - set(otel_members))
+            if missing:
+                problems.append(f"{name}: OTEL exports no {group.member_label} {missing} of the "
+                                f"CLI's {sorted(cli_members)}")
+            expected = {leaf: kind for leaf, kind in node.member_leaves.items()
+                        if leaf in group.leaves}
+            for index, cli_member in sorted(cli_members.items()):
+                if index not in otel_members:
+                    continue
+                member_problems, member_compared = ibh.otel_leaf_parity_problems(
+                    snap, group, name, expected, cli_member, API_NVUE_CLI,
+                    member=otel_members[index])
+                problems += member_problems
+                compared += member_compared
+    else:
+        problems, compared = ibh.otel_leaf_parity_problems(
+            snap, groups[0], name, node.leaves, ibh.peer_port_show_leaves(body), API_NVUE_CLI)
+    logger.info("Compared %d %s leaf value(s) across the CLI and OTEL", compared, node.node_id)
+    ResultObj(
+        not problems and compared > 0,
+        f"Component {name} exports {len(problems)} {node.node_id} leaf value(s) over OTEL that "
+        f"differ from or are missing against the CLI (compared {compared}); only the encoding "
+        f"may differ, and sampled values may differ within sampling jitter (SR-1):\n  " +
+        "\n  ".join(problems),
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+
+
+# 5.7 test_peer_platform_transceiver_and_asic_show
+@pytest.mark.gnmi
+@pytest.mark.otel
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.platform
+@pytest.mark.transceiver
+@pytest.mark.multiplanar
+@pytest.mark.nvos_build
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+@pytest.mark.parametrize("node", PEER_PLATFORM_SHOW_NODES, ids=lambda n: n.node_id)
+def test_peer_platform_transceiver_and_asic_show(engines, devices, gnmi_client, topology_obj, node, ib_otel,
+                                                 random_api):
+    """A neighbor's cable and chip open by name and report their identity, readings and alarms.
+
+    The CLI, gNMI and OTEL agree on them.
+    """
+    _enable_peer_port(engines)
+    _require_listed_hca_peers(engines)
+
+    with allure.step("Take the component names one HCA neighbor points at"):
+        pid, names = ibh.hca_peer_component_names(engines, gnmi_client)
+        ibh.attach_dict("peer component names", {"peer": pid, "components": names})
+        ResultObj(
+            node.kind in names,
+            f"No HCA row names a {node.kind!r} component, so the {node.node_id!r} "
+            f"sub-command has nothing to open (SR-4)",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+        name = names[node.kind]
+
+    cmd = f"nv show peer-platform {node.kind} {name} {node.sub}".strip()
+    with allure.step(f"Verify `{cmd}`"):
+        body = ibh.nvue_peer_platform_show(engines, node.kind, name, node.sub)
+        ibh.attach_dict(cmd, body)
+        problems = ibh.peer_platform_show_problems(body, node)
+        ResultObj(
+            not problems,
+            f"`{cmd}` has {len(problems)} contract problem(s):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    if node.member_leaves:
+        with allure.step(f"Open each member with `{cmd} <ch>`"):
+            problems = []
+            for member_key in sorted(ibh.peer_port_show_containers(body)):
+                shown = ibh.nvue_peer_platform_show(engines, node.kind, name,
+                                                    f"{node.sub} {member_key}")
+                problems += [f"`{cmd} {member_key}` {problem}" for problem in ibh.leaf_problems(
+                    ibh.peer_port_show_leaves(shown), node.member_leaves, where=node.node_id)]
+            ResultObj(
+                not problems,
+                f"{len(problems)} problem(s) opening single members of `{cmd}` (HLD section "
+                f"5.3):\n  " + "\n  ".join(problems),
+                issue_type=IssueType.PossibleBug,
+            ).verify_result()
+
+    # A node either renders one flat payload or a keyed list of members, never both.
+    gnmi_members = (ibh.gnmi_peer_platform_members(gnmi_client, node, name)
+                    if node.member_leaves else {})
+    gnmi_leaves = ({} if node.member_leaves
+                   else ibh.gnmi_peer_platform_leaves(gnmi_client, node, name))
+
+    with allure.step(f"Verify the same {node.node_id} leaves over gNMI"):
+        if node.member_leaves:
+            ibh.attach_dict(f"gnmi {node.node_id} members", gnmi_members)
+            problems = [] if gnmi_members else [f"gNMI exposes no {node.node_id} member"]
+            problems += [
+                f"member [{member_key}] {problem}"
+                for member_key, member in sorted(gnmi_members.items())
+                for problem in ibh.leaf_problems(member, node.member_leaves, where=name)
+            ]
+        else:
+            ibh.attach_dict(f"gnmi {node.node_id}", gnmi_leaves)
+            problems = ibh.leaf_problems(gnmi_leaves, node.leaves, where=name)
+        ResultObj(
+            not problems,
+            f"The gNMI {node.node_id} leaves of component {name} have {len(problems)} "
+            f"problem(s):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    if node.kind == PeerPlatformKind.ASIC and node.sub == PeerPlatformSub.ROOT:
+        with allure.step("The peer ASIC names the remote host, not this switch"):
+            _verify_peer_asic_host_name(engines, topology_obj, devices, pid,
+                                        ibh.leaf_lookup(ibh.flatten_nvue_leaves(body)))
+
+    if not body:
+        return
+    with allure.step(f"The CLI and gNMI agree on the {node.node_id} leaves"):
+        if node.member_leaves:
+            cli_members = {ibh.list_member_index(key): ibh.peer_port_show_leaves(member)
+                           for key, member in ibh.peer_port_show_containers(body).items()}
+            gnmi_by_index = {ibh.list_member_index(key): member
+                             for key, member in gnmi_members.items()}
+            problems, compared = [], 0
+            if set(cli_members) != set(gnmi_by_index):
+                problems.append(f"the CLI lists member(s) {sorted(cli_members)!r} while gNMI "
+                                f"lists {sorted(gnmi_by_index)!r}")
+                # Report a pure 0-based/1-based numbering gap once, then compare the members
+                # side by side so a real value difference is not buried under it.
+                gnmi_by_index = ibh.shift_member_index_to_match(cli_members, gnmi_by_index)
+            for member_key, cli_member in sorted(cli_members.items()):
+                member_problems, member_compared = ibh.leaf_parity_problems(
+                    node.member_leaves, cli_member, gnmi_by_index.get(member_key, {}),
+                    API_NVUE_CLI, API_GNMIC)
+                problems += [f"member [{member_key}] {problem}" for problem in member_problems]
+                compared += member_compared
+        else:
+            problems, compared = ibh.leaf_parity_problems(
+                node.leaves, ibh.peer_port_show_leaves(body), gnmi_leaves,
+                API_NVUE_CLI, API_GNMIC)
+        logger.info("Compared %d %s leaf value(s) across both surfaces", compared, node.node_id)
+        ResultObj(
+            not problems,
+            f"Component {name} reports {len(problems)} {node.node_id} leaf value(s) "
+            f"differently on the CLI and over gNMI; only the encoding may differ, and sampled "
+            f"values may differ within sampling jitter (SR-1):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step(f"The CLI and OTEL agree on the {node.node_id} leaves"):
+        _verify_peer_platform_otel(node, name, body)
 
 
 # 6.10 test_hca_xcset_ingestion (plan §6.2)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.requires_hfnm
-@pytest.mark.timeout(12 * MINUTE, func_only=True)
-def test_hca_xcset_ingestion(engines, devices, setup_topology, setup_name, request):
-    """gpu-telemetry writes each HCA as its own DB row; additive counters stay monotonic under traffic."""
+@pytest.mark.timeout(14 * MINUTE, func_only=True)
+def test_hca_xcset_ingestion(engines, devices, setup_topology, setup_name, request, ib_otel):
+    """gpu-telemetry writes each HCA as its own DB row; additive counters stay monotonic under traffic.
+
+    OTEL exports every ingested row, and its counters stay monotonic across the same traffic.
+    """
     _enable_peer_port_for_hca(engines, tier=PeerPortFields.TIER_AGGREGATED)
     _assert_hca_ingestion_directly_on_dut(engines, setup_topology)
     _require_external_hca_topology(setup_topology)
@@ -747,6 +1387,13 @@ def test_hca_xcset_ingestion(engines, devices, setup_topology, setup_name, reque
 
     players, interfaces = _require_active_fabric_and_traffic(engines, request, setup_name)
 
+    with allure.step("OTEL exports every ingested aggregated HCA row"):
+        otel_initial = _otel_hca_rows("pre-traffic")
+        missing = sorted(set(hca_rows) - set(otel_initial))
+        assert not missing, (
+            f"Ingested aggregated HCA row(s) not exported over OTEL: {missing!r}"
+        )
+
     with allure.step("Snapshot the HCA row, drive an IB traffic burst, re-read"):
         initial = ibh.read_peer_port_row(engines, one_pid)
         Tools.TrafficGeneratorTool.send_ib_traffic(players, interfaces, setup_name, True).verify_result()
@@ -754,12 +1401,21 @@ def test_hca_xcset_ingestion(engines, devices, setup_topology, setup_name, reque
         after = ibh.read_peer_port_row(engines, one_pid)
         ibh.attach_dict(f"hca {one_pid} pre/post traffic", {"initial": initial, "after": after})
         assert after, f"HCA row {one_pid} vanished after traffic"
+        otel_after = _otel_hca_rows("post-traffic")
 
     with allure.step("Additive counters are monotonic across the traffic burst"):
         ibh.assert_counters_monotonic(
             initial, after, PEER_PORT_DB_ADDITIVE_FIELDS,
             label=f"HCA {one_pid} across traffic",
         )
+
+    with allure.step("OTEL additive counters are monotonic across the traffic burst"):
+        assert one_pid in otel_after, f"HCA peer {one_pid} is no longer exported over OTEL after traffic"
+        compared = ibh.assert_counters_monotonic(
+            otel_initial[one_pid], otel_after[one_pid], list(PEER_PORT_OTEL_ADDITIVE_LEAVES),
+            label=f"HCA {one_pid} over OTEL across traffic",
+        )
+        assert compared > 0, f"HCA peer {one_pid} exports no additive counter over OTEL"
 
 
 # 6.x test_hca_xcset_matches_system_db (ingestion fidelity: xcset <-> System DB)
@@ -822,11 +1478,15 @@ def test_hca_xcset_matches_system_db(engines, devices, setup_topology):
 
 # 6.11 test_hca_peerport_to_aport_mapping (plan §6.4)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_hca_peerport_to_aport_mapping(engines, devices, gnmi_client, setup_topology):
-    """Every HCA peer-port maps to a real local switch port matching external HCA cabling (by plane IB port)."""
+def test_hca_peerport_to_aport_mapping(engines, devices, gnmi_client, setup_topology, ib_otel):
+    """Every HCA peer-port maps to a real local switch port matching external HCA cabling (by plane IB port).
+
+    Checked on gNMI and on the OTEL switch_info.
+    """
     _enable_peer_port(engines)
     _assert_hca_ingestion_directly_on_dut(engines, setup_topology)
     _require_external_hca_topology(setup_topology)
@@ -855,14 +1515,30 @@ def test_hca_peerport_to_aport_mapping(engines, devices, gnmi_client, setup_topo
         )
         _assert_switch_ports_cover_external_hca(hca_live, expected_ports)
 
+    with allure.step("OTEL: aggregated HCA peers reference valid Aports matching external cabling"):
+        otel_live = ibh.aggregated_peer_entries(_otel_hca_rows("peer-aport-mapping"))
+        assert otel_live, f"No aggregated peer-type={PeerType.HCA} peers exported over OTEL"
+        _assert_peers_reference_known_aports(otel_live, valid_aports)
+        _assert_external_hca_neighbor_guids_present(
+            ibh.aggregated_hca_node_guids(otel_live),
+            expected_guids,
+            label=API_OTEL,
+            row_count=len(otel_live),
+        )
+        _assert_switch_ports_cover_external_hca(otel_live, expected_ports)
+
 
 # 6.12 test_hca_peerport_aggregation (plan §6.5)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_hca_peerport_aggregation(engines, devices, gnmi_client, setup_topology):
-    """Validate HCA parent/child aggregation: plane rows link to parent; counters sum when guids partition."""
+def test_hca_peerport_aggregation(engines, devices, gnmi_client, setup_topology, ib_otel):
+    """Validate HCA parent/child aggregation: plane rows link to parent; counters sum when guids partition.
+
+    OTEL exports the aggregate and its plane rows, with the same roll-up.
+    """
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines, tier=PeerPortFields.TIER_PLANE)
 
@@ -900,6 +1576,13 @@ def test_hca_peerport_aggregation(engines, devices, gnmi_client, setup_topology)
             assert ibh.peer_row_parent(row) == parent, (
                 f"Plane peer {pid!r} parent is {ibh.peer_row_parent(row)!r}, expected {parent!r}"
             )
+
+    with allure.step(f"OTEL exports {parent} and its plane rows"):
+        otel_rows = _otel_peer_rows("peer-aggregation")
+        missing = [pid for pid in [parent, *member_pids] if pid not in otel_rows]
+        assert not missing, (
+            f"HCA aggregate {parent} / plane row(s) not exported over OTEL: {missing!r}"
+        )
 
     if not ibh.hca_aggregate_counters_partitioned_by_planes(aggregate, plane_rows, member_pids):
         logger.info(
@@ -939,14 +1622,33 @@ def test_hca_peerport_aggregation(engines, devices, gnmi_client, setup_topology)
             f"plane rows {member_pids!r} (agg keys={sorted(aggregate)!r})"
         )
 
+    with allure.step("OTEL: the aggregate's additive counters are the sum of its plane rows"):
+        compared = 0
+        for leaf in PEER_PORT_OTEL_ADDITIVE_LEAVES:
+            member_vals = [otel_rows[pid].get(leaf) for pid in member_pids]
+            agg_val = otel_rows[parent].get(leaf)
+            if agg_val is None or None in member_vals:
+                continue
+            summed = sum(int(v) for v in member_vals)
+            assert ibh.values_within_tolerance(summed, int(agg_val), SAMPLING_JITTER_TOLERANCE_PCT), (
+                f"HCA {parent} aggregate {leaf}={agg_val} over OTEL != sum of "
+                f"{len(member_pids)} plane rows ({summed})"
+            )
+            compared += 1
+        assert compared > 0, (
+            f"No additive counter is exported over OTEL on both {parent} and every plane row "
+            f"{member_pids!r} (agg keys={sorted(otel_rows[parent])!r})"
+        )
+
 
 # 6.13 test_hca_peerport_db_api_set_consistency (nice-to-have)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_hca_peerport_db_api_set_consistency(engines, devices, gnmi_client, setup_topology):
-    """The HCA peer set in System DB exactly matches gNMI, with unique keys (no duplicate ingestion)."""
+def test_hca_peerport_db_api_set_consistency(engines, devices, gnmi_client, setup_topology, ib_otel):
+    """The HCA peer set in System DB exactly matches gNMI and OTEL, with unique keys (no duplicate ingestion)."""
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines)
 
@@ -964,10 +1666,10 @@ def test_hca_peerport_db_api_set_consistency(engines, devices, gnmi_client, setu
         assert not dups, f"Duplicate PEER_COUNTERS keys ingested: {dups!r}"
 
     with allure.step("DB and gNMI expose the same HCA identity set"):
-        db_idents = {ibh.peer_entry_identity(r, fallback=pid) for pid, r in db_rows.items()}
-        api_idents = {ibh.peer_entry_identity(f, fallback=pid) for pid, f in api_hca.items()}
-        missing_in_api = db_idents - api_idents
-        orphan_in_api = api_idents - db_idents
+        db_identities = {ibh.peer_entry_identity(r, fallback=pid) for pid, r in db_rows.items()}
+        api_identities = {ibh.peer_entry_identity(f, fallback=pid) for pid, f in api_hca.items()}
+        missing_in_api = db_identities - api_identities
+        orphan_in_api = api_identities - db_identities
         assert not missing_in_api, (
             f"HCA rows present in System DB but not exposed via gNMI: {sorted(missing_in_api)!r}"
         )
@@ -975,13 +1677,26 @@ def test_hca_peerport_db_api_set_consistency(engines, devices, gnmi_client, setu
             f"HCA peers exposed via gNMI with no System DB row: {sorted(orphan_in_api)!r}"
         )
 
+    with allure.step("DB and OTEL expose the same HCA identity set"):
+        otel_hca = _otel_hca_rows("peer-set")
+        otel_identities = {ibh.peer_entry_identity(f, fallback=pid) for pid, f in otel_hca.items()}
+        assert db_identities == otel_identities, (
+            f"HCA identity sets differ between System DB and OTEL: "
+            f"DB-only={sorted(db_identities - otel_identities)!r}, "
+            f"OTEL-only={sorted(otel_identities - db_identities)!r}"
+        )
+
 
 # 6.14 test_peer_telemetry_health_steady_state_healthy (nice-to-have)
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_peer_telemetry_health_steady_state_healthy(engines, devices, setup_topology):
-    """In steady state, gpu-telemetry publishes PEER_PORT_TELEMETRY_HEALTH healthy in STATE_DB."""
+def test_peer_telemetry_health_steady_state_healthy(engines, devices, setup_topology, ib_otel):
+    """In steady state, gpu-telemetry publishes PEER_PORT_TELEMETRY_HEALTH healthy in STATE_DB.
+
+    Every ingested HCA peer then exports a defined link health over OTEL.
+    """
     _require_hca_topology(setup_topology)
     _enable_peer_port(engines)
 
@@ -1000,14 +1715,21 @@ def test_peer_telemetry_health_steady_state_healthy(engines, devices, setup_topo
             f"Steady-state PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}); expected healthy."
         )
 
-
-def _is_gnmi_entry_absent(exc: BaseException) -> bool:
-    """True when a gNMI read failed because the container/entry is not implemented
-    for that peer (an FNM-connected HCA with no transceiver/component, or a plane leg
-    whose link is down). Such a per-peer applicability gap is tolerated by the schema
-    sweep rather than failed."""
-    msg = str(exc).lower()
-    return "unimplemented" in msg and "cannot find the entry" in msg
+    with allure.step(f"OTEL: every ingested HCA peer exports {PEER_PORT_OTEL_LINK_HEALTH}"):
+        rows = ibh.list_hca_peer_rows(engines)
+        assert rows, "No HCA peer-port rows in System DB (HCA feature build delivered?)"
+        snap = ibo.active_surface().snapshot("peer-health", fresh=True)
+        problems = []
+        for pid in sorted(rows):
+            series = snap.current(PEER_PORT_OTEL_LINK_HEALTH, **{OtelLabel.INTERFACE: pid})
+            if len(series) != 1:
+                problems.append(f"{pid}: {len(series)} current series (expected 1)")
+            elif series[0].latest not in OTEL_LINK_HEALTH_STATES:
+                problems.append(f"{pid}: {series[0].latest} is not one of {OTEL_LINK_HEALTH_STATES}")
+        assert not problems, (
+            f"{PEER_PORT_OTEL_LINK_HEALTH} problems on {len(problems)} peer(s):\n  " +
+            "\n  ".join(problems)
+        )
 
 
 # 7.4 test_peer_port_gnmi_schema_paths_present_and_typed (nice-to-have)
@@ -1015,30 +1737,37 @@ def _is_gnmi_entry_absent(exc: BaseException) -> bool:
 # disable + cold re-ingest otherwise flakes on not-yet-populated leaves.
 @pytest.mark.skip_clear_config
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(12 * MINUTE, func_only=True)
+@pytest.mark.timeout(14 * MINUTE, func_only=True)
 @pytest.mark.parametrize("group", PEER_PORT_SCHEMA_GROUPS, ids=lambda g: g.group_id)
-def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_client, setup_topology, group):
-    """Positive gNMI schema sweep of the nvidia-peer-port model: every documented leaf present and typed."""
-    _enable_peer_port(engines)
-    targets = _select_peer_port_targets(gnmi_client)
-    problems: List[str] = []
+def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_client, setup_topology, group,
+                                                       ib_otel):
+    """Positive gNMI schema sweep of the nvidia-peer-port model: every documented leaf present and typed.
 
-    # A peer that doesn't implement this container (an FNM-connected HCA with no
-    # transceiver/component, or a plane leg whose link is down) answers the subscribe
-    # with gNMI Unimplemented "cannot find the entry" - a per-peer applicability gap,
-    # not a schema violation. Tolerate it and count how many peers actually exposed it.
+    Every peer exposing the container over gNMI exports the same leaves over OTEL.
+    """
+    _enable_peer_port(engines)
+    targets = _peer_port_schema_targets(gnmi_client, group)
+    problems: List[str] = []
+    exposed_payloads: List[Tuple[str, str, Dict[str, str]]] = []
+
+    # A peer that doesn't implement a per-port container (a plane leg whose link is down)
+    # answers the subscribe with gNMI Unimplemented "cannot find the entry" - a per-peer
+    # applicability gap, not a schema violation. Tolerate it and count how many peers exposed
+    # it. A component container is addressed by a name a peer-port published, so it must exist.
     exposed = 0
-    with allure.step(f"Sweep peer-port container {group.group_id!r} across {len(targets)} peer(s)"):
+    with allure.step(f"Sweep peer-port container {group.group_id!r} across {len(targets)} target(s)"):
         for role, pid in targets:
             prefix = group.prefix.format(name=pid)
             with allure.independent_step(f"Sweep {group.group_id} on {role} {pid} ({prefix})"):
+                read = ibh.gnmi_get_flat_relative if group.relative_leaves else ibh.gnmi_get_flat
                 try:
-                    payload = ibh.gnmi_get_flat(gnmi_client, prefix=prefix, path="")
+                    payload = read(gnmi_client, prefix=prefix, path="")
                 except AssertionError as exc:
-                    if _is_gnmi_entry_absent(exc):
+                    if not group.component_ref and ibh.is_gnmi_entry_absent(str(exc)):
                         logger.info(
                             "[%s %s] container %s not implemented for this peer "
                             "(gNMI 'cannot find the entry'); tolerated as N/A",
@@ -1047,6 +1776,7 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
                         continue
                     raise
                 exposed += 1
+                exposed_payloads.append((role, pid, payload))
                 ibh.attach_dict(f"{group.group_id} {role} {pid}", payload)
                 # `pending` leaves (known build gap) are tolerated-missing but still typed.
                 problems += [
@@ -1054,6 +1784,24 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
                     for problem in ibh.leaf_problems(
                         payload, group.leaves, tolerated_missing=group.pending, where=prefix)
                 ]
+
+    otel_group = PEER_PORT_OTEL_SCHEMA_GROUPS.get(group.group_id)
+    if otel_group is None:
+        problems.append(f"container {group.group_id!r} has no OTEL rendering defined")
+    elif exposed_payloads:
+        with allure.step(f"The same {group.group_id!r} leaves are exported over OTEL"):
+            snap = ibo.active_surface().snapshot(
+                "peer-schema", platform=bool(group.component_ref), fresh=True)
+            for role, pid, payload in exposed_payloads:
+                # A pending leaf is required over OTEL only where gNMI already carries it and
+                # the leaf has an OTEL rendering.
+                unexported = PEER_PORT_OTEL_UNEXPORTED_SCHEMA_LEAVES.get(group.group_id, frozenset())
+                leaves = [leaf for leaf in group.leaves
+                          if leaf not in unexported and
+                          (leaf not in group.pending or
+                           (leaf in payload and leaf in otel_group.leaves))]
+                problems += [f"[{role} {pid}] OTEL: {problem}"
+                             for problem in ibo.group_problems(snap, otel_group, pid, leaves=leaves)]
 
     if exposed == 0:
         pytest.skip(
@@ -1066,36 +1814,362 @@ def test_peer_port_gnmi_schema_paths_present_and_typed(engines, devices, gnmi_cl
     )
 
 
-# 7.5 test_peer_port_gnmi_list_subtree_paths_present_and_typed (nice-to-have)
-@pytest.mark.gnmi
+# 6.6, last step: a column NMX-T does not serve omits one leaf, not the row (SR-7).
+#
+# Its own case rather than a step of the parameterized sweep, because it swaps out the NMX-T
+# backend - as a step it would tear the backend down and rebuild it once per schema group.
+def _otel_missing_column_problems(snap: ibo.OtelSnapshot, pid: str,
+                                  before: Dict[str, str], after: Dict[str, str]) -> List[str]:
+    """The peer is still exported, and nothing its now-missing DB fields fed is (SR-7)."""
+    dropped = sorted({f for f, v in before.items() if str(v).strip()} -
+                     {f for f, v in after.items() if str(v).strip()})
+    problems = []
+    if not snap.current(PEER_PORT_OTEL_NODE_INFO, **{OtelLabel.INTERFACE: pid}):
+        problems.append(f"{pid} is no longer exported over OTEL ({PEER_PORT_OTEL_NODE_INFO}); "
+                        f"only the leaf the column fed may go")
+    identity = ibo.peer_identity(snap, pid)
+    label_by_field = {db_field: label for label, db_field in PEER_PORT_OTEL_IDENTITY_DB_FIELD.items()}
+    for db_field in dropped:
+        metric = PEER_PORT_OTEL_METRIC_BY_DB_FIELD.get(db_field)
+        if metric and snap.current(metric, **{OtelLabel.INTERFACE: pid}):
+            problems.append(f"{pid}: {metric} is still exported although DB {db_field} is gone")
+        label = label_by_field.get(db_field)
+        if label and not ibh.component_source_absent(identity.get(label)):
+            problems.append(f"{pid}: identity label {label}={identity[label]!r} is still exported "
+                            f"although DB {db_field} is gone")
+    return problems
+
+
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(10 * MINUTE, func_only=True)
-@pytest.mark.parametrize("group", PEER_PORT_LIST_SCHEMA_GROUPS, ids=lambda g: g.group_id)
-def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, gnmi_client, setup_topology, group):
-    """Positive schema sweep of the peer-port list subtrees: each exposed member's value leaf present and typed (empty tolerated)."""
-    _enable_peer_port(engines)
-    targets = _select_peer_port_targets(gnmi_client)
-    problems: List[str] = []
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+def test_peer_port_missing_xcset_column_omits_one_leaf(engines, devices, gnmi_client, ib_otel):
+    """A column absent from the xcset omits its leaf; the peer-port row and its components survive.
 
-    with allure.step(f"Sweep peer-port list {group.group_id!r} across {len(targets)} peer(s)"):
-        for role, pid in targets:
-            prefix = group.list_prefix.format(name=pid)
-            with allure.independent_step(f"Sweep list {group.group_id} on {role} {pid} ({prefix})"):
-                members = ibh.gnmi_list_members(gnmi_client, prefix)
-                ibh.attach_dict(f"{group.group_id} {role} {pid}", members)
+    The OTEL export drops the same leaf and keeps the peer.
+    """
+    _enable_peer_port_for_hca(engines)
+    _require_listed_hca_peers(engines)
+
+    with allure.step("Read the xcset NMX-T serves and pick an extended column to remove"):
+        raw = ibh.read_hca_xcset_raw(engines)
+        assert raw, (
+            "NMX-T-for-IB served an empty HCA xcset, so there is no sample to rewrite. "
+            "Confirm NMX-T-for-IB is serving the HCA report."
+        )
+        column, pid = ibh.select_droppable_xcset_column(
+            engines, ibh.hca_xcset_rows_from_raw(raw))
+        ResultObj(
+            bool(column),
+            "The served xcset carries no extended column with a value on any ingested HCA "
+            "row, so no column can be removed to exercise SR-7",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+        logger.info("Removing column %r, which feeds peer-port %s", column, pid)
+
+    with allure.step(f"Serve the xcset without {column!r} and re-read {pid}"):
+        before = ibh.read_peer_port_row(engines, pid)
+        refs_before = ibh.peer_component_refs(ibh.gnmi_get_peer_port(gnmi_client, pid))
+        assert before, f"No COUNTERS_DB PEER_COUNTERS row for {pid} before the column was removed"
+        with ibh.serving_hca_xcset(engines, ibh.xcset_csv_drop_column(raw, column)):
+            time.sleep(_peer_port_interval_sec() * PEER_PORT_SETTLE_INTERVALS)
+            after = ibh.read_peer_port_row(engines, pid)
+            refs_after = ibh.peer_component_refs(ibh.gnmi_get_peer_port(gnmi_client, pid))
+            otel_snap = ibo.active_surface().snapshot("xcset-column-dropped", fresh=True)
+        ibh.attach_dict(f"{pid} with and without {column}",
+                        {"before": before, "after": after,
+                         "refs before": refs_before, "refs after": refs_after})
+
+    with allure.step(f"The {pid} row survives and no field is reported as zero instead"):
+        problems = ibh.missing_xcset_column_problems(before, after, column,
+                                                     refs_before, refs_after)
+        if column in before and column in after:
+            problems.append(f"COUNTERS_DB still holds {column}={after[column]!r} on {pid} after "
+                            f"the column was removed from the served xcset; SR-7 requires the "
+                            f"leaf to be omitted, not to keep its last value")
+        elif before == after:
+            problems.append(f"removing {column!r} changed no field of {pid}, although the "
+                            f"column was selected for feeding it")
+        ResultObj(
+            not problems,
+            f"Removing xcset column {column!r} broke {len(problems)} SR-7 expectation(s):\n  " +
+            "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step(f"OTEL keeps exporting {pid} and drops only what {column!r} fed"):
+        problems = _otel_missing_column_problems(otel_snap, pid, before, after)
+        ResultObj(
+            not problems,
+            f"Removing xcset column {column!r} broke {len(problems)} SR-7 expectation(s) over "
+            f"OTEL:\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+
+def _verify_unnamed_sources_invent_nothing(engines, gnmi_client, raw, peers, db_rows,
+                                           xcset_by_key) -> None:
+    """Blanking an identifier column drops that component only; the peer's row survives (SR-7).
+
+    No lab has a peer whose serial or node GUID is genuinely missing, so the condition is
+    produced by serving an xcset with the column cleared on one row.
+    """
+    target = next((pid for pid in sorted(peers)
+                   if ibh.xcset_row_for_db_row(db_rows.get(pid, {}), xcset_by_key)), "")
+    ResultObj(
+        bool(target),
+        "No listed HCA row joins to an xcset row, so no identifier can be blanked (SR-7)",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+    join_key = ibh.hca_xcset_join_key(db_rows[target])
+
+    with allure.step(f"An identifier-less source on {target} invents no component (SR-7)"):
+        for column, ref_leaf in ((PeerComponentXcsetColumn.MODULE_SERIAL,
+                                  PeerPortComponentRef.TRANSCEIVER),
+                                 (PeerComponentXcsetColumn.NODE_GUID,
+                                  PeerPortComponentRef.INTEGRATED_CIRCUIT)):
+            with allure.independent_step(f"Blank {column} on {target} and re-read it"):
+                ResultObj(
+                    column in ibh.xcset_header(raw),
+                    f"NMX-T serves no {column!r} column, which the {ref_leaf} component is "
+                    f"named from (SR-4)",
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+                named_before = ibh.peer_component_refs(peers[target]).get(ref_leaf, "")
+                with ibh.serving_hca_xcset(
+                        engines, ibh.xcset_csv_blank_column(raw, column, join_key)):
+                    time.sleep(_peer_port_interval_sec() * PEER_PORT_SETTLE_INTERVALS)
+                    row = ibh.read_peer_port_row(engines, target)
+                    refs = ibh.peer_component_refs(ibh.gnmi_get_peer_port(gnmi_client, target))
+                    listed = set(ibh.gnmi_list_members(
+                        gnmi_client, GnmiYangPaths.PEER_PORT_COMPONENTS, relative=True))
+                ibh.attach_dict(f"{target} with {column} blanked",
+                                {"row": row, "refs": refs, "components": sorted(listed)})
+
+                problems = []
+                if not row:
+                    problems.append(
+                        f"the {target} row disappeared when {column} was cleared; the peer's own "
+                        f"row must still be listed"
+                    )
+                if refs.get(ref_leaf):
+                    problems.append(
+                        f"{target} still names a {ref_leaf} component {refs[ref_leaf]!r} with "
+                        f"{column} cleared; no component may be created without an identifier"
+                    )
+                # Peers sharing one module share one name, so the component may legitimately
+                # survive on someone else's reference; only an orphan must disappear.
+                still_referenced = any(
+                    named_before and ibh.peer_component_refs(other).get(ref_leaf) == named_before
+                    for pid, other in peers.items() if pid != target
+                )
+                if named_before and not still_referenced and named_before in listed:
+                    problems.append(
+                        f"component {named_before!r} is still listed under "
+                        f"{GnmiYangPaths.PEER_PORT_COMPONENTS} although {column} was cleared and "
+                        f"no other peer references it"
+                    )
+                ResultObj(
+                    not problems,
+                    f"Clearing {column} broke {len(problems)} SR-7 expectation(s):\n  " +
+                    "\n  ".join(problems),
+                    issue_type=IssueType.PossibleBug,
+                ).verify_result()
+
+
+def _otel_peer_component_names(snap: ibo.OtelSnapshot) -> set:
+    """Names of the peer transceivers and ASICs the OTEL window exports."""
+    names = set()
+    for node_id in ("transceiver-identity", "asic"):
+        for spec in PEER_PLATFORM_OTEL_GROUPS[node_id].leaves.values():
+            names |= snap.keys(spec.metric, OtelLabel.NAME)
+    return names
+
+
+# 6.9 test_peer_component_naming_and_linkage
+@pytest.mark.gnmi
+@pytest.mark.otel
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.transceiver
+@pytest.mark.multiplanar
+@pytest.mark.nvos_build
+@pytest.mark.timeout(14 * MINUTE, func_only=True)
+def test_peer_component_naming_and_linkage(engines, devices, gnmi_client, ib_otel):
+    """Peer cables and chips are named per the rule, linked from the peer-port, never invented.
+
+    OTEL names the same components on each peer and exports every one of them.
+    """
+    _enable_peer_port_for_hca(engines)
+    listed_hca = _require_listed_hca_peers(engines)
+
+    with allure.step("Read the xcset identifiers and the gNMI state behind every HCA row"):
+        raw = ibh.read_hca_xcset_raw(engines)
+        xcset_by_key = ibh.xcset_rows_by_join_key(ibh.hca_xcset_rows_from_raw(raw))
+        db_rows = ibh.list_hca_peer_rows(engines)
+        # The references are read from the gNMI state the naming rule is defined on; whether
+        # `nv show peer-port <peer>` renders them identically is the listing test's check.
+        states = ibh.gnmi_get_peer_port_list(gnmi_client)
+        peers = {pid: states.get(pid, {})
+                 for pid in ibh.most_specific_peer_entries(listed_hca)}
+        ibh.attach_dict("xcset rows by join key", xcset_by_key)
+        ibh.attach_dict("gnmi state of the hca rows", peers)
+        assert xcset_by_key, (
+            "NMX-T-for-IB served no HCA xcset row, so there are no identifiers to name a "
+            "component from. Confirm NMX-T-for-IB is serving the HCA report."
+        )
+
+    with allure.step(f"Component names on {len(peers)} peer(s) follow the naming rule"):
+        problems = []
+        named = 0
+        for pid, fields in sorted(peers.items()):
+            xcset_row = ibh.xcset_row_for_db_row(db_rows.get(pid, {}), xcset_by_key)
+            if not xcset_row:
+                problems.append(f"[{pid}] joins to no xcset row, so its component names have "
+                                f"no identifiers to be checked against")
+                continue
+            refs = ibh.peer_component_refs(fields)
+            named += bool(refs)
+            problems += ibh.component_naming_problems(pid, xcset_row, refs)
+        if not named:
+            problems.append("no ingested HCA row names a transceiver or an "
+                            "integrated-circuit component")
+        ResultObj(
+            not problems,
+            f"Peer component naming has {len(problems)} problem(s). A name is "
+            f"xcvr-<serial>[-<sys-image-guid>] or asic-<node-guid>, with a leading 0x dropped "
+            f"and every other character replaced (SR-4):\n  " + "\n  ".join(problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step("Every named component resolves in the gNMI component tree"):
+        listed = set(ibh.gnmi_list_members(
+            gnmi_client, GnmiYangPaths.PEER_PORT_COMPONENTS, relative=True))
+        wanted = {name for fields in peers.values()
+                  for name in ibh.peer_component_refs(fields).values()}
+        ibh.attach_dict("peer components", {"listed": sorted(listed), "named": sorted(wanted)})
+        unlisted = sorted(wanted - listed)
+        ResultObj(
+            not unlisted,
+            f"{len(unlisted)} component name(s) are published on a peer-port but absent from "
+            f"{GnmiYangPaths.PEER_PORT_COMPONENTS} (SR-4): {unlisted!r}",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step("Peers sharing one physical module share one transceiver name"):
+        shared_problems = ibh.shared_module_problems(peers, xcset_by_key, db_rows)
+        ResultObj(
+            not shared_problems,
+            "Ports on one module must share one component name (SR-4):\n  " +
+            "\n  ".join(shared_problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    with allure.step("OTEL names the same components and exports each of them"):
+        snap = ibo.active_surface().snapshot("peer-components", platform=True, fresh=True)
+        otel_problems = []
+        for pid, fields in sorted(peers.items()):
+            refs = ibh.peer_component_refs(fields)
+            otel_refs = ibh.peer_component_refs(ibo.peer_identity_leaf_values(snap, pid))
+            if refs != otel_refs:
+                otel_problems.append(f"[{pid}] names {otel_refs!r} over OTEL but {refs!r} over gNMI")
+        exported = _otel_peer_component_names(snap)
+        ibh.attach_dict("peer components over OTEL", {"exported": sorted(exported),
+                                                      "named": sorted(wanted)})
+        otel_problems += [f"component {name!r} is named on a peer-port but not exported over OTEL"
+                          for name in sorted(wanted - exported)]
+        ResultObj(
+            not otel_problems,
+            f"OTEL peer component linkage has {len(otel_problems)} problem(s) (SR-4):\n  " +
+            "\n  ".join(otel_problems),
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+
+    _verify_unnamed_sources_invent_nothing(engines, gnmi_client, raw, peers, db_rows, xcset_by_key)
+
+
+def _otel_list_group_problems(group, listed: List[Tuple[str, str, Dict]]) -> List[str]:
+    """Each gNMI list is exported over OTEL with the same members (histogram: the same buckets)."""
+    otel_group = PEER_PORT_OTEL_LIST_GROUPS.get(group.group_id)
+    if otel_group is None:
+        return [f"list {group.group_id!r} has no OTEL rendering defined"]
+    snap = ibo.active_surface().snapshot("peer-list-schema", platform=bool(group.component_ref),
+                                         fresh=True)
+    problems = []
+    for role, name, members in listed:
+        where = f"[{role} {name}] OTEL:"
+        if otel_group.member_label is None:
+            for leaf, spec in otel_group.leaves.items():
+                series = snap.current(spec.metric, **{otel_group.key_label: name})
+                if len(series) != 1:
+                    problems.append(f"{where} {leaf} ({spec.metric}) has {len(series)} current "
+                                    f"series (expected 1)")
+                elif len(series[0].bucket_counts) != len(members):
+                    problems.append(f"{where} {leaf} ({spec.metric}) has "
+                                    f"{len(series[0].bucket_counts)} bucket(s) but gNMI lists "
+                                    f"{len(members)} member(s)")
+            continue
+        otel_members = ibh.otel_member_labels(snap, otel_group, name)
+        gnmi_members = {ibh.list_member_index(key) for key in members}
+        if set(otel_members) != gnmi_members:
+            problems.append(f"{where} exports {otel_group.member_label} {sorted(otel_members)} but "
+                            f"gNMI lists {sorted(gnmi_members)}")
+        for _, member in sorted(otel_members.items()):
+            problems += [f"{where} {problem}" for problem in
+                         ibo.group_problems(snap, otel_group, name, members=[member])]
+    return problems
+
+
+# 7.5 test_peer_port_gnmi_list_subtree_paths_present_and_typed (nice-to-have)
+@pytest.mark.gnmi
+@pytest.mark.otel
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+@pytest.mark.parametrize("group", PEER_PORT_LIST_SCHEMA_GROUPS, ids=lambda g: g.group_id)
+def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, gnmi_client, setup_topology, group,
+                                                             ib_otel):
+    """Positive schema sweep of the peer-port list subtrees: each exposed member's value leaf present and typed (empty tolerated).
+
+    Every list gNMI exposes is exported over OTEL with the same members.
+    """
+    _enable_peer_port(engines)
+    targets = _peer_port_schema_targets(gnmi_client, group)
+    problems: List[str] = []
+    listed: List[Tuple[str, str, Dict]] = []
+
+    with allure.step(f"Sweep peer-port list {group.group_id!r} across {len(targets)} target(s)"):
+        for role, name in targets:
+            prefix = group.list_prefix.format(name=name)
+            with allure.independent_step(f"Sweep list {group.group_id} on {role} {name} ({prefix})"):
+                # Members that nest the same leaf name under two parents must be keyed by the
+                # path relative to the member, or the readings collapse onto each other.
+                members = ibh.gnmi_list_members(gnmi_client, prefix,
+                                                relative=group.relative_leaves)
+                ibh.attach_dict(f"{group.group_id} {role} {name}", members)
+                if not members and group.component_ref:
+                    problems.append(f"[{role} {name}] a fitted module exposes no "
+                                    f"{group.group_id} member")
+                    continue
                 if not members:
                     logger.info(
                         "Peer-port list %s on %s %s exposes no members - tolerated "
-                        "(no oper-status leaf to force presence)", group.group_id, role, pid,
+                        "(no oper-status leaf to force presence)", group.group_id, role, name,
                     )
                     continue
+                listed.append((role, name, members))
                 for member_key, leaves in members.items():
                     problems += [
-                        f"[{role} {pid}] member [{member_key}] {problem}"
+                        f"[{role} {name}] member [{member_key}] {problem}"
                         for problem in ibh.leaf_problems(leaves, group.leaves, where=prefix)
                     ]
+
+    if listed:
+        with allure.step(f"The same {group.group_id!r} members are exported over OTEL"):
+            problems += _otel_list_group_problems(group, listed)
 
     assert not problems, (
         f"peer-port gNMI list-subtree sweep for {group.group_id!r} found "
@@ -1109,22 +2183,8 @@ def test_peer_port_gnmi_list_subtree_paths_present_and_typed(engines, devices, g
 
 
 def _require_link_up_port(purpose: str):
-    """
-    A link-up switch Port, or skip because the lab cannot host this coverage.
-
-    Skips rather than fails for the same reason the fabric and HCA gates above do when called
-    from these cases: a DUT with no live link cannot show a switch-side leaf heartbeating.
-    """
-    port_result = Tools.RandomizationTool.select_random_port(
-        requested_ports_state=NvosConsts.LINK_STATE_UP)
-    if not port_result.result:
-        port_result.ignore_result()
-        ibh.report_wrong_lab(
-            f"WRONG LAB SETUP: no link-up port available to {purpose} on this DUT, so the "
-            f"switch-side leaves this case watches cannot be streamed: {port_result.info}",
-            skip=True,
-        )
-    return port_result.get_returned_value()
+    """A link-up switch Port, or skip because the lab cannot host this extra coverage."""
+    return ibh.require_link_up_port(purpose, skip=True)
 
 
 def _peer_port_counter_paths(targets: List[Tuple[str, str]]) -> List[str]:
@@ -1326,12 +2386,14 @@ def test_peer_port_heartbeat_survives_peer_port_disable(
 
 # 9.2 test_hca_ingestion_persists_across_reboot (nice-to-have)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, setup_topology, topology_obj):
-    """The peer-port knob survives a reboot and gpu-telemetry re-ingests the HCA rows."""
+@pytest.mark.timeout(17 * MINUTE, func_only=True)
+def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, setup_topology, topology_obj,
+                                              ib_otel):
+    """The peer-port knob survives a reboot and gpu-telemetry re-ingests the HCA rows, exported over OTEL."""
     expected_hca = _require_hca_topology(setup_topology)
     system = System()
 
@@ -1351,6 +2413,8 @@ def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, set
         before = ibh.list_hca_peer_rows(engines, tier=PeerPortFields.TIER_AGGREGATED)
         ibh.attach_dict("hca rows before reboot", before)
         assert before, "No aggregated HCA peer-port rows before reboot (HCA feature build delivered?)"
+        missing = sorted(set(before) - set(_otel_hca_rows("before-reboot")))
+        assert not missing, f"Aggregated HCA row(s) not exported over OTEL before reboot: {missing!r}"
 
     with allure.step("Reboot the system"):
         system.reboot.action_reboot(
@@ -1412,15 +2476,25 @@ def test_hca_ingestion_persists_across_reboot(engines, devices, gnmi_client, set
                 f"{sorted(expected_aports)!r}"
             )
 
+    with allure.step("After boot: OTEL exports the re-ingested HCA rows"):
+        # The OTEL export was applied, not saved, so the reboot dropped it.
+        ib_otel.invalidate(reconfigure=True)
+        missing = sorted(set(before) - set(_otel_hca_rows("after-reboot")))
+        assert not missing, f"Re-ingested HCA row(s) not exported over OTEL after reboot: {missing!r}"
+
 
 # 10.5 test_hca_peerport_behavior_on_peer_down (plan §10.3)
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(12 * MINUTE, func_only=True)
-def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology):
-    """A down HCA peer's row disappears within ~10s and reappears with the same Aport on recovery."""
+@pytest.mark.timeout(14 * MINUTE, func_only=True)
+def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology, ib_otel):
+    """A down HCA peer's row disappears within ~10s and reappears with the same Aport on recovery.
+
+    OTEL stops exporting the peer while it is down and exports it again on recovery.
+    """
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines)
 
@@ -1468,6 +2542,14 @@ def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology
                     "All peer-ports are down but `nv show peer-port` did not render the "
                     "'No data' sentinel (checked case-insensitively)"
                 )
+
+        with allure.step(f"OTEL stops exporting {peer_id}"):
+            snap = ibo.active_surface().snapshot("peer-down", fresh=True)
+            still = snap.current(PEER_PORT_OTEL_NODE_INFO, **{OtelLabel.INTERFACE: peer_id})
+            assert not still, (
+                f"HCA peer {peer_id} is down but is still exported over OTEL "
+                f"({PEER_PORT_OTEL_NODE_INFO}: {[s.labels for s in still]!r})"
+            )
     finally:
         with allure.step(f"Bring HCA peer {peer_id} back up"):
             ibh.restore_hca_peer(engines, peer_id)
@@ -1486,14 +2568,26 @@ def test_hca_peerport_behavior_on_peer_down(engines, gnmi_client, setup_topology
             f"{ibh.peer_entry_aport(snapshot)!r} -> {ibh.peer_entry_aport(restored)!r}"
         )
 
+    with allure.step(f"OTEL exports {peer_id} again with the same Aport"):
+        otel_row = _otel_peer_rows("peer-restored").get(peer_id, {})
+        assert otel_row, f"HCA peer {peer_id} is not exported over OTEL after recovery"
+        assert ibh.peer_entry_aport(otel_row) == ibh.peer_entry_aport(snapshot), (
+            f"HCA peer {peer_id} Aport over OTEL after recovery is "
+            f"{ibh.peer_entry_aport(otel_row)!r}, was {ibh.peer_entry_aport(snapshot)!r}"
+        )
+
 
 # 10.6 test_hca_xcset_unreachable_resiliency (plan §10.5)
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
-    """NMX-T-for-IB outage: last-good rows retained while the backend is down, refreshed on its return."""
+@pytest.mark.timeout(17 * MINUTE, func_only=True)
+def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology, ib_otel):
+    """NMX-T-for-IB outage: last-good rows retained while the backend is down, refreshed on its return.
+
+    OTEL keeps exporting the retained rows through the outage and the full set after it.
+    """
     _require_hca_topology(setup_topology)
     _recycle_peer_port_for_hca(engines)
 
@@ -1575,6 +2669,13 @@ def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
                         f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after the failure was "
                         "declared unrecoverable; expected degraded while the backend is still down"
                     )
+                with allure.independent_step("OTEL keeps exporting the last-good rows"):
+                    otel_rows = _otel_hca_rows("xcset-outage")
+                    assert set(otel_rows) == set(snapshot), (
+                        "The OTEL HCA peer set changed during the NMX-T-for-IB outage; the last-good "
+                        f"rows must stay exported. before={sorted(snapshot)!r}, "
+                        f"otel={sorted(otel_rows)!r}"
+                    )
         finally:
             with allure.step("Restore NMX-T Lite"):
                 ibh.restore_nmxt_lite(engines)
@@ -1620,14 +2721,22 @@ def test_hca_xcset_unreachable_resiliency(engines, devices, setup_topology):
             f"PEER_PORT_TELEMETRY_HEALTH did not return to healthy after recovery: {health!r} (raw={raw!r})"
         )
 
+    with allure.step("After recovery: OTEL exports the full pre-outage peer set"):
+        missing = sorted(set(snapshot) - set(_otel_hca_rows("xcset-restored")))
+        assert not missing, f"HCA row(s) not exported over OTEL after NMX-T Lite was restored: {missing!r}"
+
 
 # 10.7 test_hca_xcset_malformed_csv_resiliency (plan §10.6)
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
-    """On a malformed xcset: rows frozen (no partial writes), parse error logged, health -> degraded; recovers on a good feed."""
+@pytest.mark.timeout(17 * MINUTE, func_only=True)
+def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology, ib_otel):
+    """On a malformed xcset: rows frozen (no partial writes), parse error logged, health -> degraded; recovers on a good feed.
+
+    OTEL keeps exporting the frozen rows with their frozen counters.
+    """
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines)
 
@@ -1680,6 +2789,23 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
                     "Expected the journal's 'retaining last ... snapshot' behaviour to hold the rows steady."
                 )
 
+            with allure.step("During the malformed feed: OTEL exports the frozen rows and counters"):
+                snap = ibo.active_surface().snapshot("xcset-malformed", fresh=True)
+                otel_rows = ibh.filter_peer_entries_by_type(ibh.otel_peer_port_rows(snap), PeerType.HCA)
+                assert set(otel_rows) == set(frozen_a), (
+                    "The OTEL HCA peer set differs from the frozen DB rows during the malformed feed: "
+                    f"db={sorted(frozen_a)!r}, otel={sorted(otel_rows)!r}"
+                )
+                problems = []
+                for pid, row in sorted(frozen_a.items()):
+                    fields = [f for f in PEER_PORT_DB_ADDITIVE_FIELDS if f in row]
+                    problems += ibo.db_parity_problems(snap, pid, row, frozen_b.get(pid, {}),
+                                                       PEER_PORT_OTEL_METRIC_BY_DB_FIELD, fields)
+                assert not problems, (
+                    "OTEL counters moved away from the frozen DB rows during the malformed feed:\n  " +
+                    "\n  ".join(problems)
+                )
+
             with allure.step("Parse failure is logged"):
                 log = ibh.read_gpu_telemetry_log(engines)
                 assert any(tok in log.lower() for tok in ("malformed", "parse", "invalid")), (
@@ -1711,12 +2837,16 @@ def test_hca_xcset_malformed_csv_resiliency(engines, devices, setup_topology):
 
 
 # 10.8 test_hca_ingestion_recovers_after_gpu_telemetry_restart (nice-to-have)
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(12 * MINUTE, func_only=True)
-def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, setup_topology):
-    """A gpu-telemetry restart loses no HCA ingestion: rows repopulate, counters do not reset, health -> healthy."""
+@pytest.mark.timeout(14 * MINUTE, func_only=True)
+def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, setup_topology, ib_otel):
+    """A gpu-telemetry restart loses no HCA ingestion: rows repopulate, counters do not reset, health -> healthy.
+
+    The same holds for the OTEL export.
+    """
     _require_hca_topology(setup_topology)
     _enable_peer_port_for_hca(engines)
 
@@ -1724,6 +2854,7 @@ def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, se
         before = ibh.list_hca_peer_rows(engines)
         ibh.attach_dict("hca rows before restart", before)
         assert before, "No HCA peer-port rows before restart (HCA feature build delivered?)"
+        otel_before = _otel_hca_rows("before-restart")
 
     with allure.step("Restart gpu-telemetry"):
         ibh.restart_gpu_telemetry(engines)
@@ -1768,3 +2899,13 @@ def test_hca_ingestion_recovers_after_gpu_telemetry_restart(engines, devices, se
         assert health == PeerTelemetryHealth.HEALTHY, (
             f"PEER_PORT_TELEMETRY_HEALTH is {health!r} (raw={raw!r}) after gpu-telemetry restart; expected healthy"
         )
+
+    with allure.step("OTEL exports every row again, with counters that did not reset"):
+        otel_after = _otel_hca_rows("after-restart")
+        missing = sorted(set(before) - set(otel_after))
+        assert not missing, f"HCA row(s) not exported over OTEL after gpu-telemetry restart: {missing!r}"
+        for pid in sorted(set(otel_before) & set(otel_after)):
+            ibh.assert_counters_monotonic(
+                otel_before[pid], otel_after[pid], list(PEER_PORT_OTEL_ADDITIVE_LEAVES),
+                label=f"HCA {pid} over OTEL across gpu-telemetry restart",
+            )

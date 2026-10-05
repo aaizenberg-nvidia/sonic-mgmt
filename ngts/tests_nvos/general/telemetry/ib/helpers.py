@@ -18,15 +18,16 @@ from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.cli_wrappers.nvue.nvue_system_clis import NvueSystemCli
 from ngts.cli_wrappers.openapi.openapi_system_clis import OpenApiSystemCli
 from ngts.constants.constants import GnmiConsts
-from ngts.nvos_constants.constants_nvos import ApiType, DatabaseConst, UfmMadConsts
+from ngts.nvos_constants.constants_nvos import ApiType, DatabaseConst, PlatformConsts, UfmMadConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RegisterTool import RegisterTool
-from ngts.nvos_tools.infra.ResultObj import ResultObj
+from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.infra.Tools import Tools
+from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmicErr
@@ -39,27 +40,43 @@ from ngts.tests_nvos.system.gnmi.helpers import (
     verify_msg_not_in_out_or_err,
 )
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils.nvos_general_utils import loganalyzer_ignore
 
 from ngts.tests_nvos.general.telemetry.ib.constants import (
     ALL_APIS,
     API_GNMIC,
     API_NVUE_CLI,
     API_OTEL,
+    ASIC_COMPONENT_TYPE,
+    BER_COMPONENT_LEAF_MARKERS,
+    BER_DB_FIELD_MARKER,
     BER_INJECT_SETTLE_SEC,
+    BER_RATIO_CEILING,
+    BER_RAW_COMPONENT_MARKERS,
+    COMPONENT_REF_POLL_SEC,
+    COMPONENT_REF_WAIT_SEC,
     CONCAT_DELIMITER,
     COUNTER_SNAPSHOT_SETTLE_SEC,
     COUNTERMGRD_MAX_COUNTERS,
     COUNTERMGRD_SUM_COUNTERS,
     CounterMgrdRule,
+    DECIMAL_COMPARE_EPSILON,
     EXPECTED_PLANE_PORT_DB_FIELDS,
+    EXTENDED_COUNTERS,
     GNMI_REBOOT_READY_DELAY_SEC,
     GNMI_REBOOT_READY_TRIES,
     GnmiTypeKind,
     GnmiYangPaths,
+    IB_OTEL_CURRENT_SAMPLE_SLACK_SEC,
     IfaceType,
     LINK_RECOVERY_POLL_SEC,
     LINK_RECOVERY_TIMEOUT_SEC,
     LINK_STATE_RECOVERY_LEAVES,
+    LOCAL_PORT_OTEL_LINK_DOWN_INFO,
+    LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD,
+    LOCAL_PORT_OTEL_TYPE,
+    LocalPortFamily,
+    LocalPortNvueSub,
     NMXT_CONNECTION_ERROR_TOKEN,
     NMXT_CONNECTOR_SOCKET,
     NMXT_CONTROL_SOCKET,
@@ -70,12 +87,24 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     NMXT_XCSET_TO_DB_FIELD,
     NvueShowNode,
     NvuePaths,
-    OTEL_PENDING_MSG,
+    OPTICAL_POWER_DBM_TOLERANCE,
+    OPTICAL_POWER_DBM_UNIT,
+    OPTICAL_POWER_MW_UNIT,
+    OTEL_LINK_DOWN_LOCAL_REASON_LABEL,
+    OtelGroup,
+    OtelLabel,
+    PEER_ASIC_HOST_NAME_CANDIDATES,
+    PEER_PLATFORM_CLI_LEAF_NAMES,
+    PEER_PLATFORM_CLI_POWER_CONTAINERS,
+    PEER_PLATFORM_CLI_POWER_LEAF,
+    PEER_PLATFORM_CLI_UNIT_LEAVES,
+    PEER_PLATFORM_RESOURCE_PATH,
     PEER_PORT_BER_MAX_RATIO,
     PEER_PORT_BER_ZERO_FLOOR,
     PEER_PORT_COUNTERS_LINK_TO_DB_FIELD,
     PEER_PORT_COUNTERS_TO_DB_FIELD,
     PEER_PORT_DIRECTION_NA,
+    PEER_PORT_HCA_OMITTED_LEAVES,
     PEER_PORT_HISTOGRAM_BUCKET_COUNT,
     PEER_PORT_HISTOGRAM_DB_FMT,
     PEER_PORT_HISTOGRAM_LEAF,
@@ -83,6 +112,15 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     PEER_PORT_LANE_LEAF_SPECS,
     PEER_PORT_LANE_LEAVES,
     PEER_PORT_LANES_DB_FIELD,
+    PEER_PORT_OTEL_ADDITIVE_LEAVES,
+    PEER_PORT_OTEL_LANE_LEAVES,
+    PEER_PORT_OTEL_LEAVES_BY_NVUE_SUB,
+    PEER_PORT_OTEL_METRIC_BY_DB_FIELD,
+    PEER_PORT_OTEL_NODE_INFO,
+    PEER_PORT_OTEL_PLR_BW_LOSS,
+    PEER_PORT_OTEL_PLR_CODES_LOSS,
+    PEER_PORT_OTEL_RS_HISTOGRAM,
+    PEER_PORT_OTEL_UNEXPORTED_NVUE_SUBS,
     PEER_PORT_PHY_DETAIL_TO_DB_FIELD,
     PEER_PORT_PHY_HEALTH_BER_TO_DB_FIELD,
     PEER_PORT_PHY_HEALTH_TO_DB_FIELD,
@@ -90,12 +128,19 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     PEER_PORT_PLR_BW_LOSS_DIVISOR,
     PEER_PORT_PLR_BW_LOSS_LEAF,
     PEER_PORT_PLR_CODES_LOSS_LEAF,
+    PEER_PORT_NVUE_ROOT_EXTENDED_LEAVES,
     PEER_PORT_SPEED_DB_FIELD,
     PEER_PORT_SPEED_LEAF,
     PEER_PORT_SPEED_MBPS_PER_GBPS,
     PEER_PORT_WIDTH_LEAF,
     PEER_TELEMETRY_SAMPLING_SEC,
     PEER_TELEMETRY_SERVICE,
+    PEER_TYPE_NODE_INFO_FIELDS,
+    PeerComponentNaming,
+    PeerComponentXcsetColumn,
+    PeerPlatformKind,
+    PeerPlatformNode,
+    PeerPortComponentRef,
     PeerPortContainer,
     PeerPortDbPair,
     PeerPortFields,
@@ -111,7 +156,10 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     SAI_TO_NVUE_MAX_COUNTER_LEAF,
     SAMPLING_JITTER_TOLERANCE_PCT,
     SystemDbCli,
+    TRANSCEIVER_DETAIL_VIEW,
+    XCSET_EXTENDED_COLUMN_MARKERS,
 )
+from ngts.tests_nvos.general.telemetry.ib import otel_helpers as ibo
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +363,81 @@ def gnmi_get_raw_lines(client: GnmiClient, prefix: str, path: str = "") -> List[
     return [line for line in out.splitlines() if line.strip()]
 
 
+# One `[key=value]` element of a gNMI list path.
+_GNMI_LIST_KEY_RE = re.compile(r"\[[^\]=]+=([^\]]+)\]")
+
+
+def _split_gnmic_flat_line(line: str) -> Optional[Tuple[str, str]]:
+    """Split one gnmic flat line into ``(path, value)``, or None when it carries no separator.
+
+    Different gnmic versions separate the two with ``: ``, ``=`` or a bare ``:``. The bare
+    colon is tried last so a value that itself contains one is not split on it. A separator
+    inside a list predicate such as ``[name=acp1]`` belongs to the path, so only one outside
+    square brackets splits the line.
+    """
+    for separator in (": ", "=", ":"):
+        index = _index_outside_brackets(line, separator)
+        if index >= 0:
+            return line[:index].strip(), line[index + len(separator):].strip()
+    return None
+
+
+def _index_outside_brackets(text: str, separator: str) -> int:
+    """Index of the first ``separator`` that is not inside ``[...]``, or -1."""
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth = max(0, depth - 1)
+        elif depth == 0 and text.startswith(separator, index):
+            return index
+    return -1
+
+
+def relative_leaf_path(path: str, prefix: str) -> str:
+    """A leaf's path relative to `prefix`, keeping the containers between the two.
+
+    Falls back to the bare leaf name when the prefix does not appear in the path, so a
+    rendering difference degrades to the `gnmi_get_flat` behavior rather than dropping the leaf.
+    """
+    head = prefix.strip("/")
+    text = path.strip("/")
+    if head and head in text:
+        return text.split(head, 1)[1].strip("/")
+    return text.rsplit("/", 1)[-1]
+
+
+def gnmi_get_flat_relative(client: GnmiClient, prefix: str, path: str = "") -> Dict[str, str]:
+    """Flat read of (prefix, path) keyed by each leaf's path RELATIVE to `prefix`.
+
+    `gnmi_get_flat` keys by the last path segment alone, which collapses distinct readings
+    that end in the same name - ``media-snr/instant`` and ``host-snr/instant`` would both
+    arrive as ``instant``. Use this wherever a container nests its samples.
+    """
+    lines = gnmi_get_raw_lines(client, prefix=prefix, path=path)
+    result: Dict[str, str] = {}
+    unparseable: List[str] = []
+    for line in lines:
+        parsed = _split_gnmic_flat_line(line)
+        if parsed is None:
+            unparseable.append(line)
+            continue
+        leaf_path, value = parsed
+        result[relative_leaf_path(leaf_path, prefix)] = value
+    if unparseable:
+        # Logged rather than raised: gnmic can emit banner//progress lines that carry no leaf.
+        # A dropped leaf would otherwise resurface later as a confusing "missing leaf".
+        logger.warning("Ignored %d unparseable gnmic line(s) under %s: %r",
+                       len(unparseable), prefix, unparseable)
+    if lines and not result:
+        raise AssertionError(
+            f"gnmic returned {len(lines)} line(s) under {prefix!r} but none carried a leaf "
+            f"value; output was: {lines!r}"
+        )
+    return result
+
+
 def parse_counter_value(raw: str) -> int:
     """Strip stringification artifacts and coerce a gNMI counter leaf to int."""
     if raw is None:
@@ -368,14 +491,34 @@ def nvue_show_all_interfaces_json(engines) -> Dict:
 # ============================================================================
 
 
-def pull_otel_metric(name: str, leaf: Optional[str] = None) -> Dict[str, str]:
+def otel_interface_types(snap: ibo.OtelSnapshot) -> Dict[str, str]:
+    """``{interface: type}`` from the current `nvswitch_interface_type` series.
+
+    An interface exported under more than one type at once renders as their comma-joined list,
+    so the caller's type comparison reports it instead of picking one.
     """
-    OTEL collector access is not wired up in ngts yet (test plan section 4: "OTEL
-    not yet exposed"). The plan calls for parametrizing over OTEL and
-    routing through this single function so that, when OTEL lands, only this
-    helper needs to change.
-    """
-    pytest.skip(f"{OTEL_PENDING_MSG} (interface={name}, leaf={leaf})")
+    types: Dict[str, set] = {}
+    for series in snap.current(LOCAL_PORT_OTEL_TYPE):
+        name = series.labels.get(OtelLabel.INTERFACE)
+        if name:
+            types.setdefault(name, set()).add(series.labels.get(OtelLabel.TYPE, ""))
+    return {name: ",".join(sorted(values)) for name, values in types.items()}
+
+
+def otel_interface_metric_names(snap: ibo.OtelSnapshot, name: str) -> set:
+    """Every metric with at least one current series of ``name``."""
+    return {metric for metric in snap.names
+            if snap.current(metric, **{OtelLabel.INTERFACE: name})}
+
+
+def otel_interface_metrics(snap: ibo.OtelSnapshot, name: str) -> Dict[str, Any]:
+    """``{metric: latest value}`` of every current single-series metric of ``name``."""
+    out: Dict[str, Any] = {}
+    for metric in sorted(snap.names):
+        series = snap.current(metric, **{OtelLabel.INTERFACE: name})
+        if len(series) == 1:
+            out[metric] = series[0].latest
+    return out
 
 
 def list_interfaces_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[str, str]:
@@ -387,7 +530,8 @@ def list_interfaces_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[
 
     The `type` for gnmic is the gNMI `state/type` leaf (e.g. "infiniband",
     "infiniband-plane-port"); for NVUE it is the JSON top-level "type" field
-    (e.g. "ib", "ibpp").
+    (e.g. "ib", "ibpp"); for OTEL it is the `type` label of `nvswitch_interface_type`,
+    read from a fresh collection window.
     """
     assert api in ALL_APIS, f"Unsupported api: {api!r}"
 
@@ -405,8 +549,7 @@ def list_interfaces_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[
         return result
 
     if api == API_OTEL:
-        pull_otel_metric("<list>", "type")
-        return {}  # unreachable; pytest.skip raises
+        return otel_interface_types(ibo.active_surface().snapshot("interface-types", fresh=True))
 
     raise ValueError(api)
 
@@ -417,7 +560,9 @@ def expected_type_leaf(api: str, is_plane: bool) -> str:
         return IfaceType.NVUE_PLANE if is_plane else IfaceType.NVUE_APORT
     if api == API_GNMIC:
         return IfaceType.GNMI_PLANE if is_plane else IfaceType.GNMI_APORT
-    return "<otel>"
+    if api == API_OTEL:
+        return IfaceType.OTEL_PLANE if is_plane else IfaceType.OTEL_APORT
+    raise ValueError(api)
 
 
 def attach_dict(name: str, payload: Dict) -> None:
@@ -707,18 +852,49 @@ def read_nvue_aggregation_snapshot_window(
         return readings
 
 
-def capture_otel_counter_snapshot(
-    engines,
-    port_name: str,
-    sai_fields: Optional[List[str]] = None,
-) -> Dict[str, int]:
-    """
-    Read countermgrd fields via OTEL (same {SAI_PORT_STAT_*: int} shape as gNMI/NVUE).
+def _otel_point_near(points: Dict[int, float], ts_ns: int) -> Optional[float]:
+    """The value sampled closest to ``ts_ns``, if within the same export cycle."""
+    if not points:
+        return None
+    nearest = min(points, key=lambda ts: abs(ts - ts_ns))
+    if abs(nearest - ts_ns) > IB_OTEL_CURRENT_SAMPLE_SLACK_SEC * 1_000_000_000:
+        return None
+    return points[nearest]
 
-    Not exposed yet - pytest.skip until the OTEL maps and collector wiring land.
+
+def read_otel_aggregation_snapshot_window(
+    aport_name: str,
+    plane_ports: List[Port],
+    sai_fields: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, int]]:
     """
-    del engines, sai_fields
-    pytest.skip(f"{OTEL_PENDING_MSG} (port={port_name})")
+    Read Aport + plane-port countermgrd fields from one OTEL collection window.
+
+    Every port of one export cycle is sampled together, so each field is read at the Aport's
+    newest sample and each plane at its point of that same cycle (section 6.3). Same
+    {SAI_PORT_STAT_*: int} shape as the gNMI / NVUE windows.
+    """
+    fields = list(sai_fields if sai_fields is not None else COUNTERMGRD_SUM_COUNTERS)
+    fields += [f for f in COUNTERMGRD_MAX_COUNTERS if f not in fields]
+    port_names = [aport_name] + [p.name for p in plane_ports]
+    with allure.step(
+        f"Read OTEL counters for {aport_name} + {len(plane_ports)} plane-port(s) "
+        "from one export cycle"
+    ):
+        snap = ibo.active_surface().snapshot("aggregation", fresh=True)
+        readings: Dict[str, Dict[str, int]] = {name: {} for name in port_names}
+        for sai_field in fields:
+            per_port = snap.per_key_points(
+                LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD[sai_field], OtelLabel.INTERFACE)
+            aport_points = per_port.get(aport_name, {})
+            if not aport_points:
+                continue
+            cycle_ts = max(aport_points)
+            for name in port_names:
+                value = _otel_point_near(per_port.get(name, {}), cycle_ts)
+                if value is not None:
+                    readings[name][sai_field] = int(value)
+        return readings
 
 
 def read_counter_snapshot_window(
@@ -1193,6 +1369,41 @@ def capture_counters_db_aggregation_snapshot_window(
         return readings
 
 
+def otel_port_db_parity_problems(
+    engines,
+    aport_name: str,
+    plane_ports: List[Port],
+    sai_fields: List[str],
+    label: str,
+) -> List[str]:
+    """Problems where an OTEL port metric is not a value its COUNTERS_DB row held in the window.
+
+    The rows are read before and after one fresh collection window, so each exported value must
+    sit within (for a counter) or equal (for a state) what the DB carried around it.
+    """
+    port_names = [aport_name] + [p.name for p in plane_ports]
+    before = capture_counters_db_aggregation_snapshot_window(engines, aport_name, plane_ports, sai_fields)
+    snap = ibo.active_surface().snapshot(label, fresh=True)
+    after = capture_counters_db_aggregation_snapshot_window(engines, aport_name, plane_ports, sai_fields)
+    attach_dict(f"COUNTERS_DB around OTEL window {label}", {"before": before, "after": after})
+    problems: List[str] = []
+    for name in port_names:
+        problems += ibo.db_parity_problems(
+            snap, name, before.get(name, {}), after.get(name, {}),
+            LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD, sai_fields,
+        )
+    return problems
+
+
+def otel_link_down_reasons(snap: ibo.OtelSnapshot, port_name: str) -> List[str]:
+    """The local link-down reasons the port currently exports over OTEL."""
+    return [
+        series.labels.get(OTEL_LINK_DOWN_LOCAL_REASON_LABEL, "")
+        for series in snap.current(LOCAL_PORT_OTEL_LINK_DOWN_INFO,
+                                   **{OtelLabel.INTERFACE: port_name})
+    ]
+
+
 # ============================================================================
 # countermgrd aggregation rules (SUM / MAX / MIN / CONCAT)
 # ============================================================================
@@ -1526,17 +1737,26 @@ def canonical_aport(name: str) -> str:
     return re.sub(r"p0$", "p1", str(name).strip().lower())
 
 
-def gnmi_list_members(client: GnmiClient, list_prefix: str) -> Dict[str, Dict[str, str]]:
-    """Enumerate a gNMI list under `list_prefix` as ``{member_key: {leaf: value}}``."""
+def gnmi_list_members(client: GnmiClient, list_prefix: str,
+                      relative: bool = False) -> Dict[str, Dict[str, str]]:
+    """Enumerate a gNMI list under `list_prefix` as ``{member_key: {leaf: value}}``.
+
+    With `relative`, each leaf keeps the containers below its list member instead of just the
+    last segment, so members that nest several samples under one leaf name stay distinguishable.
+    """
     members: Dict[str, Dict[str, str]] = {}
     for line in gnmi_get_raw_lines(client, prefix=list_prefix, path=""):
-        if ": " not in line:
+        parsed = _split_gnmic_flat_line(line)
+        if parsed is None:
             continue
-        path, _, value = line.partition(": ")
-        keys = re.findall(r"\[[^\]=]+=([^\]]+)\]", path)
+        path, value = parsed
+        keys = list(_GNMI_LIST_KEY_RE.finditer(path))
         if not keys:
             continue
-        members.setdefault(keys[-1], {})[path.rsplit("/", 1)[-1]] = value.strip()
+        leaf = path[keys[-1].end():].strip("/") if relative else path.rsplit("/", 1)[-1]
+        if not leaf:
+            continue
+        members.setdefault(keys[-1].group(1), {})[leaf] = value
     return members
 
 
@@ -1647,11 +1867,12 @@ def select_nvue_peer_port_targets(engines) -> List[Tuple[str, str]]:
 def leaf_problems(leaves: Dict[str, Any], expected: Dict[str, str],
                   allow_not_available: bool = False,
                   tolerated_missing: FrozenSet[str] = frozenset(),
-                  where: str = "") -> List[str]:
+                  where: str = "", require_value: bool = False) -> List[str]:
     """Missing / mistyped leaves against an ``{leaf: GnmiTypeKind}`` expectation.
 
     Shared by the NVUE show-surface walk and the gNMI schema sweeps: both need the same
     case-insensitive presence check, the same known-gap tolerance and the same typecheck.
+    A blank value is tolerated unless ``require_value`` is set, which reports it as a problem.
     A tolerated leaf that has started reporting is logged as a warning rather than as a
     problem, so the tolerance is noticed once the build delivers the leaf.
     """
@@ -1673,6 +1894,9 @@ def leaf_problems(leaves: Dict[str, Any], expected: Dict[str, str],
             )
         value = leaves_ci[leaf.lower()]
         if allow_not_available and str(value).strip().lower() == PEER_PORT_DIRECTION_NA:
+            continue
+        if require_value and str(value).strip().strip('"').strip() in ("", "None"):
+            problems.append(f"leaf {leaf!r}: reported with no value ({value!r})")
             continue
         err = gnmi_typecheck(kind, value)
         if err:
@@ -1722,13 +1946,16 @@ def peer_port_show_problems(body: Dict, node: NvueShowNode,
 
     The peer's tier labels every problem and every tolerated-leaf log, because a leaf that is
     absent on a plane row while the aggregated row reports it is the interesting case.
+
+    ``node.pending`` names leaves whose tier the HLD leaves open, so one row may lack them; the
+    caller proves across the listing that some tier carries them.
     """
     containers = peer_port_show_containers(body)
+    tolerated = frozenset(node.pending)
+    if role == PeerPortTargetRole.PLANE and node.sub == PeerPortNvueSub.ROOT:
+        tolerated |= PEER_PORT_PLANE_ROOT_PENDING_LEAVES
     problems = [f"missing child container {name!r}"
                 for name in sorted(node.containers) if name not in containers]
-    tolerated = (PEER_PORT_PLANE_ROOT_PENDING_LEAVES
-                 if role == PeerPortTargetRole.PLANE and node.sub == PeerPortNvueSub.ROOT
-                 else frozenset())
     problems += leaf_problems(peer_port_show_leaves(body), node.leaves,
                               tolerated_missing=tolerated, where=role)
     for name in sorted(node.containers):
@@ -1832,8 +2059,9 @@ def peer_port_db_pair_problems(
     pairs: List[PeerPortDbPair],
     db_row: Dict[str, str],
     tolerance_pct: float = SAMPLING_JITTER_TOLERANCE_PCT,
+    surface: str = "NVUE",
 ) -> Tuple[List[str], int]:
-    """Problems and compared-count for NVUE-vs-DB pairs (absent on both sides is consistent)."""
+    """Problems and compared-count for API-vs-DB pairs (absent on both sides is consistent)."""
     problems: List[str] = []
     compared = 0
     for pair in pairs:
@@ -1844,7 +2072,7 @@ def peer_port_db_pair_problems(
             # A lane past the operational width: neither surface reports it.
             continue
         if not cli_present:
-            problems.append(f"{pair.label}: absent in NVUE while {pair.db_field}={db_raw!r}")
+            problems.append(f"{pair.label}: absent in {surface} while {pair.db_field}={db_raw!r}")
             continue
         if not db_present:
             problems.append(f"{pair.label}={pair.cli_value!r} has no {pair.db_field} in the DB row")
@@ -1861,7 +2089,7 @@ def peer_port_db_pair_problems(
             cli_val = parse_counter_value(pair.cli_value)
             db_val = parse_counter_value(db_raw)
         except (AssertionError, ValueError) as exc:
-            problems.append(f"{pair.label}: unparseable counter (NVUE={pair.cli_value!r}, "
+            problems.append(f"{pair.label}: unparseable counter ({surface}={pair.cli_value!r}, "
                             f"{pair.db_field}={db_raw!r}): {exc}")
             continue
         if not values_within_tolerance(cli_val, db_val, tolerance_pct):
@@ -1917,16 +2145,187 @@ def peer_port_plr_bw_loss_problems(detail_body: Dict) -> List[str]:
     return []
 
 
+def otel_peer_port_rows(snap: ibo.OtelSnapshot) -> Dict[str, Dict[str, str]]:
+    """``{peer_id: {leaf: value}}`` of every peer exporting `nvswitch_peer_port_node_info`.
+
+    A row carries the identity labels under their NVUE and gNMI leaf names and the additive
+    counters, the same shape as the NVUE / gNMI listings.
+    """
+    rows: Dict[str, Dict[str, str]] = {}
+    for peer_id in sorted(snap.keys(PEER_PORT_OTEL_NODE_INFO, OtelLabel.INTERFACE)):
+        row = dict(ibo.peer_identity_leaf_values(snap, peer_id))
+        for leaf, spec in PEER_PORT_OTEL_ADDITIVE_LEAVES.items():
+            value = snap.value(spec, OtelLabel.INTERFACE, peer_id)
+            if value is not None:
+                row[leaf] = str(int(value))
+        rows[peer_id] = row
+    return rows
+
+
+def _otel_rendering(value: Any) -> str:
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else repr(value)
+    return str(value)
+
+
+def otel_leaf_readings(snap: ibo.OtelSnapshot, group: OtelGroup, key: str,
+                       member: Optional[str] = None) -> Dict[str, List[str]]:
+    """``{leaf: [rendering, ...]}`` of every leaf of ``group`` the entity currently exports."""
+    readings: Dict[str, List[str]] = {}
+    for leaf, spec in group.leaves.items():
+        values = snap.leaf_values(spec, group.key_label, key, group.member_label, member)
+        if values:
+            readings[leaf] = [_otel_rendering(v) for v in values]
+    return readings
+
+
+def otel_leaf_parity_problems(snap: ibo.OtelSnapshot, group: OtelGroup, key: str,
+                              expected: Dict[str, str], shown: Dict[str, str], other_label: str,
+                              member: Optional[str] = None,
+                              single_series: bool = False) -> Tuple[List[str], int]:
+    """Leaves ``other_label`` shows for ``key`` must read the same over OTEL.
+
+    Compared with the same kind-aware rule as the CLI and gNMI parity; a leaf fanned out over
+    several series (one per direction) agrees when any of them does. With ``single_series`` the
+    leaf must be exported by exactly one current series, so a correct duplicate cannot hide a
+    wrong or stale one. Returns ``(problems, compared)``.
+    """
+    readings = otel_leaf_readings(snap, group, key, member)
+    where = f"{key} {group.member_label}={member}" if member is not None else key
+    problems: List[str] = []
+    compared = 0
+    for leaf, kind in sorted(expected.items()):
+        if component_source_absent(shown.get(leaf)):
+            continue
+        spec = group.leaves.get(leaf)
+        if spec is None:
+            problems.append(f"{where}: {leaf} has no OTEL counterpart defined")
+            continue
+        if leaf not in readings:
+            problems.append(f"{where}: {leaf} is shown over {other_label} ({shown[leaf]!r}) but "
+                            f"not exported over OTEL ({spec.metric})")
+            continue
+        compared += 1
+        if single_series and len(readings[leaf]) != 1:
+            problems.append(f"{where}: leaf {leaf!r} is exported by {len(readings[leaf])} "
+                            f"series ({spec.metric}), expected exactly one: {readings[leaf]!r}")
+            continue
+        if not any(_leaf_values_agree(kind, shown[leaf], value) for value in readings[leaf]):
+            problems.append(f"{where}: leaf {leaf!r} differs: {other_label}={shown[leaf]!r}, "
+                            f"{API_OTEL}={readings[leaf]!r}")
+    return problems, compared
+
+
+def otel_member_labels(snap: ibo.OtelSnapshot, group: OtelGroup, key: str) -> Dict[str, str]:
+    """``{member index: member label value}`` over every leaf of a list group."""
+    labels: Dict[str, str] = {}
+    for spec in group.leaves.values():
+        for member in snap.members(spec, group.key_label, key, group.member_label):
+            labels[list_member_index(member)] = member
+    return labels
+
+
+def peer_port_otel_show_problems(snap: ibo.OtelSnapshot, peer_id: str, node: NvueShowNode,
+                                 body: Dict, role: str = PeerPortTargetRole.AGGREGATED) -> List[str]:
+    """Problems when the OTEL export of a peer lacks what `nv show peer-port <id> <sub>` shows.
+
+    Every leaf the sub-command documents must be exported; the ones whose tier the HLD leaves
+    open are required only when the CLI shows them on this row. The lanes and histogram buckets
+    must match the CLI one for one.
+    """
+    if node.sub in PEER_PORT_OTEL_UNEXPORTED_NVUE_SUBS:
+        return []
+    table = PEER_PORT_OTEL_LEAVES_BY_NVUE_SUB.get(node.sub)
+    if table is None:
+        return [f"{peer_id}: `{node.sub}` has no OTEL counterpart defined"]
+    tolerated = frozenset(node.pending)
+    if role == PeerPortTargetRole.PLANE and node.sub == PeerPortNvueSub.ROOT:
+        tolerated |= PEER_PORT_PLANE_ROOT_PENDING_LEAVES
+    shown = peer_port_show_leaves(body)
+    leaves = [leaf for leaf in table
+              if leaf not in tolerated or not component_source_absent(shown.get(leaf))]
+    problems = ibo.group_problems(snap, OtelGroup(OtelLabel.INTERFACE, table), peer_id,
+                                  leaves=leaves)
+    containers = peer_port_show_containers(body)
+
+    if node.sub == PeerPortNvueSub.LINK_PHY_HEALTH:
+        lane_group = OtelGroup(OtelLabel.INTERFACE, PEER_PORT_OTEL_LANE_LEAVES, OtelLabel.LANE)
+        cli_lane_members = peer_port_show_containers(
+            containers.get(PeerPortContainer.LANE, {}))
+        cli_lanes = sorted(list_member_index(k) for k, member in cli_lane_members.items()
+                           if any(peer_port_show_leaves(member).values()))
+        otel_lanes = otel_member_labels(snap, lane_group, peer_id)
+        if len(otel_lanes) != len(cli_lanes):
+            problems.append(f"{peer_id}: OTEL exports {len(otel_lanes)} lane(s) "
+                            f"{sorted(otel_lanes)} but the CLI shows {len(cli_lanes)} populated "
+                            f"lane(s) {cli_lanes}; lanes past the operational width are null on "
+                            f"the CLI and not exported, and the lane numbering is not compared")
+        for _, lane in sorted(otel_lanes.items()):
+            problems += ibo.group_problems(snap, lane_group, peer_id, members=[lane])
+
+    if node.sub == PeerPortNvueSub.LINK_PHY_HEALTH_HISTOGRAM:
+        cli_buckets = peer_port_show_containers(
+            containers.get(PeerPortContainer.HISTOGRAM_BUCKETS, {}))
+        series = snap.current(PEER_PORT_OTEL_RS_HISTOGRAM, **{OtelLabel.INTERFACE: peer_id})
+        if len(series) != 1:
+            problems.append(f"{peer_id}: {PEER_PORT_OTEL_RS_HISTOGRAM} has {len(series)} current "
+                            f"series (expected 1)")
+        else:
+            # An OTLP histogram carries one more bucket than explicit bounds (the overflow
+            # bucket), so the CLI buckets are compared with the explicit bounds.
+            bounds = series[0].explicit_bounds
+            if len(series[0].bucket_counts) != len(bounds) + 1:
+                problems.append(f"{peer_id}: {PEER_PORT_OTEL_RS_HISTOGRAM} has "
+                                f"{len(series[0].bucket_counts)} bucket(s) for {len(bounds)} "
+                                f"explicit bound(s); an OTLP histogram needs bounds + 1")
+            if len(bounds) != len(cli_buckets):
+                problems.append(f"{peer_id}: {PEER_PORT_OTEL_RS_HISTOGRAM} has {len(bounds)} "
+                                f"explicit bound(s) {bounds} but the CLI shows "
+                                f"{len(cli_buckets)} bucket(s)")
+    return problems
+
+
+def otel_peer_port_db_problems(engines, peer_id: str, label: str) -> Tuple[List[str], int]:
+    """Problems where the OTEL export of a peer disagrees with its COUNTERS_DB rows.
+
+    The PEER_COUNTERS row is read before and after one fresh collection window, so a sampled
+    value must be one the DB held in that window; the identity labels must equal the
+    PEER_COUNTERS / PEER_PORT_MAPPING fields they are read from. Returns
+    ``(problems, compared)``.
+    """
+    before = read_peer_port_row(engines, peer_id)
+    snap = ibo.active_surface().snapshot(label, fresh=True)
+    after = read_peer_port_row(engines, peer_id)
+    mapping = read_peer_port_mapping(engines, peer_id)
+    attach_dict(f"{peer_id} DB rows around OTEL window {label}",
+                {"before": before, "after": after, "mapping": mapping})
+    fields = [f for f in PEER_PORT_OTEL_METRIC_BY_DB_FIELD if f in before and f in after]
+    problems = ibo.db_parity_problems(snap, peer_id, before, after,
+                                      PEER_PORT_OTEL_METRIC_BY_DB_FIELD, fields)
+    problems += ibo.peer_identity_problems(snap, peer_id, {**mapping, **after})
+    return problems, len(fields)
+
+
+def otel_peer_port_plr_bw_loss_problems(snap: ibo.OtelSnapshot, peer_id: str) -> List[str]:
+    """The exported PLR bandwidth loss must be derived from the exported PLR codes loss."""
+    body = {}
+    for leaf, spec in ((PEER_PORT_PLR_BW_LOSS_LEAF, PEER_PORT_OTEL_PLR_BW_LOSS),
+                       (PEER_PORT_PLR_CODES_LOSS_LEAF, PEER_PORT_OTEL_PLR_CODES_LOSS)):
+        value = snap.value(spec, OtelLabel.INTERFACE, peer_id)
+        if value is not None:
+            body[leaf] = _otel_rendering(value)
+    return [f"{peer_id} over OTEL: {problem}" for problem in peer_port_plr_bw_loss_problems(body)]
+
+
 def list_peer_ports_via_api(api: str, engines, gnmi_client: GnmiClient) -> Dict[str, Dict[str, str]]:
-    """Enumerate peer-ports across APIs as ``{peer_id: {leaf: value}}`` (OTEL excluded today)."""
+    """Enumerate peer-ports across APIs as ``{peer_id: {leaf: value}}``."""
     assert api in ALL_APIS, f"Unsupported api: {api!r}"
     if api == API_NVUE_CLI:
         return nvue_show_peer_ports(engines)
     if api == API_GNMIC:
         return gnmi_get_peer_port_list(gnmi_client)
     if api == API_OTEL:
-        pull_otel_metric("<peer-port-list>", "peer-type")
-        return {}  # unreachable; pull_otel_metric raises
+        return otel_peer_port_rows(ibo.active_surface().snapshot("peer-ports", fresh=True))
     raise ValueError(api)
 
 
@@ -1938,8 +2337,8 @@ def get_peer_port_via_api(api: str, engines, gnmi_client: GnmiClient, peer_id: s
     if api == API_GNMIC:
         return gnmi_get_peer_port(gnmi_client, peer_id)
     if api == API_OTEL:
-        pull_otel_metric(peer_id, "peer-type")
-        return {}  # unreachable
+        rows = otel_peer_port_rows(ibo.active_surface().snapshot(f"peer-port-{peer_id}", fresh=True))
+        return rows.get(peer_id, {})
     raise ValueError(api)
 
 
@@ -1961,7 +2360,7 @@ def peer_entry_type(fields: Dict[str, str], peer_id: str = "") -> str:
     explicit = str(fields.get(PeerPortFields.PEER_TYPE, "")).strip().upper()
     if explicit in (PeerType.GPU, PeerType.HCA):
         return explicit
-    for key in ("peer_port_name", "peer-port-name", PeerPortFields.HCA_ALIAS_FIELD,
+    for key in ("name", "peer_port_name", "peer-port-name", PeerPortFields.HCA_ALIAS_FIELD,
                 "peer_component", "peer-component"):
         ptype = classify_peer_type(str(fields.get(key, "")))
         if ptype:
@@ -2283,6 +2682,8 @@ class H(BaseHTTPRequestHandler):
             self._w(HEALTH, "application/json")
         elif self.path.startswith("/csv/"):
             self._w(BODY, "text/csv")
+            sys.stderr.write("xcset-served\n")
+            sys.stderr.flush()
         else:
             self.send_response(404)
             self.send_header("Content-Length", "0")
@@ -2340,7 +2741,7 @@ time.sleep(3600)
 _NMXT_FAKE_SCRIPT_PATH = "/tmp/peerport_nmxt_fake.py"
 
 
-_NMXT_FAKE_CSV_PATH = "/tmp/peerport_xcset_bad.csv"
+_NMXT_FAKE_CSV_PATH = "/tmp/peerport_xcset_fake.csv"
 
 
 _NMXT_FAKE_PID_PATH = "/tmp/peerport_nmxt_fake.pid"
@@ -2365,21 +2766,7 @@ def _put_remote_file(engines, remote_path: str, contents: str) -> None:
 
 def inject_malformed_hca_xcset(engines) -> None:
     """Serve a malformed HCA xcset (via the interceptor) so peer-telemetry hits the CSV parse-failure path."""
-    with allure.step("Ship the malformed xcset + interceptor to the DUT"):
-        _put_remote_file(engines, _NMXT_FAKE_CSV_PATH, _MALFORMED_XCSET)
-        _put_remote_file(engines, _NMXT_FAKE_SCRIPT_PATH, _NMXT_FAKE_SERVER)
-
-    with allure.step(f"Mask + stop {NMXT_IB_SERVICE} and start the interceptor"):
-        engines.dut.run_cmd(f"sudo systemctl mask {NMXT_IB_SERVICE}")
-        engines.dut.run_cmd(f"sudo systemctl stop {NMXT_IB_SERVICE} 2>/dev/null")
-        engines.dut.run_cmd(f"sudo docker stop {NMXT_IB_CONTAINER} 2>/dev/null")
-        engines.dut.run_cmd("sudo mkdir -p /var/run/nmx-t/ib")
-        time.sleep(3)  # let the real daemon release its sockets
-        engines.dut.run_cmd(
-            f"sudo bash -c 'nohup python3 {_NMXT_FAKE_SCRIPT_PATH} {NMXT_CONTROL_SOCKET} "
-            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} {NMXT_CONNECTOR_SOCKET} "
-            f">{_NMXT_FAKE_LOG_PATH} 2>&1 < /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
-        )
+    inject_hca_xcset(engines, _MALFORMED_XCSET)
 
 
 def restore_valid_hca_xcset(engines) -> None:
@@ -2513,17 +2900,31 @@ def wait_for_hca_peer_rows(
     return rows, missing
 
 
-def _parse_xcset_csv(raw: str) -> List[Dict[str, str]]:
-    """Parse the NMX-T-for-IB CSV into column->value dicts (skips noise/short rows)."""
+def _split_xcset_csv(raw: str) -> Tuple[List[str], List[str], List[List[str]]]:
+    """Split an xcset response into ``(preamble_lines, header, data_rows)``."""
     lines = (raw or "").splitlines()
     start = next((i for i, ln in enumerate(lines) if ln.startswith("timestamp,")), None)
     if start is None:
-        return []
+        return [], [], []
     rows = [r for r in csv.reader(io.StringIO("\n".join(lines[start:]))) if r]
     if not rows:
-        return []
-    header = rows[0]
-    return [dict(zip(header, r)) for r in rows[1:] if len(r) == len(header)]
+        return lines[:start], [], []
+    return lines[:start], rows[0], rows[1:]
+
+
+def _render_xcset_csv(preamble: List[str], header: List[str], rows: List[List[str]]) -> str:
+    """Re-render an xcset response from the parts `_split_xcset_csv` produced."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(header)
+    writer.writerows(rows)
+    return "\n".join(preamble + [buffer.getvalue().rstrip("\n")]) + "\n"
+
+
+def _parse_xcset_csv(raw: str) -> List[Dict[str, str]]:
+    """Parse the NMX-T-for-IB CSV into column->value dicts (skips noise/short rows)."""
+    _, header, rows = _split_xcset_csv(raw)
+    return [dict(zip(header, row)) for row in rows if len(row) == len(header)]
 
 
 def _is_hca_xcset_row(row: Dict[str, str]) -> bool:
@@ -2546,12 +2947,17 @@ def hca_xcset_join_key(fields: Dict[str, str]) -> str:
     return guid
 
 
+def read_hca_xcset_raw(engines) -> str:
+    """The raw xcset response, exactly as NMX-T-for-IB serves it over its Unix socket."""
+    cmd = f"sudo curl -s --unix-socket {NMXT_XCSET_SOCKET} http://localhost{NMXT_XCSET_ENDPOINT}"
+    return engines.dut.run_cmd(cmd) or ""
+
+
 def read_hca_xcset(engines, attempts: int = 3) -> Dict[str, Dict[str, str]]:
     """Read the NMX-T-for-IB xcset as ``{join_key: {sai_field: value}}`` (HCA rows only, counters summed per join key)."""
-    cmd = f"sudo curl -s --unix-socket {NMXT_XCSET_SOCKET} http://localhost{NMXT_XCSET_ENDPOINT}"
     out: Dict[str, Dict[str, str]] = {}
     for attempt in range(max(1, attempts)):
-        raw = engines.dut.run_cmd(cmd) or ""
+        raw = read_hca_xcset_raw(engines)
         out = {}
         for row in _parse_xcset_csv(raw):
             if not _is_hca_xcset_row(row):
@@ -2578,8 +2984,12 @@ def gnmi_typecheck(kind: str, value) -> str:
     text = "" if value is None else str(value).strip().strip('"').strip()
     if text == "":
         return ""
-    if kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT, GnmiTypeKind.DECIMAL):
-        want_int = kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT)
+    if kind == GnmiTypeKind.OPTICAL_POWER:
+        return "" if optical_power_readings(text) else (
+            f"expected a number or '<mW> mW / <dBm> dBm' ({kind}); got {value!r}")
+    if kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT, GnmiTypeKind.SAMPLED_UINT,
+                GnmiTypeKind.DECIMAL):
+        want_int = kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.UINT, GnmiTypeKind.SAMPLED_UINT)
         noun = "unsigned integer" if want_int else "decimal"
         for token in text.split("/"):
             token = token.strip()
@@ -2660,3 +3070,1142 @@ def assert_counters_monotonic(before_row, after_row, fields, label: str) -> int:
         )
         compared += 1
     return compared
+
+
+# ============================================================================
+# Extended drop: peer component naming (HLD section 4.2)
+# ============================================================================
+
+
+def component_source_absent(value) -> bool:
+    """True when a component-naming source identifier names nothing (missing, empty or N/A)."""
+    return str(value or "").strip().lower() in PeerComponentNaming.ABSENT_VALUES
+
+
+def sanitize_component_part(value) -> str:
+    """One part of a component name: drop a leading 0x, replace every disallowed character."""
+    text = str(value or "").strip()
+    if text.lower().startswith(PeerComponentNaming.HEX_PREFIX):
+        text = text[len(PeerComponentNaming.HEX_PREFIX):]
+    return PeerComponentNaming.ALLOWED_CHARS_RE.sub(
+        PeerComponentNaming.SANITIZE_REPLACEMENT, text)
+
+
+def expected_peer_transceiver_name(module_serial, sys_image_guid=None) -> str:
+    """Component name a peer module must carry, or "" when the serial names nothing.
+
+    ``xcvr-<serial>``, extended with the chassis GUID when the xcset carries one, so the same
+    cable serial seen on two chassis stays two components.
+    """
+    if component_source_absent(module_serial):
+        return ""
+    name = PeerComponentNaming.TRANSCEIVER_PREFIX + sanitize_component_part(module_serial)
+    if not component_source_absent(sys_image_guid):
+        name += "-" + sanitize_component_part(sys_image_guid)
+    return name
+
+
+def expected_peer_asic_name(node_guid) -> str:
+    """Component name a peer ASIC must carry, or "" when the node GUID names nothing."""
+    if component_source_absent(node_guid):
+        return ""
+    return PeerComponentNaming.ASIC_PREFIX + sanitize_component_part(node_guid)
+
+
+def plane_peer_entries(entries: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Keep only per-plane (``...plN``) peer entries, dropping their aggregated parents."""
+    return {pid: f for pid, f in entries.items() if is_plane_port_name(pid)}
+
+
+def most_specific_peer_entries(entries: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """One tier per peer port: its plane rows when it has any, otherwise the port row itself.
+
+    The HLD does not say which tier carries the extended leaves, and a peer cabled on a single
+    plane is listed with no plane rows at all, so keeping only the plane tier would drop it.
+    """
+    planes = plane_peer_entries(entries)
+    out = dict(planes)
+    for pid, fields in aggregated_peer_entries(entries).items():
+        if not plane_peer_ids_for_parent(planes, pid):
+            out[pid] = fields
+    return out
+
+
+def foreign_node_info_fields(fields: Dict[str, str], peer_type: str) -> List[str]:
+    """Node-info leaves on a peer row that carry another peer type's data (SR-6).
+
+    gpu_node_info and hca_node_info are separate metrics, so a row must not be padded with the
+    other type's values. Only a populated leaf counts: if the two peer types share one YANG
+    container, every row renders the other type's leaf names as empty placeholders, and
+    failing on that would flag correct behaviour. A placeholder holding an actual value is the
+    padding the requirement rules out.
+    """
+    foreign = set().union(*(names for kind, names in PEER_TYPE_NODE_INFO_FIELDS.items()
+                            if kind != peer_type))
+    return sorted(name for name, value in (fields or {}).items()
+                  if str(name).lower() in foreign and str(value).strip())
+
+
+def foreign_node_info_problems(entries: Dict[str, Dict[str, str]]) -> List[str]:
+    """Peer rows carrying another peer type's node-info fields (SR-6)."""
+    problems = []
+    enforceable = 0
+    for pid, fields in sorted(entries.items()):
+        peer_type = classify_peer_type(pid, fields)
+        if not peer_type:
+            continue
+        # A type whose own node info nobody else defines has no foreign set to match.
+        if any(names for kind, names in PEER_TYPE_NODE_INFO_FIELDS.items() if kind != peer_type):
+            enforceable += 1
+        strays = foreign_node_info_fields(fields, peer_type)
+        if strays:
+            problems.append(
+                f"[{pid}] is a {peer_type} row but carries {len(strays)} field(s) of the other "
+                f"peer type: {strays!r}"
+            )
+    logger.info("SR-6 examined %d of %d peer row(s) for foreign node info; the rest are of a "
+                "peer type whose counterpart has no node-info leaf in the HLD",
+                enforceable, len(entries or {}))
+    return problems
+
+
+def extended_identity_tier_problems(hca_entries: Dict[str, Dict[str, str]]) -> List[str]:
+    """Extended leaves that no tier of the `nv show peer-port <id>` HCA rows carries (HLD 5.2).
+
+    The HLD leaves open whether the aggregated or the plane row carries port-number, so it
+    passes when every row of one tier publishes it. A component reference is named by the rows
+    that have a cable or a chip behind them, which an FNM-connected HCA does not, so each
+    reference must be named by at least one row.
+    """
+    plane = plane_peer_entries(hca_entries)
+    tiers = {
+        PeerPortTargetRole.PLANE: plane,
+        PeerPortTargetRole.AGGREGATED: {pid: fields for pid, fields in hca_entries.items()
+                                        if pid not in plane},
+    }
+    nvue_refs = set(PeerPortComponentRef.NVUE_LEAF.values())
+    problems = hca_omitted_leaf_problems(hca_entries)
+    for leaf in sorted(PEER_PORT_NVUE_ROOT_EXTENDED_LEAVES):
+        if leaf in nvue_refs:
+            if not any(str(fields.get(leaf) or "").strip() for fields in hca_entries.values()):
+                problems.append(f"no HCA row names a {leaf!r} component")
+            continue
+        missing = {role: sorted(pid for pid, fields in rows.items() if leaf not in fields)
+                   for role, rows in tiers.items() if rows}
+        if all(missing.values()):
+            problems.append(f"leaf {leaf!r} is not published on every row of any tier; rows "
+                            f"lacking it per tier: {missing!r}")
+    return problems
+
+
+def hca_omitted_leaf_problems(hca_entries: Dict[str, Dict[str, str]]) -> List[str]:
+    """HCA peer-port rows that publish a leaf the HLD omits for an HCA (tray-id, SR-6)."""
+    return [f"HCA row {pid} publishes {leaf!r} = {fields[leaf]!r}, which the HLD omits for an "
+            f"HCA peer-port (published for a GPU peer-port only)"
+            for pid, fields in sorted(hca_entries.items())
+            for leaf in sorted(PEER_PORT_HCA_OMITTED_LEAVES) if leaf in fields]
+
+
+def peer_component_refs(fields: Dict[str, str], nvue: bool = False) -> Dict[str, str]:
+    """The component names a peer-port row points at, keyed by the gNMI reference leaf.
+
+    `nvue` reads a `nv show peer-port <id>` row, which names the chip reference `asic`.
+    """
+    refs = {}
+    for leaf in PeerPortComponentRef.ALL:
+        shown = PeerPortComponentRef.NVUE_LEAF[leaf] if nvue else leaf
+        value = str(fields.get(shown) or "").strip()
+        if value:
+            refs[leaf] = value
+    return refs
+
+
+# ============================================================================
+# Extended drop: `nv show peer-platform` surface (HLD section 5.3)
+# ============================================================================
+
+
+# Top-level `nv show peer-platform` resource - the peer-side twin of `nv show platform`,
+# addressed by component name rather than by peer-port id.
+_PEER_PLATFORM_RESOURCE = BaseComponent(
+    parent=None,
+    api={ApiType.NVUE: NvueSystemCli, ApiType.OPENAPI: OpenApiSystemCli},
+    path=PEER_PLATFORM_RESOURCE_PATH,
+)
+
+
+def parse_show_json(resource: BaseComponent, op_param: str, engines, label: str) -> Dict:
+    """`nv show` one resource as nested JSON, failing the case when it carries no JSON object.
+
+    Every command tree the extended drop adds goes through here, so a command the build does
+    not resolve fails with its own output as the evidence rather than as a JSON parse error.
+    """
+    shown = resource.show(op_param=op_param, dut_engine=engines.dut,
+                          if_returned_value=False).ignore_result()
+    ResultObj(shown.result, f"`{label}` failed:\n{shown.info}",
+              issue_type=IssueType.PossibleBug).verify_result()
+    parsed = OutputParsingTool.parse_json_str_to_dictionary(shown.returned_value).ignore_result()
+    body = parsed.returned_value if parsed.result else None
+    ResultObj(isinstance(body, dict),
+              f"`{label}` returned no JSON object:\n{shown.returned_value}",
+              issue_type=IssueType.PossibleBug).verify_result()
+    return body
+
+
+_CLI_UNIT_SUFFIX = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s+[A-Za-z%]+\s*$")
+
+
+def peer_platform_cli_to_canonical(body):
+    """Re-spell a `nv show peer-platform` payload onto the names the HLD and gNMI use.
+
+    The CLI follows the local platform show: the module type is `identifier` (gNMI `form-factor`),
+    each channel power is a nested `rx-power` / `tx-power` container whose `power` leaf reads
+    "<mW> mW / <dBm> dBm" (gNMI `input-power` / `output-power`), and temperature, laser
+    temperature and supply voltage carry their unit ("63.00 C", "3.28 V"). Everything else is
+    left as the CLI printed it. A power container without a `power` leaf is kept as printed, so
+    the missing leaf shows up in the parity check.
+    """
+    if not isinstance(body, dict):
+        return body
+    out = {}
+    for key, value in body.items():
+        if (key in PEER_PLATFORM_CLI_POWER_CONTAINERS and isinstance(value, dict) and
+                PEER_PLATFORM_CLI_POWER_LEAF in value):
+            out[PEER_PLATFORM_CLI_POWER_CONTAINERS[key]] = value[PEER_PLATFORM_CLI_POWER_LEAF]
+            continue
+        if isinstance(value, dict):
+            out[key] = peer_platform_cli_to_canonical(value)
+            continue
+        key = PEER_PLATFORM_CLI_LEAF_NAMES.get(key, key)
+        if key in PEER_PLATFORM_CLI_UNIT_LEAVES:
+            match = _CLI_UNIT_SUFFIX.match(str(value))
+            value = match.group(1) if match else value
+        out[key] = value
+    return out
+
+
+def nvue_peer_platform_show(engines, kind: str, name: str, sub: str = "") -> Dict:
+    """`nv show peer-platform <kind> <name> [sub]` as nested JSON, on the HLD leaf names."""
+    op_param = " ".join(part for part in (kind, name, sub) if part)
+    return peer_platform_cli_to_canonical(
+        parse_show_json(_PEER_PLATFORM_RESOURCE, op_param, engines,
+                        f"nv show peer-platform {op_param}"))
+
+
+def hca_peer_component_names(engines, client: GnmiClient) -> Tuple[str, Dict[str, str]]:
+    """``(peer_id, {PeerPlatformKind: component name})`` for one switch-cabled HCA neighbor.
+
+    Any HCA row will do: what 5.7 opens is the module and the ASIC by name, not the port they
+    were read off. The names are taken from the gNMI peer-port state the naming rule is defined
+    on; whether `nv show peer-port <peer>` renders the same references is the listing test's
+    check. Returns ``("", {})`` when no row names a component, which callers fail.
+    """
+    # A row is listed before its component references are published, so right after the knob is
+    # enabled the references can be absent for up to a couple of telemetry cycles. Wait for them
+    # instead of failing on the first read.
+    deadline = time.time() + COMPONENT_REF_WAIT_SEC
+    while True:
+        candidates = most_specific_peer_entries(
+            filter_peer_entries_by_type(nvue_show_peer_ports(engines), PeerType.HCA))
+        states = gnmi_get_peer_port_list(client)
+        for pid in sorted(candidates):
+            refs = peer_component_refs(states.get(pid, {}))
+            if refs:
+                return pid, {PeerPlatformKind.BY_COMPONENT_REF[leaf]: name
+                             for leaf, name in refs.items()}
+        if time.time() >= deadline:
+            return "", {}
+        logger.info("No HCA row names a component yet; checking again in %ds",
+                    COMPONENT_REF_POLL_SEC)
+        time.sleep(COMPONENT_REF_POLL_SEC)
+
+
+def remap_leaf_keys(leaves: Dict[str, str], key_map: Dict[str, str]) -> Dict[str, str]:
+    """Re-key leaf readings through `key_map`, leaving keys the map does not name as they are."""
+    return {key_map.get(key, key): value for key, value in leaves.items()}
+
+
+def merge_gnmi_containers(client: GnmiClient, prefixes, name: str,
+                          path_prefix: str = "") -> Dict[str, str]:
+    """Read several gNMI containers into one leaf table, refusing to hide a name collision.
+
+    A node or family may span containers while the reader keys by leaf name, so the same leaf
+    served under two prefixes would silently overwrite itself and the comparison would run
+    against whichever container happened to be read last. Identical values are harmless;
+    conflicting ones mean the merged table cannot be trusted.
+    """
+    leaves: Dict[str, str] = {}
+    origin: Dict[str, str] = {}
+    for prefix_template in prefixes:
+        path = path_prefix + prefix_template.format(name=name)
+        for leaf, value in gnmi_get_flat_relative(client, prefix=path).items():
+            if leaf in leaves and leaves[leaf] != value:
+                raise AssertionError(
+                    f"gNMI leaf {leaf!r} is served by both {origin[leaf]} and {path} with "
+                    f"different values ({leaves[leaf]!r} vs {value!r}); the containers "
+                    f"collide, so the merged leaf table would be read from whichever was "
+                    f"fetched last"
+                )
+            leaves[leaf] = value
+            origin[leaf] = path
+    return leaves
+
+
+def gnmi_peer_platform_leaves(client: GnmiClient, node: PeerPlatformNode,
+                              name: str) -> Dict[str, str]:
+    """A peer-platform node's leaves over gNMI, re-keyed onto the CLI leaf names."""
+    return remap_leaf_keys(merge_gnmi_containers(client, node.gnmi_prefixes, name),
+                           node.gnmi_key_map)
+
+
+def gnmi_peer_platform_members(client: GnmiClient, node: PeerPlatformNode,
+                               name: str) -> Dict[str, Dict[str, str]]:
+    """A peer-platform node's list members over gNMI, each re-keyed onto the CLI leaf names.
+
+    Members are merged across the node's prefixes by member key, because the receive-side
+    readings and the transmit-side indications of one channel live in two sibling lists while
+    the CLI renders them as one channel entry.
+    """
+    members: Dict[str, Dict[str, str]] = {}
+    for prefix_template in node.gnmi_prefixes:
+        for key, leaves in gnmi_list_members(
+                client, prefix_template.format(name=name), relative=True).items():
+            members.setdefault(key, {}).update(remap_leaf_keys(leaves, node.gnmi_key_map))
+    return members
+
+
+def list_member_index(key: str) -> str:
+    """The index a list member is keyed by: `channel-3` on the CLI and `3` over gNMI both give `3`.
+
+    The HLD writes the CLI key as `<ch>` without fixing its spelling, so members are joined on
+    the number alone.
+    """
+    match = re.search(r"(\d+)$", str(key))
+    return match.group(1) if match else str(key)
+
+
+def shift_member_index_to_match(reference: Dict[str, Any], members: Dict[str, Any]) -> Dict[str, Any]:
+    """``members`` renumbered by a constant offset when that makes its indexes equal ``reference``'s.
+
+    Meant for a list one surface numbers from 0 and another from 1. Returned unchanged when no
+    constant offset lines the two up, so any other mismatch keeps being compared as it is.
+    """
+    try:
+        want = sorted(int(key) for key in reference)
+        have = sorted(int(key) for key in members)
+    except ValueError:
+        return members
+    if not want or len(want) != len(have):
+        return members
+    offset = want[0] - have[0]
+    if offset == 0 or [index + offset for index in have] != want:
+        return members
+    return {str(int(key) + offset): member for key, member in members.items()}
+
+
+def xcset_row_for_db_row(db_row: Dict[str, str],
+                         indexed_rows: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    """The raw xcset row behind one ingested peer-port row ({} when the two cannot be joined)."""
+    key = hca_xcset_join_key(db_row)
+    return indexed_rows.get(key, {}) if key else {}
+
+
+def xcset_host_name(xcset_row: Dict[str, str]) -> str:
+    """The remote host an xcset row names: its host_name column, else the host word of node_description."""
+    named = str(xcset_row.get(PeerComponentXcsetColumn.HOST_NAME) or "").strip()
+    if named:
+        return named
+    description = str(xcset_row.get(PeerComponentXcsetColumn.NODE_DESCRIPTION) or "").split()
+    return description[0] if description else ""
+
+
+def peer_asic_host_name(leaves: Dict[str, str]) -> str:
+    """The remote host name off a peer ASIC payload, under either accepted spelling."""
+    for candidate in PEER_ASIC_HOST_NAME_CANDIDATES:
+        value = str(leaves.get(candidate) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def peer_platform_show_problems(body: Dict, node: PeerPlatformNode) -> List[str]:
+    """Contract problems for one `nv show peer-platform ...` payload (empty list when clean)."""
+    problems = leaf_problems(peer_port_show_leaves(body), node.leaves, where=node.node_id)
+    if not node.member_leaves:
+        return problems
+    members = peer_port_show_containers(body)
+    if not members:
+        return problems + [f"{node.node_id} exposes no members to check"]
+    for member_key, member in sorted(members.items()):
+        problems += [
+            f"member [{member_key}] {problem}"
+            for problem in leaf_problems(peer_port_show_leaves(member), node.member_leaves,
+                                         where=node.node_id)
+        ]
+    return problems
+
+
+# ============================================================================
+# Extended drop: raw xcset columns and serving a rewritten xcset
+# ============================================================================
+
+
+def hca_xcset_rows_from_raw(raw: str) -> List[Dict[str, str]]:
+    """Every HCA xcset row in `raw` as ``{column: value}``, keeping all columns.
+
+    Split from `read_hca_xcset_rows` so a caller that rewrites the CSV parses the very text it
+    is about to rewrite; re-reading the socket could return a different header.
+    """
+    return [row for row in _parse_xcset_csv(raw) if _is_hca_xcset_row(row)]
+
+
+def read_hca_xcset_rows(engines) -> List[Dict[str, str]]:
+    """Every HCA xcset row as ``{column: value}``, keeping all columns (not just the counters)."""
+    return hca_xcset_rows_from_raw(read_hca_xcset_raw(engines))
+
+
+def xcset_rows_by_join_key(rows: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Index raw xcset rows by the join key they share with the ingested System DB rows."""
+    indexed: Dict[str, Dict[str, str]] = {}
+    for row in rows:
+        key = hca_xcset_join_key(row)
+        if key:
+            indexed.setdefault(key, row)
+    return indexed
+
+
+def xcset_header(raw: str) -> List[str]:
+    """Column names the served xcset carries, so a caller can tell a rewrite is possible."""
+    _, header, _ = _split_xcset_csv(raw)
+    return header
+
+
+def _split_xcset_csv_for_rewrite(raw: str, column: str, verb: str):
+    """`_split_xcset_csv`, but refusing a response the column cannot be located in."""
+    preamble, header, rows = _split_xcset_csv(raw)
+    if not header:
+        raise AssertionError(
+            f"the xcset response carries no CSV header, so column {column!r} cannot be "
+            f"{verb}; NMX-T-for-IB served: {raw!r}"
+        )
+    if column not in header:
+        raise AssertionError(
+            f"xcset column {column!r} is not served, so it cannot be {verb}; "
+            f"header is {header!r}"
+        )
+    return preamble, header, rows
+
+
+def xcset_csv_drop_column(raw: str, column: str) -> str:
+    """The xcset CSV with `column` removed from the header and from every row.
+
+    This is how a column NMX-T does not serve is simulated: the field must then be omitted
+    from the published row rather than reported as zero (SR-7).
+    """
+    preamble, header, rows = _split_xcset_csv_for_rewrite(raw, column, "removed")
+    keep = [index for index, name in enumerate(header) if name != column]
+    return _render_xcset_csv(
+        preamble,
+        [header[index] for index in keep],
+        [[row[index] for index in keep if index < len(row)] for row in rows],
+    )
+
+
+def xcset_csv_blank_column(raw: str, column: str, join_key: str = "") -> str:
+    """The xcset CSV with `column` emptied - on the row matching `join_key`, or on every row.
+
+    Keeping the column but clearing its value is the "telemetry does not name it" case: no
+    component may be created, while the peer's own row must still be published.
+    """
+    preamble, header, rows = _split_xcset_csv_for_rewrite(raw, column, "blanked")
+    index = header.index(column)
+    blanked = []
+    for row in rows:
+        if index < len(row) and (not join_key or hca_xcset_join_key(dict(zip(header, row))) == join_key):
+            row = list(row)
+            row[index] = ""
+        blanked.append(row)
+    return _render_xcset_csv(preamble, header, blanked)
+
+
+def droppable_xcset_column(xcset_row: Dict[str, str]) -> str:
+    """An extended xcset column this row actually carries a value for, or "" when it has none.
+
+    Picked by marker rather than by a fixed name: which columns NMX-T serves per cable type is
+    still open, and a column that is empty or zero already proves nothing when removed. The
+    columns that name a component are excluded -- removing one of those is the separate SR-7
+    scenario where the component correctly goes away, which this check would misread as a loss.
+    """
+    for column, value in sorted(xcset_row.items()):
+        if column.lower() in PeerComponentXcsetColumn.ALL:
+            continue
+        if (any(marker in column.lower() for marker in XCSET_EXTENDED_COLUMN_MARKERS) and
+                not _xcset_value_is_empty(value)):
+            return column
+    return ""
+
+
+def _xcset_value_is_empty(value) -> bool:
+    """True for a blank, a zero, or the firmware's "no errors" BER sentinel (e.g. ``1.5e-254``).
+
+    Removing a column that carries such a value proves nothing, because the DB shows the same
+    zero-like value whether the column is served or not.
+    """
+    text = str(value).strip()
+    if text in ("", "0"):
+        return True
+    try:
+        return abs(Decimal(text)) <= PEER_PORT_BER_ZERO_FLOOR
+    except InvalidOperation:
+        return False
+
+
+def missing_xcset_column_problems(before: Dict[str, str], after: Dict[str, str], column: str,
+                                  refs_before: Dict[str, str],
+                                  refs_after: Dict[str, str]) -> List[str]:
+    """SR-7 problems seen after a column was removed from the served xcset.
+
+    Which DB field a given column feeds is not published, so the two COUNTERS_DB snapshots are
+    compared instead of a name map: a field that went from a real value to zero is exactly the
+    violation SR-7 names, and the row itself must survive either way. The component references
+    are passed in separately because they are NVUE leaves, absent from the DB row.
+    """
+    if not after:
+        return [f"the whole peer-port row disappeared when column {column!r} was removed; "
+                f"SR-7 requires the row to survive with a single leaf omitted"]
+    problems = [
+        f"field {field!r} was {value!r} and now reads 0 with column {column!r} removed; a "
+        f"column NMX-T does not serve must omit its leaf, not report it as zero"
+        for field, value in sorted(before.items())
+        if str(value).strip() not in ("", "0") and str(after.get(field, "")).strip() == "0"
+    ]
+    problems += [
+        f"component reference {leaf!r} was dropped when column {column!r} was removed; that "
+        f"column names no component, so only the leaf it feeds may go"
+        for leaf in sorted(set(refs_before) - set(refs_after))
+    ]
+    return problems
+
+
+def select_droppable_xcset_column(engines, xcset_rows: List[Dict[str, str]]) -> Tuple[str, str]:
+    """``(column, peer_id)`` for an extended xcset column that feeds a live peer-port row."""
+    rows = most_specific_peer_entries(list_hca_peer_rows(engines))
+    indexed = xcset_rows_by_join_key(xcset_rows)
+    for pid, db_row in sorted(rows.items()):
+        column = droppable_xcset_column(indexed.get(hca_xcset_join_key(db_row), {}))
+        if column:
+            return column, pid
+    return "", ""
+
+
+def component_naming_problems(pid: str, xcset_row: Dict[str, str],
+                              refs: Dict[str, str]) -> List[str]:
+    """Where a peer-port's component names disagree with the naming rule (HLD Section 4.2)."""
+    expected = {
+        PeerPortComponentRef.TRANSCEIVER: expected_peer_transceiver_name(
+            xcset_row.get(PeerComponentXcsetColumn.MODULE_SERIAL),
+            xcset_row.get(PeerComponentXcsetColumn.SYS_IMAGE_GUID),
+        ),
+        PeerPortComponentRef.INTEGRATED_CIRCUIT: expected_peer_asic_name(
+            xcset_row.get(PeerComponentXcsetColumn.NODE_GUID)),
+    }
+    problems = []
+    for leaf, want in expected.items():
+        got = refs.get(leaf, "")
+        if not want:
+            if got:
+                problems.append(
+                    f"[{pid}] names a {leaf} component {got!r} although the xcset carries no "
+                    f"identifier to build it from; no component may be invented"
+                )
+            continue
+        if not got:
+            problems.append(f"[{pid}] carries no {leaf} name although the xcset names one "
+                            f"(expected {want!r})")
+        elif got != want:
+            problems.append(f"[{pid}] {leaf} is {got!r}, but the naming rule gives {want!r}")
+    return problems
+
+
+def shared_module_problems(peers: Dict[str, Dict[str, str]],
+                           xcset_by_key: Dict[str, Dict[str, str]],
+                           db_rows: Dict[str, Dict[str, str]]) -> List[str]:
+    """Peers on one physical module that do not point at the same transceiver name (SR-4).
+
+    A module is its serial plus the system image GUID, because the component name appends the
+    GUID so the same serial on two chassis stays two components.
+    """
+    by_module: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for pid, fields in sorted(peers.items()):
+        xcset_row = xcset_row_for_db_row(db_rows.get(pid, {}), xcset_by_key)
+        serial = str(xcset_row.get(PeerComponentXcsetColumn.MODULE_SERIAL) or "").strip()
+        guid = str(xcset_row.get(PeerComponentXcsetColumn.SYS_IMAGE_GUID) or "").strip()
+        name = peer_component_refs(fields).get(PeerPortComponentRef.TRANSCEIVER, "")
+        if serial and name:
+            by_module.setdefault((serial, guid), {})[pid] = name
+    return [
+        f"peers sharing module serial {serial!r} (system image GUID {guid!r}) point at "
+        f"different transceiver names: {names!r}"
+        for (serial, guid), names in sorted(by_module.items()) if len(set(names.values())) > 1
+    ]
+
+
+def resolve_component_targets(client: GnmiClient, ref_leaf: str) -> List[Tuple[str, str]]:
+    """Component names to sweep: every `ref_leaf` value a gNMI-listed peer-port points at.
+
+    The whole listing is read rather than a sample of peers, because which tier carries the
+    reference is not in the HLD. Ports sharing one module share one component name, so the
+    names are de-duplicated and the peer they were read off is kept only to label the sweep.
+    """
+    resolved: Dict[str, str] = {}
+    for pid, fields in sorted(gnmi_get_peer_port_list(client).items()):
+        name = str(fields.get(ref_leaf) or "").strip()
+        if name:
+            resolved.setdefault(name, f"via {pid}")
+    return [(via, name) for name, via in sorted(resolved.items())]
+
+
+def inject_hca_xcset(engines, csv_text: str) -> None:
+    """Serve `csv_text` as the ib_nvos xcset, replacing the real NMX-T-for-IB backend."""
+    with allure.step("Ship the replacement xcset + interceptor to the DUT"):
+        _put_remote_file(engines, _NMXT_FAKE_CSV_PATH, csv_text)
+        _put_remote_file(engines, _NMXT_FAKE_SCRIPT_PATH, _NMXT_FAKE_SERVER)
+
+    with allure.step(f"Mask + stop {NMXT_IB_SERVICE} and start the interceptor"):
+        engines.dut.run_cmd(f"sudo systemctl mask {NMXT_IB_SERVICE}")
+        engines.dut.run_cmd(f"sudo systemctl stop {NMXT_IB_SERVICE} 2>/dev/null")
+        engines.dut.run_cmd(f"sudo docker stop {NMXT_IB_CONTAINER} 2>/dev/null")
+        engines.dut.run_cmd("sudo mkdir -p /var/run/nmx-t/ib")
+        time.sleep(3)  # let the real daemon release its sockets
+        engines.dut.run_cmd(
+            f"sudo bash -c 'nohup python3 {_NMXT_FAKE_SCRIPT_PATH} {NMXT_CONTROL_SOCKET} "
+            f"{NMXT_XCSET_SOCKET} {_NMXT_FAKE_CSV_PATH} {NMXT_CONNECTOR_SOCKET} "
+            f">{_NMXT_FAKE_LOG_PATH} 2>&1 < /dev/null & echo $! > {_NMXT_FAKE_PID_PATH}'"
+        )
+
+
+def wait_for_fake_xcset_fetches(engines, fetches: int,
+                                timeout_sec: int = 10 + PEER_TELEMETRY_SAMPLING_SEC * 3) -> int:
+    """How many times peer-telemetry fetched the served xcset, waiting for `fetches` of them.
+
+    The swap is an outage, after which peer-telemetry retries on its health-check cadence
+    rather than the sampling interval, so a fixed sleep can end before it reads the rewritten
+    xcset even once.
+    """
+    deadline = time.time() + timeout_sec
+    served = 0
+    while True:
+        out = engines.dut.run_cmd(
+            f"sudo grep -c xcset-served {_NMXT_FAKE_LOG_PATH} 2>/dev/null; true") or ""
+        found = re.search(r"\d+", out)
+        served = int(found.group()) if found else 0
+        if served >= fetches or time.time() >= deadline:
+            return served
+        time.sleep(5)
+
+
+@contextmanager
+def serving_hca_xcset(engines, csv_text: str) -> Generator[None, None, None]:
+    """Serve a rewritten xcset for the duration of the block, then restore the real backend.
+
+    Each swap is a deliberate NMX-T outage, during which peer-telemetry logs connection errors
+    at error level (HLD section 6), so LogAnalyzer is paused across the two swaps but not while
+    the block runs. The block is entered only after two fetches of the rewritten xcset: the
+    second one starts after the first was written through.
+    """
+    with loganalyzer_ignore():
+        inject_hca_xcset(engines, csv_text)
+        served = wait_for_fake_xcset_fetches(engines, fetches=2)
+    try:
+        ResultObj(
+            served >= 2,
+            f"peer-telemetry fetched the rewritten xcset {served} time(s) after NMX-T-for-IB "
+            f"came back; it must resume polling once the backend answers again (HLD section 6)",
+            issue_type=IssueType.PossibleBug,
+        ).verify_result()
+        yield
+    finally:
+        with loganalyzer_ignore():
+            restore_valid_hca_xcset(engines)
+            backend_quiet = wait_for_nmxt_backend_reachable(engines)
+    # Checked after the finally so that a failure inside the block is not replaced by this one.
+    ResultObj(
+        backend_quiet,
+        "nmx-t-ib did not come back and stop logging backend connection errors after the "
+        "rewritten xcset was withdrawn",
+        issue_type=IssueType.PossibleBug,
+    ).verify_result()
+
+
+# ============================================================================
+# Extended drop: the local switch half (HLD section 5.1)
+# ============================================================================
+
+
+def is_gnmi_entry_absent(text: str) -> bool:
+    """True when a gNMI read failed because the container / entry is not implemented there.
+
+    An FNM-connected HCA with no peer components, or a plane leg whose link is down, answers
+    with Unimplemented "cannot find the entry" - a per-target applicability gap rather than a
+    schema violation.
+    """
+    message = str(text or "").lower()
+    return "unimplemented" in message and "cannot find the entry" in message
+
+
+def select_link_up_port() -> Tuple[Optional[Port], str]:
+    """A randomly chosen link-up switch Port, or ``(None, reason)`` when the DUT has none.
+
+    Returns the reason rather than skipping, so a caller can fail, skip or degrade one step
+    according to how central a live link is to what it checks.
+    """
+    port_result = Tools.RandomizationTool.select_random_port(
+        requested_ports_state=NvosConsts.LINK_STATE_UP)
+    if not port_result.result:
+        port_result.ignore_result()
+        return None, str(port_result.info)
+    return port_result.get_returned_value(), ""
+
+
+def require_link_up_port(purpose: str, skip: bool) -> Port:
+    """A link-up switch Port, or end the case: these leaves only populate on a live link.
+
+    `skip` carries the same meaning as in `report_wrong_lab`: the telemetry suites proper fail,
+    because a DUT with no live link never exercises the leaves under test, while the
+    subscribe-heartbeat cases layered on top skip instead.
+    """
+    port, reason = select_link_up_port()
+    if port is None:
+        report_wrong_lab(
+            f"WRONG LAB SETUP: no link-up port available to {purpose} on this DUT. The "
+            f"extended PHY and platform leaves are only populated while a port is link-up: "
+            f"{reason}",
+            skip=skip,
+        )
+    return port
+
+
+def ber_ratio_scale_problem(leaf: str, value, where: str) -> str:
+    """Empty string unless an error-rate leaf sits outside the 0..1 ratio it is published as.
+
+    A surface that scaled the rate to a percentage would report up to 100, which is exactly the
+    scaling difference SR-2 rules out between the local port and the peer-port.
+    """
+    try:
+        ratio = Decimal(str(value).strip().strip('"'))
+    except (InvalidOperation, ValueError):
+        return ""
+    if ratio.is_nan() or Decimal(0) <= ratio <= BER_RATIO_CEILING:
+        return ""
+    return (f"error-rate leaf {leaf!r} reads {value!r} on the {where}, outside the 0..1 ratio "
+            f"an error rate is published as, which is a scaling difference")
+
+
+def phy_surface_symmetry_problems(expected: Dict[str, str], peer_leaves: Dict[str, str],
+                                  local_leaves: Dict[str, str]) -> Tuple[List[str], int]:
+    """Where the peer-port and local-port PHY containers disagree (SR-2); ``(problems, shared)``.
+
+    Names: the two read the same YANG container, so a leaf one side publishes must be published
+    on the other under the same name.
+    Scale: every error rate both sides publish must be a ratio on both, which is what a
+    percent-versus-ratio difference would break.
+    """
+    problems: List[str] = []
+    peer_present = {leaf for leaf in expected if leaf in peer_leaves}
+    local_present = {leaf for leaf in expected if leaf in local_leaves}
+    problems += [f"leaf {leaf!r} is published on the local port but not on the peer-port"
+                 for leaf in sorted(local_present - peer_present)]
+    problems += [f"leaf {leaf!r} is published on the peer-port but not on the local port"
+                 for leaf in sorted(peer_present - local_present)]
+    shared = sorted(peer_present & local_present)
+    for leaf in shared:
+        if expected[leaf] != GnmiTypeKind.DECIMAL:
+            continue
+        for where, leaves in (("peer-port", peer_leaves), ("local port", local_leaves)):
+            problem = ber_ratio_scale_problem(leaf, leaves[leaf], where)
+            if problem:
+                problems.append(problem)
+    return problems, len(shared)
+
+
+def gnmi_family_leaves(client: GnmiClient, name: str, family: LocalPortFamily,
+                       path_prefix: str = "") -> Dict[str, str]:
+    """One field family over gNMI, merged across the containers the family spans.
+
+    `path_prefix` selects the tree: "" reads the switch's own port, while
+    ``GnmiYangPaths.PEER_PORT_PREFIX`` reads the peer-port twin of the same containers - which
+    is what makes the local-versus-peer symmetry check table-driven.
+    """
+    return merge_gnmi_containers(client, family.gnmi_prefixes, name, path_prefix=path_prefix)
+
+
+def flatten_nvue_leaves(body: Dict, prefix: str = "") -> Dict[str, str]:
+    """Flatten nested NVUE JSON to ``{container/.../leaf: value}`` (null renders as "")."""
+    flat: Dict[str, str] = {}
+    for key, value in (body or {}).items():
+        path = f"{prefix}/{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            flat.update(flatten_nvue_leaves(value, path))
+        else:
+            flat[path] = "" if value is None else str(value)
+    return flat
+
+
+def leaf_lookup(flat: Dict[str, str]) -> Dict[str, str]:
+    """Address each flattened leaf by its full path and by every unambiguous suffix of it.
+
+    The CLI and gNMI do not agree on how many wrapper containers a leaf sits under, so a
+    gNMI-relative key like ``raw-ber/alarm-count`` has to resolve against a CLI payload that
+    nests it one level deeper. A suffix more than one leaf would claim is dropped, so an
+    ambiguous short name never resolves to an arbitrary reading.
+    """
+    lookup: Dict[str, str] = dict(flat)
+    claims: Dict[str, List[str]] = {}
+    for path, value in flat.items():
+        parts = path.split("/")
+        for start in range(1, len(parts)):
+            claims.setdefault("/".join(parts[start:]), []).append(value)
+    for suffix, values in claims.items():
+        if len(values) == 1 and suffix not in lookup:
+            lookup[suffix] = values[0]
+    return lookup
+
+
+def nvue_local_sub_leaves(engines, port: Port, sub: str) -> Dict[str, str]:
+    """`nv show interface <port> <sub>` flattened and addressable by every unambiguous suffix."""
+    phy = port.interface.link.phy
+    readers = {
+        LocalPortNvueSub.LINK_PHY: phy,
+        LocalPortNvueSub.LINK_PHY_DETAIL: phy.detail,
+        LocalPortNvueSub.LINK_PHY_HEALTH: phy.health,
+        LocalPortNvueSub.LINK_PHY_BER_MONITOR: phy.ber_monitor,
+        LocalPortNvueSub.COUNTERS: port.interface.counters,
+    }
+    body = parse_show_json(readers[sub], "", engines, f"nv show interface {port.name} {sub}")
+    return leaf_lookup(flatten_nvue_leaves(body))
+
+
+def nvue_local_family_leaves(engines, port: Port, family: LocalPortFamily) -> Dict[str, str]:
+    """One local-port field family over the CLI, addressable by the family's gNMI leaf keys."""
+    return nvue_local_sub_leaves(engines, port, family.nvue_sub)
+
+
+def read_local_port_counters_row(engines, port_name: str) -> Dict[str, str]:
+    """hgetall the COUNTERS_DB row of one local switch port ({} when its OID does not resolve)."""
+    oid = (get_aport_oid(engines, port_name) or "").replace('"', "").strip()
+    if not oid.startswith(SystemDbCli.COUNTERS_OID_PREFIX):
+        logger.info("Port %s resolved to OID %r, which is not a COUNTERS_DB key", port_name, oid)
+        return {}
+    return db_hgetall(engines, SystemDbCli.COUNTERS_DB,
+                      SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=oid))
+
+
+def read_port_counters_row(engines, port_name: str) -> Dict[str, str]:
+    """hgetall the COUNTERS_DB row of an Aport or a plane-port (fails when its OID does not resolve)."""
+    return db_hgetall(engines, SystemDbCli.COUNTERS_DB,
+                      SystemDbCli.COUNTERS_OID_KEY_FMT.format(oid=_resolve_counter_oid(engines, port_name)))
+
+
+def _db_field_by_leaf_tokens(db_row: Dict[str, str], leaf: str) -> List[str]:
+    """Row fields whose name carries every dash-separated token of ``leaf``, upper-cased."""
+    tokens = leaf.upper().split("-")
+    return sorted(field for field in db_row if all(token in field for token in tokens))
+
+
+def extended_counter_db_fields(db_row: Dict[str, str], port_name: str,
+                               is_plane: bool) -> Tuple[Dict[str, str], List[str]]:
+    """``{leaf: db_field}`` of every EXTENDED_COUNTERS entry the port must expose, and the problems.
+
+    An Aport must carry every extended counter; a plane-port must carry the per-plane ones and
+    is compared on the others only where its DB row carries them.
+    """
+    fields: Dict[str, str] = {}
+    problems: List[str] = []
+    for counter in EXTENDED_COUNTERS:
+        required = counter.per_plane or not is_plane
+        if counter.db_field:
+            candidates = [counter.db_field] if counter.db_field in db_row else []
+        else:
+            candidates = _db_field_by_leaf_tokens(db_row, counter.leaf)
+        if len(candidates) > 1:
+            problems.append(f"{port_name}: {counter.leaf} matches more than one COUNTERS_DB "
+                            f"field: {candidates}")
+        elif candidates and str(db_row[candidates[0]]).strip() != "":
+            fields[counter.leaf] = candidates[0]
+        elif required:
+            problems.append(f"{port_name}: the COUNTERS_DB row carries no "
+                            f"{counter.db_field or counter.leaf + ' field'}")
+    return fields, problems
+
+
+def _extended_counter_api_values(engines, gnmi_client: GnmiClient, api: str, port: Port,
+                                 leaves) -> Dict[str, Optional[str]]:
+    """``{leaf: value}`` of the given extended counters over ``api`` (None when not exposed)."""
+    readings: Dict[str, Dict[str, str]] = {}
+    values: Dict[str, Optional[str]] = {}
+    for counter in EXTENDED_COUNTERS:
+        if counter.leaf not in leaves:
+            continue
+        if api == API_NVUE_CLI:
+            source, leaf = counter.nvue_sub, counter.nvue_leaf
+            if source not in readings:
+                readings[source] = nvue_local_sub_leaves(engines, port, source)
+        else:
+            source, leaf = counter.gnmi_prefix, counter.leaf
+            if source not in readings:
+                readings[source] = gnmi_get_flat(gnmi_client, source.format(name=port.name))
+        values[counter.leaf] = readings[source].get(leaf)
+    attach_dict(f"{api} extended counters {port.name}", values)
+    return values
+
+
+def extended_counter_db_problems(engines, gnmi_client: GnmiClient, api: str, port: Port,
+                                 is_plane: bool) -> List[str]:
+    """Problems where an extended counter of ``port`` is missing over ``api`` or disagrees with the DB.
+
+    The DB row read first decides which counters apply. NVUE and gNMI are then compared to the
+    row read right after them, a counter within the sampling tolerance and a BER within a
+    decade; OTEL is compared to the rows read around one fresh collection window.
+    """
+    by_leaf = {counter.leaf: counter for counter in EXTENDED_COUNTERS}
+    before = read_port_counters_row(engines, port.name)
+    fields, problems = extended_counter_db_fields(before, port.name, is_plane)
+    if api == API_OTEL:
+        snap = ibo.active_surface().snapshot(f"extended-counters-{port.name}", fresh=True)
+        after = read_port_counters_row(engines, port.name)
+        attach_dict(f"COUNTERS_DB {port.name} around OTEL window", {"before": before, "after": after})
+        metric_by_field = {field: by_leaf[leaf].otel_metric for leaf, field in fields.items()}
+        return problems + ibo.db_parity_problems(snap, port.name, before, after, metric_by_field,
+                                                 list(fields.values()))
+
+    api_values = _extended_counter_api_values(engines, gnmi_client, api, port, fields)
+    db_row = read_port_counters_row(engines, port.name)
+    attach_dict(f"COUNTERS_DB {port.name}", db_row)
+    pairs = [PeerPortDbPair(f"{port.name} {api} {leaf}", api_values[leaf], field, by_leaf[leaf].kind)
+             for leaf, field in fields.items()]
+    pair_problems, _ = peer_port_db_pair_problems(pairs, db_row, surface=api)
+    return problems + pair_problems
+
+
+def gnmi_missing_extended_counters(gnmi_client: GnmiClient, port_name: str) -> List[str]:
+    """Extended counter leaves an Aport does not expose over gNMI."""
+    readings = {prefix: gnmi_get_flat(gnmi_client, prefix.format(name=port_name))
+                for prefix in {counter.gnmi_prefix for counter in EXTENDED_COUNTERS}}
+    return [counter.leaf for counter in EXTENDED_COUNTERS
+            if str(readings[counter.gnmi_prefix].get(counter.leaf, "")).strip() == ""]
+
+
+def local_transceiver_inventory(engines) -> Dict[str, Dict]:
+    """`nv show platform transceiver --view=detail`, keyed by module name.
+
+    The detail view rather than the brief one: the identity leaves this suite compares
+    (vendor revision, supported cable length) are rendered there only. Read once per test and
+    passed around, so one CLI call serves both the module choice and every leaf read.
+    """
+    inventory = parse_show_json(Platform().transceiver, TRANSCEIVER_DETAIL_VIEW, engines,
+                                f"nv show platform transceiver {TRANSCEIVER_DETAIL_VIEW}")
+    return {name: row for name, row in inventory.items() if isinstance(row, dict)}
+
+
+def fitted_transceiver_names(inventory: Dict[str, Dict]) -> List[str]:
+    """The modules the platform reports as fitted, out of every cage the inventory lists.
+
+    An empty cage is listed too and publishes no identity leaf on either surface, so choosing
+    one would leave the comparison with nothing to compare. A cage the platform gives a cable
+    type is one that holds a module, whatever type that module turns out to be.
+    """
+    return sorted(name for name, row in inventory.items()
+                  if str(row.get(PlatformConsts.TRANSCEIVER_CABLE_TYPE) or "").strip())
+
+
+def local_transceiver_leaves(inventory: Dict[str, Dict], name: str) -> Dict[str, str]:
+    """One module's detail row, addressable by the gNMI transceiver leaf keys."""
+    return leaf_lookup(flatten_nvue_leaves(inventory.get(name, {})))
+
+
+def diagnostic_transceiver_names(inventory: Dict[str, Dict], fitted: List[str]) -> List[str]:
+    """The fitted modules that carry diagnostic data, the only ones with per-channel readings.
+
+    A passive copper cable reports itself not DDMI capable and has no channel to sample.
+    """
+    return [name for name in fitted
+            if str(inventory[name].get(PlatformConsts.HARDWARE_TRANCEIVER_DIAGNOSTIC_STATUS) or
+                   "").strip() != PlatformConsts.HARDWARE_TRANCEIVER_NOT_DDMI]
+
+
+def gnmi_local_asic_names(client: GnmiClient) -> List[str]:
+    """Names of the switch chips in the gNMI components tree.
+
+    Read from gNMI because the bare `nv show platform asic` lists no chip on NVOS; only the
+    per-chip commands resolve.
+    """
+    types = gnmi_list_members(client, GnmiYangPaths.COMPONENT_TYPES)
+    return sorted(name for name, leaves in types.items()
+                  if leaves.get("type") == ASIC_COMPONENT_TYPE)
+
+
+def local_asic_frequency_leaves(engines, asic_name: str) -> Dict[str, str]:
+    """`nv show platform asic <asic> frequency`, flattened to the gNMI frequency leaf keys."""
+    return leaf_lookup(flatten_nvue_leaves(parse_show_json(
+        Platform().asic.asic_id[asic_name].frequency, "", engines,
+        f"nv show platform asic {asic_name} frequency")))
+
+
+def gnmi_local_component_names(client: GnmiClient) -> List[str]:
+    """Component names the switch's own components tree exposes over gNMI."""
+    return sorted(gnmi_list_members(client, GnmiYangPaths.COMPONENTS, relative=True))
+
+
+def _normalized_bool(value: str) -> str:
+    """Canonical spelling of a boolean leaf, so true and 1 compare equal across surfaces.
+
+    Deliberately the same vocabulary `gnmi_typecheck` accepts for a BOOL: a spelling this
+    folded away but the type check rejects would be normalized into a pass by one half of the
+    suite and flagged by the other.
+    """
+    text = str(value).strip().strip('"').lower()
+    if text in ("true", "1"):
+        return "true"
+    if text in ("false", "0"):
+        return "false"
+    return text
+
+
+def _decimals_agree(left: float, right: float) -> bool:
+    """Relative +/- jitter comparison for a sampled decimal, with no absolute counter floor.
+
+    Error rates are ratios bounded at 1, so the shared `values_within_tolerance` -- which
+    degrades to an absolute tolerance of 1.0 once either side reads zero -- would accept any
+    reading against a zero. Only far-tail noise below DECIMAL_COMPARE_EPSILON is absorbed here.
+    """
+    scale = max(abs(left), abs(right))
+    if scale <= DECIMAL_COMPARE_EPSILON:
+        return True
+    return abs(left - right) <= max(SAMPLING_JITTER_TOLERANCE_PCT * scale,
+                                    DECIMAL_COMPARE_EPSILON)
+
+
+def optical_power_readings(text: str) -> Dict[str, float]:
+    """An optical power as ``{unit: value}``; empty when `text` is neither rendering.
+
+    gNMI publishes a bare number whose unit the HLD does not state, keyed "" here. nv show
+    renders ``"<mW> mW / <dBm> dBm"``, and a milliwatt reading can never be negative.
+    """
+    text = str(text).strip().strip('"').strip()
+    try:
+        return {"": float(text)}
+    except ValueError:
+        pass
+    readings: Dict[str, float] = {}
+    for part in text.split("/"):
+        tokens = part.split()
+        if len(tokens) != 2:
+            return {}
+        number, unit = tokens[0], tokens[1].lower()
+        if unit not in (OPTICAL_POWER_MW_UNIT, OPTICAL_POWER_DBM_UNIT) or unit in readings:
+            return {}
+        try:
+            readings[unit] = float(number)
+        except ValueError:
+            return {}
+    if set(readings) != {OPTICAL_POWER_MW_UNIT, OPTICAL_POWER_DBM_UNIT}:
+        return {}
+    return readings if readings[OPTICAL_POWER_MW_UNIT] >= 0 else {}
+
+
+def _optical_powers_agree(left: str, right: str) -> bool:
+    """True when two renderings of one optical power carry the same reading.
+
+    A bare number matches either unit of the two-unit rendering, since the HLD names the
+    reading but not its unit. Milliwatts compare within the relative sampling jitter, dBm
+    within an absolute band.
+    """
+    left_by_unit, right_by_unit = optical_power_readings(left), optical_power_readings(right)
+    if not left_by_unit or not right_by_unit:
+        return False
+
+    def agree(unit: str, a: float, b: float) -> bool:
+        if unit == OPTICAL_POWER_DBM_UNIT:
+            return abs(a - b) <= OPTICAL_POWER_DBM_TOLERANCE
+        return _decimals_agree(a, b)
+
+    for left_unit, a in left_by_unit.items():
+        for right_unit, b in right_by_unit.items():
+            if left_unit and right_unit and left_unit != right_unit:
+                continue
+            if agree(left_unit or right_unit, a, b):
+                return True
+    return False
+
+
+def _leaf_values_agree(kind: str, left: str, right: str) -> bool:
+    """True when two surfaces report the same reading for a leaf of the given kind.
+
+    Only values sampled from the hardware -- accumulating counters, ratios and measured
+    readings -- get the sampling-jitter tolerance. A code, a setting or a duration is a single
+    published value, so any difference there is a real mismatch.
+    """
+    left_text, right_text = str(left).strip().strip('"'), str(right).strip().strip('"')
+    if kind == GnmiTypeKind.BOOL:
+        return _normalized_bool(left_text) == _normalized_bool(right_text)
+    if kind == GnmiTypeKind.OPTICAL_POWER:
+        return _optical_powers_agree(left_text, right_text)
+    if kind in (GnmiTypeKind.COUNTER, GnmiTypeKind.SAMPLED_UINT, GnmiTypeKind.DECIMAL):
+        try:
+            if kind == GnmiTypeKind.DECIMAL:
+                return _decimals_agree(float(left_text), float(right_text))
+            return values_within_tolerance(float(left_text), float(right_text),
+                                           SAMPLING_JITTER_TOLERANCE_PCT)
+        except (TypeError, ValueError):
+            return left_text.lower() == right_text.lower()
+    if kind == GnmiTypeKind.UINT:
+        # "1000" and "1000.0" are the same integer rendered differently.
+        try:
+            return float(left_text) == float(right_text)
+        except (TypeError, ValueError):
+            return left_text.lower() == right_text.lower()
+    return left_text.lower() == right_text.lower()
+
+
+def leaf_parity_problems(expected: Dict[str, str], left: Dict[str, str], right: Dict[str, str],
+                         left_label: str, right_label: str) -> Tuple[List[str], int]:
+    """Disagreements over the leaves both surfaces expose; returns ``(problems, compared)``.
+
+    A leaf only one surface carries is not a disagreement - that is the presence check's job,
+    and the two surfaces deliberately differ on a few leaves (local SNR is gNMI-only).
+    """
+    problems: List[str] = []
+    compared = 0
+    for leaf, kind in sorted(expected.items()):
+        if leaf not in left or leaf not in right:
+            continue
+        compared += 1
+        if not _leaf_values_agree(kind, left[leaf], right[leaf]):
+            problems.append(
+                f"leaf {leaf!r} differs: {left_label}={left[leaf]!r}, "
+                f"{right_label}={right[leaf]!r}"
+            )
+    return problems, compared
+
+
+def ber_raw_component_db_fields(db_row: Dict[str, str]) -> Dict[str, str]:
+    """COUNTERS_DB fields holding a raw BER component (coefficient / magnitude) the switch polled.
+
+    Matched by name rather than by a hardcoded field: the HLD does not publish the spellings,
+    and the pair is what R-NVOS-3 requires to be combined before publication.
+    """
+    return {
+        field: value for field, value in (db_row or {}).items()
+        if BER_DB_FIELD_MARKER in field.upper() and
+        any(marker in field.lower() for marker in BER_RAW_COMPONENT_MARKERS)
+    }
+
+
+def ber_component_leaf_problems(leaves, where: str) -> List[str]:
+    """Published leaf names that expose a raw BER component instead of the combined rate."""
+    return [
+        f"leaf {leaf!r} publishes a raw BER component on {where}: R-NVOS-3 requires the "
+        f"coefficient and magnitude to be combined into a single value"
+        for leaf in sorted(leaves)
+        if any(marker in str(leaf).lower() for marker in BER_COMPONENT_LEAF_MARKERS)
+    ]

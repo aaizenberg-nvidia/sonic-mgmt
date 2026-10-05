@@ -206,6 +206,10 @@
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",
         "support_hwsku": ["Mellanox-SN6600_LD-P128C2", "Mellanox-SN6600_LD-P64O128C2"]
     },
+    "slm-174_setup": {
+        "default_hwsku": "Mellanox-SN6600_LD-P128C2",
+        "support_hwsku": ["Mellanox-SN6600_LD-P128C2"]
+    },
     "slm-16_setup": {
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",
         "support_hwsku": ["Mellanox-SN6600_LD-P128C2"]
@@ -255,6 +259,10 @@
         "support_hwsku": ["ACS-SN6810_LD"]
     },
     "sws-cham6s-20_setup": {
+        "default_hwsku": "ACS-SN6810_LD",
+        "support_hwsku": ["ACS-SN6810_LD"]
+    },
+    "sws-cham6s-21_setup": {
         "default_hwsku": "ACS-SN6810_LD",
         "support_hwsku": ["ACS-SN6810_LD"]
     }

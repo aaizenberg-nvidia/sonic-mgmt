@@ -472,6 +472,8 @@ def get_spcx_ra_spine_traffic(players, conf_args, template_suite="traffic_packet
 
 def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
                                      data_packet_size=PerfConsts.PACKET_SIZE_4K,
+                                     data_packet_count=None,
+                                     control_packet_count=1,
                                      template_suite="traffic_packets_json_files"):
     """Build bidirectional SPCX-RA spine traffic carrying the AI packet mix.
 
@@ -492,6 +494,15 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
         players: Test players mapping.
         conf_args: Rendered per-test configuration arguments.
         data_packet_size: Frame size of the RoCE data stream, in bytes.
+        data_packet_count: Number of RoCE data packets per port per cycle.
+            Defaults to ``None``, which keeps the chip/split-specific count
+            supplied by the CLI wrapper (``traffic_parameters["num_packets"]``).
+            Pass an explicit value to override it (e.g. for a lighter/heavier
+            data load experiment). Must match whatever is passed to
+            :func:`get_ai_mix_mean_packet_size` for validation to stay correct.
+        control_packet_count: Number of packets sent per control stream (RoCE
+            ACK, RTT probe, RTT probe response, CNP) per cycle. Defaults to 1.
+            Must match whatever is passed to :func:`get_ai_mix_mean_packet_size`.
         template_suite: Directory under ``performance_tests`` holding the
             generated traffic JSONs.
 
@@ -501,7 +512,9 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
     traffic_jsons = {}
 
     logger.info(f"Building the AI control-packet mix on top of the "
-                f"{data_packet_size}B RoCE data stream")
+                f"{data_packet_size}B RoCE data stream "
+                f"(data_packet_count={data_packet_count or 'default'}, "
+                f"control_packet_count={control_packet_count})")
     for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
         player_cli_obj = players[player_alias]['cli']
         json_path = os.path.join(
@@ -510,10 +523,12 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
             f"{player_alias}_{TESTS_SCENARIO.replace('/', '_')}_ai_mix.json")
         traffic_parameters = player_cli_obj.performance.get_traffic_parameters(
             scenario=TESTS_SCENARIO, conf_args=conf_args)
-        data_packet_count = traffic_parameters["num_packets"]
+        resolved_data_packet_count = (
+            data_packet_count if data_packet_count is not None
+            else traffic_parameters["num_packets"])
         stream_list = []
 
-        traffic_parameters["num_packets"] = 1
+        traffic_parameters["num_packets"] = control_packet_count
         for stream_name, stream_spec in AI_MIX_CONTROL_STREAM_SPECS.items():
             traffic_parameters["packet_size"] = stream_spec.packet_size
             stream_list.append(create_json_traffic_stream(
@@ -521,7 +536,7 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
                 f"{player_alias}_{stream_name}", tc=stream_spec.traffic_class))
 
         traffic_parameters["packet_size"] = data_packet_size
-        traffic_parameters["num_packets"] = data_packet_count
+        traffic_parameters["num_packets"] = resolved_data_packet_count
         stream_list.append(create_json_traffic_stream(
             player_alias, traffic_parameters,
             f"{player_alias}_RoCE_data", tc=AI_MIX_LOSSLESS_TC))
@@ -535,7 +550,8 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
 
 
 def get_ai_mix_mean_packet_size(data_packet_count,
-                                data_packet_size=PerfConsts.PACKET_SIZE_4K):
+                                data_packet_size=PerfConsts.PACKET_SIZE_4K,
+                                control_packet_count=1):
     """Return the byte-weighted mean frame size of one AI-mix send cycle.
 
     The performance-counter validation derives expected PPS by dividing a port's
@@ -548,18 +564,24 @@ def get_ai_mix_mean_packet_size(data_packet_count,
     and the mean depends only on the packet counts and sizes of one cycle.
 
     Args:
-        data_packet_count: RoCE data packets per port per cycle, i.e. the
-            chip's ``traffic_packets_per_port``.
+        data_packet_count: RoCE data packets per port per cycle. Must match
+            whatever was passed as ``data_packet_count`` to
+            :func:`get_spcx_ra_ai_mix_spine_traffic` (or its default, the
+            chip's ``traffic_packets_per_port``, if that was left unset).
         data_packet_size: Frame size of the RoCE data stream, in bytes. Must
             match what was passed to :func:`get_spcx_ra_ai_mix_spine_traffic`.
+        control_packet_count: Packets sent per control stream per cycle. Must
+            match ``control_packet_count`` passed to
+            :func:`get_spcx_ra_ai_mix_spine_traffic`.
 
     Returns:
         The mean frame size in bytes, rounded down.
     """
-    control_bytes = sum(stream_spec.packet_size
-                        for stream_spec in AI_MIX_CONTROL_STREAM_SPECS.values())
-    total_bytes = control_bytes + data_packet_size * data_packet_count
-    total_packets = len(AI_MIX_CONTROL_STREAM_SPECS) + data_packet_count
+    control_bytes_per_cycle = control_packet_count * sum(
+        stream_spec.packet_size for stream_spec in AI_MIX_CONTROL_STREAM_SPECS.values())
+    total_bytes = control_bytes_per_cycle + data_packet_size * data_packet_count
+    total_packets = (len(AI_MIX_CONTROL_STREAM_SPECS) * control_packet_count +
+                     data_packet_count)
     return total_bytes // total_packets
 
 

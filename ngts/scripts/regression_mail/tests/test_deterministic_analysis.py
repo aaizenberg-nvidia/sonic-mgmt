@@ -10,6 +10,7 @@ from ngts.scripts.regression_mail.grouping import (
     SourceSkipAnalyzer,
     _condition_selector_matches,
     _evaluate_condition,
+    _matching_conditions,
     _retain_ticket_refs,
     build_deterministic_report,
 )
@@ -275,7 +276,7 @@ def test_reboot(reboot_type, rand_selected_dut):
             self.assertEqual([], cold_group.redmine_urls)
             self.assertNotIn(ticket, cold_group.internal_comments)
 
-    def test_condition_yaml_ticket_is_ignored_for_skip_attribution(self) -> None:
+    def test_condition_yaml_ticket_does_not_create_issue_attribution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             test_path = root / "tests" / "a.py"
@@ -322,10 +323,7 @@ tests/a.py:
                 "tests/a.py::test_feature[param]",
                 semantic.skip_groups[0].test_display,
             )
-            self.assertEqual(
-                "",
-                semantic.skip_groups[0].internal_comments,
-            )
+            self.assertEqual("", semantic.skip_groups[0].internal_comments)
 
     def test_condition_yaml_does_not_fold_skip_cases(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -361,6 +359,10 @@ qos/test_qos.py::TestQos::testQosSaiLossy:
                 root / "results.xlsx",
                 "qos/test_qos.py::TestQos::testQosSaiDwrr[param]",
             )
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message="https://redmine.mellanox.com/issues/5167432",
+            )
             workbook.selected_rows.append(
                 replace(
                     workbook.selected_rows[0],
@@ -379,16 +381,10 @@ qos/test_qos.py::TestQos::testQosSaiLossy:
 
             SourceSkipAnalyzer().enrich(semantic, workbook, root)
 
-            self.assertEqual(2, len(semantic.skip_groups))
+            self.assertEqual(1, len(semantic.skip_groups))
             self.assertEqual(
-                {
-                    "qos/test_qos.py::TestQos::testQosSaiDwrr[param]",
-                    "qos/test_qos.py::TestQos::testQosSaiLossy[param]",
-                },
-                {
-                    group.test_display
-                    for group in semantic.skip_groups
-                },
+                "qos/test_qos.py::TestQos",
+                semantic.skip_groups[0].test_display,
             )
 
     def test_condition_yaml_does_not_add_public_issue_scope(self) -> None:
@@ -423,6 +419,12 @@ hft/test_hft.py::test_b:
                 root / "results.xlsx",
                 "hft/test_hft.py::test_a[param]",
             )
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message=(
+                    "https://github.com/sonic-net/sonic-mgmt/issues/25812"
+                ),
+            )
             workbook.selected_rows.append(
                 replace(
                     workbook.selected_rows[0],
@@ -437,18 +439,19 @@ hft/test_hft.py::test_b:
 
             SourceSkipAnalyzer().enrich(semantic, workbook, root)
 
-            self.assertEqual(2, len(semantic.skip_groups))
+            self.assertEqual(1, len(semantic.skip_groups))
+            self.assertEqual(
+                "hft/test_hft.py",
+                semantic.skip_groups[0].test_display,
+            )
             self.assertEqual(
                 {
-                    "hft/test_hft.py::test_a[param]",
-                    "hft/test_hft.py::test_b[param]",
+                    "https://github.com/sonic-net/sonic-mgmt/issues/25812": [
+                        "topo_name == 't0'"
+                    ]
                 },
-                {
-                    group.test_display
-                    for group in semantic.skip_groups
-                },
+                workbook.public_issue_conditions,
             )
-            self.assertEqual({}, workbook.public_issue_conditions)
 
     def test_condition_yaml_or_does_not_project_issue_branches(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -480,11 +483,22 @@ tests/a.py:
                 encoding="utf-8",
             )
             workbook = _skip_snapshot(root / "results.xlsx")
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message=issue_123,
+            )
             semantic = build_deterministic_report(workbook)
 
             SourceSkipAnalyzer().enrich(semantic, workbook, root)
 
-            self.assertEqual({}, workbook.public_issue_conditions)
+            self.assertEqual(
+                {
+                    issue_123: [
+                        "topo_name == 't0'"
+                    ]
+                },
+                workbook.public_issue_conditions,
+            )
 
     def test_static_skip_analysis_rejects_paths_outside_source_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -513,6 +527,228 @@ def test_feature():
             )
 
             self.assertNotIn("outside", semantic.skip_groups[0].internal_comments)
+
+    def test_non_ticket_or_branch_prevents_issue_skip_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            condition_dir = (
+                root / "tests" / "common" / "plugins" / "conditional_mark"
+            )
+            condition_dir.mkdir(parents=True)
+            issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+            (condition_dir / "tests_mark_conditions.yaml").write_text(
+                """
+tests/a.py:
+  skip:
+    reason: "Known issue"
+    conditions_logical_operator: OR
+    conditions:
+      - "{} and topo_name == 'dualtor'"
+      - "asic_type == 'mellanox'"
+""".format(issue),
+                encoding="utf-8",
+            )
+            workbook = _skip_snapshot(root / "results.xlsx")
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                platform="x86_64-nvidia_sn5640-r0",
+                topology="t0",
+                message="Skipped by conditional mark",
+            )
+            semantic = build_deterministic_report(workbook)
+
+            SourceSkipAnalyzer().enrich(semantic, workbook, root)
+
+            self.assertEqual({}, workbook.issue_skip_tickets)
+            self.assertEqual({}, workbook.public_issue_conditions)
+
+    def test_source_ticket_does_not_replace_excel_skip_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            condition_dir = (
+                root / "tests" / "common" / "plugins" / "conditional_mark"
+            )
+            condition_dir.mkdir(parents=True)
+            issue = "https://redmine.mellanox.com/issues/5089623"
+            (condition_dir / "tests_mark_conditions.yaml").write_text(
+                """
+acl/test_acl.py::TestMultiBindingAcl:
+  skip:
+    reason: "ACL issue {}"
+    conditions:
+      - "{}"
+""".format(issue, issue),
+                encoding="utf-8",
+            )
+            workbook = _skip_snapshot(
+                root / "results.xlsx",
+                "acl/test_acl.py::TestMultiBindingAcl::test_rule[param]",
+            )
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message="'dualtor' not in topo_name",
+            )
+            semantic = build_deterministic_report(workbook)
+
+            SourceSkipAnalyzer().enrich(semantic, workbook, root)
+
+            self.assertEqual({}, workbook.issue_skip_tickets)
+
+    def test_ticket_condition_is_required_when_all_or_branches_are_tickets(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            condition_dir = (
+                root / "tests" / "common" / "plugins" / "conditional_mark"
+            )
+            condition_dir.mkdir(parents=True)
+            first = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+            second = "https://github.com/sonic-net/sonic-mgmt/issues/456"
+            (condition_dir / "tests_mark_conditions.yaml").write_text(
+                """
+tests/a.py:
+  xfail:
+    reason: "Known issues"
+    conditions_logical_operator: OR
+    conditions:
+      - "{} and topo_name == 't0'"
+      - "{} and topo_name == 'dualtor'"
+""".format(first, second),
+                encoding="utf-8",
+            )
+            workbook = _skip_snapshot(root / "results.xlsx")
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message=first,
+            )
+            semantic = build_deterministic_report(workbook)
+
+            SourceSkipAnalyzer().enrich(semantic, workbook, root)
+
+            self.assertEqual(
+                {"skip-1": [first]},
+                workbook.issue_skip_tickets,
+            )
+
+    def test_ticket_does_not_receive_condition_from_another_matching_rule(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            condition_dir = (
+                root / "tests" / "common" / "plugins" / "conditional_mark"
+            )
+            condition_dir.mkdir(parents=True)
+            skip_issue = "https://github.com/sonic-net/sonic-buildimage/issues/24660"
+            xfail_issue = "https://github.com/sonic-net/sonic-buildimage/issues/24402"
+            (condition_dir / "tests_mark_conditions.yaml").write_text(
+                """
+dhcp_relay/test_dhcp_relay.py::test_checksum:
+  skip:
+    reason: "Unsupported checksum validation"
+    conditions:
+      - "{}"
+  xfail:
+    reason: "Another known issue"
+    conditions:
+      - "{} and asic_type == 'mellanox'"
+""".format(skip_issue, xfail_issue),
+                encoding="utf-8",
+            )
+            workbook = _skip_snapshot(
+                root / "results.xlsx",
+                "dhcp_relay/test_dhcp_relay.py::test_checksum[param]",
+            )
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message=skip_issue,
+                values={"asic_type": "mellanox"},
+            )
+            semantic = build_deterministic_report(workbook)
+
+            SourceSkipAnalyzer().enrich(semantic, workbook, root)
+
+            self.assertEqual(
+                {"skip-1": [skip_issue]},
+                workbook.issue_skip_tickets,
+            )
+            self.assertEqual({}, workbook.public_issue_conditions)
+
+    def test_false_branch_is_removed_from_internal_or_expression(self) -> None:
+        issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        row = replace(
+            _skip_snapshot(Path("results.xlsx")).selected_rows[0],
+            topology="t0",
+            values={"asic_type": "mellanox"},
+        )
+        matched, active = _matching_conditions(
+            [
+                "{} and (topo_name == 'dualtor' or "
+                "asic_type == 'mellanox')".format(issue)
+            ],
+            "OR",
+            row,
+        )
+
+        self.assertTrue(matched)
+        self.assertEqual(
+            ["{} and asic_type == 'mellanox'".format(issue)],
+            active,
+        )
+
+    def test_condition_attribution_preserves_rows_from_mixed_versions(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            condition_dir = (
+                root / "tests" / "common" / "plugins" / "conditional_mark"
+            )
+            condition_dir.mkdir(parents=True)
+            issue = "https://github.com/sonic-net/sonic-buildimage/issues/24660"
+            (condition_dir / "tests_mark_conditions.yaml").write_text(
+                """
+tests/a.py:
+  skip:
+    reason: "Known issue"
+    conditions:
+      - "{}"
+""".format(issue),
+                encoding="utf-8",
+            )
+            workbook = _skip_snapshot(root / "results.xlsx")
+            workbook.selected_rows[0] = replace(
+                workbook.selected_rows[0],
+                message=issue,
+                values={"os_version": "202605_RC.100-build_Internal"},
+            )
+            workbook.selected_rows.append(
+                replace(
+                    workbook.selected_rows[0],
+                    record_id="skip-2",
+                    excel_row=3,
+                    values={"os_version": "202605_RC.101-build_Internal"},
+                )
+            )
+            semantic = build_deterministic_report(workbook)
+
+            SourceSkipAnalyzer().enrich(semantic, workbook, root)
+
+            self.assertEqual(
+                {"skip-1": [issue], "skip-2": [issue]},
+                workbook.issue_skip_tickets,
+            )
+
+    def test_nvidia_platform_implies_mellanox_asic_fact(self) -> None:
+        row = replace(
+            _skip_snapshot(Path("results.xlsx")).selected_rows[0],
+            platform="x86_64-nvidia_sn5640-r0",
+            values={},
+        )
+
+        self.assertTrue(_evaluate_condition("asic_type == 'mellanox'", row))
+        self.assertTrue(_evaluate_condition("is_nvidia", row))
 
     def test_redmine_error_candidates_do_not_drop_late_distinct_pattern(
         self,

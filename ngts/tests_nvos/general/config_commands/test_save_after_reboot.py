@@ -25,7 +25,7 @@ from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger()

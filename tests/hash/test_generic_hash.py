@@ -185,6 +185,9 @@ def test_ecmp_hash(rand_selected_dut, tbinfo, ptfhost, fine_params, mg_facts, gl
         restore_vxlan_port: fixture to restore vxlan port to default
         global_hash_capabilities: module level fixture to get the dut hash capabilities
     """
+    if 't1-isolated-d448u15-lag' in tbinfo['topo']['name']:
+        pytest.skip("Skipping test_ecmp_hash on t1-isolated-d448u15-lag: upstream links are a mix of "
+                    "physical ports and LAG ports, which is not supported by this test.")
     hash_algorithm, ecmp_test_hash_field, ipver, inner_ipver, encap_type = fine_params.split('-')
     with allure.step('Randomly select an ecmp hash field to test and configure the global ecmp and lag hash'):
         lag_hash_fields = global_hash_capabilities['lag']
@@ -245,6 +248,9 @@ def test_lag_hash(rand_selected_dut, ptfhost, tbinfo, fine_params, mg_facts, res
         restore_vxlan_port: fixture to restore vxlan port to default
         global_hash_capabilities: module level fixture to get the dut hash capabilities
     """
+    if 't1-isolated-d448u15-lag' in tbinfo['topo']['name']:
+        pytest.skip("Skipping test_lag_hash on t1-isolated-d448u15-lag: upstream links are a mix of "
+                    "physical ports and LAG ports, which is not supported by this test.")
     hash_algorithm, lag_test_hash_field, ipver, inner_ipver, encap_type = fine_params.split('-')
     with allure.step('Randomly select a lag hash field to test and configure the global ecmp and lag hash'):
         ecmp_hash_fields = global_hash_capabilities['ecmp']
@@ -670,6 +676,8 @@ def test_lag_member_remove_add(rand_selected_dut, tbinfo, ptfhost, fine_params, 
     with allure.step('Randomly select one member in each portchannel and remove it from the lag and add it back'):
         # Randomly choose the members to remove/add
         for portchannel in uplink_interfaces:
+            if portchannel not in mg_facts['minigraph_portchannels']:
+                continue
             interface = random.choice(uplink_interfaces[portchannel])
             remove_add_portchannel_member(rand_selected_dut, interface, portchannel)
 

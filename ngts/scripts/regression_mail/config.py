@@ -24,6 +24,8 @@ class Settings:
     redmine_author_id: int
     http_timeout_seconds: int
     github_authors: Tuple[str, ...]
+    gerrit_username: str
+    gerrit_api_key: str
     inference_api_key: str
     inference_base_url: str
     inference_model: str
@@ -74,6 +76,8 @@ class Settings:
             github_authors=_csv_values(
                 values.get("REGRESSION_MAIL_GITHUB_AUTHORS", "")
             ),
+            gerrit_username=_secret(values, "SVC_SONIC_VER_BOT"),
+            gerrit_api_key=_secret(values, "GERRIT_API_KEY"),
             inference_api_key=_secret(values, "INFERENCE_API_KEY"),
             inference_base_url=values.get(
                 "REGRESSION_MAIL_INFERENCE_BASE_URL",

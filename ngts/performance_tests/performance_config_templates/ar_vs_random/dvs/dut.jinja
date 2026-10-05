@@ -50,6 +50,14 @@
         "congestion_thresh_lo": {{ conf_args.congestion_thresh_lo }},
         "congestion_thresh_med": {{ conf_args.congestion_thresh_med }},
         "congestion_thresh_hi": {{ conf_args.congestion_thresh_hi }},
+        {% if conf_args.extended_grading is defined and conf_args.extended_grading %}
+        {# Extended grading (SPC6+): thresholds 4-7 add port grades up to 7 #}
+        "extended_grading": "True",
+        "congestion_thresh_extended_4": {{ conf_args.congestion_thresh_extended_4 }},
+        "congestion_thresh_extended_5": {{ conf_args.congestion_thresh_extended_5 }},
+        "congestion_thresh_extended_6": {{ conf_args.congestion_thresh_extended_6 }},
+        "congestion_thresh_extended_7": {{ conf_args.congestion_thresh_extended_7 }},
+        {% endif %}
 
         {# Split ports configuration #}
         {% set split_left = conf_args.split_left %}

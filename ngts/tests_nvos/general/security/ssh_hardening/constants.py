@@ -17,6 +17,15 @@ class SshHardeningConsts:
 
     OPTIONS_FOR_FUNCTIONAL_TEST = [CIPHERS, MACS, KEX_ALGOS]
 
+    # Signaling markers that OpenSSH always includes in the KEXINIT kex_algorithms field
+    # (strict-KEX / RFC 8308 ext-info). They are not negotiable algorithms and cannot be
+    # removed via KexAlgorithms, so they must be ignored when verifying ssh hardening.
+    KEX_SIGNALING_MARKERS = ['kex-strict-s-v00@openssh.com',
+                             'kex-strict-c-v00@openssh.com',
+                             'ext-info-s',
+                             'ext-info-c'
+                             ]
+
     VALUES = {
         PROTOCOL: '2.0',
         COMPRESSION: 'none',

@@ -964,7 +964,7 @@ configlet/test_add_rack.py:
 #######################################
 #####            console          #####
 #######################################
-console/(?!test_console_(?:driver|reversessh)\.py):
+^console/(?!test_console_(?:driver|reversessh)\.py):
   regex: true
   skip:
     reason: 'Only console driver and reverse SSH tests are compatible with BMC'
@@ -1226,6 +1226,15 @@ decap/test_subnet_decap.py::test_vlan_subnet_decap:
       - "topo_name in ['t1-isolated-d128', 't1-isolated-d32']"
 
 #######################################
+#####      device_ops_agent      #####
+#######################################
+device_ops_agent/test_device_ops_agent.py:
+  skip:
+    reason: "device-ops-agent container is not present on BMC, so these tests are not applicable."
+    conditions:
+      - "'bmc' in topo_type"
+
+#######################################
 #####         dhcp_relay        #####
 #######################################
 dhcp_relay:
@@ -1265,6 +1274,12 @@ dhcp_relay/test_dhcp_relay.py:
     conditions:
       - "platform in ['x86_64-8111_32eh_o-r0', 'x86_64-8122_64eh_o-r0', 'x86_64-8122_64ehf_o-r0']"
       - "'-v6-' in topo_name"
+
+dhcp_relay/test_dhcp_relay.py::test_dhcp_broadcast_not_flooded:
+  xfail:
+    reason: "Testcase skipped due to https://github.com/sonic-net/sonic-mgmt/issues/27028 on Mellanox platforms"
+    conditions:
+      - "asic_type in ['mellanox'] and https://github.com/sonic-net/sonic-mgmt/issues/27028"
 
 dhcp_relay/test_dhcp_relay.py::test_dhcp_relay_after_link_flap:
   skip:
@@ -1576,6 +1591,12 @@ disk/test_disk_exhaustion.py:
 #######################################
 #####             dns             #####
 #######################################
+dns/static_dns/test_static_dns.py::TestStaticMgmtPortIP::test_dynamic_dns_not_working_when_static_ip_configured:
+  xfail:
+    reason: "dhclient eth0 can replace the static mgmt IP on BMC platforms and render the DUT unreachable."
+    conditions:
+      - "'bmc' in topo_type and https://github.com/sonic-net/sonic-mgmt/issues/27308"
+
 dns/static_dns/test_static_dns.py::test_static_dns_basic:
   skip:
     reason: "Found regression issue on multi-asic platform, need to skip for multi-asic platform until the issue is fixed."
@@ -2104,16 +2125,6 @@ everflow/test_everflow_per_interface.py:
       - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
       - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
 
-everflow/test_everflow_per_interface.py::test_everflow_packet_format[ipv6-erspan:
-  skip:
-    reason: "Skip everflow packet integrity IPv6 test on unsupported platforms"
-    conditions_logical_operator: or
-    conditions:
-      - "asic_type in ['cisco-8000', 'marvell', 'mellanox', 'marvell-prestera'] or (asic_subtype in ['broadcom-dnx'] and https://github.com/sonic-net/sonic-swss/issues/2204)"
-      - "'dualtor' in topo_name"
-      - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
-      - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
-
 everflow/test_everflow_per_interface.py::test_everflow_packet_format[ipv6-m0_l3_scenario]:
   skip:
     reason: "Skip m0 everflow packet integrity IPv6 test on unsupported platforms"
@@ -2134,22 +2145,10 @@ everflow/test_everflow_per_interface.py::test_everflow_packet_format[ipv6-m0_vla
       - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
       - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
 
-everflow/test_everflow_per_interface.py::test_everflow_packet_format\[.*ipv4:
+everflow/test_everflow_per_interface.py::test_everflow_packet_format\[(ipv6-erspan_ipv[46]|erspan_ipv[46]-ipv6)-:
   regex: true
   skip:
-    reason: "Skip for IPv6-only topologies"
-    conditions:
-      - "'-v6-' in topo_name"
-
-everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv4-erspan_ipv4-default]:
-  xfail:
-    reason: "xfail for scale topology, PTF is not stable at the scale testbed"
-    conditions:
-      - "https://github.com/sonic-net/sonic-mgmt/issues/21571 and 't0-isolated-d256u256s2' in topo_name"
-
-everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv6-erspan:
-  skip:
-    reason: "Skip everflow per interface IPv6 test on unsupported platforms"
+    reason: "Skip everflow packet integrity IPv6 test on unsupported platforms"
     conditions_logical_operator: or
     conditions:
       - "asic_type in ['cisco-8000', 'marvell', 'mellanox', 'marvell-prestera'] or (asic_subtype in ['broadcom-dnx'] and https://github.com/sonic-net/sonic-swss/issues/2204)"
@@ -2157,11 +2156,12 @@ everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv6-erspan
       - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
       - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
 
-everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv6-erspan_ipv6-default]:
+everflow/test_everflow_per_interface.py::test_everflow_packet_format\[.*ipv4:
+  regex: true
   skip:
-    reason: "Skip everflow per interface IPv6 test on unsupported platforms x86_64-nvidia_sn5640-r0."
+    reason: "Skip for IPv6-only topologies"
     conditions:
-      - "platform in ['x86_64-nvidia_sn5640-r0']"
+      - "'-v6-' in topo_name"
 
 everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv6-m0_l3_scenario]:
   skip:
@@ -2179,6 +2179,31 @@ everflow/test_everflow_per_interface.py::test_everflow_per_interface[ipv6-m0_vla
     conditions_logical_operator: or
     conditions:
       - "asic_type in ['marvell', 'marvell-prestera']"
+      - "'dualtor' in topo_name"
+      - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
+      - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
+
+everflow/test_everflow_per_interface.py::test_everflow_per_interface\[(ipv4-erspan_ipv4|erspan_ipv4-ipv4)-default:
+  regex: true
+  xfail:
+    reason: "xfail for scale topology, PTF is not stable at the scale testbed"
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/21571 and 't0-isolated-d256u256s2' in topo_name"
+
+everflow/test_everflow_per_interface.py::test_everflow_per_interface\[(ipv6-erspan_ipv6|erspan_ipv6-ipv6)-default:
+  regex: true
+  skip:
+    reason: "Skip everflow per interface IPv6 test on unsupported platforms x86_64-nvidia_sn5640-r0."
+    conditions:
+      - "platform in ['x86_64-nvidia_sn5640-r0']"
+
+everflow/test_everflow_per_interface.py::test_everflow_per_interface\[(ipv6-erspan_ipv[46]|erspan_ipv[46]-ipv6)-:
+  regex: true
+  skip:
+    reason: "Skip everflow per interface IPv6 test on unsupported platforms"
+    conditions_logical_operator: or
+    conditions:
+      - "asic_type in ['cisco-8000', 'marvell', 'mellanox', 'marvell-prestera'] or (asic_subtype in ['broadcom-dnx'] and https://github.com/sonic-net/sonic-swss/issues/2204)"
       - "'dualtor' in topo_name"
       - "platform in ['x86_64-8800_lc_48h_o-r0', 'x86_64-8800_lc_48h-r0']"
       - "(is_multi_asic==True) and https://github.com/sonic-net/sonic-buildimage/issues/11776"
@@ -2563,6 +2588,12 @@ everflow/test_everflow_testbed.py::TestEverflowV4IngressAclIngressMirror::test_e
 #######################################
 #####            fdb              #####
 #######################################
+fdb/test_fdb_churn.py::test_fdb_distinct_macs_bulk_learn:
+  xfail:
+    reason: "Xfail due to GitHub issue https://github.com/sonic-net/sonic-mgmt/issues/28049"
+    conditions:
+      - https://github.com/sonic-net/sonic-mgmt/issues/28049
+
 fdb/test_fdb_mac_expire.py:
   skip:
     reason: "Not supported on this DUT topology."
@@ -3905,11 +3936,20 @@ kubesonic/test_k8s_join_disjoin.py:
       - "branch in ['master']"
       - "asic_type in ['vs']"
 
+#######################################
+#####            layer1           #####
+#######################################
 layer1/:
   skip:
     reason: 'Layer 1 tests require physical port interfaces, not available on BMC'
     conditions:
       - "'bmc' in topo_type"
+
+layer1/test_fec_error.py::test_verify_fec_stats_counters:
+  skip:
+    reason: "Broadcom TH does not support FEC_SYMBOL_ERR at 50G"
+    conditions:
+      - "'Arista-7060CX-32S-D48C8'in hwsku"
 
 #######################################
 #####           lldp              #####
@@ -4873,7 +4913,7 @@ qos/test_qos_sai.py::TestQosSai::testQosSaiHeadroomPoolWatermark:
   xfail:
     reason: "Headroom pool size not supported."
     conditions:
-      - "hwsku not in ['Arista-7060CX-32S-C32', 'Celestica-DX010-C32', 'Arista-7260CX3-D108C8', 'Arista-7260CX3-D108C10', 'Force10-S6100', 'Arista-7260CX3-Q64', 'Arista-7050CX3-32S-C32', 'Arista-7050CX3-32C-C32', 'Arista-7050CX3-32S-C28S4', 'Arista-7050CX3-32C-C28S4', 'Arista-7050CX3-32S-D48C8', 'Arista-7060X6-16PE-384C-B-O128S2', 'Arista-7060X6-64PE-B-O128'] and asic_type not in ['marvell-teralynx']"
+      - "hwsku not in ['Arista-7060CX-32S-C32', 'Celestica-DX010-C32', 'Arista-7260CX3-D108C8', 'Arista-7260CX3-D108C10', 'Force10-S6100', 'Arista-7260CX3-Q64', 'Arista-7050CX3-32S-C32', 'Arista-7050CX3-32C-C32', 'Arista-7050CX3-32S-C28S4', 'Arista-7050CX3-32C-C28S4', 'Arista-7050CX3-32S-D48C8', 'Arista-7060X6-16PE-384C-B-O128S2', 'Arista-7060X6-64PE-B-O128', 'Arista-7060X6-64PE-O128'] and asic_type not in ['marvell-teralynx']"
 
 qos/test_qos_sai.py::TestQosSai::testQosSaiLosslessVoq:
   skip:
@@ -5368,18 +5408,21 @@ sflow/:
 
 sflow/test_sflow.py::TestReboot::testFastreboot:
   skip:
-    reason: "Dualtor topology doesn't support advanced-reboot or Fastreboot is not supported on sn5640 SP5 platform."
+    reason: "Dualtor topology doesn't support advanced-reboot or Fastreboot is not supported on sn5640 SP5 platform or vpp platform."
     conditions_logical_operator: or
     conditions:
       - "topo_name in ['dualtor', 'dualtor-56', 'dualtor-120', 'dualtor-aa', 'dualtor-aa-56', 'dualtor-aa-64-breakout']"
       - "platform in ['x86_64-nvidia_sn5640-r0']"
+      - "asic_type in ['vpp']"
 
 sflow/test_sflow.py::TestReboot::testWarmreboot:
   skip:
-    reason: "Dualtor topology doesn't support advanced-reboot"
+    reason: "Dualtor topology doesn't support advanced-reboot or Warmreboot is not supported on sn5640 SP5 platform or vpp platform."
     conditions_logical_operator: or
     conditions:
       - "topo_name in ['dualtor', 'dualtor-56', 'dualtor-120', 'dualtor-aa', 'dualtor-aa-56', 'dualtor-aa-64-breakout']"
+      - "platform in ['x86_64-nvidia_sn5640-r0']"
+      - "asic_type in ['vpp']"
   xfail:
     reason: "testWarmreboot sflow failure: VS SAI warm reboot bug (sonic-net/sonic-buildimage#26594)"
     conditions:
@@ -5459,6 +5502,30 @@ snappi_tests:
     conditions_logical_operator: or
     conditions:
       - "asic_type in ['vs']"
+      - *lossyTopos
+
+snappi_tests/ecn:
+  skip:
+    reason: "Snappi ECN tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/pfc:
+  skip:
+    reason: "Snappi PFC tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/pfcwd:
+  skip:
+    reason: "Snappi PFCWD tests are not supported on lossy topologies."
+    conditions:
+      - *lossyTopos
+
+snappi_tests/qos:
+  skip:
+    reason: "Snappi QoS tests are not supported on lossy topologies."
+    conditions:
       - *lossyTopos
 
 snappi_tests/bgp/test_bgp_convergence_performance.py:
@@ -5574,6 +5641,18 @@ snappi_tests/pfcwd/test_pfcwd_actions.py::test_pfcwd_frwd_over_subs_40_09:
     reason: "Forward action is not supported in cisco-8000."
     conditions:
       - "asic_type in ['cisco-8000']"
+
+snappi_tests/reboot/test_fast_reboot.py:
+  skip:
+    reason: "Fast reboot is not supported on SN6600 platforms."
+    conditions:
+      - "platform in ['x86_64-nvidia_sn6600-r0', 'x86_64-nvidia_sn6600_simx-r0', 'x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600_ld_simx-r0']"
+
+snappi_tests/reboot/test_warm_reboot.py:
+  skip:
+    reason: "Warm reboot is not supported on SN6600 platforms."
+    conditions:
+      - "platform in ['x86_64-nvidia_sn6600-r0', 'x86_64-nvidia_sn6600_simx-r0', 'x86_64-nvidia_sn6600_ld-r0', 'x86_64-nvidia_sn6600_ld_simx-r0']"
 
 snappi_tests/reboot:
   skip:

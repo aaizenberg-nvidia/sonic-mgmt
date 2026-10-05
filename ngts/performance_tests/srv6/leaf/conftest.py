@@ -1,6 +1,5 @@
 import logging
 import os
-from collections import defaultdict
 
 import allure
 import pytest
@@ -34,7 +33,7 @@ def get_bisection_traffic(players, conf_args, traffic_type,
             address so the switch treats each packet as a unique flow.
     """
     traffic_jsons = {}
-    tg_src_dst_port_bisection_pairs_dict = sort_bisection_pairs_by_tg_alias(players, upstream_ports, downstream_ports)
+    tg_src_dst_port_bisection_pairs_dict = sort_bisection_pairs_by_tg_alias(upstream_ports, downstream_ports)
     for tg_alias, bisection_pairs in tg_src_dst_port_bisection_pairs_dict.items():
         get_tg_bisection_traffic_params(players, tg_alias, conf_args, traffic_type, template_suite, create_workload_stream,
                                         dut_interfaces_ipv6_configuration_dict, traffic_jsons, bisection_pairs,
@@ -44,20 +43,17 @@ def get_bisection_traffic(players, conf_args, traffic_type,
     return traffic_jsons
 
 
-def sort_bisection_pairs_by_tg_alias(players, upstream_ports, downstream_ports):
-    ports = players['dut']['cli'].performance.get_right_left_ports_dict()
-    left_ports = ports["left_ports"]
-    right_ports = ports["right_ports"]
-    upstream_to_downstream_port_bisection_pairs = list(zip(upstream_ports, downstream_ports))
-    downstream_to_upstream_port_bisection_pairs = list(zip(downstream_ports, upstream_ports))
-    all_bisection_pairs = upstream_to_downstream_port_bisection_pairs + downstream_to_upstream_port_bisection_pairs
-    tg_src_dst_port_bisection_pairs_dict = defaultdict(list)
-    for pair in all_bisection_pairs:
-        if pair[0] in left_ports:
-            tg_src_dst_port_bisection_pairs_dict[PerfConsts.LEFT_TG_ALIAS].append(pair)
-        elif pair[0] in right_ports:
-            tg_src_dst_port_bisection_pairs_dict[PerfConsts.RIGHT_TG_ALIAS].append(pair)
-    return tg_src_dst_port_bisection_pairs_dict
+def sort_bisection_pairs_by_tg_alias(upstream_ports, downstream_ports):
+    """Assign the caller's established left/right bisection pairs to each TG.
+
+    The port lists are captured from DUT LLDP before traffic starts. Re-reading
+    DUT LLDP here races with convergence after mloops are removed and recreated
+    between traffic runs, which can produce an empty traffic JSON mapping.
+    """
+    return {
+        PerfConsts.LEFT_TG_ALIAS: list(zip(upstream_ports, downstream_ports)),
+        PerfConsts.RIGHT_TG_ALIAS: list(zip(downstream_ports, upstream_ports)),
+    }
 
 
 def build_conf_args_base(chip_type, players):

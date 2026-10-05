@@ -592,6 +592,7 @@
 - Errors_list:
   - '.*ERR pmon#.*\/var\/run\/hw-management\/thermal\/.*'
   - '.*ERR pmon#thermalctld: Thermal sysfs \/run\/hw-management\/thermal\/.* does not exis.*'
+  - '.*ERR\s+health\-statsd\#health_history:\s+SODIMM\s+\d+\s+Temp:\s+Sensor\s+temperature\s+is\s+not\s+available,\s+temperature=N/A,\s+threshold=N/A.*'
   Conditions:
   - Affected_test_cases:
     - tests/nightly/new_hw_thermal_control/test_new_hw_tc_algorithm.py::TestNewTc::test_temperature_sweep

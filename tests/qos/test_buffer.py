@@ -926,7 +926,7 @@ def mtu_to_test(request):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def port_to_test(request, duthost):
+def port_to_test(request, duthosts, rand_one_dut_hostname):
     """Used to parametrized test cases for port
 
     Args:
@@ -939,6 +939,8 @@ def port_to_test(request, duthost):
     global NUMBER_OF_LANES
     if PORT_TO_TEST:
         return PORT_TO_TEST
+
+    duthost = duthosts[rand_one_dut_hostname]
     dutLagInterfaces = []
     mgFacts = duthost.minigraph_facts(host=duthost.hostname)['ansible_facts']
 
