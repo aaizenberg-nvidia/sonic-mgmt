@@ -1760,10 +1760,10 @@ class BugHandlerConst:
     BH_1_5_2_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/1_5_2/bin/"
     BH_1_5_3_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/1_5_3/bin/"
     BH_2026_1_1_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_1_1/bin/"
-    BH_2026_6_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_6/bin/"
+    BH_2026_9_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_9/bin/"
     BUG_HANDLER_PATH = {
-        "SONiC-Design": BH_2026_6_PATH,
-        "SONiC-Verification": BH_2026_6_PATH,
+        "SONiC-Design": BH_2026_9_PATH,
+        "SONiC-Verification": BH_2026_9_PATH,
         "'NVOS - Design'": "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_9/bin/",
         "default": BH_1_5_2_PATH
     }
