@@ -13,7 +13,7 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger(__name__)
