@@ -7,8 +7,7 @@ Portia port grouping testable without hardware.
 from __future__ import annotations
 
 import re
-import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 from ngts.nvos_constants.constants_nvos import Cpov2Consts
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import InternalNvosConsts
@@ -16,7 +15,6 @@ from ngts.nvos_tools.platform.Cpo import Cpo
 
 CPO_SW_LINK_UP_TIMEOUT_SECONDS: int = InternalNvosConsts.NVL7_SW_LINK_UP_TIMEOUT
 CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS = InternalNvosConsts.DEFAULT_TIMEOUT
-CPO_POLL_INTERVAL_SECONDS = 2
 
 _SW_PORT_PATTERN = re.compile(r"^(sw\d+p\d+s)(\d+)$")
 _COUNTER_NAME_PATTERN = re.compile(r"(?:error|drop)", re.IGNORECASE)
@@ -91,43 +89,3 @@ def assert_no_counter_increase(before: Mapping[str, int], after: Mapping[str, in
         if after.get(name, before.get(name, 0)) > before.get(name, 0)
     }
     assert not increased, f"{context} error/drop counters increased: {increased}"
-
-
-def poll_until[T](  # noqa: PLR0913 - clock/sleep injection keeps polling tests deterministic
-    read: Callable[[], T],
-    predicate: Callable[[T], bool],
-    *,
-    timeout_seconds: float,
-    description: str,
-    interval_seconds: float = CPO_POLL_INTERVAL_SECONDS,
-    acceptable_exceptions: tuple[type[Exception], ...] = (),
-    clock: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
-) -> T:
-    """Poll a value until a lifecycle condition is met, returning the last read.
-
-    ``acceptable_exceptions`` raised by ``read`` are transient (mid-reset CLI
-    or parse blips): polling continues, and the last one is re-raised with
-    context only if the deadline expires without a conclusive read.
-    """
-    assert timeout_seconds >= 0, "timeout_seconds must be non-negative"
-    assert interval_seconds > 0, "interval_seconds must be positive"
-    deadline = clock() + timeout_seconds
-    last_value: T | None = None
-    last_error: Exception | None = None
-    while True:
-        try:
-            last_value = read()
-            last_error = None
-            if predicate(last_value):
-                return last_value
-        except acceptable_exceptions as error:
-            last_error = error
-        if clock() >= deadline:
-            break
-        sleep(interval_seconds)
-    if last_error is not None:
-        raise AssertionError(
-            f"Timed out after {timeout_seconds}s waiting for {description}; last read failed: {last_error}"
-        ) from last_error
-    raise AssertionError(f"Timed out after {timeout_seconds}s waiting for {description}; last value: {last_value!r}")

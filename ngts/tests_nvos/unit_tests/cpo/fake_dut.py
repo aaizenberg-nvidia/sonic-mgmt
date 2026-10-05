@@ -17,11 +17,17 @@ Adding a future show test to the dry run:
 
 import copy
 import json
+import re
+from collections.abc import Iterator
 
 from ngts.nvos_constants.constants_nvos import Cpov2Consts, HealthConsts
+from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoTopology
+from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.tests_nvos.system.telemetry import telemetry_watch
 from ngts.tests_nvos.unit_tests.cpo import sample_outputs as samples
 
 _HEALTHY_INSTANCE = {"state": "HEALTHY", "last-unhealthy": "", "unhealthy-count": "0"}
+_NO_ALARM_FLAG = "0"
 
 
 class FakeDutEngine:
@@ -139,3 +145,63 @@ def build_show_tree(device) -> dict:
     }
     _insert(tree, "system health component", health)
     return tree
+
+
+def _walk(node: dict, segments: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], dict]]:
+    if node["output"] is not None:
+        yield segments, node["output"]
+    for segment, child in node["children"].items():
+        yield from _walk(child, (*segments, segment))
+
+
+def _cpo_channel(cpo: str, index: str) -> str:
+    return f"components/component[name={cpo}]/cpo/physical-channels/channel[index={index}]"
+
+
+class FakeTelemetry:
+    """gNMI and DB stand-ins that report the show tree's value on every pinned leaf, plus the HLD topology
+    references derived from the topology and the `interface <port> cpo` slices."""
+
+    def __init__(self, show_tree: dict, topology: CpoTopology):
+        self.gnmi: dict[str, object] = {}
+        self.db: dict[tuple[str, str, str], str] = {}
+        for segments, output in _walk(show_tree):
+            self._add_pinned_leaves(BaseComponent(path="/" + "/".join(segments)), output)
+        for cpo in topology.cpo_names():
+            for channel in topology.channels_for_cpo(cpo):
+                index = channel.removeprefix(topology.CHANNEL_PREFIX)
+                self.gnmi[f"{_cpo_channel(cpo, index)}/index"] = index
+            for child in topology.subcomponents_for_cpo(cpo):
+                self.gnmi[f"components/component[name={cpo}]/subcomponents/subcomponent[name={child}]/name"] = child
+                self.gnmi[f"components/component[name={child}]/state/parent"] = cpo
+        for port, node in show_tree["children"]["interface"]["children"].items():
+            port_cpo = node["children"]["cpo"]["output"]
+            for channel in port_cpo[Cpov2Consts.CHANNEL]:
+                index = channel.removeprefix(topology.CHANNEL_PREFIX)
+                self.gnmi[f"{_cpo_channel(port_cpo[Cpov2Consts.PARENT], index)}/state/mapping/interface"] = port
+
+    def _add_pinned_leaves(self, component: BaseComponent, output: dict) -> None:
+        try:
+            _, keys, leaves = telemetry_watch._pinned_row(component)
+        except AssertionError:
+            return
+        xpaths = telemetry_watch.telemetry_xpaths(component)
+        for field_path, leaf in leaves.items():
+            if not leaf.cli:
+                continue
+            value = telemetry_watch._field(output, field_path)
+            self.gnmi[xpaths[field_path]] = value
+            if leaf.db:
+                db, key_template, field_templates = leaf.db
+                key = key_template.format(**keys)
+                if isinstance(field_templates, str):
+                    self.db[(db, key, field_templates.format(**keys))] = "" if value is None else str(value)
+                else:
+                    self.db |= {(db, key, flag.format(**keys)): _NO_ALARM_FLAG for flag in field_templates}
+
+    def snapshot(self, engines, devices, paths: list[str]) -> dict[str, object]:
+        selected = [re.compile("[^/]*".join(map(re.escape, path.split("*"))) + "(?:/.*)?") for path in paths]
+        return {leaf: value for leaf, value in self.gnmi.items() if any(path.fullmatch(leaf) for path in selected)}
+
+    def hget(self, engine, asic: str, db: str, key: str, field: str) -> str:
+        return self.db.get((db, key, field), "")

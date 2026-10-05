@@ -2436,6 +2436,7 @@ class Cpov2Consts:
     DIAGNOSTICS_STATUS = "diagnostics-status"
     TEMPERATURE = "temperature"
     POWER = "power"
+    CURRENT = "current"
     ALARM_STATUS = "alarm-status"
     ALARM_SEVERITY = "alarm-severity"
 

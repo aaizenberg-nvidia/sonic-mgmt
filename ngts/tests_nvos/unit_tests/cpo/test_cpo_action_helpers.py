@@ -1,6 +1,7 @@
 import pytest
 
 from ngts.nvos_constants.constants_nvos import Cpov2Consts
+from ngts.nvos_tools.infra.PollingTool import PollingTool
 from ngts.tests_nvos.platform.cpo.action_helpers import (
     assert_mapping_unchanged,
     assert_no_counter_increase,
@@ -8,7 +9,6 @@ from ngts.tests_nvos.platform.cpo.action_helpers import (
     error_drop_counters,
     laser_sibling_ports,
     mapping_snapshot,
-    poll_until,
 )
 from ngts.tests_nvos.unit_tests.cpo import sample_outputs as samples
 
@@ -107,7 +107,7 @@ def test_poll_until_returns_first_matching_value_without_sleeping():
     values = iter(["Removed", "Inserted"])
     now = iter([0.0, 0.0, 0.1])
     sleeps = []
-    result = poll_until(
+    result = PollingTool.poll_until(
         lambda: next(values),
         lambda value: value == "Inserted",
         timeout_seconds=1,
@@ -123,7 +123,7 @@ def test_poll_until_returns_first_matching_value_without_sleeping():
 def test_poll_until_reports_last_value_on_timeout():
     now = iter([0.0, 0.0, 2.0])
     with pytest.raises(AssertionError, match="last value: 'Removed'"):
-        poll_until(
+        PollingTool.poll_until(
             lambda: "Removed",
             lambda value: value == "Inserted",
             timeout_seconds=1,
@@ -144,7 +144,7 @@ def test_poll_until_tolerates_transient_read_failures():
 
     now = iter([0.0, 0.0, 0.1])
     sleeps = []
-    result = poll_until(
+    result = PollingTool.poll_until(
         read,
         lambda value: value == "Inserted",
         timeout_seconds=1,
@@ -164,7 +164,7 @@ def test_poll_until_reraises_last_read_failure_on_timeout():
 
     now = iter([0.0, 0.0, 2.0])
     with pytest.raises(AssertionError, match="last read failed: cli blip mid-reset"):
-        poll_until(
+        PollingTool.poll_until(
             read,
             lambda _: True,
             timeout_seconds=1,
@@ -180,7 +180,7 @@ def test_poll_until_propagates_unexpected_read_exceptions():
         raise KeyError("missing field")
 
     with pytest.raises(KeyError, match="missing field"):
-        poll_until(
+        PollingTool.poll_until(
             read,
             lambda _: True,
             timeout_seconds=1,
@@ -189,3 +189,18 @@ def test_poll_until_propagates_unexpected_read_exceptions():
             clock=iter([0.0]).__next__,
             sleep=lambda _: None,
         )
+
+
+def test_port_steady_states_cover_oper_status_and_each_host_lane(monkeypatch):
+    from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+    from ngts.nvos_tools.platform.Platform import Platform
+    from ngts.tests_nvos.platform.cpo import test_cpo_actions
+
+    monkeypatch.setattr(test_cpo_actions, "read_interface_cpo", lambda port, engine: {
+        Cpov2Consts.PARENT: "cpo2", Cpov2Consts.CHANNEL: {"channel-5": {}, "channel-6": {}}})
+    lanes = "components/component[name=cpo2]/cpo/host-lanes/lane[lane-number={}]/state"
+    assert test_cpo_actions._port_steady_states(Platform(), Port("sw1p1s1"), None) == {
+        "interfaces/interface[name=sw1p1s1]/state/oper-status": "UP",
+        f"{lanes.format(5)}/dp-state": "ACTIVATED", f"{lanes.format(5)}/tx-los": False,
+        f"{lanes.format(6)}/dp-state": "ACTIVATED", f"{lanes.format(6)}/tx-los": False,
+    }

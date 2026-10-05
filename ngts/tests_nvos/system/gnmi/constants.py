@@ -60,6 +60,12 @@ NANOSEC_PER_SEC = 1_000_000_000
 # Seconds a STREAM subscription flows before SIGINT.
 STREAM_SUBSCRIBE_WINDOW_SEC = 8
 
+# Per-call gnmic budget for telemetry watches: the ONCE probe and collecting a stopped STREAM.
+GNMI_WATCH_CMD_TIME_SEC = 30
+
+# Upper bound for a config change to reach NVUE, OpenAPI, gNMI and the DB; telemetry republishes about every 10s.
+TELEMETRY_CONVERGENCE_TIMEOUT_SEC = 60
+
 # gnmic SAMPLE stream-mode interval (one result-set per interval).
 STREAM_SUBSCRIBE_SAMPLE_INTERVAL = '1s'
 
