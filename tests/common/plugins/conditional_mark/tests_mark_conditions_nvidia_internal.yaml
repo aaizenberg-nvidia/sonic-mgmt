@@ -887,8 +887,10 @@ packet_trimming/test_packet_trimming_.*::test_trimming_during_warm_reboot:
   regex: true
   skip:
     reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5303333"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5303333 and 'sn5640' in platform"
+    - "https://redmine.mellanox.com/issues/5242501 and 'sn6600_ld' in platform"
 
 passw_hardening/test_passw_hardening.py:
   skip:
