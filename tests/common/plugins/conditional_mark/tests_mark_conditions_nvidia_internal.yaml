@@ -1972,6 +1972,13 @@ platform_tests/test_advanced_reboot.py::test_warm_reboot_sad:
     conditions:
     - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
+platform_tests/test_advanced_reboot.py::test_warm_reboot_sad\[sad_bgp(-.*)?\]:
+  regex: true
+  xfail:
+    reason: "xfail due to following bug:  https://redmine.mellanox.com/issues/5324215"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5324215"
+
 platform_tests/test_advanced_reboot.py::test_cancelled_warm_reboot:
   skip:
     reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
