@@ -1,0 +1,4 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+mtvr-moose-16,10.245.21.123/22,ACS-SN5600,DevSonic,,sonic
+pdu-10-245-2-40,10.245.2.40,Vertiv,Pdu,snmp,
+pdu-10-245-2-16,10.245.2.16,Vertiv,Pdu,snmp,

@@ -1,0 +1,4 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+mtvr-tigon-05,10.245.21.6/22,ACS-SN4600C,DevSonic,,sonic
+pdu-10-245-2-15,10.245.2.15,Vertiv,Pdu,snmp,
+pdu-10-245-2-34,10.245.2.34,Vertiv,Pdu,snmp,

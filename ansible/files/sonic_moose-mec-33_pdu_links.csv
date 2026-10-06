@@ -1,0 +1,3 @@
+StartDevice,StartPort,EndDevice,EndPort,EndFeed
+pdu-10-193-230-193,18,moose-mec-33,PSU1,
+pdu-10-193-230-193,34,moose-mec-33,PSU2,
