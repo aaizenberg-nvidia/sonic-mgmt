@@ -1,11 +1,11 @@
-from typing import Generator, Optional, Dict, Any, List
+from typing import Generator, Any, ParamSpecKwargs
 from functools import partial
 import logging
 import pytest
 
+from ngts.ngts_types import EnginesT, DevicesT, TopologyT, CleanUpT
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.system.System import System
-from ngts.ngts_types import EnginesT, DevicesT
 from ngts.tests_nvos.constants import MINUTE
 
 from . import helpers, feature_checkers, post_checkers
@@ -34,16 +34,16 @@ def ensure_target_version_is_installed(target_version: str):
 
 def pytest_generate_tests(metafunc: pytest.Metafunc):
     """ Generate test cases from the matrix file/json. """
-    matrix: List[Dict[str, Any]] = metafunc.config.getoption("--upgrade-matrix-json", skip=True)  # type: ignore
+    matrix: list[dict[str, Any]] = metafunc.config.getoption("--upgrade-matrix-json", skip=True)  # type: ignore
     target_version: str = metafunc.config.getoption("--target_version", None)  # type: ignore
     override_target_version: bool = metafunc.config.getoption("--override-target-version", False)  # type: ignore
 
-    _matrix: List[helpers.SystemVersionTransition] = []
+    _matrix: list[helpers.SystemVersionTransition] = []
     for item in matrix:
         if override_target_version:
             item['target']['nvos'] = target_version
 
-        prev_case: Optional[helpers.SystemVersionTransition] = None
+        prev_case: helpers.SystemVersionTransition | None = None
         for action in item['actions']:
             _matrix.append(case := helpers.SystemVersionTransition.from_dict({
                 "base": item['base'],
@@ -59,23 +59,91 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
     metafunc.parametrize("case", _matrix, ids=_test_id_builder)
 
 
-def _rollback(base: helpers.SystemPackage, target: helpers.SystemPackage, register_cleanup, skip_rollback_cleanup: bool = False,
-              **kwargs) -> helpers.ResultsMetadataT:
-    """ Rollback the system to the base version.
+def _cleanup_rollback(
+    base: helpers.SystemPackage,
+    target: helpers.SystemPackage,
+    devices: DevicesT,
+    engines: EnginesT,
+    topology_obj: TopologyT,
+    provisioning: str,
+    register_cleanup: CleanUpT,
+    boot_next_partition_id: str,
+) -> None:
+    """Restore the pre-rollback image and its matching platform firmware."""
+    with allure.step("Cleanup rollback"):
+        with allure.step("Get system image"):
+            sys_img = helpers.get_system_image()
+            target_sys_pkg = base if sys_img.other in base.nvos.name else target
+
+        with allure.step(f"Update system to {base.nvos.name!r}"):
+            register_cleanup(partial(helpers.remove_added_fw_files, devices, delete_platform_firmware_files=True))
+            helpers.update_system_fw(devices, engines, target_sys_pkg, topology_obj, provisioning, update_nvos=False)
+
+        helpers.rollback(boot_next_partition_id=boot_next_partition_id)
+
+
+def _rollback(
+    *,
+    base: helpers.SystemPackage,
+    target: helpers.SystemPackage,
+    devices: DevicesT,
+    engines: EnginesT,
+    topology_obj: TopologyT,
+    provisioning: str,
+    register_cleanup: CleanUpT,
+    skip_rollback_cleanup: bool = False,
+    **kwargs: ParamSpecKwargs,
+) -> helpers.ResultsMetadataT:
+    """Rollback to the target package after staging its platform firmware.
 
     Args:
-        base: The base system package.
-        target: The target system package.
+        base: The package running before rollback.
+        target: The package being rolled back to.
         register_cleanup: The register cleanup function.
         skip_rollback_cleanup: Whether to skip the rollback cleanup.
         **kwargs: Additional keyword arguments.
     """
     base_platform_fw_versions = helpers.get_platform_fw_versions()
     result_metadata: helpers.ResultsMetadataT = {}
+
+    with allure.step("Get system image"):
+        sys_img = helpers.get_system_image()
+        target_sys_pkg = base if sys_img.other.replace('nvos-', '') in base.nvos.name else target
+
+    with allure.step(f"Stage FW recipe for rollback target {target_sys_pkg.nvos.name!r}"):
+        register_cleanup(partial(helpers.remove_added_fw_files, devices, delete_platform_firmware_files=True))
+        result_metadata.update(helpers.update_system_fw(devices, engines, target_sys_pkg, topology_obj, provisioning, update_nvos=False))
+
     with allure.step("Rollback system"):
         current_partition = helpers.rollback(base.nvos.name, other_build=target.nvos.name)
 
+    if skip_rollback_cleanup:
+        logger.info("Skipping rollback cleanup")
+    else:
+        assert current_partition is not None
+        # Restore the source image and its matching firmware after the test.
+        logger.info("Registering rollback cleanup")
+        register_cleanup(partial(
+            _cleanup_rollback,
+            base=base,
+            target=target,
+            devices=devices,
+            engines=engines,
+            topology_obj=topology_obj,
+            provisioning=provisioning,
+            register_cleanup=register_cleanup,
+            boot_next_partition_id=current_partition,
+        ))
+
     target_platform_fw_versions = helpers.get_platform_fw_versions()
+    with allure.step("Verify FW versions"):
+        assert (r := helpers.verify_fw_versions(
+            devices,
+            target_sys_pkg,
+            provisioning,
+            target_platform_fw_versions,
+        )), r.error_message
+
     if base_platform_fw_versions != target_platform_fw_versions:
         diff = {
             k: f"base={v1!r} != target={v2!r}"
@@ -85,19 +153,23 @@ def _rollback(base: helpers.SystemPackage, target: helpers.SystemPackage, regist
         logger.info(f"FW versions changed from: {diff}")
         result_metadata[helpers.ResultMetadata.HAD_FW_UPDATE] = True
 
-    if skip_rollback_cleanup:
-        logger.info("Skipping rollback cleanup")
-    else:
-        # the test passed, so we need to rollback to the target version after the test is finished
-        logger.info("Registering rollback cleanup")
-        register_cleanup(partial(helpers.rollback, boot_next_partition_id=current_partition))
-
     return result_metadata
 
 
-def _upgrade_downgrade(*, base: helpers.SystemPackage, target: helpers.SystemPackage, engines: EnginesT, devices: DevicesT,
-                       topology_obj, provisioning: str, feature_checkers_it: Optional[Generator[List[helpers.Result], None, List[helpers.Result]]],
-                       register_cleanup, load_config: bool = True, is_upgrade: bool = True, **kwargs) -> helpers.ResultsMetadataT:
+def _upgrade_downgrade(
+    *,  # force keyword-only arguments
+    base: helpers.SystemPackage,
+    target: helpers.SystemPackage,
+    engines: EnginesT,
+    devices: DevicesT,
+    topology_obj: TopologyT,
+    provisioning: str,
+    feature_checkers_it: Generator[list[helpers.Result], None, list[helpers.Result]] | None,
+    register_cleanup: CleanUpT,
+    load_config: bool = True,
+    is_upgrade: bool = True,
+    **kwargs: ParamSpecKwargs,
+) -> helpers.ResultsMetadataT:
     """
     Update the system to the base version and return True if any firmware was updated successfully.
 
@@ -127,7 +199,7 @@ def _upgrade_downgrade(*, base: helpers.SystemPackage, target: helpers.SystemPac
     if load_config:  # case of downgrade we don't load config
         with allure.step("Load Configuration"):
             register_cleanup(helpers.remove_added_config_files)
-            helpers.load_config(engines, base.config)
+            result_metadata.update(helpers.load_config(engines, base.config))
 
     if is_upgrade and feature_checkers_it:
         with allure.step("Run feature pre-checkers"):
@@ -153,8 +225,15 @@ def _check_if_base_version_is_expected_version(base: helpers.SystemPackage) -> N
         assert expected_version == system_image.current, f"Current image is {system_image.current} but expected {expected_version}"
 
 
-def _build_upgrade_downgrade_rollback_kwargs(case: helpers.SystemVersionTransition, engines: EnginesT, devices: DevicesT,
-                                             topology_obj, provisioning: str, register_cleanup, unregister_cleanup) -> Dict[str, Any]:
+def _build_upgrade_downgrade_rollback_kwargs(
+    case: helpers.SystemVersionTransition,
+    engines: EnginesT,
+    devices: DevicesT,
+    topology_obj: TopologyT,
+    provisioning: str,
+    register_cleanup: CleanUpT,
+    unregister_cleanup: CleanUpT,
+) -> dict[str, Any]:
     """ Build the kwargs for the upgrade/downgrade/rollback function. """
     kwargs = dict(
         base=case.base,
@@ -190,8 +269,15 @@ def _build_upgrade_downgrade_rollback_kwargs(case: helpers.SystemVersionTransiti
 
 
 @pytest.mark.timeout(MINUTE * 90, func_only=True)
-def test_change_nvos_version(case: helpers.SystemVersionTransition, engines: EnginesT, devices: DevicesT, topology_obj,
-                             provisioning: str, register_cleanup, unregister_cleanup):
+def test_change_nvos_version(
+    case: helpers.SystemVersionTransition,
+    engines: EnginesT,
+    devices: DevicesT,
+    topology_obj: TopologyT,
+    provisioning: str,
+    register_cleanup: CleanUpT,
+    unregister_cleanup: CleanUpT,
+):
     """
     Test upgrade/downgrade/rollback of NVOS version.
 
@@ -227,6 +313,13 @@ def test_change_nvos_version(case: helpers.SystemVersionTransition, engines: Eng
 
     # Step 3: Verify config is preserved
     if case.action in (helpers.Action.UPGRADE, helpers.Action.ROLLBACK):
+        with allure.step("validate config apply & save"):
+            for metadata_key in (helpers.ResultMetadata.CONFIG_APPLY_ERROR, helpers.ResultMetadata.CONFIG_SAVE_ERROR):
+                title = metadata_key.name.replace('_', ' ').title()
+                with allure.independent_step(f"validate {title}"):
+                    err = result_metadata.get(metadata_key)
+                    assert not err, f"Found {title}: {err}"
+
         with allure.step("validate config preserved"):
             expected_config = case.target.config if (case.target and case.action == helpers.Action.UPGRADE) else case.base.config
             logger.debug(f'expected_config file: {expected_config}')

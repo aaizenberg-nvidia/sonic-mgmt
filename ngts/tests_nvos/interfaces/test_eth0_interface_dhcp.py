@@ -929,54 +929,56 @@ def test_interface_eth0_show_after_reboot(engines, topology_obj, serial_engine):
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     logger.info(f"mgmt port: {mgmt_port_name}")
     mgmt_port = Port(mgmt_port_name)
+    system = System()
+
+    with allure.step('Get current IP address'):
+        ipv4_output = mgmt_port.interface.ipv4.parse_show()
+        validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
+        switch_ip_mask = [ip for ip in ipv4_output['address'] if engines.dut.ip in ip][0]
 
     try:
-        with allure.step('Get current IP address'):
-            ipv4_output = Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                mgmt_port.interface.ipv4.show()).get_returned_value()
-            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
-            switch_ip = [ip for ip in ipv4_output['address'] if engines.dut.ip in ip][0]
-
         with allure.step('Disable DHCP and set static IP'):
             mgmt_port.interface.ipv4.dhcp_client.set(
-                op_param_name='state', op_param_value='disabled',
-                dut_engine=serial_engine, apply=True, ask_for_confirmation=True).verify_result()
+                op_param_name='state',
+                op_param_value='disabled',
+                dut_engine=serial_engine, apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(False, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
             mgmt_port.interface.ipv4.address.set(
-                op_param_name=switch_ip, dut_engine=serial_engine,
-                apply=True, ask_for_confirmation=True).verify_result()
+                op_param_name=switch_ip_mask,
+                dut_engine=serial_engine,
+                apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
 
         with allure.step('Verify static IP, save and reboot'):
-            retry_call(lambda: validate_interface_ip_address(
-                switch_ip, Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                    mgmt_port.interface.ipv4.show()).get_returned_value(), True),
-                tries=10, delay=2)
+            ipv4_output = mgmt_port.interface.ipv4.parse_show()
+            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
             NvueGeneralCli.save_config(engine=engines.dut)
-            System().reboot.action_reboot()
+            system.reboot.action_reboot(params="force").verify_result()
             _reconnect_serial(serial_engine)
-
-            with allure.step('Wait for system to become ready after reboot'):
-                retry_call(lambda: mgmt_port.interface.ipv4.show(dut_engine=serial_engine),
-                           tries=60, delay=5)
 
             with allure.step('Verify mgmt interface shown after reboot'):
                 interface = Interface(None)
-                assert mgmt_port_name in interface.show(dut_engine=serial_engine), \
+                assert mgmt_port_name in interface.show(), \
                     f"Mgmt port {mgmt_port_name} not found in interface show"
-                assert mgmt_port_name in interface.lldp.show(dut_engine=serial_engine), \
+                assert mgmt_port_name in interface.lldp.show(), \
                     f"Mgmt port {mgmt_port_name} not found in interface lldp show"
 
     finally:
         with allure.step('Restore DHCP configuration'):
             _reconnect_serial(serial_engine)
             mgmt_port.interface.ipv4.unset(
-                dut_engine=serial_engine, apply=True, ask_for_confirmation=True).verify_result()
+                dut_engine=serial_engine,
+                apply=True,
+                ask_for_confirmation=True,
+            ).verify_result()
             check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port, tries=15, delay=2)
-            ipv4_output = Tools.OutputParsingTool.parse_show_interface_pluggable_output_to_dictionary(
-                mgmt_port.interface.ipv4.show()).get_returned_value()
-            validate_interface_ip_address(engines.dut.ip, ipv4_output, validate_in=True, run_show=True, mgmt_port=mgmt_port)
-            NvueGeneralCli.save_config(engine=serial_engine)
+            ipv4_output = mgmt_port.interface.ipv4.parse_show()
+            validate_interface_ip_address(engines.dut.ip, ipv4_output, True)
+            NvueGeneralCli.save_config(engine=engines.dut)
 
 
 def _reconnect_serial(serial_engine):

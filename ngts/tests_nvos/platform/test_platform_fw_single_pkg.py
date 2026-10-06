@@ -156,6 +156,14 @@ def test_install_platform_firmware_single_pkg(engines, devices, random_api, test
                     result_obj = DutUtilsTool.wait_for_nvos_to_become_functional(engines.dut)
                     assert result_obj.result, f"System did not become functional after remote reboot"
 
+        with allure.step("Get current firmware versions of all components before starting"):
+            show_fw_output = OutputParsingTool.parse_json_str_to_dictionary(nv_command.platform.firmware.show()). \
+                get_returned_value()
+            component_dict_initial = {key: show_fw_output[key]["actual-firmware"] for key in show_fw_output if key in
+                                      components}
+            logger.info(f"Current versions before install: {component_dict_initial}")
+            assert component_dict_initial, f"Could not read current FW versions for components: {components}"
+
         with allure.step("Fetch Base firmware file to switch"):
             nv_command.platform.firmware.action_fetch(fw_file_previous, base_url=scp_path).verify_result()
             nv_command.platform.firmware.files.verify_show_files_output(expected_files=[fw_image_name_previous])

@@ -60,4 +60,8 @@
         <cases> sonic-mgmt/sonic-tool/mars/cases/community/port_mirroring.cases </cases>
     </test>
 
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/erspan_sampling_truncation.cases </cases>
+    </test>
+
 </DBDEF>

@@ -131,8 +131,10 @@ class AiCommentSummarizer:
             for group in batch:
                 summary = sanitize_ai_summary(parsed[group.group_id], group, redactor)
                 if group.internal_comments.strip() and not summary:
-                    raise ValueError(
-                        "AI returned an empty summary for a non-empty group"
+                    summary = sanitize_ai_summary(
+                        group.internal_comments,
+                        group,
+                        redactor,
                     )
                 summaries[group.group_id] = summary
         return summaries
@@ -358,9 +360,11 @@ class AiCommentSummarizer:
                 {
                     "role": "system",
                     "content": (
-                        "Summarize each SONiC regression internal comment concisely "
-                        "and generally. Remove setup names, Redmine URLs, ticket "
-                        "numbers, owner names, and other internal identifiers. "
+                        "Summarize each SONiC regression internal comment as one concise "
+                        "sentence describing the root cause. Merge repeated or overlapping "
+                        "statements and omit investigation history, ownership, status, and "
+                        "fix-tracking details. Remove setup names, Redmine URLs, ticket "
+                        "numbers, internal links, owner names, and other internal identifiers. "
                         "Return only one JSON object mapping every supplied group_id "
                         "to its summary. Preserve empty input as an empty summary."
                     ),

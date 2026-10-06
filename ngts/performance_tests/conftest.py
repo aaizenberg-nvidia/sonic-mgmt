@@ -19,6 +19,7 @@ from ngts.helpers.performance.Performance_log_print import print_players_logs, r
 from ngts.constants.constants import FatalStateConsts, PytestConst
 from ngts.constants.performance_constants import MongoDbConsts, RailModel, PerfConsts, ValidationConsts
 from ngts.helpers.performance.burst_config import BurstConfig
+from ngts.tools.allure_report import allure_set_environment
 from ngts.helpers.performance.performance_db_helpers import (create_performance_db_template,
                                                              create_test_validation_entry_to_db,
                                                              add_test_mongo_metadata, get_perf_test_name)
@@ -31,6 +32,7 @@ from ngts.helpers.performance.port_selection import (set_cli_port_selection_opti
                                                      port_selection_was_activated,
                                                      DEFAULT_PORT_SELECTION_CONFIG)
 from devts.infra.tools.exceptions.test_issue import TestIssue
+from tests.common.plugins.allure_server import get_pytest_run_cmd, PYTEST_RUN_CMD
 
 logger = logging.getLogger()
 
@@ -40,7 +42,8 @@ _players_cmd_log_run_timestamp = None
 
 def pytest_sessionstart(session):
     """Reset process-local performance recovery state for this pytest session."""
-    reset_performance_session_state()
+    state = reset_performance_session_state()
+    state.ar_extended_thresholds = session.config.getoption("--ar_extended_thresholds", default=False)
 
 
 def pytest_runtest_setup(item):
@@ -86,19 +89,24 @@ def pytest_configure(config):
 
 
 def pytest_runtest_setup(item):
-    """Redirect the players-command log to a per-test file, before any of the test's fixtures.
+    """Redirect the players-command log to a per-test file and attach the pytest run command,
+    before any of the test's fixtures.
 
     A conftest hookimpl runs ahead of pytest's own ``pytest_runtest_setup``, which is what
     triggers fixture setup, so this lands before every fixture for the item at every scope.
     That matters for the class-scoped ``basic_setup_configuration`` most suites use: it runs
     before any function-scoped fixture, so a fixture-based switch would attribute its
-    configuration commands to the previous test.
+    configuration commands to the previous test, and a fixture-based Allure attach would never
+    run if ``basic_setup_configuration`` itself fails.
 
     The name matches the test's MongoDB ``test_name`` so a log file and a DB record can be
     correlated; ``get_perf_test_name`` reads only ``request.node``.
     """
     init_players_cmd_logger(_players_cmd_log_run_timestamp,
                             f"{PLAYERS_CMD_LOG_PREFIX}_{get_perf_test_name(SimpleNamespace(node=item))}")
+    pytest_run_cmd = get_pytest_run_cmd(SimpleNamespace(node=item, config=item.config),
+                                        get_current_test_run_cmd=True)
+    allure.attach(pytest_run_cmd, PYTEST_RUN_CMD, allure.attachment_type.TEXT)
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -243,8 +251,11 @@ def os_ports_name_mapping_df(request, players, basic_setup_configuration):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def create_mongo_db_template_file(players, session_id, setup_name):
-    create_performance_db_template(players, session_id, setup_name)
+def create_mongo_db_template_file(players, session_id, setup_name, pytestconfig):
+    template = create_performance_db_template(players, session_id, setup_name)
+    os_version = template.get(MongoDbConsts.DUT_SYSTEM_INFORMATION, {}).get(MongoDbConsts.OS_VERSION)
+    if os_version:
+        allure_set_environment(pytestconfig, "os_version", os_version)
 
 
 @pytest.fixture(scope='session', autouse=True)

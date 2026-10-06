@@ -1,4 +1,4 @@
-from typing import Dict, Generator
+from typing import Callable, Dict, Generator
 from functools import partial
 import contextlib
 import logging
@@ -10,12 +10,12 @@ import string
 from ngts.helpers.secure_boot_helper import SecureBootHelper
 from ngts.tests_nvos.constants import MINUTE
 from paramiko import SSHClient, AutoAddPolicy
-from ngts.ngts_types import EnginesT
+from ngts.ngts_types import CleanUpT, EnginesT
 from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import switch_recovery
 from ngts.tools.test_utils import nvos_general_utils
 from ngts.tools.test_utils import allure_utils as allure
-from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
+from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool, wait_until_cli_is_up
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.general.security.radius.constants import RadiusPhysicalServer
 from ngts.tests_nvos.general.security.tacacs.constants import TacacsDockerServer1
@@ -29,6 +29,15 @@ from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSeri
 logger = logging.getLogger(__name__)
 DEFAULT_TEST_PASSWORD = 'Aa123456!'
 USERNAME_LENGTH = 8
+# ``_restore_default_passwords`` may run as a cleanup on a DUT that is still booting, and tries two
+# passwords, so keep the per-attempt wait short enough to bound the total cleanup time.
+CLI_UP_RETRIES_FOR_PASSWORD_RESTORE = 24
+# Factory-reset boot is slower than the helper's 330s default, but ``timeout_system_is_ready`` is
+# 20 minutes on Rosalind/Juliet. Using that full budget with no pytest timeout made a missing
+# "System is ready" banner look like a hang. 10 minutes is enough for a real factory-reset boot
+# and still fails in a bounded time if the banner never appears.
+FACTORY_RESET_SERIAL_READY_TIMEOUT = 10 * MINUTE
+LONG_PRESS_RESET_FACTORY_TIMEOUT = 20 * MINUTE
 
 
 def _test_ssh_connection(engines: EnginesT, user: UserInfo) -> bool:
@@ -64,14 +73,71 @@ def _set_user_password(engines: EnginesT, system: System, usr_name: str, usr_pas
     NvueGeneralCli.save_config(engines.dut)
 
 
-def _admin_passsword_restore_check(engines: EnginesT, feature_enabled: bool):
+def _restore_default_passwords(engines: EnginesT, system: System) -> bool:
+    """
+    Put admin and monitor back on their default passwords and re-sync the SSH engine to them.
+
+    Both the current engine password and the default are tried, because which one authenticates depends on
+    whether a factory reset already reverted the DUT.
+
+    :return: True once the defaults are applied. False when every attempt failed - the DUT password is then
+             unknown, so the engine is deliberately left on the last password tried rather than claiming the
+             default, which would hide the real state from the next test.
+    """
+    passwords_to_try = [engines.dut.password]
+    if AaaConsts.ADMIN not in passwords_to_try:
+        passwords_to_try.append(AaaConsts.ADMIN)
+    for password_to_connect_with in passwords_to_try:
+        try:
+            engines.dut.password = password_to_connect_with
+            wait_until_cli_is_up(engines.dut, retries=CLI_UP_RETRIES_FOR_PASSWORD_RESTORE)
+            _set_user_password(engines, system, AaaConsts.ADMIN, AaaConsts.ADMIN)
+            # admin answers to the default from here on, so re-sync before the next command authenticates
+            engines.dut.password = AaaConsts.ADMIN
+            _set_user_password(engines, system, AaaConsts.MONITOR, AaaConsts.MONITOR)
+            return True
+        except Exception as e:
+            logger.warning(f'Could not restore default passwords using password "{password_to_connect_with}": {e}')
+    logger.error('Failed to restore the default passwords. The DUT password is unknown, so the console and '
+                 'any following test may fail to authenticate')
+    return False
+
+
+def _make_default_password_restorer(engines: EnginesT, system: System) -> Callable[[], None]:
+    """
+    Build a one-shot revert of the admin/monitor passwords to their defaults.
+
+    Two call sites need the revert: the post-reboot phase, which must re-sync the engine before the later
+    checkers run, and the registered cleanup, which covers a failure before that phase is reached.
+    Whichever runs first does the work and the other becomes a no-op, so the happy path does not pay for it
+    twice. A failed attempt is not marked done, so the cleanup still retries it.
+    """
+    restored = False
+
+    def restore() -> None:
+        nonlocal restored
+        if restored:
+            logger.info('default passwords already restored - skipping')
+            return
+        restored = _restore_default_passwords(engines, system)
+
+    return restore
+
+
+def _admin_password_restore_check(engines: EnginesT, feature_enabled: bool, register_cleanup: CleanUpT):
     system = System()
     old_password = engines.dut.password
     new_password = DEFAULT_TEST_PASSWORD
+    restore_default_passwords = _make_default_password_restorer(engines, system)
     with allure.step("Change admin password"):
         _set_user_password(engines, system, AaaConsts.ADMIN, new_password)
         engines.dut.password = new_password
         _set_user_password(engines, system, AaaConsts.MONITOR, new_password)
+        # The DUT now holds a non-default password, saved to its configuration. Register the revert here so
+        # it also runs when the test fails before the post-reboot phase below (the readiness wait after the
+        # reboot is the usual place): a leaked test password locks the console out of every following test,
+        # because the console credentials come from the Noga topology defaults and not from this engine.
+        register_cleanup(restore_default_passwords)
 
     yield   # reboot
 
@@ -83,12 +149,7 @@ def _admin_passsword_restore_check(engines: EnginesT, feature_enabled: bool):
             assert _test_ssh_connection(engines, monitor_usr), f"SSH connection failed for monitor user with password {monitor_usr.password}"
     finally:
         with allure.step("Restore admin password"):
-            if not feature_enabled:
-                _set_user_password(engines, system, AaaConsts.ADMIN, AaaConsts.ADMIN)
-                engines.dut.password = AaaConsts.ADMIN
-                _set_user_password(engines, system, AaaConsts.MONITOR, AaaConsts.MONITOR)
-            else:
-                engines.dut.password = AaaConsts.ADMIN
+            restore_default_passwords()
 
     yield    # to prevent StopIteration on the 2nd next() call
 
@@ -184,6 +245,23 @@ def _register_cleanup(register_cleanup) -> str:
     return current_config['state']
 
 
+def _create_serial_engine_with_dut_credentials(topology_obj, engines: EnginesT) -> PexpectSerialEngine:
+    """
+    Open a console session using the DUT credentials this session actually authenticates with.
+
+    ``SecureBootHelper`` builds the serial engine from the Noga topology attributes, which hold the
+    *default* console credentials. This test changes the admin password, so once it has run - or once any
+    predecessor failed before reverting it - the console credentials no longer match the DUT and login
+    fails with "Login incorrect" while SSH still works. The SSH engine tracks the working password, so
+    reuse it for the console.
+    """
+    serial_engine: PexpectSerialEngine = SecureBootHelper.get_serial_engine_instance(topology_obj)
+    serial_engine.username = engines.dut.username
+    serial_engine.password = engines.dut.password
+    serial_engine.create_serial_engine()
+    return serial_engine
+
+
 @contextlib.contextmanager
 def _simulate_long_press(engines: EnginesT):
     try:
@@ -216,11 +294,13 @@ LOCAL_USERS_RESTORE = "Local users restore"
 
 @pytest.mark.dut_reboot
 @pytest.mark.simx
+@pytest.mark.timeout(LONG_PRESS_RESET_FACTORY_TIMEOUT, func_only=True)
 @pytest.mark.parametrize('config_state, auth_method', [
     pytest.param(AaaConsts.DISABLED, random.choice(RemoteAaaType.ALL_TYPES), id=AaaConsts.DISABLED),
     pytest.param(AaaConsts.ENABLED, random.choice(RemoteAaaType.ALL_TYPES), id=AaaConsts.ENABLED),
 ])
-def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_obj, config_state: str, auth_method: str):
+def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_obj,
+                                  config_state: str, auth_method: str):
     """
     Test the factory reset flow when the long press is used to reset the system.
     If the feature is enabled, the admin and monitor users should be restored, configured AAA method should be kept
@@ -233,7 +313,7 @@ def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_
         5. Restore the system to the initial state.
     """
     LONG_PRESS_FACTORY_RESET_CHECKERS: Dict[str, Generator[None, None, None]] = {
-        ADMIN_PASSWORD: _admin_passsword_restore_check(engines, config_state == AaaConsts.ENABLED),
+        ADMIN_PASSWORD: _admin_password_restore_check(engines, config_state == AaaConsts.ENABLED, register_cleanup),
         AAA_METHOD_KEEP: _aaa_method_keep_check(engines, auth_method),
         LOCAL_USERS_RESTORE: _local_users_restore_check(engines, config_state == AaaConsts.ENABLED),
     }
@@ -241,10 +321,13 @@ def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_
     if not checkers:
         pytest.skip('test skipped: no checkers registered for this test')
     system = System()
+    with allure.step('wait for the CLI to be ready'):
+        # This test reboots the DUT, so a preceding case in the same run can still be initializing it.
+        wait_until_cli_is_up(engines.dut)
     with allure.step('create serial engine'):
         engines.dut.disconnect()
         engines.dut.run_cmd('id')
-        serial_engine: PexpectSerialEngine = SecureBootHelper.get_serial_engine(topology_obj)
+        serial_engine: PexpectSerialEngine = _create_serial_engine_with_dut_credentials(topology_obj, engines)
     if _register_cleanup(register_cleanup) != config_state:
         with allure.step(f"Set feature state to {config_state}"):
             system.aaa.allow_reset_local_passwords.set('state', config_state, apply=True).get_returned_value()
@@ -257,18 +340,22 @@ def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_
         with allure.step('Reboot the system'):
             engines.dut.disconnect()
             serial_engine.serial_engine.sendline('sudo reboot')
-            DutUtilsTool.wait_for_system_ready_in_serial(topology_obj, serial_engine)
+            # Longer than the helper's 330s default (too short for a factory-reset boot), shorter than
+            # the 20-minute Rosalind/Juliet device budget (unbounded if the banner never prints).
+            DutUtilsTool.wait_for_system_ready_in_serial(topology_obj, serial_engine,
+                                                         FACTORY_RESET_SERIAL_READY_TIMEOUT)
         with allure.step('checkers cleanup'):
             for name, checker in checkers.items():
                 with allure.independent_step(f"check {name}"):
                     next(checker)
 
 
-@pytest.mark.timeout(2 * MINUTE, func_only=True)
-def test_feature_default_config(register_cleanup, DEFAULT_CONFIG=AaaConsts.ENABLED):
+@pytest.mark.timeout(5 * MINUTE, func_only=True)
+def test_feature_default_config(engines: EnginesT, register_cleanup, DEFAULT_CONFIG=AaaConsts.ENABLED):
     """
     Validate the default configuration of the feature allowing reset of local passwords.
     Test flow:
+        0. Wait for the CLI: the sibling long-press tests reboot the DUT, so it may still be initializing.
         1. Initialize the system with NVUE API:
             - Ensure the system is set to use the NVUE API.
         2. Unset and apply the 'allow_reset_local_passwords' feature:
@@ -278,6 +365,8 @@ def test_feature_default_config(register_cleanup, DEFAULT_CONFIG=AaaConsts.ENABL
         4. Assert the feature's default state:
             - Confirm that the feature is enabled by default, ensuring compliance with expected behavior.
     """
+    with allure.step('wait for the CLI to be ready'):
+        wait_until_cli_is_up(engines.dut)
     _register_cleanup(register_cleanup)
     system = System()
     with allure.step('Unset the feature'):

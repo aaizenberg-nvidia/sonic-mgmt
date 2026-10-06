@@ -501,7 +501,7 @@ def get_port_alias_to_name_map(hwsku, asic_name=None):
             for i in range(0, 32):
                 port_alias_to_name_map["etp%da" % i] = "Ethernet%d" % (i * 4 * 2)
                 port_alias_to_name_map["etp%db" % i] = "Ethernet%d" % ((i * 4 * 2) + 4)
-        elif hwsku in ["Cisco-8122-O64", 'Cisco-8122-O64S2']:
+        elif hwsku in ["Cisco-8122-O64", "Cisco-8122-O64S2", "Cisco-8223-P64S2", "Cisco-8223L-P64S2"]:
             for i in range(0, 64):
                 port_alias_to_name_map["etp%d" % i] = "Ethernet%d" % (i * 8)
         elif hwsku in ["Cisco-8122-O128"]:
@@ -859,6 +859,13 @@ def get_port_alias_to_name_map(hwsku, asic_name=None):
             # adding placeholder for 100G ports
             port_alias_to_name_map["Port65"] = "Ethernet256"
             port_alias_to_name_map["Port66"] = "Ethernet260"
+        elif hwsku == "ACS-SN6810_LD":
+            # 128 main ports: Ethernet0..Ethernet508 -> etp1..etp128
+            for i in range(128):
+                port_alias_to_name_map["etp%d" % (i + 1)] = "Ethernet%d" % (i * 4)
+            # Two service sub-ports on the last cage -> etp129a/b
+            port_alias_to_name_map["etp129a"] = "Ethernet512"
+            port_alias_to_name_map["etp129b"] = "Ethernet513"
         else:
             if "Arista-7800" in hwsku:
                 assert False, "Please add port_alias_to_name_map for new modular SKU %s." % hwsku

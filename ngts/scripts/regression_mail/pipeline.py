@@ -7,6 +7,7 @@ import sys
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, TextIO, Tuple
@@ -19,8 +20,9 @@ from ngts.scripts.regression_mail.ai import (
     sanitize_error_logs,
 )
 from ngts.scripts.regression_mail.config import Settings
-from ngts.scripts.regression_mail.git_history import GitHistoryResolver, GitHubClient
+from ngts.scripts.regression_mail.git_history import GerritClient, GitHistoryResolver, GitHubClient
 from ngts.scripts.regression_mail.grouping import (
+    SourceSkipAnalyzer,
     build_deterministic_report,
     compact_test_names,
     compact_test_members,
@@ -45,6 +47,7 @@ from ngts.scripts.regression_mail.models import (
 from ngts.scripts.regression_mail.normalization import (
     COMMENT_SEPARATOR,
     canonical_test_name,
+    expand_explicit_public_work_item_ids,
     extract_internal_change_urls,
     extract_public_issue_urls,
     extract_public_pr_urls,
@@ -52,6 +55,8 @@ from ngts.scripts.regression_mail.normalization import (
     join_distinct_analysis_blocks,
     join_comment_blocks,
     normalize_text,
+    normalize_version,
+    ordered_unique,
     strip_redmine_references,
     unique_sorted,
 )
@@ -123,6 +128,7 @@ class PipelineDependencies:
     artifacts: Any
     renderer: Any
     transport: Any
+    gerrit: Any = None
     mime_builder: Callable[..., EmailMessage] = build_message
 
 
@@ -142,6 +148,11 @@ def build_default_dependencies(settings: Settings) -> PipelineDependencies:
         ),
         git=GitHistoryResolver(settings.repo_root),
         github=github,
+        gerrit=GerritClient(
+            settings.gerrit_username,
+            settings.gerrit_api_key,
+            timeout=settings.http_timeout_seconds,
+        ),
         redmine=RedmineClient(
             settings.redmine_api_token,
             timeout=settings.http_timeout_seconds,
@@ -185,7 +196,7 @@ def run(
                 report,
                 "Regression Report API",
                 ExitCode.EXTERNAL_SOURCE,
-                "Coverage, pass rate, and engineer analysis are unavailable.",
+                "Engineer analysis is unavailable; Excel-derived metrics remain available.",
                 lambda: deps.dashboard.fetch(
                     [request.version] + report.workbook.versions
                 ),
@@ -224,6 +235,19 @@ def run(
 
         if report.workbook:
             report.semantic = build_deterministic_report(report.workbook)
+            if report.workbook.skipped and report.git and report.git.source_root:
+                report.semantic = _attempt(
+                    report,
+                    "Skip condition analysis",
+                    ExitCode.INVALID_INPUT,
+                    "Issue-attributed skips are excluded from coverage when source conditions cannot be evaluated.",
+                    lambda: SourceSkipAnalyzer().enrich(
+                        report.semantic,
+                        report.workbook,
+                        report.git.source_root,
+                    ),
+                    settings,
+                ) or report.semantic
             internal_errors = _attempt(
                 report,
                 "Redmine LogAnalyzer review",
@@ -298,9 +322,17 @@ def run(
                     )
                     if isinstance(described, Mapping):
                         ticket_summaries = described
+            _filter_closed_issue_skips(
+                report,
+                deps,
+                ticket_contexts,
+                settings,
+            )
             _classify_and_merge_failure_groups(report, deps, settings)
             _summarize_comments(report, deps, settings)
             _summarize_internal_errors(report, deps, settings)
+            _collect_internal_change_titles(report, deps, settings)
+            _expand_explicit_failure_link_ids(report)
             public_link_decisions = _review_failure_public_links(
                 report,
                 deps,
@@ -317,6 +349,7 @@ def run(
                 report.semantic,
                 ticket_summaries,
                 report.redactor,
+                ticket_contexts,
             )
             _apply_failure_comment_policy(
                 report.semantic,
@@ -562,6 +595,116 @@ def _build_setup_redactor(
     return SetupRedactor(setup_platforms, setup_testbeds)
 
 
+def _filter_closed_issue_skips(
+    report: ReportModel,
+    deps: PipelineDependencies,
+    redmine_contexts: Mapping[str, Mapping[str, Any]],
+    settings: Settings,
+) -> None:
+    if report.workbook is None or report.semantic is None:
+        return
+    if not report.workbook.issue_skip_analysis_complete:
+        return
+    public_urls = unique_sorted(
+        url
+        for urls in report.workbook.issue_skip_tickets.values()
+        for url in urls
+        if extract_public_issue_urls(url)
+    )
+    github_contexts: Mapping[str, Mapping[str, Any]] = {}
+    inspector = (
+        getattr(deps.github, "inspect_issue_links", None)
+        if public_urls
+        else None
+    )
+    if callable(inspector):
+        inspected = _attempt(
+            report,
+            "GitHub skip issue details",
+            ExitCode.EXTERNAL_SOURCE,
+            "GitHub skips are excluded when issue closure time cannot be checked.",
+            lambda: inspector(public_urls),
+            settings,
+        )
+        if isinstance(inspected, Mapping):
+            github_contexts = inspected
+
+    retained: Dict[str, List[str]] = {}
+    unresolved = False
+    for row in report.workbook.skipped:
+        start = _result_start_time(row)
+        tickets = []
+        for ticket in report.workbook.issue_skip_tickets.get(row.record_id, ()):
+            context = (
+                github_contexts.get(ticket)
+                if extract_public_issue_urls(ticket)
+                else redmine_contexts.get(ticket)
+            )
+            if context is None or start is None:
+                unresolved = True
+                tickets.append(ticket)
+            elif _ticket_active_at_start(context, start):
+                tickets.append(ticket)
+        if tickets:
+            retained[row.record_id] = tickets
+    report.workbook.issue_skip_tickets = retained
+    if unresolved:
+        report.workbook.issue_skip_analysis_complete = False
+    active_public_urls = {
+        url
+        for urls in retained.values()
+        for url in urls
+        if extract_public_issue_urls(url)
+    }
+    report.workbook.public_issue_conditions = {
+        url: conditions
+        for url, conditions in report.workbook.public_issue_conditions.items()
+        if url in active_public_urls
+    }
+    refreshed = build_deterministic_report(report.workbook)
+    refreshed.internal_error_groups = report.semantic.internal_error_groups
+    report.semantic = refreshed
+    if report.redactor is not None:
+        report.redactor.redact_semantic(report.semantic)
+
+
+def _result_start_time(row: Any) -> Optional[datetime]:
+    return _parse_datetime(row.values.get("start"))
+
+
+def _parse_datetime(value: object) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time())
+    else:
+        text = normalize_text(value)
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _ticket_active_at_start(
+    context: Optional[Mapping[str, Any]],
+    start: Optional[datetime],
+) -> bool:
+    if not isinstance(context, Mapping) or start is None:
+        return False
+    if normalize_text(context.get("state")).casefold() == "open":
+        return True
+    if context.get("is_closed") is False:
+        return True
+    closed_value = context.get("closed_at") or context.get("closed_on")
+    closed = _parse_datetime(closed_value)
+    return closed is not None and closed > start
+
+
 def _summarize_comments(
     report: ReportModel,
     deps: PipelineDependencies,
@@ -622,8 +765,15 @@ def _summarize_comments(
     )
     selected = summaries if summaries is not None else fallbacks
     for group in groups:
-        summary = selected[group.group_id]
-        group.comments = summary
+        group.comments = _limit_summary_sentences(selected[group.group_id], 1)
+
+
+def _limit_summary_sentences(value: object, limit: int) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(sentences[:limit]).strip()
 
 
 def _classify_and_merge_failure_groups(
@@ -1183,6 +1333,15 @@ def _review_failure_public_links(
         details = inspected or {}
     for context in contexts.values():
         context["github_link_details"] = details
+        group = context["group"]
+        group.link_titles.update(
+            {
+                url: normalize_text(details[url].get("title"))
+                for url in context["github_issue_urls"] + context["github_pr_urls"]
+                if url in details and isinstance(details[url], Mapping) and
+                normalize_text(details[url].get("title"))
+            }
+        )
 
     deterministic: Dict[str, str] = {}
     ai_contexts: Dict[str, Dict[str, Any]] = {}
@@ -1246,6 +1405,54 @@ def _review_failure_public_links(
     return deterministic
 
 
+def _collect_internal_change_titles(
+    report: ReportModel,
+    deps: PipelineDependencies,
+    settings: Settings,
+) -> None:
+    if (
+        report.semantic is None or
+        deps.gerrit is None or
+        not normalize_text(getattr(deps.gerrit, "username", "")) or
+        not normalize_text(getattr(deps.gerrit, "api_key", ""))
+    ):
+        return
+    groups = list(report.semantic.failure_groups)
+    urls = unique_sorted(
+        url
+        for group in groups
+        for url in extract_internal_change_urls(group.internal_comments)
+    )
+    if not urls:
+        return
+    titles = _attempt(
+        report,
+        "Gerrit change details",
+        ExitCode.EXTERNAL_SOURCE,
+        "Internal fixes retain their links when Gerrit titles are unavailable.",
+        lambda: deps.gerrit.describe_changes(urls),
+        settings,
+    )
+    if not isinstance(titles, Mapping):
+        return
+    for group in groups:
+        for url in extract_internal_change_urls(group.internal_comments):
+            title = normalize_text(titles.get(url))
+            if title:
+                group.link_titles[url] = title
+
+
+def _expand_explicit_failure_link_ids(report: ReportModel) -> None:
+    if report.semantic is None:
+        return
+    for group in report.semantic.failure_groups:
+        group.ticket_refs = ordered_unique(
+            list(group.ticket_refs) +
+            expand_explicit_public_work_item_ids(group.internal_comments) +
+            expand_explicit_public_work_item_ids(group.cause_evidence)
+        )
+
+
 def _first_analysis_line(value: object) -> str:
     return next(
         (
@@ -1266,6 +1473,17 @@ def _strong_direct_public_link_decision(
     pr_urls: Sequence[str],
     details: Mapping[str, Mapping[str, Any]],
 ) -> str:
+    explicit = [
+        (prefix, url)
+        for prefix, urls in (
+            ("github_pr:", pr_urls),
+            ("github_issue:", issue_urls),
+        )
+        for url in urls
+    ]
+    if len(explicit) == 1:
+        prefix, url = explicit[0]
+        return prefix + url
     tokens = _public_link_test_tokens(group.test_display)
     if not tokens:
         return ""
@@ -1415,6 +1633,18 @@ def _review_redmine_links(
             candidate: github_details[candidate]
             for candidate in candidates
         }
+        for group in groups_by_url[url]:
+            group.link_titles.update(
+                {
+                    candidate: normalize_text(
+                        github_details[candidate].get("title")
+                    )
+                    for candidate in candidates
+                    if normalize_text(
+                        github_details[candidate].get("title")
+                    )
+                }
+            )
         context["current_failure_evidence"] = (
             join_distinct_analysis_blocks(
                 value
@@ -1508,6 +1738,10 @@ def _apply_failure_comment_policy(
     for group in semantic.failure_groups:
         if _dashboard_group_status(group) in _MISSING_DASHBOARD_STATUSES:
             group.comments = "Under investigation"
+            group.internal_comments = _DASHBOARD_STATUS_MESSAGES.get(
+                _dashboard_group_status(group),
+                "Analysis unavailable",
+            )
             continue
         decisions = [
             normalize_text(link_decisions.get(url))
@@ -1516,39 +1750,44 @@ def _apply_failure_comment_policy(
         decisions.append(
             normalize_text(public_link_decisions.get(group.group_id))
         )
-        pull_requests = unique_sorted(
+        public_links = unique_sorted(
             decision.split(":", 1)[1]
             for decision in decisions
-            if decision.startswith("github_pr:")
+            if decision.startswith(("github_pr:", "github_issue:"))
         )
-        if pull_requests:
-            group.comments = "Could be fixed by: {}".format(
-                "\n".join(pull_requests)
+        summary = _limit_summary_sentences(group.comments, 1)
+        if public_links:
+            labeled_links = "\n".join(
+                _format_classified_link(
+                    _failure_link_label(url),
+                    group.link_titles.get(url),
+                    url,
+                )
+                for url in public_links
             )
-            continue
-        issues = unique_sorted(
-            decision.split(":", 1)[1]
-            for decision in decisions
-            if decision.startswith("github_issue:")
-        )
-        if issues:
-            group.comments = "\n".join(issues)
-            continue
-        if not group.redmine_urls:
-            if _has_verification_ticket_summary(group):
-                group.comments = "Internal test issue, WIP"
-            elif _has_sensitive_internal_technology(group):
-                group.comments = "Internal issue, WIP"
-            continue
-        issue_type = (
-            "Internal test issue"
-            if _failure_has_only_test_tickets(group, ticket_contexts)
-            else "Internal issue"
-        )
-        group.comments = (
-            issue_type
-            if _all_failure_tickets_are_closed(group, ticket_contexts)
-            else issue_type + ", WIP"
+            group.comments = "\n".join(
+                value for value in (summary, labeled_links) if value
+            )
+        elif group.redmine_urls:
+            issue_type = (
+                "Internal test issue"
+                if _failure_has_only_test_tickets(group, ticket_contexts)
+                else "Internal issue"
+            )
+            group.comments = (
+                issue_type
+                if _all_failure_tickets_are_closed(group, ticket_contexts)
+                else issue_type + ", WIP"
+            )
+        elif _has_verification_ticket_summary(group):
+            group.comments = "Internal test issue, WIP"
+        elif _has_sensitive_internal_technology(group):
+            group.comments = "Internal issue, WIP"
+        group.internal_comments = _compact_internal_review(
+            group,
+            ticket_contexts,
+            public_links,
+            summary,
         )
 
 
@@ -1615,10 +1854,114 @@ def _has_sensitive_internal_technology(group: SemanticGroup) -> bool:
     )
 
 
+def _failure_link_label(url: object) -> str:
+    normalized = normalize_text(url)
+    match = re.fullmatch(
+        r"https://github\.com/(?:sonic-net|nvidia-sonic)/"
+        r"([^/]+)/(issues|pull)/(\d+)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError("unsupported public failure link: {!r}".format(normalized))
+    repository, kind, _number = match.groups()
+    scope = "test" if repository.casefold() == "sonic-mgmt" else "production"
+    role = "bug" if kind.casefold() == "issues" else "fix"
+    return "{} {}".format(scope, role).capitalize()
+
+
+def _format_classified_link(label: str, title: object, url: object) -> str:
+    normalized_url = normalize_text(url)
+    normalized_title = normalize_text(title).strip(" |:-")
+    return "{}: {}{}".format(
+        label,
+        normalized_title + " | " if normalized_title else "",
+        normalized_url,
+    )
+
+
+def _compact_internal_review(
+    group: SemanticGroup,
+    ticket_contexts: Mapping[str, Mapping[str, Any]],
+    public_links: Sequence[str],
+    summary: str,
+) -> str:
+    entries: List[str] = []
+    for url in public_links:
+        entries.append(
+            _format_classified_link(
+                _failure_link_label(url),
+                group.link_titles.get(url),
+                url,
+            )
+        )
+    for url in group.redmine_urls:
+        context = ticket_contexts.get(url, {})
+        label = (
+            "Test bug"
+            if context.get("is_test_issue") is True or
+            _is_verification_ticket_context(context)
+            else "Production bug"
+        )
+        title = context.get("subject") or _title_near_link(
+            group.internal_comments,
+            url,
+        )
+        entries.append(_format_classified_link(label, title, url))
+    for url in extract_internal_change_urls(group.internal_comments):
+        label = "Test fix" if "/sonic-mgmt/" in url.casefold() else "Production fix"
+        entries.append(
+            _format_classified_link(
+                label,
+                group.link_titles.get(url) or
+                _title_near_link(group.internal_comments, url) or
+                "Internal change",
+                url,
+            )
+        )
+    if entries:
+        return "\n".join(ordered_unique([summary] + entries))
+    return summary or _format_internal_review(
+        group.internal_comments
+    )
+
+
+def _title_near_link(value: object, url: str) -> str:
+    text = str(value or "")
+    blocks = text.split(COMMENT_SEPARATOR)
+    block = next((item for item in blocks if url in item), "")
+    if not block:
+        block = next((line for line in text.splitlines() if url in line), "")
+    title = block
+    for linked_url in (
+        extract_public_issue_urls(block) +
+        extract_public_pr_urls(block) +
+        extract_internal_change_urls(block) +
+        extract_redmine_urls(block)
+    ):
+        title = title.replace(linked_url, " ")
+    title = re.sub(
+        r"(?i)\b(?:test|production)\s+(?:bug|fix)\s*:\s*",
+        "",
+        title,
+    )
+    title = re.sub(r"^\s*\d+\s*:\s*", "", title)
+    title = re.sub(
+        r"(?i)\b(?:fixing\s+(?:CR|PR)|rerun\s+passed)\s*:?[^|]*",
+        "",
+        title,
+    )
+    title = normalize_text(title).strip(" |:-")
+    if " | " in title:
+        title = title.split(" | ", 1)[0].strip()
+    return title
+
+
 def _prepare_redmine_comments(
     semantic: Any,
     ticket_summaries: Optional[Mapping[str, str]] = None,
     redactor: Optional[SetupRedactor] = None,
+    ticket_contexts: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> None:
     summaries = {
         normalize_text(url).casefold(): normalize_text(summary)
@@ -1658,6 +2001,14 @@ def _prepare_redmine_comments(
                 summaries,
                 redactor,
             )
+            context = (ticket_contexts or {}).get(url)
+            if isinstance(context, Mapping):
+                label = (
+                    "Test bug"
+                    if context.get("is_test_issue") is True
+                    else "Production bug"
+                )
+                display = "{}: {}".format(label, display)
             pattern = re.compile(
                 r"(?i)(?:Redmine:\s*)?{}(?!\d)".format(
                     re.escape(url.rstrip("/"))
@@ -1671,7 +2022,7 @@ def _prepare_redmine_comments(
             if redactor is not None
             else value
         )
-        group.internal_comments = join_comment_blocks((redacted,))
+        group.internal_comments = _format_internal_review(redacted)
     for group in semantic.skip_groups:
         group.comments = (
             "Internal test issue, WIP"
@@ -1702,6 +2053,34 @@ def _strip_stale_redmine_summaries(
         for block in text.split(COMMENT_SEPARATOR)
         if normalize_text(block.strip(" -:;"))
     )
+
+
+def _format_internal_review(value: object) -> str:
+    blocks = [
+        "\n".join(
+            normalize_text(line)
+            for line in block.strip(" -:;").splitlines()
+            if normalize_text(line)
+        )
+        for block in str(value or "").split(COMMENT_SEPARATOR)
+        if normalize_text(block.strip(" -:;"))
+    ]
+    rendered: List[str] = []
+    seen = set()
+    for block in blocks:
+        for url in extract_public_issue_urls(block) + extract_public_pr_urls(block):
+            block = block.replace(
+                url,
+                "{}: {}".format(_failure_link_label(url), url),
+            )
+        for url in extract_internal_change_urls(block):
+            scope = "Test" if "/sonic-mgmt/" in url.casefold() else "Production"
+            block = block.replace(url, "{} fix: {}".format(scope, url))
+        key = normalize_text(block).casefold()
+        if key and key not in seen:
+            seen.add(key)
+            rendered.append(block)
+    return "\n".join(rendered)
 
 
 def _redmine_reference_display(
@@ -1905,30 +2284,31 @@ def apply_dashboard_analysis(
     """Join exact human analysis to Excel failures without cross-version guessing."""
 
     exact_index: Dict[
-        Tuple[str, str, str],
+        Tuple[str, str, str, str],
         List[DashboardAnalysis],
     ] = defaultdict(list)
     identity_index: Dict[
-        Tuple[str, str],
+        Tuple[str, str, str],
         List[DashboardAnalysis],
     ] = defaultdict(list)
     for analysis in dashboard.analyses:
         if not normalize_text(analysis.key_id):
             continue
+        version = normalize_version(analysis.switch_version)
         identity_key = (
+            version,
             normalize_text(analysis.session_id),
             normalize_text(analysis.key_id),
         )
         identity_index[identity_key].append(analysis)
         exact_key = (
-            identity_key[0],
-            identity_key[1],
+            *identity_key,
             normalize_text(analysis.test_name),
         )
         exact_index[exact_key].append(analysis)
     setup_aliases = _dashboard_setup_aliases(workbook, dashboard)
     aliased_index: Dict[
-        Tuple[str, str, str],
+        Tuple[str, str, str, str],
         List[DashboardAnalysis],
     ] = defaultdict(list)
     if setup_aliases:
@@ -1940,19 +2320,24 @@ def apply_dashboard_analysis(
                 setup_aliases,
             )
             aliased_key = (
+                normalize_version(analysis.switch_version),
                 normalize_text(analysis.session_id),
                 normalize_text(analysis.key_id),
                 aliased_name,
             )
             aliased_index[aliased_key].append(analysis)
     session_test_index: Dict[
-        Tuple[str, str],
+        Tuple[str, str, str],
         List[DashboardAnalysis],
     ] = defaultdict(list)
+    session_index: Dict[str, List[DashboardAnalysis]] = defaultdict(list)
     for analysis in dashboard.analyses:
+        session_id = normalize_text(analysis.session_id)
+        session_index[session_id].append(analysis)
         session_test_index[
             (
-                normalize_text(analysis.session_id),
+                normalize_version(analysis.switch_version),
+                session_id,
                 normalize_text(analysis.test_name),
             )
         ].append(analysis)
@@ -1963,17 +2348,40 @@ def apply_dashboard_analysis(
         if selected_ids is not None and row.record_id not in selected_ids:
             continue
         identity_key = (
+            normalize_version(row.version),
             normalize_text(row.session_id),
             normalize_text(row.mars_key_id),
         )
         candidates: List[DashboardAnalysis] = []
-        direct_candidates: List[DashboardAnalysis] = []
         for test_name in row.join_names:
-            direct_candidates.extend(session_test_index.get(
-                (identity_key[0], normalize_text(test_name)),
-                (),
-            ))
-        if direct_candidates:
+            exact_key = (*identity_key, normalize_text(test_name))
+            for analysis in exact_index.get(exact_key, []):
+                if analysis not in candidates:
+                    candidates.append(analysis)
+        if not candidates and setup_aliases:
+            for test_name in row.join_names:
+                aliased_key = (
+                    *identity_key,
+                    _normalize_dashboard_join_name(
+                        test_name,
+                        setup_aliases,
+                    ),
+                )
+                for analysis in aliased_index.get(aliased_key, []):
+                    if analysis not in candidates:
+                        candidates.append(analysis)
+        if not candidates:
+            direct_candidates: List[DashboardAnalysis] = []
+            for test_name in row.join_names:
+                direct_candidates.extend(session_test_index.get(
+                    (identity_key[0], identity_key[1], normalize_text(test_name)),
+                    (),
+                ))
+            direct_candidates = [
+                analysis
+                for analysis in direct_candidates
+                if not normalize_text(analysis.key_id)
+            ]
             by_content: Dict[Tuple[str, str, str], DashboardAnalysis] = {}
             for analysis in sorted(
                 direct_candidates,
@@ -1987,29 +2395,19 @@ def apply_dashboard_analysis(
                 )
                 by_content.setdefault(content, analysis)
             candidates = list(by_content.values())
-        if not candidates:
-            for test_name in row.join_names:
-                exact_key = (
-                    identity_key[0],
-                    identity_key[1],
-                    normalize_text(test_name),
+        if not candidates and row.sanitized_testname:
+            sanitized_candidates = [
+                analysis
+                for analysis in session_index.get(identity_key[1], ())
+                if normalize_version(analysis.switch_version) == identity_key[0] and
+                not normalize_text(analysis.key_id) and
+                _matches_sanitized_dashboard_name(
+                    row.sanitized_testname,
+                    analysis.test_name,
                 )
-                for analysis in exact_index.get(exact_key, []):
-                    if analysis not in candidates:
-                        candidates.append(analysis)
-        if not candidates and setup_aliases:
-            for test_name in row.join_names:
-                aliased_key = (
-                    identity_key[0],
-                    identity_key[1],
-                    _normalize_dashboard_join_name(
-                        test_name,
-                        setup_aliases,
-                    ),
-                )
-                for analysis in aliased_index.get(aliased_key, []):
-                    if analysis not in candidates:
-                        candidates.append(analysis)
+            ]
+            if len(sanitized_candidates) == 1:
+                candidates = sanitized_candidates
         if not candidates:
             candidates = [
                 analysis

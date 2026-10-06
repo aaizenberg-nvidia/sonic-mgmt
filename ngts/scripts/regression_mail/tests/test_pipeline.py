@@ -46,8 +46,10 @@ from ngts.scripts.regression_mail.pipeline import (
     _apply_failure_comment_policy,
     _build_setup_redactor,
     _classify_and_merge_failure_groups,
+    _collect_internal_change_titles,
     _collect_mgmt_prs,
     _filter_ngts_internal_error_tests,
+    _filter_closed_issue_skips,
     _merge_internal_error_groups,
     _prepare_redmine_comments,
     _review_failure_public_links,
@@ -332,6 +334,8 @@ def _settings(repo_root: Path) -> Settings:
         redmine_author_id=7680,
         http_timeout_seconds=30,
         github_authors=("zypgithub",),
+        gerrit_username="",
+        gerrit_api_key="",
         inference_api_key="inference-token",
         inference_base_url="https://inference-api.nvidia.com/v1",
         inference_model="openai/openai/gpt-5.6-sol",
@@ -357,8 +361,8 @@ class PipelineTest(unittest.TestCase):
 
     def test_table_palettes_match_reference_email(self) -> None:
         expected = {
-            "hardware": ("#0F9ED5", "#CAEDFB", "#FFFFFF"),
-            "detail": ("#156082", "#83CCEB", "#C0E6F5"),
+            "hardware": ("#CAEDFB", "#F5FBFE"),
+            "detail": ("#C0E6F5", "#F2F9FC"),
         }
         for palette, colors in expected.items():
             rendered = _table(
@@ -368,6 +372,232 @@ class PipelineTest(unittest.TestCase):
             )
             for color in colors:
                 self.assertIn("background-color:{}".format(color), rendered)
+            self.assertNotIn("background-color:#0F9ED5", rendered)
+            self.assertNotIn("background-color:#156082", rendered)
+
+    def test_excel_metrics_count_only_issue_skips_in_coverage(self) -> None:
+        base = _snapshot(self.request.excel_path).selected_rows[0]
+        rows = [
+            replace(base, record_id="pass-1", result="pass"),
+            replace(base, record_id="pass-2", result="pass"),
+            replace(base, record_id="fail-1", result="fail"),
+            replace(
+                base,
+                record_id="github-skip",
+                result="skipped",
+                message=(
+                    "Skipped for https://github.com/sonic-net/"
+                    "sonic-mgmt/issues/123"
+                ),
+            ),
+            replace(
+                base,
+                record_id="redmine-skip",
+                result="skipped",
+                message="Known failure tracked by RM ticket 5154543",
+            ),
+            replace(
+                base,
+                record_id="plain-skip",
+                result="skipped",
+                message="Topology is not supported",
+            ),
+        ]
+        snapshot = WorkbookSnapshot(
+            source_path=self.request.excel_path,
+            sheet_name="community_tests",
+            header_row=1,
+            selected_rows=rows,
+            result_counts={"pass": 2, "fail": 1, "skipped": 3},
+            hardware_pairs=[],
+            issue_skip_tickets={
+                "github-skip": [
+                    "https://github.com/sonic-net/sonic-mgmt/issues/123"
+                ],
+                "redmine-skip": [
+                    "https://redmine.mellanox.com/issues/5154543"
+                ],
+            },
+            issue_skip_analysis_complete=True,
+        )
+
+        self.assertEqual(2, len(snapshot.issue_skipped))
+        self.assertAlmostEqual(60.0, snapshot.coverage)
+        self.assertAlmostEqual(2 / 3 * 100.0, snapshot.pass_rate)
+
+    def test_coverage_is_unavailable_until_skip_analysis_completes(self) -> None:
+        snapshot = _snapshot(self.request.excel_path)
+        skipped = replace(
+            snapshot.selected_rows[0],
+            record_id="skip-unknown",
+            result="skipped",
+        )
+        snapshot.selected_rows.append(skipped)
+        snapshot.result_counts["skipped"] = 1
+
+        self.assertIsNone(snapshot.coverage)
+
+    def test_closed_ticket_before_case_start_is_not_counted_as_issue_skip(
+        self,
+    ) -> None:
+        github_issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        redmine_issue = "https://redmine.mellanox.com/issues/5154543"
+        base = _snapshot(self.request.excel_path).selected_rows[0]
+        skipped = [
+            replace(
+                base,
+                record_id="github-skip",
+                result="skipped",
+                message=github_issue,
+                values={"start": "2026-09-20T12:00:00Z"},
+            ),
+            replace(
+                base,
+                record_id="redmine-skip",
+                result="skipped",
+                message=redmine_issue,
+                values={"start": "2026-09-20T12:00:00Z"},
+            ),
+        ]
+        workbook = WorkbookSnapshot(
+            source_path=self.request.excel_path,
+            sheet_name="community_tests",
+            header_row=1,
+            selected_rows=skipped,
+            result_counts={"pass": 0, "fail": 0, "skipped": 2},
+            hardware_pairs=[],
+            issue_skip_tickets={
+                "github-skip": [github_issue],
+                "redmine-skip": [redmine_issue],
+            },
+            issue_skip_analysis_complete=True,
+        )
+        report = ReportModel(
+            request=self.request,
+            workbook=workbook,
+            semantic=build_deterministic_report(workbook),
+        )
+
+        class GitHub:
+            @staticmethod
+            def inspect_issue_links(urls):
+                return {
+                    github_issue: {
+                        "state": "closed",
+                        "closed_at": "2026-09-19T12:00:00Z",
+                    }
+                }
+
+        class Dependencies:
+            github = GitHub()
+
+        _filter_closed_issue_skips(
+            report,
+            Dependencies(),
+            {
+                redmine_issue: {
+                    "is_closed": True,
+                    "closed_on": "2026-09-19T12:00:00Z",
+                }
+            },
+            self.settings,
+        )
+
+        self.assertEqual({}, workbook.issue_skip_tickets)
+        self.assertEqual([], workbook.issue_skipped)
+
+    def test_ticket_open_at_case_start_remains_issue_skip(self) -> None:
+        issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        base = _snapshot(self.request.excel_path).selected_rows[0]
+        skipped = replace(
+            base,
+            record_id="github-skip",
+            result="skipped",
+            message=issue,
+            values={"start": "2026-09-20T12:00:00Z"},
+        )
+        workbook = WorkbookSnapshot(
+            source_path=self.request.excel_path,
+            sheet_name="community_tests",
+            header_row=1,
+            selected_rows=[skipped],
+            result_counts={"pass": 0, "fail": 0, "skipped": 1},
+            hardware_pairs=[],
+            issue_skip_tickets={"github-skip": [issue]},
+            issue_skip_analysis_complete=True,
+        )
+        report = ReportModel(
+            request=self.request,
+            workbook=workbook,
+            semantic=build_deterministic_report(workbook),
+        )
+
+        class GitHub:
+            @staticmethod
+            def inspect_issue_links(urls):
+                return {
+                    issue: {
+                        "state": "closed",
+                        "closed_at": "2026-09-21T12:00:00Z",
+                    }
+                }
+
+        class Dependencies:
+            github = GitHub()
+
+        _filter_closed_issue_skips(
+            report,
+            Dependencies(),
+            {},
+            self.settings,
+        )
+
+        self.assertEqual({"github-skip": [issue]}, workbook.issue_skip_tickets)
+        self.assertEqual([skipped], workbook.issue_skipped)
+
+    def test_missing_ticket_metadata_marks_coverage_incomplete(self) -> None:
+        issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        base = _snapshot(self.request.excel_path).selected_rows[0]
+        skipped = replace(
+            base,
+            record_id="github-skip",
+            result="skipped",
+            message=issue,
+            values={"start": "2026-09-20T12:00:00Z"},
+        )
+        workbook = WorkbookSnapshot(
+            source_path=self.request.excel_path,
+            sheet_name="community_tests",
+            header_row=1,
+            selected_rows=[skipped],
+            result_counts={"pass": 0, "fail": 0, "skipped": 1},
+            hardware_pairs=[],
+            issue_skip_tickets={"github-skip": [issue]},
+            issue_skip_analysis_complete=True,
+        )
+        report = ReportModel(
+            request=self.request,
+            workbook=workbook,
+            semantic=build_deterministic_report(workbook),
+        )
+
+        class GitHub:
+            @staticmethod
+            def inspect_issue_links(urls):
+                return {}
+
+        class Dependencies:
+            github = GitHub()
+
+        _filter_closed_issue_skips(
+            report,
+            Dependencies(),
+            {},
+            self.settings,
+        )
+
+        self.assertFalse(workbook.issue_skip_analysis_complete)
+        self.assertIsNone(workbook.coverage)
 
     def test_table_keeps_first_column_at_fixed_width(self) -> None:
         rendered = _table(
@@ -470,11 +700,12 @@ class PipelineTest(unittest.TestCase):
             palette="detail",
         )
 
-        for color in ("#156082", "#83CCEB", "#C0E6F5"):
+        for color in ("#C0E6F5", "#F2F9FC"):
             marker = "background-color:{}".format(color)
             for rendered in analysis_tables:
                 self.assertIn(marker, rendered)
             self.assertIn(marker, github)
+        self.assertNotIn("#156082", github)
         for rendered in analysis_tables:
             self.assertIn("color:#c00000", rendered)
         self.assertNotIn("#4F81BD", analysis_tables[0])
@@ -915,8 +1146,8 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(
             [
                 "Under investigation",
-                "Could be fixed by: " + pr_url,
-                issue_url,
+                "old summary\nProduction fix: " + pr_url,
+                "old summary\nProduction bug: " + issue_url,
                 "Internal test issue, WIP",
                 "Internal issue, WIP",
                 "AI summary",
@@ -1239,7 +1470,10 @@ class PipelineTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(issue_url, groups[0].comments)
+        self.assertEqual(
+            "AI summary\nProduction bug: " + issue_url,
+            groups[0].comments,
+        )
         self.assertEqual("Under investigation", groups[1].comments)
 
     def test_redmine_link_ai_compares_current_and_github_evidence(
@@ -1324,7 +1558,51 @@ class PipelineTest(unittest.TestCase):
             {ticket: "github_issue:" + issue_url},
             decisions,
         )
-        self.assertEqual(issue_url, group.comments)
+        self.assertEqual(
+            "Generalized service startup failure\n"
+            "Production bug: Service exits during startup | " + issue_url,
+            group.comments,
+        )
+
+    def test_failure_comment_policy_labels_all_public_link_types(self) -> None:
+        urls = (
+            "https://github.com/sonic-net/sonic-mgmt/issues/1",
+            "https://github.com/sonic-net/sonic-mgmt/pull/2",
+            "https://github.com/sonic-net/sonic-buildimage/issues/3",
+            "https://github.com/sonic-net/sonic-swss/pull/4",
+        )
+        groups = [
+            SemanticGroup(
+                group_id="link-{}".format(index),
+                member_ids=["link-{}".format(index)],
+                test_display="tests/a.py::test_a",
+                testbeds=[],
+            )
+            for index in range(len(urls))
+        ]
+        decisions = {
+            group.group_id: (
+                "github_issue:" if "/issues/" in url else "github_pr:"
+            ) + url
+            for group, url in zip(groups, urls)
+        }
+
+        _apply_failure_comment_policy(
+            SemanticReport(failure_groups=groups),
+            {},
+            {},
+            public_link_decisions=decisions,
+        )
+
+        self.assertEqual(
+            [
+                "Test bug: " + urls[0],
+                "Test fix: " + urls[1],
+                "Production bug: " + urls[2],
+                "Production fix: " + urls[3],
+            ],
+            [group.comments for group in groups],
+        )
 
     def test_active_redmine_github_pr_is_selected_without_ai(
         self,
@@ -1464,7 +1742,97 @@ class PipelineTest(unittest.TestCase):
             {"dhcp-failure": "github_issue:" + issue_url},
             decisions,
         )
-        self.assertEqual(issue_url, group.comments)
+        self.assertEqual(
+            "Test bug: Regression: test_dhcp_relay failed | " + issue_url,
+            group.comments,
+        )
+
+    def test_single_explicit_public_link_does_not_depend_on_ai_matching(
+        self,
+    ) -> None:
+        issue_url = "https://github.com/sonic-net/sonic-mgmt/issues/27717"
+        group = SemanticGroup(
+            group_id="copp-failure",
+            member_ids=["copp-failure"],
+            test_display="copp/test_copp.py::TestCOPP",
+            testbeds=["SN4280"],
+            internal_comments="ptf issue\n" + issue_url,
+            ticket_refs=[issue_url],
+        )
+        report = ReportModel(
+            request=self.request,
+            semantic=SemanticReport(failure_groups=[group]),
+            redactor=SetupRedactor({}),
+        )
+
+        class GitHub:
+            @staticmethod
+            def inspect_issue_links(urls):
+                return {
+                    issue_url: {
+                        "title": "Bug: nnpy connection timed out",
+                        "body": "PTF packet injection intermittently times out.",
+                    }
+                }
+
+        class AI:
+            @staticmethod
+            def review_public_links(contexts, redactor):
+                raise AssertionError("an explicit singleton link is authoritative")
+
+        class Dependencies:
+            github = GitHub()
+            ai = AI()
+
+        decisions = _review_failure_public_links(
+            report,
+            Dependencies(),
+            self.settings,
+        )
+        _apply_failure_comment_policy(
+            report.semantic,
+            {},
+            {},
+            public_link_decisions=decisions,
+        )
+
+        self.assertEqual(
+            {"copp-failure": "github_issue:" + issue_url},
+            decisions,
+        )
+        self.assertIn(issue_url, group.comments)
+
+    def test_unconfigured_gerrit_title_lookup_is_skipped(self) -> None:
+        change = (
+            "https://git-nbu-sw.nvidia.com/r/c/switchx/sonic/"
+            "sonic-mgmt/+/338605"
+        )
+        report = ReportModel(
+            request=self.request,
+            semantic=SemanticReport(failure_groups=[SemanticGroup(
+                group_id="internal-change",
+                member_ids=["internal-change"],
+                test_display="tests/a.py::test_a",
+                testbeds=[],
+                internal_comments=change,
+            )]),
+        )
+
+        class Gerrit:
+            @staticmethod
+            def describe_changes(urls):
+                raise AssertionError("unconfigured Gerrit must not be called")
+
+        class Dependencies:
+            gerrit = Gerrit()
+
+        _collect_internal_change_titles(
+            report,
+            Dependencies(),
+            self.settings,
+        )
+
+        self.assertEqual([], report.errors)
 
     def test_all_testbed_cells_render_one_value_per_line(self) -> None:
         group = SemanticGroup(
@@ -1638,6 +2006,127 @@ class PipelineTest(unittest.TestCase):
             ),
         )
 
+    def test_internal_review_removes_separators_and_labels_links(self) -> None:
+        test_issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        production_fix = (
+            "https://github.com/sonic-net/sonic-buildimage/pull/456"
+        )
+        group = SemanticGroup(
+            group_id="links",
+            member_ids=["links"],
+            test_display="tests/a.py::test_a",
+            testbeds=[],
+            internal_comments=COMMENT_SEPARATOR.join(
+                ("Root cause", test_issue, production_fix)
+            ),
+        )
+
+        _prepare_redmine_comments(SemanticReport(failure_groups=[group]))
+
+        self.assertNotIn(COMMENT_SEPARATOR, group.internal_comments)
+        self.assertIn("Test bug: " + test_issue, group.internal_comments)
+        self.assertIn(
+            "Production fix: " + production_fix,
+            group.internal_comments,
+        )
+
+    def test_failure_comments_put_one_sentence_before_classified_link(
+        self,
+    ) -> None:
+        issue = "https://github.com/sonic-net/sonic-mgmt/issues/123"
+        group = SemanticGroup(
+            group_id="links",
+            member_ids=["links"],
+            test_display="tests/a.py::test_a",
+            testbeds=[],
+            comments=(
+                "The invalid test expectation causes the failure. "
+                "Investigation history should be omitted."
+            ),
+            internal_comments="Investigation history " + issue,
+            link_titles={issue: "Fix invalid test expectation"},
+        )
+        semantic = SemanticReport(failure_groups=[group])
+
+        _apply_failure_comment_policy(
+            semantic,
+            {},
+            {},
+            {"links": "github_issue:" + issue},
+        )
+
+        expected = "Test bug: Fix invalid test expectation | " + issue
+        self.assertEqual(
+            "The invalid test expectation causes the failure.\n" + expected,
+            group.comments,
+        )
+        self.assertEqual(
+            "The invalid test expectation causes the failure.\n" + expected,
+            group.internal_comments,
+        )
+
+    def test_internal_links_are_hidden_from_public_comments_and_compacted(
+        self,
+    ) -> None:
+        change = (
+            "https://git-nbu-sw.nvidia.com/r/c/switchx/sonic/"
+            "sonic-mgmt/+/348618"
+        )
+        group = SemanticGroup(
+            group_id="internal-link",
+            member_ids=["internal-link"],
+            test_display="platform_tests/fwutil/test_fwutil.py",
+            testbeds=[],
+            comments="The power-cycle implementation uses the wrong backend.",
+            internal_comments=(
+                "348618: Use Redfish PowerCycle for BMC-based power cycle |\n" +
+                "Test issue, fixed in 202605\n" + change
+            ),
+        )
+        semantic = SemanticReport(failure_groups=[group])
+
+        _apply_failure_comment_policy(semantic, {}, {})
+
+        self.assertEqual(
+            "The power-cycle implementation uses the wrong backend.",
+            group.comments,
+        )
+        self.assertEqual(
+            "The power-cycle implementation uses the wrong backend.\n"
+            "Test fix: Use Redfish PowerCycle for BMC-based power cycle | " + change,
+            group.internal_comments,
+        )
+        self.assertNotIn("git-nbu-sw", group.comments)
+
+    def test_internal_review_deduplicates_same_links_in_different_order(
+        self,
+    ) -> None:
+        first = "https://git-nbu-sw.nvidia.com/r/c/project/+/347432"
+        second = "https://git-nbu-sw.nvidia.com/r/c/project/+/349054"
+        group = SemanticGroup(
+            group_id="reordered-links",
+            member_ids=["reordered-links"],
+            test_display="tests/a.py::test_a",
+            testbeds=[],
+            comments="The recovery retry logic is incomplete.",
+            internal_comments=COMMENT_SEPARATOR.join(
+                (
+                    "fixing CR, rerun passed " + first + " | " + second,
+                    "fixing CR, rerun passed " + second + " | " + first,
+                )
+            ),
+        )
+
+        _apply_failure_comment_policy(
+            SemanticReport(failure_groups=[group]),
+            {},
+            {},
+        )
+
+        self.assertEqual(1, group.internal_comments.count(first))
+        self.assertEqual(1, group.internal_comments.count(second))
+        self.assertEqual(3, len(group.internal_comments.splitlines()))
+
     def _dependencies(
         self,
         transport,
@@ -1706,7 +2195,7 @@ class PipelineTest(unittest.TestCase):
         group = artifacts.semantic.failure_groups[0]
         self.assertEqual("Generalized AI summary", group.comments)
         self.assertEqual(
-            "Existing engineer analysis on SN5600",
+            "Generalized AI summary",
             group.internal_comments,
         )
         self.assertEqual(
@@ -1725,12 +2214,14 @@ class PipelineTest(unittest.TestCase):
         self.assertIn('width="360"', html)
         self.assertIn("width:360px;min-width:360px", html)
         for color in (
-            "#0F9ED5",
             "#CAEDFB",
-            "#156082",
-            "#83CCEB",
+            "#F5FBFE",
+            "#C0E6F5",
+            "#F2F9FC",
         ):
             self.assertIn("background-color:{}".format(color), html)
+        self.assertNotIn("background-color:#0F9ED5", html)
+        self.assertNotIn("background-color:#156082", html)
         self.assertIn(">Testbed</th>", html)
         self.assertNotIn(">Platform</th>", html)
         self.assertIn("Comments for internal review", html)
@@ -1740,8 +2231,8 @@ class PipelineTest(unittest.TestCase):
             "202608",
             "def",
             VERSION,
-            "91.2%",
-            "98.4%",
+            "100%",
+            "0%",
         ):
             self.assertIn(
                 '<strong style="color:#000000;font-weight:700">' +
@@ -1810,7 +2301,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(2, dashboard.calls)
         group = artifacts.semantic.failure_groups[0]
         self.assertEqual(
-            "Analysis became available on SN5600 before rendering",
+            "Generalized AI summary",
             group.internal_comments,
         )
         self.assertNotIn(
@@ -2791,7 +3282,7 @@ class PipelineTest(unittest.TestCase):
         group = artifacts.semantic.skip_groups[0]
         self.assertEqual("Internal issue, WIP", group.comments)
         self.assertEqual(
-            "[SONIC - Design] Bug SW #5154543: Internal issue"
+            "Production bug: [SONIC - Design] Bug SW #5154543: Internal issue"
             " | Assignee: Owner | Status: In Progress",
             group.internal_comments,
         )
@@ -2969,12 +3460,11 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(4, result)
         group = artifacts.semantic.failure_groups[0]
         self.assertEqual("Internal issue, WIP", group.comments)
-        self.assertIn("Engineer analysis", group.internal_comments)
         self.assertIn(
-            "[SONIC - Design] Bug SW #5154543: Internal issue",
+            "Production bug: Internal issue | ",
             group.internal_comments,
         )
-        self.assertNotIn(
+        self.assertIn(
             "https://redmine.mellanox.com/issues/5154543",
             group.internal_comments,
         )
@@ -3316,6 +3806,32 @@ class PipelineTest(unittest.TestCase):
             "not_found",
             workbook.dashboard_statuses["failure-1"],
         )
+
+    def test_dashboard_does_not_match_same_session_and_test_across_versions(
+        self,
+    ) -> None:
+        workbook = _snapshot(self.request.excel_path)
+        workbook.selected_rows[0] = replace(
+            workbook.selected_rows[0],
+            values={"os_version": "202605_RC.100-build_Internal"},
+        )
+        workbook.row_comments = {}
+        dashboard = DashboardSnapshot(
+            analyses=[
+                DashboardAnalysis(
+                    session_id="s",
+                    key_id="k",
+                    test_name="tests/a.py::test_a",
+                    analysis="Analysis from another version",
+                    switch_version="202605_RC.101-build_Internal",
+                )
+            ]
+        )
+
+        apply_dashboard_analysis(workbook, dashboard)
+
+        self.assertEqual("", workbook.row_comments["failure-1"])
+        self.assertEqual("not_found", workbook.dashboard_statuses["failure-1"])
 
     def test_dashboard_matches_desensitized_setup_alias_by_platform_and_id(
         self,
@@ -3730,7 +4246,7 @@ class PipelineTest(unittest.TestCase):
             workbook.dashboard_statuses["failure-1"],
         )
 
-    def test_dashboard_merges_conflicting_exact_analyses_by_time(self) -> None:
+    def test_dashboard_does_not_merge_exact_analyses_from_other_versions(self) -> None:
         workbook = _snapshot(self.request.excel_path)
         workbook.row_comments = {}
         dashboard = DashboardSnapshot(
@@ -3758,13 +4274,8 @@ class PipelineTest(unittest.TestCase):
 
         apply_dashboard_analysis(workbook, dashboard)
 
-        comment = workbook.row_comments["failure-1"]
-        self.assertLess(comment.index("2026-08-28 10:00:00"), comment.index("2026-08-28 09:00:00"))
-        self.assertIn("Analysis A", comment)
-        self.assertIn("Analysis B", comment)
-        self.assertIn("[202605_RC.82-old_Internal]", comment)
-        self.assertIn("[202605_RC.83-new_Internal]", comment)
-        self.assertEqual("analyzed", workbook.dashboard_statuses["failure-1"])
+        self.assertEqual("", workbook.row_comments["failure-1"])
+        self.assertEqual("not_found", workbook.dashboard_statuses["failure-1"])
 
     def test_dashboard_uses_latest_session_and_case_analysis(self) -> None:
         workbook = _snapshot(self.request.excel_path)
@@ -3841,7 +4352,7 @@ class PipelineTest(unittest.TestCase):
         html = transport.messages[0][0].get_body(
             preferencelist=("html",)
         ).get_content()
-        self.assertIn("slm-238", html)
+        self.assertNotIn("slm-238", html)
         self.assertNotIn("Unknown platform", html)
         self.assertIn("r-sn5640-16-r-msn4700-01", html)
 

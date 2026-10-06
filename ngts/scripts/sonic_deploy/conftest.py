@@ -12,7 +12,7 @@ import logging
 import re
 import os
 
-from ngts.constants.constants import MarsConstants
+from ngts.constants.constants import MarsConstants, SonicMgmtChangeConstants
 
 logger = logging.getLogger()
 
@@ -59,11 +59,19 @@ def _parse_perf_sys_sdk_change(value):
         value (str): User-provided ``--perf_sys_sdk_change`` value.
 
     Returns:
-        str: The validated value, either ``'branch_<name>'`` or a numeric Gerrit change number.
+        str | None: The validated value, either ``'branch_<name>'`` or a numeric Gerrit
+        change number. ``None`` if ``value`` is empty/whitespace-only, so that MARS
+        `.steps` templates can pass this flag unconditionally with a
+        ``[[conf:extra_info.perf_sys_sdk_change: ]]``-style blank default and have it
+        behave the same as omitting the flag entirely.
 
     Raises:
         argparse.ArgumentTypeError: If ``value`` is neither ``'branch_<name>'`` nor all digits.
     """
+    value = value.strip()
+    if not value:
+        return None
+
     if value.startswith(PERF_SYS_SDK_CHANGE_BRANCH_PREFIX) or value.isdigit():
         return value
 
@@ -71,6 +79,40 @@ def _parse_perf_sys_sdk_change(value):
         f"Invalid --perf_sys_sdk_change={value!r}. Must be either "
         f"'{PERF_SYS_SDK_CHANGE_BRANCH_PREFIX}<branch_name>' to clone a specific perf_sys_sdk "
         f"branch, or a numeric Gerrit change number to fetch an unmerged CR's latest patchset."
+    )
+
+
+def _parse_sonic_mgmt_change(value):
+    """Validate ``--sonic_mgmt_change`` and return it unchanged.
+
+    Args:
+        value (str): User-provided ``--sonic_mgmt_change`` value.
+
+    Returns:
+        str | None: The validated value: ``'branch_<name>'``, ``'tag_<name>'``, or a
+        numeric Gerrit change number. ``None`` if ``value`` is empty/whitespace-only,
+        so that MARS `.steps` templates can pass this flag unconditionally with a
+        ``[[conf:extra_info.sonic_mgmt_change: ]]``-style blank default and have it
+        behave the same as omitting the flag entirely.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``value`` starts with neither prefix and is not
+            all digits.
+    """
+    value = value.strip()
+    if not value:
+        return None
+
+    if (value.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX) or
+            value.startswith(SonicMgmtChangeConstants.TAG_PREFIX) or
+            value.isdigit()):
+        return value
+
+    raise argparse.ArgumentTypeError(
+        f"Invalid --sonic_mgmt_change={value!r}. Must be either "
+        f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}<branch_name>' to check out that branch, "
+        f"'{SonicMgmtChangeConstants.TAG_PREFIX}<tag_name>' to check out that tag, "
+        f"or a numeric Gerrit change number to check out an unmerged CR's latest patchset."
     )
 
 
@@ -214,6 +256,28 @@ def pytest_addoption(parser):
             "'<change_number>' - fetch and check out the latest patchset of that Gerrit change "
             "(e.g. an unmerged CR). "
             "If omitted, the DUT-derived branch is used."
+        ),
+    )
+    logger.info('Parsing sonic_mgmt_change')
+    parser.addoption(
+        "--sonic_mgmt_change",
+        action="store",
+        default=None,
+        type=_parse_sonic_mgmt_change,
+        metavar="{tag_<name>,branch_<name>,<change_number>}",
+        help=(
+            "Check out the given tag, branch, or Gerrit change in the local sonic-mgmt "
+            "working copy that is running this test, before the deploy flow starts. "
+            "Supported formats: "
+            "'tag_<name>' - check out that tag; "
+            "'branch_<name>' - check out that branch; "
+            "'<change_number>' - fetch and check out the latest patchset of that Gerrit "
+            "change (e.g. an unmerged CR). "
+            "If omitted, no checkout is performed and the current working-copy ref is used "
+            "as-is. Note: pytest has already imported this test module by the time the "
+            "checkout runs, so it does not hot-swap the Python code of the running test "
+            "process; it affects files read from disk at runtime and any subprocess spawned "
+            "afterward."
         ),
     )
 
@@ -598,3 +662,19 @@ def perf_sys_sdk_change(request):
         str | None: The validated ``--perf_sys_sdk_change`` value, or None.
     """
     return request.config.getoption('--perf_sys_sdk_change')
+
+
+@pytest.fixture(scope="module")
+def sonic_mgmt_change(request):
+    """
+    Tag, branch, or Gerrit change to check out in the local sonic-mgmt working copy
+    before the deploy flow starts.
+
+    Controlled by ``--sonic_mgmt_change``: ``'tag_<name>'`` checks out that tag,
+    ``'branch_<name>'`` checks out that branch, a numeric Gerrit change number checks
+    out that change's latest patchset. Omitted (None) performs no checkout.
+
+    Returns:
+        str | None: The validated ``--sonic_mgmt_change`` value, or None.
+    """
+    return request.config.getoption('--sonic_mgmt_change')

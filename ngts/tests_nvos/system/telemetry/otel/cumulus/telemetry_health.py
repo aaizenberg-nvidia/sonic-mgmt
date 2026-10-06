@@ -216,6 +216,10 @@ def ensure_mgmt_vrf_secured_otlp_session(dut, collector, *, collector_ip: str) -
     NGTS ``clear_config`` between tests can drop export state while the module-scoped
     ``otel_suite_mgmt_secured`` fixture still holds the TLS collector — call this before
     secured health test02 (SSIM keeps config across class tests).
+
+    Restores the collector receiver too: a module that also uses ``otel_suite_mgmt``
+    re-points the shared collector host at the plaintext config, so the DUT would
+    otherwise handshake TLS against a plaintext listener.
     """
     from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
         apply_otel_secured_telemetry_config,
@@ -228,6 +232,8 @@ def ensure_mgmt_vrf_secured_otlp_session(dut, collector, *, collector_ip: str) -
     )
 
     vrf = CumulusOtelConst.TELEMETRY_EXPORT_VRF_MGMT
+    with allure.step("Ensure collector still serves the secured (TLS) OTLP receiver"):
+        collector.ensure_config_applied()
     with allure.step("Ensure mgmt VRF secured OTLP export is configured"):
         configure_switch_otlp_grpc_secured_destination(
             dut,

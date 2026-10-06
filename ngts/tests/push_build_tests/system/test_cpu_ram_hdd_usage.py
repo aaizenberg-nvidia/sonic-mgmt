@@ -1,14 +1,12 @@
 import re
 import time
 import pytest
-import sys
 import logging
 
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from pathlib import Path
 
-sys.path.append('/devts/tests/skynet')
-from system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
+from ngts.test_commons.skynet.system.test_cpu_ram_hdd_usage import do_cpu_usage_test, do_ram_usage_test, do_hdd_usage_test, \
     do_ssd_endurance_test  # noqa
 
 ONE_DAY_IN_SEC = 86400
@@ -123,7 +121,7 @@ class TestCpuRamHddUsage:
     @pytest.mark.build
     @pytest.mark.push_gate
     @pytest.mark.physical_coverage
-    def test_ram_usage(self, request, expected_ram_usage_dict, skip_test_ram_usage_on_asan):
+    def test_ram_usage(self, request, expected_ram_usage_dict, skip_test_ram_usage_on_asan, platform_params):
         """
         This tests checks RAM usage - total and per process
         Test doing command "top" - then parse output and check from it PIDs for running processes
@@ -136,6 +134,8 @@ class TestCpuRamHddUsage:
         """
         if is_redmine_issue_active([5152247])[0]:
             expected_ram_usage_dict['telemetry'] += 10
+        if is_redmine_issue_active([5226570])[0] and re.search('SN5640', platform_params.hwsku):
+            expected_ram_usage_dict['lldp_syncd'] = 25
         do_ram_usage_test(request.node.originalname, self.dut_engine, expected_ram_usage_dict)
 
     @pytest.mark.release_check

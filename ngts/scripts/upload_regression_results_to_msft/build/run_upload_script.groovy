@@ -124,6 +124,8 @@ def run_step(name) {
             github_api_token: env.GITHUB_API_TOKEN,
             redmine_api_token: env.REDMINE_API_TOKEN,
             redmine_author_id: env."${name}_regression_mail_redmine_author_id" ?: env.REGRESSION_MAIL_REDMINE_AUTHOR_ID,
+            gerrit_username: env.SVC_SONIC_VER_BOT,
+            gerrit_api_key: env.GERRIT_API_KEY,
             inference_api_key: env.INFERENCE_API_KEY,
             inference_base_url: env."${name}_regression_mail_inference_base_url" ?: env.REGRESSION_MAIL_INFERENCE_BASE_URL,
             inference_model: env."${name}_regression_mail_inference_model" ?: env.REGRESSION_MAIL_INFERENCE_MODEL,
@@ -191,6 +193,12 @@ def run_step(name) {
               report_values.REGRESSION_MAIL_RC_STATUS_TAG = report_settings.rc_status_tag
               if (report_settings.github_api_token) {
                 report_values.GITHUB_API_TOKEN = report_settings.github_api_token
+              }
+              if (report_settings.gerrit_username) {
+                report_values.SVC_SONIC_VER_BOT = report_settings.gerrit_username
+              }
+              if (report_settings.gerrit_api_key) {
+                report_values.GERRIT_API_KEY = report_settings.gerrit_api_key
               }
               report_values.REGRESSION_MAIL_REDMINE_AUTHOR_ID = report_settings.redmine_author_id
               report_values.REGRESSION_MAIL_SMTP_HOST = report_settings.smtp_host

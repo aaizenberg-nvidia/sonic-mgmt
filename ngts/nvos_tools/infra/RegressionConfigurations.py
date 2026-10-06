@@ -82,12 +82,13 @@ class Configurations:
 
     # Per-setup tray model for SDN tray admin-state tests (RegressionConfigurations.tray_topology).
     # Keys must match Noga/pytest setup_name exactly.
-    # switch_nodes: expected 'nv show sdn trays' count (since 0.8 the view lists switch trays
-    # only — compute trays are filtered out). compute_nodes: lab model only (>0 gates tray
-    # selection to the local switch slot); compute trays no longer appear in the trays view.
+    # switch_nodes / compute_nodes: expected 'nv show sdn trays' split — since the 6623822
+    # fix (0.8 >= 25.03.0722) the view lists ALL trays: switch trays with a real
+    # maintenance-state, compute trays with 'N/A'.
     # Maintenance-state tests use SWITCH trays only — compute-tray admin state is not
-    # released to customers (product decision 2026-08-05; blocked in NMX-C API from 0.8):
-    #   - compute_nodes>0: only the local switch tray is a known-switch slot; tests use it.
+    # released to customers (product decision 2026-08-05; update/restore on a compute tray
+    # are rejected with 'Tray admin state is not supported for tray N'):
+    #   - compute_nodes>0: only the local switch tray is used.
     #   - compute_nodes==0: every tray is a switch tray; any may be used (note: the only
     #     such setup today, rosalind-simx, is standalone and skips the suite entirely).
     tray_topology = {

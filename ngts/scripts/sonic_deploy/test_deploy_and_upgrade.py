@@ -5,7 +5,7 @@ import allure
 import pytest
 
 from ngts.scripts.sonic_deploy.deploy_helper_methods import (
-    DeploymentContext, DeployOrchestrator, DeployConnectionHelper
+    DeploymentContext, DeployOrchestrator, DeployConnectionHelper, checkout_sonic_mgmt_change
 )
 
 logger = logging.getLogger()
@@ -26,7 +26,7 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
                             serial_log_analyzers, fanout_target_version, request, is_air,
                             deploy_testbed_in_parallel, deploy_image_only, deploy_chipless,
                             post_install_only, deploy_sequential, base_version_bmc, neighbor_mode,
-                            sdk_source, perf_sys_sdk_change):
+                            sdk_source, perf_sys_sdk_change, sonic_mgmt_change):
     """
         Deploy SONiC/NVOS testing topology and upgrade switch
 
@@ -86,9 +86,21 @@ def test_deploy_and_upgrade(topology_obj, is_simx, is_performance, base_version,
             DUT-derived branch (``--perf_sys_sdk_change``): ``'branch_<name>'`` clones that
             branch, a numeric Gerrit change number fetches that change's latest patchset;
             omitted (None) keeps the DUT-derived branch
+        :param sonic_mgmt_change: sonic_mgmt_change fixture; tag, branch, or Gerrit change
+            to check out in the local sonic-mgmt working copy running this test, before
+            the deploy flow starts (``--sonic_mgmt_change``): ``'tag_<name>'`` checks out
+            that tag, ``'branch_<name>'`` checks out that branch, a numeric Gerrit change
+            number checks out that change's latest patchset; omitted (None) performs no
+            checkout. Note: pytest has already imported this test module by the time the
+            checkout runs, so it does not hot-swap the Python code of the running test
+            process; it affects files read from disk at runtime and any subprocess spawned
+            afterward.
         :raise AssertionError: in case of script failure.
     """
     try:
+        if sonic_mgmt_change:
+            checkout_sonic_mgmt_change(sonic_mgmt_change)
+
         # Create deployment context with all parameters and derived values
         context = DeploymentContext.from_function_params(
             topology_obj=topology_obj, is_simx=is_simx, is_performance=is_performance,

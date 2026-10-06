@@ -764,6 +764,9 @@ def test_ignore_health_issue(engines, devices, loganalyzer, reset_health_service
                          f"\\.*Fan removed warning: {psu_fan_config_name} was removed from the system, potential overheat hazard\\.*",
                          f"\\.*PSU absence warning: PSU {psu_id} is not present.\\.*",
                          f"\\.*Insufficient number of working fans warning\\.*",
+                         f"\\.*PSU {psu_id} is not present\\.*",
+                         f"\\.*PSU{psu_id}: is missing - Unpopulated PSU slot\\.*",
+                         f"\\.*Invalid fan speed data obtained from DB for psu\\/*"
                          ])
 
         with allure.step("Validate health status and report"):
@@ -864,7 +867,9 @@ def test_simulate_health_problem_with_hw_simulator(devices, engines, set_unset_p
             health_issue_dict = devices.dut.get_health_issue_dict_fan_and_psu(psu_display_name, fan_display_name)
 
         with allure.step("Validate health issue"):
-            validate_health_fix_or_issue(engines, system, health_issue_dict, date_time, False)
+            # The fan fault flips the overall status within seconds while the PSU fault takes
+            # considerably longer to surface, so poll until every expected issue is reported.
+            retry_validate_health_fix_or_issue(engines, system, health_issue_dict, date_time, False)
 
     finally:
         date_time = ClockTools.get_local_time_object_from_show_system_date_time_output(system.datetime.show())
@@ -874,11 +879,13 @@ def test_simulate_health_problem_with_hw_simulator(devices, engines, set_unset_p
                 HWSimulator.clear_fan_fault(engines.dut, thermal_directory, fan_id, fan_symlink)
             with allure.step("Fix the PSU fault issue"):
                 HWSimulator.simulate_fix_psu_fault(engines.dut, thermal_directory, psu_id, psu_symlink)
-            validate_health_fix_or_issue(engines, system, health_issue_dict, date_time, True)
+            retry_validate_health_fix_or_issue(engines, system, health_issue_dict, date_time, True)
 
     with allure.step("Clear system health component unhealthy counters"):
-        system.health.component.action(ActionConsts.CLEAR)
-        time.sleep(5)
+        # Cumulus does not support the system health component clear action.
+        if not devices.dut.is_eth():
+            system.health.component.action(ActionConsts.CLEAR)
+            time.sleep(5)
 
 
 @pytest.mark.system
@@ -938,8 +945,10 @@ def test_simulate_fan_speed_fault(devices, engines, loganalyzer, reset_health_se
                 retry_validate_health_fix_or_issue(engines, system, health_issue_dict, date_time, True)
 
     with allure.step("Clear system health component unhealthy counters"):
-        system.health.component.action(ActionConsts.CLEAR)
-        time.sleep(5)
+        # Cumulus does not support the system health component clear action.
+        if not devices.dut.is_eth():
+            system.health.component.action(ActionConsts.CLEAR)
+            time.sleep(5)
 
 
 @pytest.mark.disable_loganalyzer

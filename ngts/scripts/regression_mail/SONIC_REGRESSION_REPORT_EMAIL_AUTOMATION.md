@@ -99,6 +99,8 @@ The runtime injects:
 - `GITHUB_API_TOKEN`: reads private
   `nvidia-sonic/sonic-buildimage/RC_STATUS.md` and public sonic-mgmt PR data;
 - `REDMINE_API_TOKEN`: reads SONIC - Design LogAnalyzer bugs;
+- `SVC_SONIC_VER_BOT` and `GERRIT_API_KEY`: optionally read titles for
+  explicitly referenced `git-nbu-sw` changes;
 - `INFERENCE_API_KEY`: calls
   `https://inference-api.nvidia.com/v1` through the OpenAI Python SDK.
 
@@ -135,6 +137,9 @@ nvidia/nbu/mars/sonic/kv/GitHub
 nvidia/nbu/mars/sonic/kv/Redmine
 ```
 
+The Jenkins runtime may also provide its existing Gerrit service credentials.
+They are copied into the container only when regression mail is requested.
+
 `run_upload_script.groovy` copies only the required runtime values into a
 mode-0600 temporary Docker env-file and removes the file in `finally`.
 Additional sonic-mgmt PRs are read directly through GitHub REST; no downstream
@@ -148,29 +153,43 @@ instead of blocking the job during Vault initialization.
 ## Deterministic data sources
 
 1. Image branch, public image hash, and image PRs:
-   `RC_STATUS.md` from the requested release tag, or from an explicitly
-   configured matching ref. Cross-release tag overrides are rejected.
+   `RC_STATUS.md` from the full requested image tag, or from an explicitly
+   configured matching ref. Only `APPLIED` rows whose source is a public
+   `sonic-net` pull request are included; internal, skipped, and reverted
+   entries are excluded. Cross-release tag overrides are rejected.
 2. sonic-mgmt internal/public hashes:
    exact stable patch-ID comparison using the current Jenkins checkout and
    public GitHub history.
-3. Coverage, pass rate, and engineer analysis:
+3. Coverage and pass rate:
+   exact-version Excel rows after record de-duplication. Coverage is
+   `(pass + fail) / (pass + fail + issue-skipped)`, where an issue-skipped row
+   is a `skipped` row for which the matching source skip/xfail rule evaluates
+   true from the Excel facts, the issue reference is required for the true
+   condition, and the issue was still open when the test started. A different
+   true non-ticket OR branch does not attribute the skip to the issue. Pass rate
+   is `pass / (pass + fail)`. Dashboard metric values are not used. Rows marked
+   `REMOVE_FAILED_TESTCASE` in `modify_xml` are excluded before all analysis.
+4. Engineer analysis:
    Regression Report API.
-4. Hardware SKU, topology, failures, skips, and coverage issue URLs:
-   selected Excel rows for the exact requested version.
-5. Additional sonic-mgmt PRs:
+5. Hardware SKU, topology, failures, skips, and coverage issue URLs:
+   selected Excel rows for the exact requested version. The GitHub coverage
+   table uses the same condition- and closure-validated issue-skip set as the
+   Coverage denominator; merely mentioning an issue in Excel is insufficient.
+6. Additional sonic-mgmt PRs:
    public GitHub REST returns the complete open PR inventory for the configured
    NVIDIA author list. Draft PRs and PRs without a label containing the exact
    target release train (for example, `202605`) are excluded. The optional
    `sonic_github_pr_report` job is disabled by default; when explicitly enabled,
    its CSV supplies candidates but the same author, draft, state, and release
    label filters are still enforced from GitHub metadata.
-6. Internally detected errors:
+7. Internally detected errors:
    live Redmine REST query followed by batched NVIDIA Inference API log
    sentence-pattern classification and first-source-line retention.
-7. Failure comments:
+8. Failure comments:
    `Comments` contains a desensitized NVIDIA Inference API summary generated
    in fixed-size batches; `Comments for internal review` preserves the draft
-   Dashboard analysis.
+   Dashboard analysis. Verified public references are labeled as `test bug`,
+   `test fix`, `production bug`, or `production fix`.
 
 The successful mail follows the agreed template order:
 
@@ -199,10 +218,10 @@ All dynamic values in the introductory hash/version/coverage/pass-rate text
 are rendered bold in black before the first table.
 Every section/table title uses bold 11-point Aptos text with exactly two blank
 lines before it. Table cells use 11-point fonts matching the reference email.
-The hardware table remains `#0F9ED5` / `#CAEDFB` / white. Failure Analysis,
-skipped tests, GitHub coverage, and internal errors all use the GitHub table
-palette `#156082` / `#83CCEB` / `#C0E6F5`. The `Comments for internal review`
-header and warning cells remain red.
+The hardware table uses light blue `#CAEDFB` headers and `#F5FBFE` body rows.
+Failure Analysis, skipped tests, GitHub coverage, and internal errors use
+`#C0E6F5` headers and `#F2F9FC` body rows. Body rows do not alternate colors.
+The `Comments for internal review` header and warning cells remain red.
 
 By default no PR-report Jenkins build is started. GitHub is queried directly
 for all open PRs, and the configured NVIDIA author list, non-draft state, and

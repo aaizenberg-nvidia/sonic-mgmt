@@ -5443,14 +5443,6 @@ sensors_checks:
         - dps460-i2c-4-5b/PSU-3(R) Temp 1/temp1_min_alarm
         - dps460-i2c-4-5b/PSU-3(R) Temp 1/temp1_crit_alarm
         - dps460-i2c-4-5b/PSU-3(R) Temp 1/temp1_lcrit_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_max_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_min_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_crit_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_lcrit_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_max_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_min_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_crit_alarm
-        - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_lcrit_alarm
 
         - mp2855-i2c-39-69/PMIC-12 COMEX VDDCR_CPU PHASE TEMP/temp1_crit_alarm
         - mp2855-i2c-39-69/PMIC-12 COMEX VDDCR_SOC PHASE TEMP/temp2_crit_alarm
@@ -5459,14 +5451,6 @@ sensors_checks:
         - dps460-i2c-4-59/PSU-1(L) Temp 1/temp1_min_alarm
         - dps460-i2c-4-59/PSU-1(L) Temp 1/temp1_crit_alarm
         - dps460-i2c-4-59/PSU-1(L) Temp 1/temp1_lcrit_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_max_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_min_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_crit_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_lcrit_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_max_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_min_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_crit_alarm
-        - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_lcrit_alarm
 
         - nvme-pci-0100/SSD Temp/temp1_alarm
 
@@ -5481,26 +5465,11 @@ sensors_checks:
         - dps460-i2c-4-58/PSU-2(L) Temp 1/temp1_min_alarm
         - dps460-i2c-4-58/PSU-2(L) Temp 1/temp1_crit_alarm
         - dps460-i2c-4-58/PSU-2(L) Temp 1/temp1_lcrit_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 2/temp2_max_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 2/temp2_min_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 2/temp2_lcrit_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_max_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_min_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_crit_alarm
-        - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_lcrit_alarm
 
         - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_max_alarm
         - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_min_alarm
         - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_crit_alarm
         - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_lcrit_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_max_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_min_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_crit_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_lcrit_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_max_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_min_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_crit_alarm
-        - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_lcrit_alarm
 
 
     compares:
@@ -5516,12 +5485,6 @@ sensors_checks:
         - - dps460-i2c-4-5b/PSU-3(R) Temp 1/temp1_input
           - dps460-i2c-4-5b/PSU-3(R) Temp 1/temp1_crit
 
-        - - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_input
-          - dps460-i2c-4-5b/PSU-3(R) Temp 2/temp2_crit
-
-        - - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_input
-          - dps460-i2c-4-5b/PSU-3(R) Temp 3/temp3_crit
-
         - - mp2891-i2c-5-69/PMIC-8 DVDD_T4 ADJ Temp 1/temp1_input
           - mp2891-i2c-5-69/PMIC-8 DVDD_T4 ADJ Temp 1/temp1_crit
 
@@ -5533,12 +5496,6 @@ sensors_checks:
 
         - - dps460-i2c-4-59/PSU-1(L) Temp 1/temp1_input
           - dps460-i2c-4-59/PSU-1(L) Temp 1/temp1_crit
-
-        - - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_input
-          - dps460-i2c-4-59/PSU-1(L) Temp 2/temp2_crit
-
-        - - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_input
-          - dps460-i2c-4-59/PSU-1(L) Temp 3/temp3_crit
 
         - - mp2891-i2c-5-67/PMIC-6 DVDD_T0 ADJ Temp 1/temp1_input
           - mp2891-i2c-5-67/PMIC-6 DVDD_T0 ADJ Temp 1/temp1_crit
@@ -5570,23 +5527,11 @@ sensors_checks:
         - - dps460-i2c-4-58/PSU-2(L) Temp 1/temp1_input
           - dps460-i2c-4-58/PSU-2(L) Temp 1/temp1_crit
 
-        - - dps460-i2c-4-58/PSU-2(L) Temp 2/temp2_input
-          - dps460-i2c-4-58/PSU-2(L) Temp 2/temp2_crit
-
-        - - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_input
-          - dps460-i2c-4-58/PSU-2(L) Temp 3/temp3_crit
-
         - - mp2891-i2c-5-68/PMIC-7 DVDD_T2 ADJ Temp 1/temp1_input
           - mp2891-i2c-5-68/PMIC-7 DVDD_T2 ADJ Temp 1/temp1_crit
 
         - - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_input
           - dps460-i2c-4-5a/PSU-4(R) Temp 1/temp1_crit
-
-        - - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_input
-          - dps460-i2c-4-5a/PSU-4(R) Temp 2/temp2_crit
-
-        - - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_input
-          - dps460-i2c-4-5a/PSU-4(R) Temp 3/temp3_crit
 
         - - mp2891-i2c-5-65/PMIC-4 VDD_T4 ADJ Temp 1/temp1_input
           - mp2891-i2c-5-65/PMIC-4 VDD_T4 ADJ Temp 1/temp1_crit
@@ -5655,7 +5600,8 @@ sensors_checks:
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Volt (out2)/in3_crit_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Pwr (in)/power1_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (in)/curr1_alarm
-      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEMIO Curr (out1)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out2)/curr5_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_min_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_max_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_lcrit_alarm
@@ -7958,7 +7904,8 @@ sensors_checks:
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Volt (out2)/in3_crit_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Pwr (in)/power1_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (in)/curr1_alarm
-      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEMIO Curr (out1)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out2)/curr5_alarm
 
       - mp29816-i2c-15-6a/PMIC-11 PVIN1_DVDD_TILE4_TILE0_ASIC Volt (in)/in1_min_alarm
       - mp29816-i2c-15-6a/PMIC-11 PVIN1_DVDD_TILE4_TILE0_ASIC Volt (in)/in1_lcrit_alarm

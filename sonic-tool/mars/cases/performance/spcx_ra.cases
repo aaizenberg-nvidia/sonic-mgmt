@@ -23,4 +23,23 @@
       </params>
     </cmd>
   </case>
+  <!-- THIS CASE CAN RUN ONLY ON "sx_sdk_4_10_2000" AND "master" BRANCH BASED IMAGES - NOT ON "sx_sdk_4_10_1000" -->
+  <case>
+    <name> spcx ra min packet size </name>
+    <info> AR max-bandwidth (rebalancer enabled) at the ai_mix min packet size profile (19/11/11/11 mix) </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --spcx-ra-traffic-profile=ai_mix\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> spcx ra extended ar thresholds </name>
+    <info> AR max-bandwidth (rebalancer enabled) with SPC6 extended AR grading (7 congestion grades) </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/test_spcx_ra.py::TestSpcXRA_4x_lanes::test_ar_perf_max_bandwidth_rebalancer_enabled[IPv6] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ar_extended_thresholds\'"</static_args>
+      </params>
+    </cmd>
+  </case>
 </CASEDEF>

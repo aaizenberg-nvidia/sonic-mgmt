@@ -213,6 +213,8 @@ def test_sflow_polling_interval(engines, cli_objects, topology_obj, interfaces):
         for polling_interval in POLLING_INTERVAL_LIST:
             with allure.step(f"Configure sflow polling interval to {polling_interval}"):
                 cli_obj.sflow.config_sflow_polling_interval(polling_interval)
+            with allure.step("Wait for hsflowd to apply new polling interval"):
+                wait_until_hsflowd_ready(engines, [SflowConsts.COLLECTOR_0_IP, SflowConsts.COLLECTOR_1_IP])
             with allure.step(f"Validate sflow polling interval is configured to {polling_interval}"):
                 verify_sflow_configuration(cli_obj, status=SflowConsts.SFLOW_UP, polling_interval=polling_interval)
             if polling_interval == 0:

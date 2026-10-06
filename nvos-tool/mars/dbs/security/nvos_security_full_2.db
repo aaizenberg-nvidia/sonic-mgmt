@@ -87,4 +87,7 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_nv_bridge_encryption.cases </cases>
         <ignore><condition> <key>dut_type</key> <op> not in </op> <value>[rosalind, rosalind-surrogate, rosalind-chipless]</value> </condition></ignore>
 	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/security/cases/nvos_security_cert_expiry_alert.cases </cases>
+	</test>
 </DBDEF>

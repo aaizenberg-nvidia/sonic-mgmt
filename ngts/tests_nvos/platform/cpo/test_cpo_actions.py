@@ -1,19 +1,32 @@
-"""On-DUT CPO reset, link-up and reset-observability tests."""
+"""On-DUT CPO reset, link-up, reset-observability, FAE and set/unset rejection tests."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 
-from ngts.nvos_constants.constants_nvos import Cpov2Consts, EventConsts, HealthConsts
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.nvos_constants.constants_nvos import ApiType, Cpov2Consts, EventConsts, HealthConsts, NvosConst
+from ngts.nvos_constants.telemetry_mapping import (
+    GNMI_ACTIVE,
+    GNMI_DP_ACTIVATED,
+    GNMI_ELS_PRESENT,
+    GNMI_PRESENT,
+    GNMI_UP,
+)
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import (
     IbInterfaceConsts,
     NvosConsts,
 )
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.Fae import Fae
+from ngts.nvos_tools.infra.MultiPlanarTool import MultiPlanarTool
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.PollingTool import PollingTool
 from ngts.nvos_tools.platform.Cpo import Cpo
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
@@ -27,7 +40,6 @@ from ngts.tests_nvos.platform.cpo.action_helpers import (
     error_drop_counters,
     laser_sibling_ports,
     mapping_snapshot,
-    poll_until,
 )
 from ngts.tests_nvos.platform.cpo.event_helpers import (
     INSERTION_CYCLE_DESCRIPTIONS,
@@ -43,10 +55,24 @@ from ngts.tests_nvos.platform.cpo.event_helpers import (
 from ngts.tests_nvos.platform.cpo.helpers import (
     read_cpo,
     read_els,
+    read_interface_cpo,
+    sample_names,
     validate_cpo_detail,
     validate_laser_source_detail,
+    wait_for_parity,
 )
+from ngts.tests_nvos.platform.els_fiber_tuning.cpo_constants import CpoConsts
 from ngts.tests_nvos.system.clock.ClockTools import ClockTools
+from ngts.tests_nvos.system.gnmi.helpers import get_infiniband_name_from_port_name
+from ngts.tests_nvos.system.telemetry.telemetry_watch import (
+    Reads,
+    TelemetrySource,
+    TelemetryWatch,
+    assert_bounced,
+    assert_unchanged,
+    gnmi_watch,
+    telemetry_xpaths,
+)
 from ngts.tools.test_utils import allure_utils as allure
 
 
@@ -69,7 +95,7 @@ def _wait_for_cpo_and_els_recovery(platform: Platform, cpo: str, els: str, engin
     # presence semantics and recovers to Inserted
     step = f"Wait for {cpo} to return to up and {els} to Inserted (timeout={CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS}s)"
     with allure.step(step):
-        return poll_until(
+        return PollingTool.poll_until(
             lambda: (read_cpo(platform, cpo, engine), read_els(platform, els, engine)),
             lambda details: (
                 _has_status(details[0], Cpov2Consts.CPO_STATUS_UP) and
@@ -227,6 +253,43 @@ def _verify_reset_observability(
         )
 
 
+def _oper_status_xpath(port: Port) -> str:
+    return telemetry_xpaths(port.interface.link, [IbInterfaceConsts.LINK_OPER_STATUS])[
+        IbInterfaceConsts.LINK_OPER_STATUS]
+
+
+def _cascade_steady_states(platform: Platform, baseline: ResetBaseline) -> dict[str, object]:
+    cpo_leaves = telemetry_xpaths(platform.cpo.cpo_id[baseline.cpo], [Cpov2Consts.STATUS])
+    els_leaves = telemetry_xpaths(platform.laser_source.els_id[baseline.els], [Cpov2Consts.STATUS, GNMI_ELS_PRESENT])
+    return {
+        cpo_leaves[Cpov2Consts.STATUS]: GNMI_ACTIVE,
+        els_leaves[Cpov2Consts.STATUS]: GNMI_ACTIVE,
+        els_leaves[GNMI_ELS_PRESENT]: GNMI_PRESENT,
+        **{_oper_status_xpath(port): GNMI_UP for port in baseline.affected_ports},
+    }
+
+
+def _port_steady_states(platform: Platform, port: Port, engine) -> dict[str, object]:
+    detail = read_interface_cpo(port.name, engine)
+    channels = platform.cpo.cpo_id[detail[Cpov2Consts.PARENT]].channel.channel_id
+    steady_states: dict[str, object] = {_oper_status_xpath(port): GNMI_UP}
+    for channel in detail[Cpov2Consts.CHANNEL]:
+        lane = telemetry_xpaths(channels[channel], [Cpov2Consts.CH_DP_STATE, Cpov2Consts.CH_TX_LOS])
+        steady_states |= {lane[Cpov2Consts.CH_DP_STATE]: GNMI_DP_ACTIVATED, lane[Cpov2Consts.CH_TX_LOS]: False}
+    return steady_states
+
+
+def _assert_all_bounced(watch: TelemetryWatch, steady_states: Mapping[str, object]) -> None:
+    for xpath, steady in steady_states.items():
+        assert_bounced(watch, xpath, steady)
+
+
+def _verify_telemetry_restored(engines, devices, baselines: Sequence[tuple[BaseComponent, Reads]]) -> None:
+    with allure.step("Wait for NVUE, OpenAPI, gNMI and DB to return to the pre-reset values"):
+        for component, reads in baselines:
+            wait_for_parity(engines, devices, component, expected=reads)
+
+
 @pytest.mark.platform
 @pytest.mark.cpov2
 def test_cpo_reset_actions(engines, devices, random_api):
@@ -246,6 +309,9 @@ def test_cpo_reset_actions(engines, devices, random_api):
        cycle for both cascade partners, an up event per associated sw port
        within the NVL7 link-up budget, health back to HEALTHY, and matching
        remove/add syslog lines once the expected wording is defined (O-6).
+    6. Around every reset, stream gNMI: CPO/ELS oper-status, ELS presence and
+       the ports bounce (laser scope: the laser and a bounced port), and
+       NVUE, OpenAPI, gNMI and DB return to the pre-reset baseline.
     """
     topology = devices.dut.cpo
     platform = Platform()
@@ -270,41 +336,57 @@ def test_cpo_reset_actions(engines, devices, random_api):
             affected_ports=tuple(affected_ports),
         )
 
-    with allure.step(f"Reset {cpo} and verify recovery and observability"):
-        observed = _observability_baseline(system, engines.dut)
-        platform.cpo.cpo_id[cpo].action_reset(engine=engines.dut).verify_result()
-        _wait_for_ejection(system, baseline, observed)
-        _verify_reset_recovery(platform, topology, baseline, engines.dut)
-        _verify_reset_observability(system, baseline, observed, engines.dut)
+    cpo_component = platform.cpo.cpo_id[cpo]
+    els_component = platform.laser_source.els_id[els]
+    with allure.step(f"Capture the 4-way telemetry baseline of {cpo}, {els} and sampled channels and lasers"):
+        telemetry_baseline = [(component, wait_for_parity(engines, devices, component)) for component in (
+            cpo_component,
+            els_component,
+            *(cpo_component.channel.channel_id[name] for name in sample_names(topology.channels_for_cpo(cpo))),
+            *(els_component.laser.laser_id[name]
+              for name in dict.fromkeys([laser, *sample_names(topology.lasers_for_els(els))])),
+        )]
+    cascade = _cascade_steady_states(platform, baseline)
 
-    with allure.step(f"Reset {els} and verify recovery and observability"):
-        observed = _observability_baseline(system, engines.dut)
-        platform.laser_source.els_id[els].action_reset(engine=engines.dut).verify_result()
-        _wait_for_ejection(system, baseline, observed)
-        _verify_reset_recovery(platform, topology, baseline, engines.dut)
-        _verify_reset_observability(system, baseline, observed, engines.dut)
+    for instance, component in ((cpo, cpo_component), (els, els_component)):
+        with allure.step(f"Reset {instance} and verify recovery, observability and telemetry"):
+            with gnmi_watch(engines, devices, list(cascade)) as watch:
+                observed = _observability_baseline(system, engines.dut)
+                component.action_reset(engine=engines.dut).verify_result()
+                _wait_for_ejection(system, baseline, observed)
+                _verify_reset_recovery(platform, topology, baseline, engines.dut)
+                _verify_reset_observability(system, baseline, observed, engines.dut)
+                _verify_telemetry_restored(engines, devices, telemetry_baseline)
+            _assert_all_bounced(watch, cascade)
 
     # OI#11: laser-reset granularity (whole ELS vs 4-laser vs single laser) is
     # unresolved, so neither isolation nor an eject/insert event cycle is
     # asserted here; health must still end HEALTHY for both cascade partners.
-    with allure.step(f"Reset single laser {laser} on {els} and verify recovery"):
-        carrier_down_before = _carrier_down_counts(baseline.affected_ports, engines.dut)
-        platform.laser_source.els_id[els].action_reset(laser_id=laser, engine=engines.dut).verify_result()
-        with allure.step("Wait for the laser reset to bounce at least one associated port"):
-            poll_until(
-                lambda: _carrier_down_counts(baseline.affected_ports, engines.dut),
-                lambda current: any(count > carrier_down_before.get(port, 0) for port, count in current.items()),
-                timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-                description=f"a carrier-down-count increase on {cpo} ports after resetting {laser}",
-                acceptable_exceptions=TRANSIENT_READ_ERRORS,
-            )
-        _verify_reset_recovery(platform, topology, baseline, engines.dut)
-        with allure.step(f"Wait for {cpo} and {els} health to return to HEALTHY"):
-            wait_for_healthy_instances(
-                lambda: system.health.component.parse_show(dut_engine=engines.dut),
-                _cascade_targets(baseline),
-                timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-            )
+    laser_status = telemetry_xpaths(els_component.laser.laser_id[laser], [Cpov2Consts.LASER_OPER_STATUS])[
+        Cpov2Consts.LASER_OPER_STATUS]
+    port_status = {port.name: _oper_status_xpath(port) for port in baseline.affected_ports}
+    with allure.step(f"Reset single laser {laser} on {els} and verify recovery and telemetry"):
+        with gnmi_watch(engines, devices, [laser_status, *port_status.values()]) as watch:
+            carrier_down_before = _carrier_down_counts(baseline.affected_ports, engines.dut)
+            els_component.action_reset(laser_id=laser, engine=engines.dut).verify_result()
+            with allure.step("Wait for the laser reset to bounce at least one associated port"):
+                carrier_down_after = PollingTool.poll_until(
+                    lambda: _carrier_down_counts(baseline.affected_ports, engines.dut),
+                    lambda current: any(count > carrier_down_before.get(port, 0) for port, count in current.items()),
+                    timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
+                    description=f"a carrier-down-count increase on {cpo} ports after resetting {laser}",
+                    acceptable_exceptions=TRANSIENT_READ_ERRORS,
+                )
+            _verify_reset_recovery(platform, topology, baseline, engines.dut)
+            with allure.step(f"Wait for {cpo} and {els} health to return to HEALTHY"):
+                wait_for_healthy_instances(
+                    lambda: system.health.component.parse_show(dut_engine=engines.dut),
+                    _cascade_targets(baseline),
+                    timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
+                )
+            _verify_telemetry_restored(engines, devices, telemetry_baseline)
+        bounced_ports = [port for port, count in carrier_down_after.items() if count > carrier_down_before.get(port, 0)]
+        _assert_all_bounced(watch, {laser_status: GNMI_ACTIVE} | {port_status[port]: GNMI_UP for port in bounced_ports})
 
 
 @pytest.mark.platform
@@ -334,9 +416,13 @@ def test_cpo_link_up_time(engines, devices, random_api, register_cleanup):
        siblings stay up with no error/drop counter growth.
     3. Verify the toggled port publishes a fresh up event within the NVL7
        link-up budget and spot-check one acp port.
+    4. Stream gNMI over the toggle: the port oper-status and its host lanes
+       bounce, the siblings' leaves stay unchanged, and NVUE, OpenAPI, gNMI
+       and DB agree on the port oper-status when down and when up again.
     """
     topology = devices.dut.cpo
     system = System()
+    platform = Platform()
     sw_ports = [Port(name) for name in devices.dut.nvl_trunk_ports_list]
     assert sw_ports, "CPO device exposes no sw trunk ports"
     with allure.step("Verify every modeled sw port reaches link-up"):
@@ -351,44 +437,129 @@ def test_cpo_link_up_time(engines, devices, random_api, register_cleanup):
             lanes_per_laser=topology.lanes_per_laser,
         )
     ]
-    with allure.step(f"Toggle {selected.name} down and verify its same-laser siblings stay up"):
-        counters_before = {port.name: _counter_snapshot(port, engines.dut) for port in siblings}
-        register_cleanup(lambda: _set_port_state(selected, NvosConsts.LINK_STATE_UP, engines.dut))
-        _set_port_state(selected, NvosConsts.LINK_STATE_DOWN, engines.dut)
-        selected.interface.wait_for_port_state(
-            NvosConsts.LINK_STATE_DOWN,
-            timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-            dut_engine=engines.dut,
-        ).verify_result()
-        interface_helpers.wait_and_verify_link(siblings, timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS)
+    with allure.step(f"Map {selected.name} and its same-laser siblings to their gNMI leaves"):
+        selected_steady_states = _port_steady_states(platform, selected, engines.dut)
+        sibling_leaves = [xpath for port in siblings for xpath in _port_steady_states(platform, port, engines.dut)]
+        ib_port = get_infiniband_name_from_port_name(engines.dut, selected.name)
+        asic = f"{IbInterfaceConsts.ASIC}{MultiPlanarTool.get_primary_asic(Fae(port_name=selected.name))}"
 
-    with allure.step(f"Bring {selected.name} back up and verify its up event and sibling counters"):
-        observed = _observability_baseline(system, engines.dut)
-        _set_port_state(selected, NvosConsts.LINK_STATE_UP, engines.dut)
-        interface_helpers.wait_and_verify_link([selected, *siblings], timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS)
-        up_times = wait_for_ports_up_events(
-            lambda: system.events.find_events(
-                component_event_predicate(selected.name),
-                since_event_id=observed.max_event_id,
-            ),
-            [selected.name],
-            context=f"{selected.name} toggle up",
-            timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-        )
-        assert_link_up_within_budget(
-            up_times,
-            observed.dut_start_time,
-            CPO_SW_LINK_UP_TIMEOUT_SECONDS,
-            context=f"{selected.name} toggle up",
-        )
-        for sibling in siblings:
-            assert_no_counter_increase(
-                counters_before[sibling.name],
-                _counter_snapshot(sibling, engines.dut),
-                sibling.name,
+    with gnmi_watch(engines, devices, [*selected_steady_states, *sibling_leaves]) as watch:
+        with allure.step(f"Toggle {selected.name} down and verify its same-laser siblings stay up"):
+            counters_before = {port.name: _counter_snapshot(port, engines.dut) for port in siblings}
+            register_cleanup(lambda: _set_port_state(selected, NvosConsts.LINK_STATE_UP, engines.dut))
+            _set_port_state(selected, NvosConsts.LINK_STATE_DOWN, engines.dut)
+            selected.interface.wait_for_port_state(
+                NvosConsts.LINK_STATE_DOWN,
+                timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
+                dut_engine=engines.dut,
+            ).verify_result()
+            interface_helpers.wait_and_verify_link(siblings, timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS)
+            wait_for_parity(engines, devices, selected.interface.link, ib_port=ib_port, asic=asic)
+
+        with allure.step(f"Bring {selected.name} back up and verify its up event and sibling counters"):
+            observed = _observability_baseline(system, engines.dut)
+            _set_port_state(selected, NvosConsts.LINK_STATE_UP, engines.dut)
+            interface_helpers.wait_and_verify_link([selected, *siblings], timeout=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS)
+            up_times = wait_for_ports_up_events(
+                lambda: system.events.find_events(
+                    component_event_predicate(selected.name),
+                    since_event_id=observed.max_event_id,
+                ),
+                [selected.name],
+                context=f"{selected.name} toggle up",
+                timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
             )
+            assert_link_up_within_budget(
+                up_times,
+                observed.dut_start_time,
+                CPO_SW_LINK_UP_TIMEOUT_SECONDS,
+                context=f"{selected.name} toggle up",
+            )
+            for sibling in siblings:
+                assert_no_counter_increase(
+                    counters_before[sibling.name],
+                    _counter_snapshot(sibling, engines.dut),
+                    sibling.name,
+                )
+            wait_for_parity(engines, devices, selected.interface.link, ib_port=ib_port, asic=asic)
+
+    with allure.step(f"Verify gNMI streamed the {selected.name} bounce and left its siblings unchanged"):
+        _assert_all_bounced(watch, selected_steady_states)
+        for xpath in sibling_leaves:
+            assert_unchanged(watch, xpath)
 
     with allure.step("Spot-check one acp port link state"):
         acp = Port(devices.dut.nvl_access_ports_list[0])
         acp_link = _read_link(acp, engines.dut)
         assert acp_link[IbInterfaceConsts.LINK_STATE] in NvosConsts.LINK_STATE_ALL_TYPES
+
+
+def _dump_state_reads(state: str) -> Reads:
+    return {Cpov2Consts.CPO_DUMP_STATE: dict.fromkeys(
+        (TelemetrySource.NVUE, TelemetrySource.OPENAPI, TelemetrySource.DB), state)}
+
+
+@pytest.mark.platform
+@pytest.mark.cpov2
+def test_cpo_fae_dump_state(engines, devices, random_api):
+    """
+    @summary: FAE cpo-dump-state agrees across NVUE, OpenAPI and CONFIG_DB through set, invalid set and unset.
+
+    1. Set cpo-dump-state to disabled and wait until NVUE, OpenAPI and CONFIG_DB report it
+    2. Set an invalid value, verify it is rejected and all sources still report disabled
+    3. Unset cpo-dump-state and wait until all sources report the default (enabled)
+    """
+    fae_cpo = Fae().system.cpo
+    try:
+        with allure.step(f"Set {Cpov2Consts.CPO_DUMP_STATE} to {NvosConst.DISABLED} and wait for all sources"):
+            fae_cpo.set(Cpov2Consts.CPO_DUMP_STATE, NvosConst.DISABLED, apply=True).verify_result()
+            wait_for_parity(engines, devices, fae_cpo, expected=_dump_state_reads(NvosConst.DISABLED))
+        with allure.step(f"Set an invalid {Cpov2Consts.CPO_DUMP_STATE} and verify the state is unchanged"):
+            fae_cpo.set(Cpov2Consts.CPO_DUMP_STATE, CpoConsts.INVALID_FINE_TUNE_STATES[0]).verify_result(False)
+            wait_for_parity(engines, devices, fae_cpo, expected=_dump_state_reads(NvosConst.DISABLED))
+    finally:
+        NvueGeneralCli.detach_config(engines.dut)
+        with allure.step(f"Unset {Cpov2Consts.CPO_DUMP_STATE} and wait for the default on all sources"):
+            fae_cpo.unset(Cpov2Consts.CPO_DUMP_STATE, apply=True).verify_result()
+            wait_for_parity(engines, devices, fae_cpo, expected=_dump_state_reads(NvosConst.ENABLED))
+
+
+@pytest.mark.platform
+@pytest.mark.cpov2
+@pytest.mark.skip(reason="Rel2B: the per-ELS activate sysfs and FW action list are undefined")
+def test_cpo_fae_activate(engines, devices, random_api):
+    """Activate the ELS initialization on one ELS, then one laser, then one step, and verify each succeeds and the
+    targeted lasers' oper-status streams over gNMI back to ACTIVE.
+    """
+
+
+@pytest.mark.platform
+@pytest.mark.cpov2
+@pytest.mark.parametrize("test_api", ApiType.ALL_TYPES, indirect=True)
+def test_cpo_set_unset_rejected(engines, devices, test_api):
+    """
+    @summary: Read-only CPO telemetry and the Taipan-only FAE cpo knobs reject set and unset.
+
+    1. Set and unset a field of a CPO, an ELS and a laser, and verify each is rejected
+    2. Set and unset each Taipan-only FAE cpo knob, and verify each is rejected
+    """
+    topology = devices.dut.cpo
+    platform = Platform()
+    cpo = topology.cpo_names()[0]
+    els = topology.els_for_cpo(cpo)[0]
+    laser_source = platform.laser_source.els_id[els]
+    fae_cpo = Fae().system.cpo
+    rejected: list[tuple[BaseComponent, str, object]] = [
+        (platform.cpo.cpo_id[cpo], Cpov2Consts.STATUS, Cpov2Consts.CPO_STATUS_DOWN),
+        (laser_source, Cpov2Consts.STATUS, Cpov2Consts.ELS_STATUS_REMOVED),
+        (laser_source.laser.laser_id[topology.lasers_for_els(els)[0]], Cpov2Consts.LASER_ENABLED, NvosConst.DISABLED),
+        *((fae_cpo, knob, NvosConst.DISABLED) for knob in [*CpoConsts.CPO_FIELDS, CpoConsts.FINE_TUNING_STATE]),
+        (fae_cpo, CpoConsts.FINE_TUNING_INTERVAL, CpoConsts.DEFAULT_FINE_TUNING_INTERVAL),
+    ]
+    try:
+        for component, field, value in rejected:
+            with allure.step(f"Verify set and unset of {component.get_resource_path()} {field} are rejected"):
+                component.set(field, value).verify_result(False)
+                component.unset(field).verify_result(False)
+    finally:
+        NvueGeneralCli.detach_config(engines.dut)

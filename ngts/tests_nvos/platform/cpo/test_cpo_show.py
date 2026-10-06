@@ -3,6 +3,7 @@ import re
 import pytest
 
 from ngts.nvos_constants.constants_nvos import Cpov2Consts, HealthConsts
+from ngts.nvos_constants.telemetry_mapping import GNMI_NO_ERROR
 from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.platform.Cpo import Cpo
@@ -11,6 +12,7 @@ from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.platform.cpo.helpers import (
     read_cpo,
     read_els,
+    read_gnmi_topology,
     read_interface_cpo,
     sample_names,
     unwrap_instance,
@@ -20,7 +22,10 @@ from ngts.tests_nvos.platform.cpo.helpers import (
     validate_interface_cpo,
     validate_laser_source_detail,
     validate_laser_source_summary,
+    wait_for_parity,
 )
+from ngts.tests_nvos.system.telemetry.telemetry_watch import TelemetrySource
+from ngts.tools.test_utils import allure_utils as allure
 
 LEGACY_CPO_INSTANCE_PATTERN = re.compile(r"^(?:cpo|els|oe)\d+$", re.IGNORECASE)
 
@@ -57,6 +62,15 @@ def test_cpo_show_platform(engines, devices, random_api):
             )
             ValidationTool.validate_set_equal(drilldown, detail[Cpov2Consts.CHANNEL][channel]).verify_result()
 
+    with allure.step("Verify NVUE, OpenAPI, gNMI and DB agree on every CPO, OE and sampled channel"):
+        for cpo in topology.cpo_names():
+            component = platform.cpo.cpo_id[cpo]
+            wait_for_parity(engines, devices, component)
+            for oe in topology.oes_for_cpo(cpo):
+                wait_for_parity(engines, devices, component.oe.oe_id[oe])
+            for channel in sample_names(topology.channels_for_cpo(cpo)):
+                wait_for_parity(engines, devices, component.channel.channel_id[channel])
+
     transceivers = platform.transceiver.parse_show(dut_engine=engines.dut)
     legacy_objects = {name for name in transceivers if LEGACY_CPO_INSTANCE_PATTERN.fullmatch(name)}
     assert not legacy_objects, f"Gen1 CPO objects leaked into transceiver output: {legacy_objects}"
@@ -79,6 +93,13 @@ def test_cpo_show_laser_source(engines, devices, random_api):
             )
             ValidationTool.validate_set_equal(drilldown, detail[Cpov2Consts.LASER][laser]).verify_result()
 
+    with allure.step("Verify NVUE, OpenAPI, gNMI and DB agree on every ELS and sampled laser"):
+        for els in topology.els_names():
+            component = platform.laser_source.els_id[els]
+            wait_for_parity(engines, devices, component)
+            for laser in sample_names(topology.lasers_for_els(els)):
+                wait_for_parity(engines, devices, component.laser.laser_id[laser])
+
 
 @pytest.mark.platform
 @pytest.mark.cpov2
@@ -100,6 +121,8 @@ def test_cpo_show_interface(engines, devices, random_api):
             channel,
         )
         ValidationTool.validate_set_equal(drilldown, detail[Cpov2Consts.CHANNEL][channel]).verify_result()
+    with allure.step(f"Verify NVUE, OpenAPI and gNMI agree on the CPO module and channels of {port}"):
+        wait_for_parity(engines, devices, interface.cpo)
 
     interfaces = Interface(parent_obj=None).parse_show(dut_engine=engines.dut)
     expected_ports = devices.dut.nvl_access_ports_list + devices.dut.nvl_trunk_ports_list
@@ -122,6 +145,14 @@ def test_cpo_show_health(engines, devices, random_api):
     health = System().health.component.parse_show(dut_engine=engines.dut)
     validate_healthy_instances(HealthConsts.Component.CPO, health, devices.dut.cpo_list)
     validate_healthy_instances(HealthConsts.Component.Laser_Source, health, devices.dut.laser_source_list)
+    with allure.step("Verify every healthy CPO and ELS reports no error, alike in NVUE, OpenAPI, gNMI and DB"):
+        platform = Platform()
+        cpos = [platform.cpo.cpo_id[cpo] for cpo in devices.dut.cpo_list]
+        laser_sources = [platform.laser_source.els_id[els] for els in devices.dut.laser_source_list]
+        for component in cpos + laser_sources:
+            reads = wait_for_parity(engines, devices, component, [Cpov2Consts.STATUS, Cpov2Consts.ERROR_STATUS])
+            error_status = reads[Cpov2Consts.ERROR_STATUS][TelemetrySource.GNMI]
+            assert error_status == GNMI_NO_ERROR, f"healthy {component.get_resource_path()} has error {error_status}"
 
     transceivers = health[HealthConsts.Component.Transceiver][HealthConsts.Component.INSTANCE]
     legacy_objects = {name for name in transceivers if LEGACY_CPO_INSTANCE_PATTERN.fullmatch(name)}
@@ -151,3 +182,9 @@ def test_cpo_topology_consistency(engines, devices, random_api):
 
     result = topology.assert_consistent(**Cpo.build_topology_maps(cpo_details, port_to_cpo=port_to_cpo))
     result.verify_result()
+
+    with allure.step("Verify the gNMI references are mirrored and give the same topology and port map"):
+        gnmi_maps = read_gnmi_topology(engines, devices, platform, topology)
+        topology.assert_consistent(**gnmi_maps).verify_result()
+        assert gnmi_maps["port_to_cpo"] == port_to_cpo, (
+            f"gNMI cpo-module {gnmi_maps['port_to_cpo']} != CLI parent {port_to_cpo}")

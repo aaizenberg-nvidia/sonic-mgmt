@@ -3,6 +3,13 @@
 These are NVOS-native tests: they enable telemetry families and assert the exported
 metric names match the on-switch ``metrics-classes.yaml`` (capability-gated).
 
+A name expected but not exported ("missing") is not an automatic failure: it is
+looked up in Redis via ``agent-mappings.yaml`` (:mod:`inventory_db_check`) first. A
+name Redis has no source for anywhere on this DUT (no HCA peers, nothing plugged
+in, ...) is reported as ignored rather than failed — the CLI cannot show it
+either, so OTEL cannot be expected to export it. A name Redis *does* have a value
+for, or that cannot be verified either way, still fails.
+
 :func:`test_otel_all_metrics_present` also implements test-plan item Section 5.1
 ``test_otel_basic_export_and_metric_inventory``. It is extended in place rather
 than re-written under the Section 5 module because it already enabled every
@@ -105,8 +112,13 @@ def test_otel_platform_stats_metrics_present(engines, devices, otel_suite_dual, 
         max_sample_interval_sec=OtelCollectorConst.PLATFORM_STATS_SAMPLE_INTERVAL_SEC,
     )
 
-    assert_metric_names_strict(expected, primary_names, collector_label="primary (platform-stats)")
-    assert_metric_names_strict(expected, secondary_names, collector_label="secondary (platform-stats)")
+    assert_metric_names_strict(
+        expected, primary_names, collector_label="primary (platform-stats)", engines=engines, cur_dir=str(tmp_path),
+    )
+    assert_metric_names_strict(
+        expected, secondary_names, collector_label="secondary (platform-stats)",
+        engines=engines, cur_dir=str(tmp_path),
+    )
 
 
 def test_otel_all_metrics_present(
@@ -116,9 +128,11 @@ def test_otel_all_metrics_present(
 
     Enables every telemetry family against a single destination, collects a window
     long enough for two samples of the slowest class, and asserts the payload
-    decodes, the metric-name set matches ``metrics-classes.yaml`` exactly, and every
-    datapoint conforms to the ``agent-mappings.yaml`` type/attribute contract. Then
-    toggles the export off and on, and finally unsets the export subtree.
+    decodes, the metric-name set matches ``metrics-classes.yaml`` (missing names
+    with no Redis source are ignored, not failed - see :mod:`inventory_db_check`),
+    and every datapoint conforms to the ``agent-mappings.yaml`` type/attribute
+    contract. Then toggles the export off and on, and finally unsets the export
+    subtree.
 
     Takes the single-collector suite because the item's precondition is one
     destination: the two-collector suite additionally requires an ``ha`` player,
@@ -250,7 +264,9 @@ def _assert_basic_export_and_metric_inventory(
             f"No expected metric names after gating "
             f"(group prefixes={OtelCollectorConst.METRICS_CLASSES_FULL_EXPORT_GROUP_PREFIXES})."
         )
-        assert_metric_names_strict(expected, actual_names, collector_label=collector_label)
+        assert_metric_names_strict(
+            expected, actual_names, collector_label=collector_label, engines=engines, cur_dir=local_dir,
+        )
 
     with allure.step(
         "Step 6 - every datapoint carries the declared type and its full declared "

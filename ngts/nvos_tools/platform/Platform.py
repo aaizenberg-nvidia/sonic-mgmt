@@ -16,6 +16,7 @@ from ngts.nvos_tools.system.Transceiver import Transceiver
 from ngts.nvos_tools.platform.PSRedundancy import PSRedundancy
 from ngts.nvos_tools.platform.BmcFactoryDefault import BmcFactoryDefault
 from ngts.nvos_tools.platform.Bmc_password import Bmc_password
+from ngts.nvos_tools.platform.UsbFrontPanel import UsbFrontPanel
 
 logger = logging.getLogger()
 
@@ -39,6 +40,7 @@ class Platform(BaseComponent):
         self.cable_cartridge = CableCartridge(self)
         self.power_capping = PowerCapping(self)
         self.boot_policy = BaseComponent(self, path='/boot-policy')
+        self.usb_front_panel = UsbFrontPanel(self)
 
     def set(self, op_param_name="", op_param_value=""):
         raise Exception("set is not implemented for /platform")

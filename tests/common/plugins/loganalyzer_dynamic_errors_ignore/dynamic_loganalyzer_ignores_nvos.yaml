@@ -1035,8 +1035,8 @@
 - Errors_list:
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 800G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
     - '.*ERR nvued:   ERROR: lifecycle.py:846 interface sw18p1s2 speed 100G is not part of the supported speeds (supported speeds: [200000, 400000], preset: nvl)'
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
-    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds (supported speeds: ['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G']"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 800G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
+    - ".*ERR nvued:.*ERROR: JobsThread nos.funits.cue_netlink_v1.lifecycle lifecycle.py:884 interface acp269 speed 100G is not part of the supported speeds \\(supported speeds: \\['NVL_2X_400G', 'NVL_2X_360G', 'NVL_2X_328G', 'NVL_1X_200G'\\]"
   Conditions:
     - Affected_test_cases:
         - tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_nvl_negative
@@ -1176,6 +1176,17 @@
   Conditions:
     - Affected_test_cases:
       - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
+
+# NVOS - expected errors during those tests, bug 5091322
+# simulate fan speed fault
+- Errors_list:
+    - '.*WARNING hw-management-tc: WARNING: drwr\d+:\[[\d,\s]*\] FAN tacho issue\. Set tz_pwm \d+.*'
+  Conditions:
+    - Affected_test_cases:
+      - tests_nvos/system/test_system_health.py::test_simulate_fan_speed_fault
+      - tests_nvos/system/test_system_health.py::test_system_health_component_counters
+      - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
+      - tests_nvos/platform/test_platform_firmware_bios/test_platform_firmware_bios.py::test_bios_auto_update_enabled
 
 # NVOS
 - Errors_list:
@@ -2393,10 +2404,13 @@
         - tests_nvos/general/config_commands/test_save_after_reboot.py::test_save_reboot
 
 # NMX package good flow: nv-bridge Version mismatch during package swap (error expected)
+# gpu_telemetry: uninstalling nmx-telemetry also removes NMX-T Lite, which is shiped inside that package,
+# so gpu_telemetry cannot reach its sockets until the test restarts the container during cleanup.
 - Errors_list:
     - '.*WARNING nv-bridge#nv-bridge.*Version mismatch: daemon version.*vs server version.*'
     - '.*WARNING nv-bridge#nv-bridge.*Hello gRPC refused.*'
     - '.*ERR nv-bridge#nv-bridge.*[handle_connection_end] -E- Invalid or missing connection-id metadata.*'
+    - '.*ERR gpu_telemetry: Connection error: GET .* on /var/run/nmx-t-lite/.*\.sock.*'
   Conditions:
     - Affected_test_cases:
         - tests_nvos/cluster/test_nmx_package.py::test_nmx_package_good_flow
@@ -2507,3 +2521,14 @@
   Conditions:
     - Affected_test_cases:
         - tests_nvos/general/security/nv_bridge/test_nv_bridge_encryption.py::test_bridge_cluster_encryption_negative
+
+# certificate expiry monitoring: the scheduler WARNING/ERROR alerts are the expected result of these
+# tests. The alerts are emitted asynchronously, so they can land outside a loganalyzer_ignore() window.
+# Restricted to the 'cert-expiry-*' certificates these tests generate, so real expiry-monitoring
+# problems on other certificates are still reported.
+- Errors_list:
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expires\b.*'
+    - '.*\[nvued-scheduler\]-\[certificate-expiry-monitoring\].*X\.509 certificate cert-expiry-[A-Za-z0-9_-]+ expired\b.*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/security/certificate/test_cert_expiry_alert.py

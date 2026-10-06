@@ -30,8 +30,11 @@ import yaml
 import ngts.tools.test_utils.allure_utils as allure
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 
-from ngts.nvos_constants.constants_nvos import TelemetryConsts
+from ngts.nvos_constants.constants_nvos import PeerPortConsts, TelemetryConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.Fae import Fae
+from ngts.nvos_tools.infra.FilesTool import FilesTool
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
@@ -643,6 +646,114 @@ def _stage_nvos_test01_stats_group(
         )
 
 
+# Set once this suite enables peer-port, so teardown unsets it only when it changed it.
+_peer_port_enabled_by_suite = False
+
+
+def _peer_port_node(device) -> BaseComponent:
+    """Peer-port feature knob: ``system peer-port`` on IB, ``fae system peer-port`` on NVLink."""
+    return System().peer_port if device.is_ib() else Fae().system.peer_port
+
+
+def _peer_port_is_enabled(node: BaseComponent) -> bool:
+    try:
+        shown = str(node.parse_show().get(PeerPortConsts.STATE, "")).strip().lower()
+        return shown == PeerPortConsts.STATE_ENABLED
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _peer_port_interval_sec(node: BaseComponent) -> int:
+    try:
+        shown = str(node.parse_show().get(PeerPortConsts.INTERVAL, "")).strip()
+        return int(shown) if shown else PeerPortConsts.INTERVAL_DEFAULT
+    except Exception:  # noqa: BLE001
+        return PeerPortConsts.INTERVAL_DEFAULT
+
+
+def _peer_counters_keys(dut) -> List[str]:
+    out = dut.run_cmd(
+        "sonic-db-cli COUNTERS_DB keys 'PEER_COUNTERS:*' 2>&1",
+        validate=False,
+        print_output=False,
+    )
+    return [line.strip() for line in (out or "").splitlines() if line.strip().startswith("PEER_COUNTERS:")]
+
+
+def enable_peer_port_feature(dut, devices=None) -> bool:
+    """Enable the peer-port feature and wait for ``PEER_COUNTERS`` rows in ``COUNTERS_DB``.
+
+    ``nvswitch_peer_port_*`` is built from those rows. IB defaults the knob to
+    disabled; NVLink defaults it to enabled. Returns whether any rows appeared; when
+    none do (no HCA peers, no running Subnet Manager, or a fabric that is not
+    Active on IB) this logs a warning and attaches a note rather than failing -
+    every ``nvswitch_peer_port_*`` metric then has no Redis source, which the OTEL
+    inventory/DB-validation tests already treat as "not exported and no source",
+    not a failure. The dedicated peer-port suite (``test_peerport.py``) still fails
+    on a missing SM/HCAs, so that coverage is not lost.
+    """
+    global _peer_port_enabled_by_suite
+    device = devices.dut if devices is not None else TestToolkit.get_device()
+    node = _peer_port_node(device)
+    with allure.step("Enable peer-port feature and wait for PEER_COUNTERS rows"):
+        set_kwargs = {"ask_for_confirmation": "-y"} if device.is_ib() else {}
+        was_enabled = _peer_port_is_enabled(node)
+        try:
+            node.set(
+                op_param_name=PeerPortConsts.STATE,
+                op_param_value=PeerPortConsts.STATE_ENABLED,
+                apply=True,
+                **set_kwargs,
+            ).verify_result()
+            # Own the change only if it was not already enabled, so teardown leaves
+            # a pre-existing setting alone.
+            _peer_port_enabled_by_suite = _peer_port_enabled_by_suite or not was_enabled
+
+            interval = _peer_port_interval_sec(node)
+            deadline = (
+                time.time() +
+                OtelCollectorConst.PEER_PORT_ENABLE_GRACE_SEC +
+                interval * OtelCollectorConst.PEER_PORT_SETTLE_INTERVALS
+            )
+            keys = _peer_counters_keys(dut)
+            while not keys and time.time() < deadline:
+                time.sleep(min(interval, 2))
+                keys = _peer_counters_keys(dut)
+        except Exception:
+            # Suite teardown is not registered yet during setup, so roll back here
+            # (only when this call changed the state).
+            if not was_enabled:
+                try:
+                    disable_peer_port_feature(dut, devices)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("peer-port rollback after failed enable raised: %s", exc)
+            raise
+
+        if not keys:
+            note = (
+                "peer-port is enabled but COUNTERS_DB has no PEER_COUNTERS rows, so no "
+                "nvswitch_peer_port_* series can be exported. On IB this means no HCA peers, "
+                "no running Subnet Manager, or a fabric that is not Active. Every "
+                "nvswitch_peer_port_* metric will be reported as having no DB source."
+            )
+            logger.warning(note)
+            allure.attach("peer-port: no PEER_COUNTERS rows", note)
+            return False
+        logger.info("peer-port enabled: %d PEER_COUNTERS rows", len(keys))
+        return True
+
+
+def disable_peer_port_feature(dut, devices=None) -> None:
+    """Return the peer-port knob to its platform default (``unset``)."""
+    global _peer_port_enabled_by_suite
+    device = devices.dut if devices is not None else TestToolkit.get_device()
+    node = _peer_port_node(device)
+    with allure.step("Unset peer-port feature state"):
+        unset_kwargs = {"ask_for_confirmation": "-y"} if device.is_ib() else {}
+        node.unset(op_param=PeerPortConsts.STATE, apply=True, **unset_kwargs).verify_result()
+    _peer_port_enabled_by_suite = False
+
+
 def enable_nvos_telemetry_families(
     dut,
     collector_ip: str,
@@ -754,6 +865,8 @@ def enable_nvos_telemetry_families(
                 system, dut, otlp_dest_ips, stats_group_id=sg_id_used
             )
         apply_telemetry_configuration(system, dut, is_nvos=True)
+        if TelemetryConsts.PEER_PORT_STATS in enabled:
+            enable_peer_port_feature(dut)
 
     return build_nvos_enablement(
         enabled,
@@ -807,6 +920,8 @@ def enable_nvos_families_export(
                 system, dut, collector_ips, stats_group_id=sg_id_used
             )
         apply_telemetry_configuration(system, dut, is_nvos=True)
+        if TelemetryConsts.PEER_PORT_STATS in enabled:
+            enable_peer_port_feature(dut)
 
     return build_nvos_enablement(
         enabled,
@@ -1098,6 +1213,13 @@ def teardown_otel_suite(engines, suite: OtelSuiteContext) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.error("OTEL teardown: NVUE cleanup raised: %s", exc)
             failures.append(f"NVUE cleanup: {exc}")
+
+    if suite.is_nvos and _peer_port_enabled_by_suite:
+        try:
+            disable_peer_port_feature(engines.dut)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("OTEL teardown: peer-port unset raised: %s", exc)
+            failures.append(f"peer-port unset: {exc}")
 
     active_collectors = [c for c in (suite.primary, suite.secondary) if c is not None]
 
@@ -1465,8 +1587,24 @@ def assert_metric_names_strict(
     collector_label: str,
     extra_ignore: Optional[Set[str]] = None,
     group_name_prefixes: Optional[Tuple[str, ...]] = None,
+    engines=None,
+    cur_dir: Optional[str] = None,
 ) -> None:
-    """Strict equality of expected vs actual metric names. Subtracts ``extra_ignore`` from both sides if given."""
+    """Strict equality of expected vs actual metric names. Subtracts ``extra_ignore`` from both sides if given.
+
+    When both ``engines`` and ``cur_dir`` are given, every missing name is looked up
+    in Redis via agent-mappings before it fails (see
+    :func:`inventory_db_check.classify_missing_by_db`): a name Redis has no source
+    for anywhere on this DUT is reported separately and does not fail the test. A
+    name Redis has *something* for - even a value that fails to parse as the
+    declared type - still fails as "missing" (existence and type/format are
+    different questions; a present-but-wrong-typed value is still data that
+    should have been exported). Only a name this replay could not attempt at all
+    (event-driven metric, non-ported calculator/builder, no declared value source)
+    is reported as "not verifiable". Without ``engines``/``cur_dir`` the fallback
+    is skipped and every missing name fails, exactly as before (Cumulus and any
+    other caller that doesn't pass them).
+    """
     ignore: Set[str] = set(extra_ignore) if extra_ignore else set()
 
     expected_filtered = set(expected) - ignore
@@ -1487,15 +1625,72 @@ def assert_metric_names_strict(
         f"Strict metric-name equality on {collector_label} "
         f"(expected={len(expected_filtered)}, actual={len(actual_filtered)})"
     ):
-        if missing or unexpected:
+        if engines is None or cur_dir is None:
+            if missing or unexpected:
+                msg_lines = [
+                    f"OTEL metric-name strict-equality FAILED on {collector_label}.",
+                    f"  expected (filtered): {len(expected_filtered)}",
+                    f"  actual   (filtered): {len(actual_filtered)}",
+                    f"  ignore_list_size:    {len(ignore)}",
+                    f"  --- missing ({len(missing)}) ---",
+                ]
+                msg_lines.extend(sorted(missing) or ["  (none)"])
+                msg_lines.append(f"  --- unexpected ({len(unexpected)}) ---")
+                msg_lines.extend(sorted(unexpected) or ["  (none)"])
+                msg_lines.append(
+                    "Resolutions: (a) pass extra_ignore to skip a name temporarily, "
+                    "(b) add to OTLP_METRIC_NAME_PREFIXES_GATED_BY_CAPABILITY (and probe in dut_capabilities), "
+                    "(c) fix the metric pipeline, (d) accept the new metric in metrics-classes.yaml."
+                )
+                pytest.fail("\n".join(msg_lines))
+            return
+
+        # Deferred import: agent_mappings.py (imported by inventory_db_check.py) itself
+        # imports from this module, so importing it at module load time would cycle.
+        from ngts.tests_nvos.system.telemetry.otel import inventory_db_check
+
+        missing_by_db = inventory_db_check.classify_missing_by_db(engines, cur_dir, missing)
+        unclassified = missing - (
+            set(missing_by_db.real_missing) | set(missing_by_db.not_verifiable) | set(missing_by_db.no_db_source)
+        )
+        for name in unclassified:
+            missing_by_db.real_missing[name] = "unclassified by the DB fallback"
+
+        matched = expected_filtered & actual_filtered
+        allure.attach(f"expected ({len(expected_filtered)})", "\n".join(sorted(expected_filtered)) or "(none)")
+        allure.attach(f"collected ({len(actual_filtered)})", "\n".join(sorted(actual_filtered)) or "(none)")
+        allure.attach(f"matched ({len(matched)})", "\n".join(sorted(matched)) or "(none)")
+        allure.attach(
+            f"missing - FAIL ({len(missing_by_db.real_missing)})",
+            inventory_db_check.format_reasons(missing_by_db.real_missing),
+        )
+        allure.attach(
+            f"missing - not verifiable - FAIL ({len(missing_by_db.not_verifiable)})",
+            inventory_db_check.format_reasons(missing_by_db.not_verifiable),
+        )
+        allure.attach(
+            f"missing - no DB source - ignored ({len(missing_by_db.no_db_source)})",
+            inventory_db_check.format_reasons(missing_by_db.no_db_source),
+        )
+        allure.attach(f"unexpected - FAIL ({len(unexpected)})", "\n".join(sorted(unexpected)) or "(none)")
+        allure.attach("summary", inventory_db_check.summarize_missing_by_db(missing_by_db, unexpected))
+
+        if missing_by_db.real_missing or missing_by_db.not_verifiable or unexpected:
             msg_lines = [
-                f"OTEL metric-name strict-equality FAILED on {collector_label}.",
+                f"OTEL metric-name check FAILED on {collector_label}.",
                 f"  expected (filtered): {len(expected_filtered)}",
                 f"  actual   (filtered): {len(actual_filtered)}",
-                f"  ignore_list_size:    {len(ignore)}",
-                f"  --- missing ({len(missing)}) ---",
+                f"  ignored (no DB source): {len(missing_by_db.no_db_source)}",
+                f"  --- missing ({len(missing_by_db.real_missing)}) ---",
             ]
-            msg_lines.extend(sorted(missing) or ["  (none)"])
+            msg_lines.extend(
+                [f"{name}: {reason}" for name, reason in sorted(missing_by_db.real_missing.items())] or ["  (none)"]
+            )
+            msg_lines.append(f"  --- not verifiable ({len(missing_by_db.not_verifiable)}) ---")
+            msg_lines.extend(
+                [f"{name}: {reason}" for name, reason in sorted(missing_by_db.not_verifiable.items())] or
+                ["  (none)"]
+            )
             msg_lines.append(f"  --- unexpected ({len(unexpected)}) ---")
             msg_lines.extend(sorted(unexpected) or ["  (none)"])
             msg_lines.append(
@@ -1537,6 +1732,8 @@ def assert_nvos_metric_names_for_enablement(
         set(actual_metric_names),
         collector_label=collector_label,
         group_name_prefixes=OtelCollectorConst.METRICS_CLASSES_FULL_EXPORT_GROUP_PREFIXES,
+        engines=engines,
+        cur_dir=cur_dir,
     )
 
 
@@ -2555,13 +2752,20 @@ def dut_capabilities(
     if is_ib_router or _dut_has_ib_router_profile_enabled(dut_engine):
         present.add(OtelCapability.HAS_IB_ROUTER_PROFILE)
 
-    # peer-port-stats and selected platform metrics are NVLink-only; IB skips them.
+    # Selected platform metrics are NVLink-only; IB skips them.
     if not devices.dut.is_ib():
-        present.add(OtelCapability.SUPPORTS_PEER_PORT_STATS)
         present.add(OtelCapability.SUPPORTS_NVLINK_PLATFORM_METRICS)
 
     if _dut_has_connected_transceivers(dut_engine):
         present.add(OtelCapability.HAS_CONNECTED_TRANSCEIVERS)
+
+    if _dut_supports_system_power(dut_engine):
+        present.add(OtelCapability.SUPPORTS_SYSTEM_POWER)
+
+    # NoPSUCapability clears psu_list (BlackMambaDGX, Rosalind), so the device model
+    # already tells us there are no PSU_INFO rows to build power_supply series from.
+    if devices.dut.psu_list:
+        present.add(OtelCapability.HAS_PSU)
 
     logger.info("OTEL capabilities: %s (is_ib_router=%s)", sorted(present), is_ib_router)
     return present
@@ -2624,3 +2828,63 @@ def _dut_has_connected_transceivers(dut=None) -> bool:
         return False
     tx_show.ignore_result()
     return bool(OutputParsingTool.parse_show_output_to_dict(tx_show).returned_value)
+
+
+def _dut_platform_json_capabilities(dut=None) -> Optional[Dict[str, Any]]:
+    """The DUT ``platform.json`` ``capabilities`` dict, or ``None`` if unreadable.
+
+    ``{}`` means the file was read and declares no capabilities, which is a
+    conclusive "capability absent"; ``None`` means the probe itself failed.
+    """
+    if dut is None:
+        return None
+    platform = dut.run_cmd(
+        f"{OtelCollectorConst.PLATFORM_JSON_PLATFORM_CMD} 2>/dev/null",
+        validate=False,
+        print_output=False,
+    ).strip()
+    if not platform or len(platform.splitlines()) != 1:
+        logger.debug("platform.json probe: could not resolve platform (%r)", platform[:240])
+        return None
+
+    path = OtelCollectorConst.PLATFORM_JSON_PATH_FMT.format(platform=platform)
+    try:
+        # Shared reader (``sudo cat`` + JSON parse); asserts when the file is
+        # missing or the payload is not JSON, which is a failed probe, not "no
+        # capabilities" — hence None rather than {}.
+        doc = FilesTool.read_json_file(dut, path)
+    except AssertionError as exc:
+        logger.debug("platform.json probe: %s is missing or not JSON (%s)", path, exc)
+        return None
+    # An empty parse is also a failed probe: a real platform.json is never empty.
+    if not isinstance(doc, dict) or not doc:
+        logger.debug("platform.json probe: %s produced no data", path)
+        return None
+    caps = doc.get(OtelCollectorConst.PLATFORM_JSON_CAPABILITIES_KEY) or {}
+    return caps if isinstance(caps, dict) else {}
+
+
+def _dut_supports_system_power(dut=None) -> bool:
+    """True iff ``platform.json`` advertises ``system-power-supported: yes``.
+
+    The PDB metrics (``nvswitch_platform_environment_pdb_*``) are exported only on
+    systems with a power distribution board, where the flag is missing entirely on
+    the rest. A probe that fails counts as supported, so a broken probe fails the
+    strict comparison on a PDB system instead of silently dropping those names.
+    """
+    caps = _dut_platform_json_capabilities(dut)
+    if caps is None:
+        logger.warning(
+            "OTEL: platform.json capabilities unreadable; assuming %s is supported",
+            OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY,
+        )
+        return True
+    value = str(
+        caps.get(OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY) or ""
+    ).strip().lower()
+    logger.info(
+        "OTEL: platform.json %s=%r",
+        OtelCollectorConst.PLATFORM_JSON_SYSTEM_POWER_KEY,
+        value or None,
+    )
+    return value == OtelCollectorConst.PLATFORM_JSON_CAPABILITY_SUPPORTED_VALUE

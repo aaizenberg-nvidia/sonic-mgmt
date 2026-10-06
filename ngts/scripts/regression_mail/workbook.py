@@ -33,6 +33,7 @@ REQUIRED_HEADERS: Sequence[str] = (
 SUPPORTED_RESULTS = {"pass", "fail", "skipped"}
 _RESULT_PRIORITY = {"pass": 0, "skipped": 1, "fail": 2}
 FALLBACK_SKIP_REASON = "Internal issue, WIP"
+_REMOVE_FAILED_TESTCASE = "REMOVE_FAILED_TESTCASE"
 
 
 class WorkbookLoader:
@@ -152,6 +153,8 @@ class WorkbookLoader:
                 header: cells[index] if index < len(cells) else None
                 for header, index in header_index.items()
             }
+            if normalize_text(values.get("modify_xml")).upper() == _REMOVE_FAILED_TESTCASE:
+                continue
             raw_setup = str(values.get("testbed") or "").strip()
             setup = normalize_text(raw_setup)
             platform = normalize_text(values.get("platform"))

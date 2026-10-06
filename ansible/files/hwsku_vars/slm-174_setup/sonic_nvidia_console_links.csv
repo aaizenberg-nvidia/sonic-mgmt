@@ -1,0 +1,2 @@
+StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
+rcon,7020,slm-174,ssh,,root

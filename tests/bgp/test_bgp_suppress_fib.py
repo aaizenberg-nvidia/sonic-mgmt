@@ -952,7 +952,7 @@ def validate_bgp_suppress_fib(duthost, enable):
                           expected.lower(), idx, state))
 
 
-def config_bgp_suppress_fib(duthost, enable=True, validate_result=False):
+def config_bgp_suppress_fib(duthost, enable=True, validate_result=False, loganalyzer=None):
     """
     Enable or disable bgp suppress-fib-pending function
     For Multi-asic as well
@@ -979,7 +979,8 @@ def config_bgp_suppress_fib(duthost, enable=True, validate_result=False):
 
     duthost.shell("sudo config suppress-fib-pending  {}".format(cmd_pstfix))
     duthost.shell('sudo config save -y')
-    config_reload(duthost, safe_reload=True, check_intf_up_ports=True, wait_for_bgp=True)
+    config_reload(duthost, safe_reload=True, check_intf_up_ports=True, wait_for_bgp=True,
+                  ignore_loganalyzer=loganalyzer)
     if validate_result:
         validate_bgp_suppress_fib(duthost, enable)
 
@@ -1274,9 +1275,9 @@ def test_bgp_route_with_suppress(duthosts, enum_downstream_dut_hostname, enum_up
                 traffic_data_ipv4_drop, traffic_data_ipv6_drop = generate_route_and_traffic_data[FUNCTION]
 
         with allure.step("Config bgp suppress-fib-pending function"):
-            config_bgp_suppress_fib(duthost_down)
+            config_bgp_suppress_fib(duthost_down, loganalyzer=loganalyzer)
             if multi_dut:
-                config_bgp_suppress_fib(duthost_up)
+                config_bgp_suppress_fib(duthost_up, loganalyzer=loganalyzer)
 
         for continous_boot_index in range(continuous_boot_times):
             if continuous_boot_times > 1:
@@ -1379,7 +1380,7 @@ def test_bgp_route_with_suppress(duthosts, enum_downstream_dut_hostname, enum_up
 
 def test_bgp_route_without_suppress(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_hostname, tbinfo,
                                     nbrhosts, ptfadapter, prepare_param, restore_bgp_suppress_fib,
-                                    generate_route_and_traffic_data):
+                                    generate_route_and_traffic_data, loganalyzer):
     duthost_down = duthosts[enum_downstream_dut_hostname]
     duthost_up = duthosts[enum_upstream_dut_hostname]
     multi_dut = False
@@ -1389,9 +1390,9 @@ def test_bgp_route_without_suppress(duthosts, enum_downstream_dut_hostname, enum
         router_mac, mg_facts, ptf_ip, exabgp_port_list, exabgp_port_list_v6, recv_port_list = prepare_param
 
     with allure.step("Disable bgp suppress-fib-pending function"):
-        config_bgp_suppress_fib(duthost_down, enable=False, validate_result=True)
+        config_bgp_suppress_fib(duthost_down, enable=False, validate_result=True, loganalyzer=loganalyzer)
         if multi_dut:
-            config_bgp_suppress_fib(duthost_up, enable=False, validate_result=True)
+            config_bgp_suppress_fib(duthost_up, enable=False, validate_result=True, loganalyzer=loganalyzer)
 
     with allure.step("Get route and traffic data"):
         ipv4_route_list, ipv6_route_list, traffic_data_ipv4_forward, traffic_data_ipv6_forward, \
@@ -1470,9 +1471,9 @@ def test_bgp_route_with_suppress_negative_operation(duthosts, enum_downstream_du
                 traffic_data_ipv4_drop, traffic_data_ipv6_drop = generate_route_and_traffic_data[FUNCTION]
 
         with allure.step("Config bgp suppress-fib-pending function"):
-            config_bgp_suppress_fib(duthost_down)
+            config_bgp_suppress_fib(duthost_down, loganalyzer=loganalyzer)
             if multi_dut:
-                config_bgp_suppress_fib(duthost_up)
+                config_bgp_suppress_fib(duthost_up, loganalyzer=loganalyzer)
 
         for exabgp_port, exabgp_port_v6, recv_port in zip(exabgp_port_list, exabgp_port_list_v6, recv_port_list):
             try:
@@ -1587,7 +1588,7 @@ def test_bgp_route_with_suppress_negative_operation(duthosts, enum_downstream_du
 
 def test_credit_loop(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_hostname, tbinfo, nbrhosts, ptfadapter,
                      prepare_param, generate_route_and_traffic_data,
-                     restore_bgp_suppress_fib):
+                     restore_bgp_suppress_fib, loganalyzer):
     """
     The problem with BGP programming occurs after the T1 switch is rebooted:
 
@@ -1614,9 +1615,9 @@ def test_credit_loop(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_h
     for exabgp_port, exabgp_port_v6, recv_port in zip(exabgp_port_list, exabgp_port_list_v6, recv_port_list):
         try:
             with allure.step("Disable bgp suppress-fib-pending function"):
-                config_bgp_suppress_fib(duthost_down, False, validate_result=True)
+                config_bgp_suppress_fib(duthost_down, False, validate_result=True, loganalyzer=loganalyzer)
                 if multi_dut:
-                    config_bgp_suppress_fib(duthost_up, False, validate_result=True)
+                    config_bgp_suppress_fib(duthost_up, False, validate_result=True, loganalyzer=loganalyzer)
 
             with allure.step(
                     "Validate traffic is forwarded back to Upstream VM & routes in HW table are removed by orchagent"):
@@ -1644,7 +1645,7 @@ def test_credit_loop(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_h
                                  ptf_interfaces, ptf_interfaces, loop_back=True)
 
             with allure.step("Config bgp suppress-fib-pending function"):
-                config_bgp_suppress_fib(duthost_up, validate_result=True)
+                config_bgp_suppress_fib(duthost_up, validate_result=True, loganalyzer=loganalyzer)
 
             with allure.step("Validate announced BGP ipv4 and ipv6 routes are in {} state".format(OFFLOADED)):
                 if enum_upstream_dut_hostname != enum_downstream_dut_hostname:
@@ -1669,7 +1670,7 @@ def test_credit_loop(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_h
 
 def test_suppress_fib_stress(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_hostname, tbinfo, nbrhosts,
                              ptfadapter, prepare_param, completeness_level,
-                             generate_route_and_traffic_data, restore_bgp_suppress_fib):
+                             generate_route_and_traffic_data, restore_bgp_suppress_fib, loganalyzer):
     """
     Verify BGP suppress-fib-pending under stress conditions.
 
@@ -1695,7 +1696,7 @@ def test_suppress_fib_stress(duthosts, enum_downstream_dut_hostname, enum_upstre
     ptf_interfaces = get_upstream_ptf_intfs(mg_facts_up, tbinfo)
 
     with allure.step("Enable BGP suppress-fib-pending function at DUT"):
-        config_bgp_suppress_fib(duthost_down)
+        config_bgp_suppress_fib(duthost_down, loganalyzer=loganalyzer)
 
     for exabgp_port, exabgp_port_v6, recv_port in zip(exabgp_port_list, exabgp_port_list_v6, recv_port_list):
         try:
@@ -1756,7 +1757,7 @@ def test_suppress_fib_stress(duthosts, enum_downstream_dut_hostname, enum_upstre
 
 def test_suppress_fib_performance(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_hostname, tbinfo, nbrhosts,
                                   ptfadapter, prepare_param, ptfhost,
-                                  generate_route_and_traffic_data, restore_bgp_suppress_fib):
+                                  generate_route_and_traffic_data, restore_bgp_suppress_fib, loganalyzer):
     duthost_down = duthosts[enum_downstream_dut_hostname]
     duthost_up = duthosts[enum_upstream_dut_hostname]
     tcpdump_sniffer_upstream = tcpdump_helper(ptfadapter, duthost_up, ptfhost,
@@ -1772,7 +1773,7 @@ def test_suppress_fib_performance(duthosts, enum_downstream_dut_hostname, enum_u
     for exabgp_port, exabgp_port_v6, recv_port in zip(exabgp_port_list, exabgp_port_list_v6, recv_port_list):
         try:
             with allure.step("Config bgp suppress-fib-pending function"):
-                config_bgp_suppress_fib(duthost_down)
+                config_bgp_suppress_fib(duthost_down, loganalyzer=loganalyzer)
 
             MAX_CAPTURE_ATTEMPTS = 3
             pcap_file = None
@@ -1842,7 +1843,7 @@ def test_suppress_fib_performance(duthosts, enum_downstream_dut_hostname, enum_u
                 validate_route_process_perf(pcap_file, ipv4_route_list, ipv6_route_list)
         finally:
             with allure.step("Disable bgp suppress-fib-pending function"):
-                config_bgp_suppress_fib(duthost_down, False, validate_result=True)
+                config_bgp_suppress_fib(duthost_down, False, validate_result=True, loganalyzer=loganalyzer)
 
             with allure.step("Withdraw BGP ipv4 and ipv6 routes in case of any failure in case"):
                 announce_ipv4_ipv6_routes(ptf_ip, ipv4_route_list, exabgp_port, ipv6_route_list, exabgp_port_v6,
@@ -1854,7 +1855,7 @@ RELAY_TEST_PREFIX_V4 = "99.99.99.0/24"
 
 
 def test_bgp_update_relay_latency(duthosts, enum_downstream_dut_hostname, enum_upstream_dut_hostname, tbinfo, nbrhosts,
-                                  ptfadapter, prepare_param, ptfhost, restore_bgp_suppress_fib):
+                                  ptfadapter, prepare_param, ptfhost, restore_bgp_suppress_fib, loganalyzer):
     """
     Verify BGP UPDATE relay latency is sub-second with suppress-fib-pending.
 
@@ -1877,9 +1878,9 @@ def test_bgp_update_relay_latency(duthosts, enum_downstream_dut_hostname, enum_u
 
     try:
         with allure.step("Config bgp suppress-fib-pending function"):
-            config_bgp_suppress_fib(duthost_down)
+            config_bgp_suppress_fib(duthost_down, loganalyzer=loganalyzer)
             if enum_downstream_dut_hostname != enum_upstream_dut_hostname:
-                config_bgp_suppress_fib(duthost_up)
+                config_bgp_suppress_fib(duthost_up, loganalyzer=loganalyzer)
 
         with allure.step("Start sniffer"):
             perf_sniffer_prepare(tcpdump_sniffer_downstream, tcpdump_sniffer_upstream,
@@ -1935,4 +1936,4 @@ def test_bgp_update_relay_latency(duthosts, enum_downstream_dut_hostname, enum_u
         with allure.step("Withdraw test route"):
             announce_route(ptf_ip, [RELAY_TEST_PREFIX_V4], exabgp_port, action=WITHDRAW)
         if enum_downstream_dut_hostname != enum_upstream_dut_hostname:
-            config_bgp_suppress_fib(duthost_up, enable=False)
+            config_bgp_suppress_fib(duthost_up, enable=False, loganalyzer=loganalyzer)

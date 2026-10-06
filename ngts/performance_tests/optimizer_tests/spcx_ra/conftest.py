@@ -12,7 +12,8 @@ import copy
 import os
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration)
+                                                                apply_test_configuration,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts
 from ngts.performance_tests.spcx_ra.conftest import resolve_ar_algorithm
 from ngts.constants.nv_optimizer_constant import NvOptimizerEnvVariables
@@ -28,12 +29,10 @@ TESTS_SCENARIO = "spcx_ra"
 def get_conf_args(is_ipv6, chip_type, performance_parameters):
     conf_args = {
         "auto_buffer_mode": "False",
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
-        "congestion_thresh_med": (PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                  else PerfConsts.MED_AR_THRESHOLD),
-        "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                 else PerfConsts.HIGH_AR_THRESHOLD),
+        **get_ar_congestion_thresholds(chip_type),
         PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+        # Pass thresholds 4-7 here to run SPC6 extended grading.
+        **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
         "two_sided_ar": True,
         "is_ipv6": is_ipv6,
         "split_right": 2,

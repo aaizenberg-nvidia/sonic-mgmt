@@ -20,7 +20,7 @@ from ngts.tests_nvos.platform.helpers import (
 )
 from ngts.nvos_constants.constants_nvos import HealthConsts, PlatformConsts
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 TEMPERATURE_BASE_PATH = PlatformConsts.TEMPERATURE_FILES_PATH
 THERMAL_PWM_PATH = '/var/run/hw-management/thermal/pwm1'
@@ -294,7 +294,7 @@ def test_simulate_temperature_fault_high(engines, devices):
         logger.info(f"Baseline PWM before injection: {baseline_pwm} (has_fans={has_fans})")
 
         with HWSimulator.simulate_sensor(engines.dut, sensor_input_path, fault_value, HEALTH_STABILIZE_DELAY):
-            validate_sensor_state(temperature_show, sensor_name, 'failed')
+            validate_sensor_state(temperature_show, sensor_name, 'bad')
             validate_health(system, HealthConsts.NOT_OK)
             validate_health_issues(system, sensor_name, expected_present=True)
             if has_fans:

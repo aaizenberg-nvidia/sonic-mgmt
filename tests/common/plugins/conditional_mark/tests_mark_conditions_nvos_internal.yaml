@@ -163,7 +163,6 @@ tests_nvos/platform/test_platform_environment.py::test_show_platform_environment
     - https://redmine.mellanox.com/issues/5098668
     - '''juliet'' in testbed or ''q3400'' in testbed'
 
-
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:
     reason: Testcase skipped on Juliet systems, Juliet Does not have PSU
@@ -597,14 +596,6 @@ ngts/tests_nvos/checklist/test_firmware_install_same_version.py:
     - '''juliet-146'' in testbed'
     - '''juliet-160'' in testbed'
 
-ngts/tests_nvos/platform/test_platform_firmware.py::test_show_platform_firmware:
-  skip:
-    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'
-    conditions_logical_operator: and
-    conditions:
-    - https://redmine.mellanox.com/issues/4543350
-    - '''juliet'' in testbed'
-
 ngts/tests_nvos/cluster/test_cluster_state.py::test_cluster_state:
   skip:
     reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4543350'
@@ -814,5 +805,11 @@ tests_nvos/interfaces/delayed_recovery/test_delayed_recovery.py::test_delayed_re
     reason: "Requires an acp-to-acp link pair (both ends configurable via nv set fae interface) - on RTF racks the access ports are cabled to GPUs"
     conditions:
       - "'rtf' in testbed"
+
+tests_nvos/general/config_commands/test_config_verify.py::test_verify_empty_applied:
+  skip:
+    reason: 'Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5305123'
+    conditions:
+    - https://redmine.mellanox.com/issues/5305123
 
 ########################## NVOS IGNORE END ##########################

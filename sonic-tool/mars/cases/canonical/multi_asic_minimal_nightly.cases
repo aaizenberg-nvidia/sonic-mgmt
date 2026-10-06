@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> SONiC </group>
+      <name> SONiC Multi-ASIC Minimal Nightly Regression </name>
+      <info> LAG, FDB, and routing canonical nightly tests </info>
+      <owner> SONiC </owner>
+    </Test>
+    <Case>
+      <tags> nightly </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 55555 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <ignore>
+      <!-- daily case -->
+      <condition>
+        <key> skip_weekend_cases </key>
+        <op> == </op>
+        <value> no </value>
+      </condition>
+    </ignore>
+    <name> LAG_LACP </name>
+    <info> Daily LAG and LACP tests excluding reboot and scale scenarios </info>
+    <cmd>
+      <params>
+        <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests/nightly/lag --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --showlocals --timeout 3600 --session-timeout 3600 -k=\"not test_core_functionality_with_reboot and not test_lags_scale\"\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <ignore>
+      <!-- weekend case -->
+      <condition>
+        <key> skip_weekend_cases </key>
+        <op> == </op>
+        <value> yes </value>
+      </condition>
+    </ignore>
+    <name> LAG_LACP weekend </name>
+    <info> Weekend LAG reboot and scale tests </info>
+    <cmd>
+      <params>
+        <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests/nightly/lag --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --showlocals --timeout 3600 --session-timeout 7200 -k=\"test_core_functionality_with_reboot or test_lags_scale\"\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <ignore>
+      <!-- daily case -->
+      <condition>
+        <key> skip_weekend_cases </key>
+        <op> == </op>
+        <value> no </value>
+      </condition>
+    </ignore>
+    <name> FDB </name>
+    <info> Daily basic FDB tests </info>
+    <cmd>
+      <params>
+        <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests/nightly/fdb/test_fdb_basic.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --allure_server_addr=\"10.215.11.120\" --showlocals --timeout 3600 --session-timeout 3600\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <ignore>
+      <!-- weekend case -->
+      <condition>
+        <key> skip_weekend_cases </key>
+        <op> == </op>
+        <value> yes </value>
+      </condition>
+    </ignore>
+    <name> FDB weekend </name>
+    <info> Weekend advanced FDB tests </info>
+    <cmd>
+      <params>
+        <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests/nightly/fdb/test_fdb_advance.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --allure_server_addr=\"10.215.11.120\" --showlocals --timeout 3600 --session-timeout 3600\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <ignore>
+      <!-- daily case -->
+      <condition>
+        <key> skip_weekend_cases </key>
+        <op> == </op>
+        <value> no </value>
+      </condition>
+    </ignore>
+    <name> Routing </name>
+    <info> routing tests </info>
+    <cmd>
+      <params>
+        <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests/nightly/routing/test_routing.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --allure_server_addr=\"10.215.11.120\" --showlocals --timeout 1200 --session-timeout 1200\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

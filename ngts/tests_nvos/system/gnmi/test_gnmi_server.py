@@ -84,7 +84,7 @@ def test_gnmi_basic_flow_once(engines: EnginesT, topology_obj: TopologyT):
             11. validate gnmi-server stream updates
     """
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
-    gnmi_helpers.gnmi_basic_flow(engines, mode=GnmiMode.ONCE, mgmt_port_name=mgmt_port_name)
+    gnmi_helpers.gnmi_basic_flow(engines, mode=GnmiMode.ONCE, mgmt_port_name=mgmt_port_name, timeout_sec=5)
 
 
 @pytest.mark.system

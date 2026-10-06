@@ -9,7 +9,10 @@ Provides:
   layout (plane count comes from `devices.dut.num_of_plane_ports`);
 - `_planeport_safety_teardown`: an autouse function-scoped teardown that
   defensively `nv unset system plane-port state` between tests, in addition to
-  the standard session `clear_config` chain.
+  the standard session `clear_config` chain;
+- `ib_otel_suite` / `ib_otel`: a module-scoped OTLP collector and the per-test
+  OTEL surface on top of it, which re-applies the telemetry export that
+  `clear_config` wipes; `api=otel` cases request it automatically.
 
 This conftest grows one fixture at a time as each plane-port test passes review.
 """
@@ -31,9 +34,13 @@ from ngts.tests_nvos.general.security.security_test_tools.constants import AaaCo
 from ngts.tests_nvos.general.security.security_test_tools.tool_classes.UserInfo import UserInfo
 from ngts.tools.test_utils import switch_recovery
 
+from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
-from ngts.tests_nvos.general.telemetry.ib.constants import NvuePaths, PeerType
+from ngts.tests_nvos.general.telemetry.ib import otel_helpers as ibo
+from ngts.tests_nvos.general.telemetry.ib.constants import API_OTEL, NvuePaths, PeerType
+from ngts.tests_nvos.system.telemetry.otel.helpers import setup_otel_suite, teardown_otel_suite
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +394,36 @@ def _skip_without_hfnm(request, topology_obj):
             "requires a real HFNM in the topology to start the Subnet Manager and "
             "bring IB ports Active (no 'hfnm' player; the HA fallback cannot run the SM)"
         )
+
+
+@pytest.fixture(scope="module")
+def ib_otel_suite(engines, tmp_path_factory) -> ibo.IbOtelSurface:
+    """OTEL collector for the module, brought up only when a test reads OTEL."""
+    # Module fixtures run before the function-scoped `test_api`; pin NVUE for the setup.
+    TestToolkit.tested_api = ApiType.NVUE
+    suite = setup_otel_suite(engines, is_nvos=True)
+    surface = ibo.IbOtelSurface(engines, suite, str(tmp_path_factory.mktemp("ib_otel")))
+    ibo.register(surface)
+    try:
+        yield surface
+    finally:
+        ibo.unregister()
+        teardown_otel_suite(engines, suite)
+
+
+@pytest.fixture
+def ib_otel(ib_otel_suite) -> ibo.IbOtelSurface:
+    """The module's OTEL surface, with the export configured afresh for this test."""
+    ib_otel_suite.begin_test()
+    return ib_otel_suite
+
+
+@pytest.fixture(autouse=True)
+def _ib_otel_for_otel_cases(request):
+    """Bring the OTEL surface up for the `api=otel` case of the parametrized tests."""
+    callspec = getattr(request.node, "callspec", None)
+    if callspec is not None and callspec.params.get("api") == API_OTEL:
+        request.getfixturevalue("ib_otel")
 
 
 @pytest.fixture(autouse=True)

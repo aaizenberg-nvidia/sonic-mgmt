@@ -34,6 +34,7 @@ class PerformanceSessionState:
     """Track the known-good baseline and fatal recovery state for one pytest session."""
 
     recovery_enabled: bool = False
+    ar_extended_thresholds: bool = False
     baseline_saved: bool = False
     baseline_save_started: bool = False
     baseline_save_failed: bool = False

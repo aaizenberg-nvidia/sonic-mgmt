@@ -149,11 +149,7 @@ def make_laser_source_detail(els: str) -> dict:
         "vendor-sn": "MT2443FT01035",
         "fw-version": "42.40.15",
         "parent": TOPOLOGY.cpo_for_els(els),
-        "temperature": {
-            "temperature": "28.00 C",
-            "high-alarm-threshold": "80.00 C",
-            "high-warning-threshold": "60.00 C",
-        },
+        "temperature": "28.00 C",
         "power-consumption": "3.52W",
         "icc-current": "122mA",
         "threshold": {

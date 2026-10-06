@@ -1,6 +1,7 @@
 import math
 import random
 import re
+import time
 import pytest
 import logging
 
@@ -103,6 +104,97 @@ def validate_ports_state(expected_ports: list, prefix: str, state=nv_consts.Nvos
     ValidationTool.validate_subset_in_superset(expected_ports, actual_ports).verify_result()
 
 
+def show_ports_sharing_prefix(ports_range: Port, dut_engine=None) -> dict[str, dict]:
+    """
+    Flat {port_name: link fields} for every port sharing the range's prefix, from one show.
+
+    Reads the all-interfaces show rather than a range show. A range name such as 'acp1-288' is an
+    NVUE CLI convenience that the CLI expands locally; the REST API has no such object, so a range
+    read over OpenAPI is a GET on a resource that does not exist and fails with "The requested item
+    does not exist". Ports are therefore selected by the range's prefix, which is the same set for
+    the full access-port range these helpers are called with.
+    """
+    prefix = re.match(r'[a-zA-Z]+', ports_range.name).group()
+    ports_link = OutputParsingTool.parse_show_all_interfaces_output_to_dictionary(
+        Port.show_interface(dut_engine)).get_returned_value()
+    return {port_name: link for port_name, link in ports_link.items() if port_name.startswith(prefix)}
+
+
+def get_acp_ports_in_state(ports_range: Port, state: str, dut_engine=None) -> list[str]:
+    """
+    Names of the ports in `ports_range` whose link state is `state`, from one show.
+
+    Companion to wait_for_acp_ports_state: snapshot the ports that are already down before an
+    operation, so the wait afterwards does not hold its budget open for ports that were never up.
+    """
+    return [
+        port_name
+        for port_name, link in show_ports_sharing_prefix(ports_range, dut_engine).items()
+        if link[nv_consts.IbInterfaceConsts.LINK_STATE] == state
+    ]
+
+
+def wait_for_acp_ports_state(ports_range: Port, state: str,
+                             timeout: int = nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT,
+                             logical_state: str | None = None, sleep_time: int = 2,
+                             dut_engine=None, exclude_ports: list[str] | None = None) -> None:
+    """
+    Wait for a whole acp range object, e.g. Port('acp1-288'), to reach `state`.
+
+    Same contract as Interface.wait_for_port_state, but one `nv show interface` covers every port
+    in the range instead of one wait per port. Takes a real '<prefix><first>-<last>' range name - a
+    single-port name has a flat, non-port-keyed show output, so use wait_for_port_state for that,
+    and a comma-form name such as 'acp1,acp2' is not accepted either.
+
+    The wait is driven by the port names the range name expands to rather than by the names the
+    show happens to return, so a port missing from the show counts as lagging instead of passing
+    silently.
+
+    :param timeout: the plain device budget. It is doubled here while the link-up bugs are active,
+        as every wait budget in the tests is, so callers never spell that conditional out.
+    :param exclude_ports: port names to skip, e.g. ports the test deliberately left in another state
+    """
+    # Imported inside the function: interface_helpers imports this module, so a module-level
+    # import would be circular.
+    from ngts.tests_nvos.helpers.interfaces import interface_helpers
+
+    if interface_helpers.ARE_BUGS_ACTIVE:
+        timeout *= 2
+    exclude_ports = exclude_ports or []
+    expected_ports = {f'{prefix}{port}' for prefix, first, last in [re.fullmatch(r'([^\d]+)(\d+)-(\d+)', ports_range.name).groups()] for port in range(int(first), int(last) + 1)}
+    with allure_step(f"Wait for '{ports_range.name}' to reach state '{state}' (timeout: {timeout})"):
+        deadline = time.time() + timeout
+
+        # The first port is the leading '<prefix><number>' token of the range name, e.g. 'acp1' of
+        # 'acp1-288'. Polling that one port is a cheap single-port show, versus the all-interfaces
+        # show used below - and it is only a shortcut, so an excluded first port just falls through
+        # to the poll.
+        first_port_name = re.match(r'[^\d]+\d+', ports_range.name).group()
+        if first_port_name not in exclude_ports:
+            Port(first_port_name).interface.wait_for_port_state(
+                state, timeout=timeout, logical_state=logical_state, sleep_time=sleep_time,
+                dut_engine=dut_engine).verify_result()
+
+        while True:
+            # The all-interfaces parser already flattens the link subtree and unwraps NVUE's
+            # {"up": {}} into a plain string, so state and logical-state are read directly.
+            ports_link = show_ports_sharing_prefix(ports_range, dut_engine)
+            lagging = [
+                port_name for port_name in sorted(expected_ports - set(exclude_ports))
+                if port_name not in ports_link or
+                ports_link[port_name][nv_consts.IbInterfaceConsts.LINK_STATE] != state or
+                (logical_state and
+                    ports_link[port_name][nv_consts.IbInterfaceConsts.LINK_LOGICAL_PORT_STATE] != logical_state)
+            ]
+            if not lagging or time.time() >= deadline:
+                break
+            logger.info(f"{len(lagging)} ports of '{ports_range.name}' are not '{state}' yet")
+            time.sleep(sleep_time)
+
+        assert not lagging, (f"Timeout occurred while waiting for '{ports_range.name}' to reach "
+                             f"state '{state}'. Lagging ports: {', '.join(lagging)}")
+
+
 def select_random_nvl_port_name(devices, prefix=None):
     with allure.step(f"Select {devices.dut.nvl_port_type} port in up state"):
         port_names = [port.name for port in
@@ -116,7 +208,7 @@ def select_random_nvl_port_name(devices, prefix=None):
 
 
 def skip_if_no_trunk_links(devices):
-    if not devices.dut.nvl_trunk_ports_list:
+    if not getattr(devices.dut, NvosConst.NVL_TRUNK_PORTS_LIST, None):
         pytest.skip("Skipping test - device has no trunk ports")
     if isinstance(devices.dut, JulietSwitch):
         has_any_connected_transceivers = bool(get_all_interfaces_with_transceivers(devices))

@@ -32,8 +32,8 @@ from ngts.scripts.regression_mail.normalization import (
 )
 
 _TABLE_PALETTES = {
-    "hardware": ("#0F9ED5", "#CAEDFB", "#FFFFFF", "#FFFFFF"),
-    "detail": ("#156082", "#83CCEB", "#C0E6F5", "#FFFFFF"),
+    "hardware": ("#CAEDFB", "#F5FBFE", "#F5FBFE", "#000000"),
+    "detail": ("#C0E6F5", "#F2F9FC", "#F2F9FC", "#000000"),
 }
 _TABLE_FONTS = {
     "hardware": ("Arial, sans-serif", "Calibri, Arial, sans-serif"),
@@ -115,15 +115,19 @@ class ReportRenderer:
                 report.request.version
             ),
             "",
-            "Coverage: {} (coverage reduced due to some test case "
-            "skipped by known issues)".format(
-                _percent(report.dashboard.coverage)
-                if report.dashboard
-                else ""
+            "Coverage: {}{}".format(
+                _percent(report.workbook.coverage)
+                if report.workbook and report.workbook.coverage is not None
+                else "Unavailable",
+                (
+                    " (executed cases / executed plus issue-skipped cases)"
+                    if report.workbook and report.workbook.coverage is not None
+                    else " (skip condition analysis unavailable)"
+                ),
             ),
             "Pass rate: {}".format(
-                _percent(report.dashboard.pass_rate)
-                if report.dashboard
+                _percent(report.workbook.pass_rate)
+                if report.workbook
                 else ""
             ),
         ]
@@ -235,16 +239,21 @@ class ReportRenderer:
             )
 
         body.append(
-            "<p>Coverage: {} (coverage reduced due to some test case "
-            "skipped by known issues)<br>Pass rate: {}</p>".format(
+            "<p>Coverage: {}{}"
+            "<br>Pass rate: {}</p>".format(
                 _bold_value(
-                    _percent(report.dashboard.coverage)
-                    if report.dashboard
-                    else ""
+                    _percent(report.workbook.coverage)
+                    if report.workbook and report.workbook.coverage is not None
+                    else "Unavailable"
+                ),
+                (
+                    " (executed cases / executed plus issue-skipped cases)"
+                    if report.workbook and report.workbook.coverage is not None
+                    else " (skip condition analysis unavailable)"
                 ),
                 _bold_value(
-                    _percent(report.dashboard.pass_rate)
-                    if report.dashboard
+                    _percent(report.workbook.pass_rate)
+                    if report.workbook
                     else ""
                 )
             )
@@ -400,20 +409,34 @@ def _github_skip_rows(
     tests_by_url: DefaultDict[str, List[str]] = defaultdict(list)
     for row in workbook.skipped:
         source = str(row.values.get("message") or row.message or "")
-        source_urls = extract_public_issue_urls(source)
+        source_urls = (
+            [
+                url
+                for url in workbook.issue_skip_tickets.get(row.record_id, ())
+                if extract_public_issue_urls(url)
+            ]
+            if workbook.issue_skip_analysis_complete
+            else extract_public_issue_urls(source)
+        )
         for url in source_urls:
             if all(
                 item.record_id != row.record_id
                 for item in rows_by_url[url]
             ):
                 rows_by_url[url].append(row)
-        for block in source.split(COMMENT_SEPARATOR):
-            block_urls = extract_public_issue_urls(block)
-            targets = source_urls if len(source_urls) == 1 else block_urls
-            condition = strip_public_issue_urls(block)
-            for url in targets:
-                if condition and condition not in conditions_by_url[url]:
-                    conditions_by_url[url].append(condition)
+        if workbook.issue_skip_analysis_complete:
+            for url in source_urls:
+                conditions_by_url[url].extend(
+                    workbook.public_issue_conditions.get(url, ())
+                )
+        else:
+            for block in source.split(COMMENT_SEPARATOR):
+                block_urls = extract_public_issue_urls(block)
+                targets = source_urls if len(source_urls) == 1 else block_urls
+                condition = strip_public_issue_urls(block)
+                for url in targets:
+                    if condition and condition not in conditions_by_url[url]:
+                        conditions_by_url[url].append(condition)
     for group in skip_groups:
         urls = extract_public_issue_urls(" ".join(group.ticket_refs))
         for url in urls:

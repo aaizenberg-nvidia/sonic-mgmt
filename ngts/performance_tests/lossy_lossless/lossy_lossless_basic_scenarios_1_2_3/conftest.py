@@ -16,7 +16,8 @@ import re
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.performance_setup_helpers import (save_base_configuration,
                                                                 restore_basic_configuration,
-                                                                apply_test_configuration)
+                                                                apply_test_configuration,
+                                                                get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, MongoDbConsts
 
 
@@ -47,7 +48,7 @@ def conf_args(skip_test_conditionally, chip_type):
     split_left = 2
     split_right = 2
 
-    conf_args = {"congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
+    conf_args = {**get_ar_congestion_thresholds(chip_type),
                  "fboss_enabled": True,
                  "auto_buffer_mode": "False",
                  "packet_size": PerfConsts.PACKET_SIZE_LIST[0],

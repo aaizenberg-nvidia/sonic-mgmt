@@ -9,6 +9,7 @@ import threading
 import time
 import json
 from collections import defaultdict
+from operator import itemgetter
 from typing import NamedTuple, Optional, Tuple, List
 
 from retry import retry
@@ -120,7 +121,7 @@ def run_gnmi_client_in_the_background(target_ip, xpath, device):
     return process
 
 
-def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
+def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0', timeout_sec=4):
     """
     Check gnmi basic flow: show command , disable and enable commands, validate stream updates to gnmi-client.
         Test flow:
@@ -138,7 +139,8 @@ def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
     system = System()
     gnmi_server_obj = system.gnmi_server
     target_ip = Port(mgmt_port_name).interface.get_ipv6_address() if ipv6 else engines.dut.ip
-    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode)
+    validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode,
+                                                timeout_sec=timeout_sec)
 
     with allure.step('Disable gnmi'):
         gnmi_server_obj.disable_gnmi_server()
@@ -147,18 +149,19 @@ def gnmi_basic_flow(engines, mode='', ipv6=False, mgmt_port_name='eth0'):
 
     with allure.step('Enable gnmi'):
         gnmi_server_obj.enable_gnmi_server()
-        validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode)
+        validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode=mode,
+                                                    timeout_sec=timeout_sec)
 
 
 def validate_gnmi_is_running_and_stream_updates(system, gnmi_server_obj, engines, target_ip, mode='', username='',
-                                                password=''):
+                                                password='', timeout_sec=4):
     with allure.step('Validate gnmi is running and stream updates'):
         validate_gnmi_enabled_and_running(gnmi_server_obj, engines)
         validate_gnmi_server_in_health_issues(system, expected_gnmi_health_issue=False)
         port_description = Tools.RandomizationTool.get_random_string(7)
         change_port_description_and_validate_gnmi_updates(engines, port_description=port_description,
                                                           target_ip=target_ip, mode=mode, username=username,
-                                                          password=password)
+                                                          password=password, timeout_sec=timeout_sec)
 
 
 @retry(Exception, tries=6, delay=2)
@@ -202,7 +205,7 @@ def validate_gnmi_disabled_and_not_running(gnmi_server_obj, engines):
 
 
 def run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, target_port=GnmiConsts.GNMI_DEFAULT_PORT,
-                                     mode='', username='', password=''):
+                                     mode='', username='', password='', timeout_sec=4):
     username = username or devices.dut.default_username
     password = password or devices.dut.default_password
     with allure.step("run gnmi-client and parse output"):
@@ -212,7 +215,7 @@ def run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, target_
         cmd = f"gnmic -a {target_ip} --port {target_port} --skip-verify subscribe --prefix '{prefix_and_path[0]}'" \
             f" --path '{prefix_and_path[1]}' --target nvos -u {username} " \
             f"-p {password} {mode_flag} --format flat"
-        cmd = "timeout -s INT 4s " + cmd
+        cmd = f"timeout -s INT {timeout_sec}s " + cmd
         logger.info(f"run on the sonic mgmt docker {sonic_mgmt_engine.ip}: {cmd}")
         if "poll" == mode:
             gnmi_client_output = sonic_mgmt_engine.run_cmd_set([cmd, '\n', '\n', '\x03', '\x03'],
@@ -588,24 +591,24 @@ def count_result_sets(notifications):
     return len(timestamps)
 
 
-def _flatten_value_paths(values, prefix=""):
-    """Flatten a gnmic `values` mapping into the set of relative leaf paths it carries.
+def _flatten_leaf_values(values, prefix=""):
+    """Flatten a gnmic `values` mapping into ``{relative leaf path: value}``.
 
     Leaf subscriptions yield a flat ``{"in-octets": 1}`` mapping, but a subtree subscription
     (e.g. the whole ``phy-diag/state``) nests the leaves, so recurse. An empty dict is kept as
     a terminal leaf so a present-but-empty subtree is still reported.
     """
     if not isinstance(values, dict):
-        return {prefix} if prefix else set()
+        return {prefix: values} if prefix else {}
 
-    paths = set()
+    leaves = {}
     for key, value in values.items():
         child = f"{prefix}/{key}" if prefix else str(key)
         if isinstance(value, dict) and value:
-            paths |= _flatten_value_paths(value, child)
+            leaves |= _flatten_leaf_values(value, child)
         else:
-            paths.add(child)
-    return paths
+            leaves[child] = value
+    return leaves
 
 
 def _extract_relative_paths_from_update(update):
@@ -620,18 +623,23 @@ def _extract_relative_paths_from_update(update):
       - "values": dict whose keys are paths-relative-to-prefix; this is the form the
                   rest of the repo already consumes (see test_cpu_memory_monitoring.py).
     """
+    return set(_extract_relative_values_from_update(update))
+
+
+def _extract_relative_values_from_update(update):
+    """Path-only updates carry value None."""
     if not isinstance(update, dict):
-        return set()
+        return {}
 
     # `values` is the authoritative prefix-relative mapping when present. Falling back to
     # Path/path only when it is absent avoids counting one leaf twice under two spellings
     # (e.g. Path "counters/in-octets" alongside values key "in-octets").
-    paths = {path.strip("/") for path in _flatten_value_paths(update.get("values"))}
-    if not paths:
-        paths = {str(candidate).strip("/") for candidate in (update.get("Path"), update.get("path"))
-                 if candidate}
-    paths.discard("")
-    return paths
+    leaves = {path.strip("/"): value for path, value in _flatten_leaf_values(update.get("values")).items()}
+    if not leaves:
+        leaves = {str(candidate).strip("/"): None for candidate in (update.get("Path"), update.get("path"))
+                  if candidate}
+    leaves.pop("", None)
+    return leaves
 
 
 def _extract_leaves_from_update(update):
@@ -793,17 +801,12 @@ def is_sample_interval_rejected(out, err):
     return any(GnmicErr.SAMPLE_INTERVAL_TOO_LOW in (stream or '') for stream in (out, err))
 
 
-def build_leaf_timeline(notifications):
+def build_leaf_value_timeline(notifications, include_deletes=True):
     """
-    Map every delivered leaf to the sorted list of timestamps it was delivered at.
+    Map every delivered leaf to its time-ordered ``(timestamp_ns, value)`` deliveries; a gNMI delete has value None.
 
     Keys are absolute paths (``<prefix>/<relative path>``), so a wildcard subscription yields one
-    entry per interface per leaf rather than collapsing them all onto one leaf name. Values are
-    the per-Notification timestamps in nanoseconds.
-
-    This is what makes per-leaf analysis possible: ``count_result_sets`` counts distinct
-    timestamps across the whole subscription and therefore cannot see one leaf going silent while
-    its neighbours keep streaming.
+    entry per interface per leaf rather than collapsing them all onto one leaf name.
     """
     timeline = defaultdict(list)
     for obj in notifications:
@@ -811,11 +814,26 @@ def build_leaf_timeline(notifications):
             continue
         timestamp = obj.get("timestamp")
         prefix = str(obj.get("prefix", "")).strip().strip("/")
-        for update in obj.get("updates", []):
-            for relative_path in _extract_relative_paths_from_update(update):
+        leaf_batches = [_extract_relative_values_from_update(update) for update in obj.get("updates", [])]
+        if include_deletes:
+            leaf_batches.append({str(path).strip("/"): None for path in obj.get("deletes", [])})
+        for leaves in leaf_batches:
+            for relative_path, value in leaves.items():
                 leaf_path = f"{prefix}/{relative_path}" if prefix else relative_path
-                timeline[leaf_path].append(timestamp)
-    return {leaf: sorted(timestamps) for leaf, timestamps in timeline.items()}
+                timeline[leaf_path].append((timestamp, value))
+    return {leaf: sorted(entries, key=itemgetter(0)) for leaf, entries in timeline.items()}
+
+
+def build_leaf_timeline(notifications):
+    """
+    Map every delivered leaf to the sorted list of timestamps it was delivered at.
+
+    This is what makes per-leaf analysis possible: ``count_result_sets`` counts distinct
+    timestamps across the whole subscription and therefore cannot see one leaf going silent while
+    its neighbours keep streaming.
+    """
+    return {leaf: [timestamp for timestamp, _ in entries]
+            for leaf, entries in build_leaf_value_timeline(notifications, include_deletes=False).items()}
 
 
 def timeline_end_ns(timeline):
@@ -1018,7 +1036,7 @@ def _format_continuity_summary(timeline, heartbeat_sec, max_gap_sec, silent_afte
 
 
 def change_port_description_and_validate_gnmi_updates(engines, port_description, target_ip, mode='', username='',
-                                                      password=''):
+                                                      password='', timeout_sec=4):
     selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).returned_value
     selected_port.interface.set(NvosConst.DESCRIPTION, port_description, apply=True).verify_result()
     selected_port.update_output_dictionary()
@@ -1030,7 +1048,8 @@ def change_port_description_and_validate_gnmi_updates(engines, port_description,
     logger.info(f"sleep {GnmiConsts.SLEEP_TIME_FOR_UPDATE} sec until we start validate the gnmi stream")
     time.sleep(GnmiConsts.SLEEP_TIME_FOR_UPDATE)
     gnmi_stream_updates = run_gnmi_client_and_parse_output(engines, devices, xpath, target_ip, mode=mode,
-                                                           username=username, password=password)
+                                                           username=username, password=password,
+                                                           timeout_sec=timeout_sec)
     assert port_description in list(
         gnmi_stream_updates.values()), "we expect to see the new port description in the gnmi-client output but we didn't.\n" \
                                        f"port description: {port_description}\n" \

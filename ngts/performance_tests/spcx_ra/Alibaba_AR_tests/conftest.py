@@ -14,7 +14,8 @@ import os
 from ngts.constants.constants import BugHandlerConst, CliType, InfraConst
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration_guarded, restore_session_basic_configuration,
-    save_session_base_configuration, skip_test_on_unsupported_os)
+    save_session_base_configuration, skip_test_on_unsupported_os,
+    skip_dvs_leaf_scenario_on_active_bug, get_ar_congestion_thresholds)
 from ngts.constants.performance_constants import PerfConsts, SPCXRAConsts, MongoDbConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name, add_test_mongo_metadata
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
@@ -69,12 +70,10 @@ def get_conf_args(is_ipv6, chip_type):
     """
     conf_args = {
         "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
-        "congestion_thresh_lo": PerfConsts.LOW_AR_THRESHOLD_SPC6 if chip_type == "SPC6" else PerfConsts.LOW_AR_THRESHOLD,
-        "congestion_thresh_med": (PerfConsts.MED_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                  else PerfConsts.MED_AR_THRESHOLD),
-        "congestion_thresh_hi": (PerfConsts.HIGH_AR_THRESHOLD_SPC6 if chip_type == "SPC6"
-                                 else PerfConsts.HIGH_AR_THRESHOLD),
+        **get_ar_congestion_thresholds(chip_type),
         PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
+        # Pass thresholds 4-7 here to run SPC6 extended grading.
+        **PerfConsts.get_ar_extended_grading_conf_args(chip_type),
         "is_ipv6": is_ipv6,
         "host": PerfConsts.RIGHT_TG_ALIAS,
         "spine": PerfConsts.LEFT_TG_ALIAS,
@@ -141,6 +140,8 @@ def alibaba_scenarios_fixture(request, players, chip_type, scenario_configuratio
     """
     if scenario_configuration is None:
         raise ValueError("scenario_configuration must be provided")
+    if not scenario_configuration.two_sided_ar:
+        skip_dvs_leaf_scenario_on_active_bug(players['dut']['cli'], chip_type)
     is_ipv6 = basic_setup_configuration
     conf_args = get_conf_args(is_ipv6, chip_type)
     try:

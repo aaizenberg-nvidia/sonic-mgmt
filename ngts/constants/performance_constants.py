@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from ngts.constants.constants import NvosCliTypes, DVSCliTypes, BugHandlerConst
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
+from ngts.helpers.performance.performance_recovery import get_performance_session_state
 
 logger = logging.getLogger()
 
@@ -148,7 +149,25 @@ class PerfConsts:
     MED_AR_THRESHOLD = 800
     MED_AR_THRESHOLD_SPC6 = 800
     HIGH_AR_THRESHOLD = 2000
+    # SPC4 AR does not recover from repeated link toggles with hi=2000: TC occupancy stays
+    # above it and TX is stuck at ~88% (test_ar_perf_link_flap[port_repeated_toggle]).
+    HIGH_AR_THRESHOLD_SPC4 = 1200
     HIGH_AR_THRESHOLD_SPC6 = 1200
+    # Chip types not listed fall back to HIGH_AR_THRESHOLD (see get_high_ar_threshold).
+    HIGH_AR_THRESHOLD_BY_CHIP = {
+        "SPC4": HIGH_AR_THRESHOLD_SPC4,
+        "SPC6": HIGH_AR_THRESHOLD_SPC6
+    }
+    # AR extended grading adds congestion thresholds 4-7 (port grades up to 7) on top of
+    # lo/med/hi. SPC6 is the first generation to support it - add newer generations here
+    # as they arrive (see get_ar_extended_grading_conf_args).
+    AR_EXTENDED_GRADING_CHIP_TYPES = ("SPC6",)
+    AR_EXTENDED_THRESHOLD_COUNT = 4
+    # Extended-grading profile (7 grades): 200, 383, 567, 750, 933, 1117, 1300.
+    LOW_AR_THRESHOLD_EXTENDED_SPC6 = 200
+    MED_AR_THRESHOLD_EXTENDED_SPC6 = 383
+    HIGH_AR_THRESHOLD_EXTENDED_SPC6 = 567
+    AR_EXTENDED_THRESHOLDS_SPC6 = (750, 933, 1117, 1300)
     SDK_GENERATION_SECONDS_THRESHOLD = 30
     PERF_COUNTERS_ALLOWED_DEVIATION = 2.5
     DEFAULT_FAIRNESS_THRESHOLD = 0.05
@@ -400,6 +419,65 @@ class PerfConsts:
     TIMEOUT_FOR_INSTALL_MODE = 120
     IMAGE_SETTLING_TIME = 30
     MAX_CELLS_RANGE_FOR_BINARY_SEARCH = 100
+
+    @staticmethod
+    def get_high_ar_threshold(chip_type):
+        """Return the legacy AR high-congestion threshold (``congestion_thresh_hi``) for a chip type.
+
+        Args:
+            chip_type: ASIC generation of the DUT (e.g. "SPC4", "SPC6").
+
+        Returns:
+            The threshold in cells.
+        """
+        return PerfConsts.HIGH_AR_THRESHOLD_BY_CHIP.get(chip_type, PerfConsts.HIGH_AR_THRESHOLD)
+
+    @staticmethod
+    def get_ar_extended_grading_conf_args(chip_type, extended_thresholds=None):
+        """Build the AR extended-grading entries of a spcx_ra/AR ``conf_args`` dict.
+
+        Extended grading adds congestion thresholds 4-7 on top of lo/med/hi, giving port
+        grades up to 7. It exists only on the chip types listed in
+        ``AR_EXTENDED_GRADING_CHIP_TYPES``, so it is left off on older generations even
+        when thresholds are supplied - the DUT then keeps the legacy lo/med/hi grading.
+
+        Also gated on the ``--ar_extended_thresholds`` pytest flag (mirrored on
+        ``get_performance_session_state().ar_extended_thresholds``): the legacy 3-grade
+        lo/med/hi thresholds are the default, and extended thresholds are only honored
+        when the flag is passed, regardless of what the caller supplies.
+
+        Args:
+            chip_type: ASIC generation of the DUT (e.g. "SPC4", "SPC6").
+            extended_thresholds: Ordered thresholds 4-7 in cells. Passing None (the
+                default) disables extended grading, which keeps the rendered DUT config
+                identical to the legacy one.
+
+        Returns:
+            The ``conf_args`` entries to merge in: always ``extended_grading``, plus
+            ``congestion_thresh_extended_4``..``_7`` when extended grading is on.
+
+        Raises:
+            ValueError: if ``extended_thresholds`` does not hold exactly four values.
+        """
+        if not get_performance_session_state().ar_extended_thresholds:
+            extended_thresholds = None
+        if extended_thresholds is None:
+            return {"extended_grading": False}
+        extended_thresholds = list(extended_thresholds)
+        if len(extended_thresholds) != PerfConsts.AR_EXTENDED_THRESHOLD_COUNT:
+            raise ValueError(f"extended_thresholds must hold exactly "
+                             f"{PerfConsts.AR_EXTENDED_THRESHOLD_COUNT} values (thresholds 4-7), "
+                             f"got {extended_thresholds}")
+        if chip_type not in PerfConsts.AR_EXTENDED_GRADING_CHIP_TYPES:
+            logger.info(f"AR extended grading is not supported on {chip_type} "
+                        f"(supported: {PerfConsts.AR_EXTENDED_GRADING_CHIP_TYPES}) - "
+                        f"keeping legacy lo/med/hi grading")
+            return {"extended_grading": False}
+        return {
+            "extended_grading": True,
+            **{f"congestion_thresh_extended_{index}": threshold
+               for index, threshold in enumerate(extended_thresholds, start=4)},
+        }
 
 
 @dataclass
@@ -776,6 +854,7 @@ class MongoDbConsts:
     DUT_SYSTEM_INFORMATION = "dutSystemInformation"
     MARS_SESSION_ID = "marsSessionId"
     SETUP_NAME = "setupName"
+    OS_VERSION = "osVersion"
     TEST_WORKLOAD = "testWorkload"
     TEST_TRAFFIC_TYPE = "testTrafficType"
     INGRESS_PORT_SEQUENCE = "ingressPortSequence"

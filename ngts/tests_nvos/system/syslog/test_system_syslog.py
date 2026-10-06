@@ -8,6 +8,7 @@ from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tools.test_utils.nvos_config_utils import wait_for_rsyslog_reconfiguration
 import string
 import time
 import re
@@ -1571,15 +1572,6 @@ def test_syslog_welf_format_without_firewall_name(random_api):
             system.syslog.unset(apply=True)
 
 
-def _wait_for_rsyslog_reconfiguration(dut_engine, timeout=10):
-    """Wait until hostcfgd finishes restarting rsyslog after a config apply."""
-    for _ in range(timeout * 2):
-        status = dut_engine.run_cmd('systemctl is-active rsyslog-config.service', validate=False)
-        if status.strip() not in ('active', 'activating'):
-            return
-        time.sleep(0.5)
-
-
 def verify_welf_format(line_to_check, firewall_name=".*", expect_welf_format=True):
     welf_format_regex = TestToolkit.devices.dut.welf_format_regex.format(firewall_name)
     result = re.findall(welf_format_regex, line_to_check)
@@ -1591,7 +1583,7 @@ def verify_welf_format(line_to_check, firewall_name=".*", expect_welf_format=Tru
 
 
 def send_random_msg_and_validate_format(remote_server_ip, remote_server_engine, expect_welf_format, firewall_name=".*"):
-    _wait_for_rsyslog_reconfiguration(TestToolkit.engines.dut)
+    wait_for_rsyslog_reconfiguration(TestToolkit.engines.dut)
     random_msg = RandomizationTool.get_random_string(30, ascii_letters=string.ascii_letters + string.digits)
     output = send_msg_to_server(random_msg, remote_server_ip, remote_server_engine, verify_msg_received=True)
     verify_welf_format(output, expect_welf_format=expect_welf_format, firewall_name=firewall_name)

@@ -179,11 +179,11 @@ vms_1:
     VM0239:
       ansible_host: 10.220.76.71
     VM0240:
-      ansible_host: 10.220.160.1
+      ansible_host: 10.220.163.32
     VM0241:
-      ansible_host: 10.220.160.2
+      ansible_host: 10.220.161.181
     VM0242:
-      ansible_host: 10.220.160.3
+      ansible_host: 10.220.162.190
     VM0243:
       ansible_host: 10.220.160.4
     VM0244:

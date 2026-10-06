@@ -1,5 +1,5 @@
 """
-Plane-port CLI / NVUE configuration tests (test plan section 5.1 - section 5.4).
+Plane-port CLI / NVUE configuration tests (test plan section 5.1 - section 5.5).
 
 These tests drive the new NVUE knob `nv set system plane-port state ...`
 and validate the user-facing surface across NVUE, gNMI, and OTEL.
@@ -9,6 +9,7 @@ Covered:
 - 5.2 test_planeport_state_enable_disable
 - 5.3 test_planeport_type_leaf_and_api_parity
 - 5.4 test_aport_counters_unchanged_with_planeport_enabled
+- 5.5 test_extended_counters_exposed_via_apis
 """
 
 import logging
@@ -25,15 +26,18 @@ from ngts.tests_nvos.constants import MINUTE
 from ngts.tools.test_utils import allure_utils as allure
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
+from ngts.tests_nvos.general.telemetry.ib import otel_helpers as ibo
 from ngts.tests_nvos.general.telemetry.ib import umf_churn_helpers as umf_churn
 from ngts.tests_nvos.general.telemetry.ib.constants import (
     ALL_APIS,
     API_GNMIC,
     API_NVUE_CLI,
-    EXTENDED_COUNTER_FIELDS,
+    EXPECTED_PLANE_PORT_DB_FIELDS,
+    EXTENDED_COUNTERS,
     GNMI_PACKET_OCTET_LEAVES,
     GnmiYangPaths,
     IfaceType,
+    LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD,
     NVBUG_6152697,
     PlanePortState,
     PLANE_PORT_TOGGLE_CYCLES,
@@ -104,6 +108,7 @@ def _select_link_up_aport(devices, setup_topology) -> Port:
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
@@ -168,10 +173,12 @@ def _disable_and_assert_hidden(api: str, engines, gnmi_client) -> None:
 
 @pytest.mark.requires_hfnm
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(8 * MINUTE, func_only=True)
+# Twelve listings; over OTEL each one is a fresh collection window.
+@pytest.mark.timeout(16 * MINUTE, func_only=True)
 @pytest.mark.parametrize("api", ALL_APIS)
 def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_topology, start_sm, api):
     """
@@ -228,7 +235,10 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
             assert payload, f"nv show interface {first_plane.name} returned empty payload"
             ibh.attach_dict(f"nvue plane-port {first_plane.name}", payload)
         else:
-            ibh.pull_otel_metric(first_plane.name, leaf="state/type")
+            payload = ibh.otel_interface_metrics(
+                ibo.active_surface().snapshot("interface-types"), first_plane.name)
+            assert payload, f"OTEL exported no metric for plane-port {first_plane.name}"
+            ibh.attach_dict(f"otel plane-port {first_plane.name}", payload)
 
     with allure.step(f"Disable plane-port and verify hidden via {api}"):
         _disable_and_assert_hidden(api, engines, gnmi_client)
@@ -298,15 +308,18 @@ def test_planeport_state_enable_disable(engines, devices, gnmi_client, setup_top
 
 @pytest.mark.requires_hfnm
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-def test_planeport_type_leaf_and_api_parity(engines, devices, gnmi_client, setup_topology, start_sm):
+def test_planeport_type_leaf_and_api_parity(engines, devices, gnmi_client, setup_topology, start_sm,
+                                            ib_otel):
     """
     With the knob enabled, the per-surface type-leaf mapping must hold:
 
       NVUE / OpenAPI top-level `type`: ib (Aport), ibpp (plane-port)
       gNMI state/type leaf           : infiniband (Aport), infiniband-plane-port (plane-port)
+      OTEL nvswitch_interface_type   : the gNMI spelling, as its `type` label
     """
     ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
 
@@ -354,11 +367,25 @@ def test_planeport_type_leaf_and_api_parity(engines, devices, gnmi_client, setup
             f"available keys (first 30): {sorted(plane_subtree.keys())[:30]!r}"
         )
 
-    with allure.step("OTEL: confirm placeholder path skips cleanly"):
-        try:
-            ibh.pull_otel_metric(aport.name, leaf="type")
-        except pytest.skip.Exception:
-            logger.info("OTEL skip is the expected outcome until OTEL is exposed")
+    with allure.step("OTEL: verify the type label and counters for Aport and plane"):
+        snap = ib_otel.snapshot("type-leaf")
+        otel_types = ibh.otel_interface_types(snap)
+        counter_metrics = {LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD[f] for f in EXPECTED_PLANE_PORT_DB_FIELDS}
+        for port, expected, gnmi_type in (
+            (aport, IfaceType.OTEL_APORT, aport_subtree.get("type", "").strip()),
+            (plane, IfaceType.OTEL_PLANE, plane_subtree.get("type", "").strip()),
+        ):
+            metrics = ibh.otel_interface_metrics(snap, port.name)
+            ibh.attach_dict(f"otel {port.name}", metrics)
+            assert otel_types.get(port.name) == expected, (
+                f"OTEL type for {port.name} should be {expected!r}; got {otel_types.get(port.name)!r}"
+            )
+            assert otel_types.get(port.name) == gnmi_type, (
+                f"OTEL type {otel_types.get(port.name)!r} of {port.name} differs from the gNMI "
+                f"state/type {gnmi_type!r}"
+            )
+            missing = sorted(counter_metrics - set(metrics))
+            assert not missing, f"OTEL exports no {missing} for {port.name}"
 
 
 # ---------------------------------------------------------------------------
@@ -379,22 +406,43 @@ def _counter_keys(payload: Dict[str, str]) -> List[str]:
     return sorted(payload.keys())
 
 
+def _assert_counters_monotonic(baseline: Dict, after: Dict, aport_name: str, label: str) -> None:
+    for field in sorted(baseline):
+        if field not in after:
+            continue
+        try:
+            base_val = ibh.parse_counter_value(baseline[field])
+            after_val = ibh.parse_counter_value(after[field])
+        except (AssertionError, ValueError):
+            logger.debug("Skipping non-numeric counter %s (base=%r after=%r)",
+                         field, baseline.get(field), after.get(field))
+            continue
+        assert after_val >= base_val, (
+            f"{label} counter {field!r} on Aport {aport_name} regressed after enabling "
+            f"plane-port knob: baseline={base_val}, after={after_val}"
+        )
+
+
 @pytest.mark.requires_hfnm
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(8 * MINUTE, func_only=True)
-def test_aport_counters_unchanged_with_planeport_enabled(engines, devices, gnmi_client, setup_topology, start_sm):
+@pytest.mark.timeout(10 * MINUTE, func_only=True)
+def test_aport_counters_unchanged_with_planeport_enabled(engines, devices, gnmi_client, setup_topology, start_sm,
+                                                         ib_otel):
     """
     Enabling the plane-port knob must NOT change the existing Aport counter
-    schema or the live values that users were already consuming. We:
+    schema or the live values that users were already consuming, over gNMI or OTEL. We:
       1) baseline the Aport counter set with the knob disabled,
       2) enable the knob,
-      3) confirm the same counter keys are present,
-      4) confirm the counter values are non-decreasing over time (no reset).
+      3) confirm the same counter keys (OTEL: metrics) are present,
+      4) confirm the counter values are non-decreasing over time (no reset),
+      5) confirm the extended counters are exposed alongside them.
     """
     aport = _select_link_up_aport(devices, setup_topology)
+    counter_metrics = set(LOCAL_PORT_OTEL_METRIC_BY_DB_FIELD.values())
 
     with allure.step("Ensure knob starts disabled (baseline)"):
         ibh.unset_plane_port_state(engines, apply=True)
@@ -404,6 +452,13 @@ def test_aport_counters_unchanged_with_planeport_enabled(engines, devices, gnmi_
         baseline_keys = _counter_keys(baseline)
         ibh.attach_dict(f"baseline counters {aport.name}", baseline)
         assert baseline_keys, f"Aport {aport.name} returned no counter leaves at baseline"
+        otel_baseline = {
+            metric: value for metric, value in ibh.otel_interface_metrics(
+                ib_otel.snapshot("aport-baseline"), aport.name).items()
+            if metric in counter_metrics
+        }
+        ibh.attach_dict(f"baseline OTEL counters {aport.name}", otel_baseline)
+        assert otel_baseline, f"OTEL exported no counter metric for Aport {aport.name} at baseline"
 
     with allure.step("Enable plane-port knob"):
         ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
@@ -413,31 +468,69 @@ def test_aport_counters_unchanged_with_planeport_enabled(engines, devices, gnmi_
         after = _read_aport_counter_set(gnmi_client, aport.name)
         after_keys = _counter_keys(after)
         ibh.attach_dict(f"after-enable counters {aport.name}", after)
+        otel_after = ibh.otel_interface_metrics(ib_otel.snapshot("aport-after-enable"), aport.name)
+        ibh.attach_dict(f"after-enable OTEL metrics {aport.name}", otel_after)
 
     with allure.step("Counter key set must be unchanged"):
         missing = set(baseline_keys) - set(after_keys)
         assert not missing, (
             f"Counter leaves disappeared after enabling plane-port knob: {sorted(missing)!r}"
         )
+        otel_missing = set(otel_baseline) - set(otel_after)
+        assert not otel_missing, (
+            f"OTEL counter metrics of {aport.name} disappeared after enabling plane-port knob: "
+            f"{sorted(otel_missing)!r}"
+        )
 
     with allure.step("Counter values must be monotonic (no reset due to enable)"):
-        for field in baseline_keys:
-            if field not in after:
-                continue
-            try:
-                base_val = ibh.parse_counter_value(baseline[field])
-                after_val = ibh.parse_counter_value(after[field])
-            except (AssertionError, ValueError):
-                logger.debug("Skipping non-numeric counter %s (base=%r after=%r)",
-                             field, baseline.get(field), after.get(field))
-                continue
-            assert after_val >= base_val, (
-                f"Counter {field!r} on Aport {aport.name} regressed after enabling plane-port "
-                f"knob: baseline={base_val}, after={after_val}"
-            )
+        _assert_counters_monotonic(baseline, after, aport.name, "gNMI")
+        _assert_counters_monotonic(otel_baseline, otel_after, aport.name, "OTEL")
 
     with allure.step("Extended counter fields are exposed alongside the legacy set"):
-        # Soft check: extended counters may be present or absent depending on
-        # the build, but they must not displace the baseline set.
-        extra_extended = [f for f in EXTENDED_COUNTER_FIELDS if f in after]
-        ibh.attach_dict("extended counters now visible", {"present": extra_extended})
+        gnmi_missing = ibh.gnmi_missing_extended_counters(gnmi_client, aport.name)
+        otel_missing = sorted({counter.otel_metric for counter in EXTENDED_COUNTERS} - set(otel_after))
+        ibh.attach_dict(f"extended counters missing on {aport.name}",
+                        {"gnmi": gnmi_missing, "otel": otel_missing})
+        assert not gnmi_missing, (
+            f"Aport {aport.name} exposes no extended counter {gnmi_missing!r} over gNMI with the "
+            "plane-port knob enabled"
+        )
+        assert not otel_missing, (
+            f"Aport {aport.name} exports no extended counter metric {otel_missing!r} over OTEL with "
+            "the plane-port knob enabled"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5.5 test_extended_counters_exposed_via_apis
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires_hfnm
+@pytest.mark.gnmi
+@pytest.mark.otel
+@pytest.mark.ib
+@pytest.mark.interfaces
+@pytest.mark.multiplanar
+@pytest.mark.timeout(10 * MINUTE, func_only=True)
+@pytest.mark.parametrize("api", ALL_APIS)
+def test_extended_counters_exposed_via_apis(engines, devices, gnmi_client, setup_topology, start_sm, api):
+    """
+    With the knob enabled, the extended counters (congestion xmit-wait, BER, PLR, PFRN) must be
+    exposed over `api` on an Aport and, where the plane carries them, on one of its plane-ports,
+    holding the values of the port's COUNTERS_DB row.
+    """
+    with allure.step("Enable plane-port knob"):
+        ibh.set_plane_port_state(engines, PlanePortState.ENABLED, apply=True)
+        time.sleep(PLANE_PORT_TOGGLE_SETTLE_SEC)
+
+    aport = _select_link_up_aport(devices, setup_topology)
+    plane = setup_topology.planes_for(aport.name)[0]
+
+    for port, is_plane in ((aport, False), (plane, True)):
+        with allure.step(f"{api}: extended counters of {port.name} match its COUNTERS_DB row"):
+            problems = ibh.extended_counter_db_problems(engines, gnmi_client, api, port, is_plane)
+            details = "\n".join(problems)
+            assert not problems, (
+                f"{api} extended counters of {port.name} disagree with COUNTERS_DB:\n{details}"
+            )

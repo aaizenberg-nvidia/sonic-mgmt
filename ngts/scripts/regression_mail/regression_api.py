@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from ngts.scripts.regression_mail.models import DashboardAnalysis, DashboardSnapshot
 from ngts.scripts.regression_mail.normalization import normalize_text, normalize_version
+
+
+_COLLECTION_VERSION = re.compile(r"^(\d{6}_RC\.\d+)")
 
 
 class RegressionReportClient:
@@ -27,42 +31,89 @@ class RegressionReportClient:
 
     def fetch(self, versions: Union[str, Sequence[str]]) -> DashboardSnapshot:
         normalized_versions = _normalized_versions(versions)
-        metric_version = "SONiC." + normalized_versions[0]
-        records: List[Mapping[str, Any]] = []
-        seen = set()
+        overlay_records: List[Mapping[str, Any]] = []
+        seen_overlay = set()
         for version in normalized_versions:
-            overlay = self._get_json(
+            payload = self._get_json(
                 "/api/failure-analysis",
                 {"version": "SONiC." + version},
             )
-            for record in _require_record_list(overlay, "failure-analysis"):
-                if normalize_version(record.get("switchVersion")) != version:
-                    continue
+            for record in _require_record_list(payload, "failure-analysis"):
                 identity = (
+                    normalize_text(record.get("recordKey")),
+                    normalize_text(record.get("updatedAt")),
                     normalize_text(record.get("marsSessionId")),
                     normalize_text(record.get("testName")),
-                    normalize_text(record.get("analysis")),
-                    normalize_text(record.get("verdict")),
-                    normalize_text(record.get("rmUrl")),
-                    normalize_text(record.get("updatedAt")),
                 )
-                if identity not in seen:
-                    seen.add(identity)
-                    records.append(record)
-        summary = self._get_json(
-            "/api/snapshot-summary",
-            {"version": metric_version},
-        )
-        coverage = self._get_json(
-            "/api/coverage",
-            {"version": metric_version},
-        )
-        analyses = self._analyses_from_records(records)
+                if identity not in seen_overlay:
+                    seen_overlay.add(identity)
+                    overlay_records.append(record)
+        overlay = {"records": overlay_records}
+        wanted = set(normalized_versions)
+        direct_records = _latest_records_by_key([
+            record
+            for record in overlay_records
+            if normalize_version(record.get("switchVersion")) in wanted and
+            normalize_text(record.get("marsSessionId")) and
+            normalize_text(record.get("testName"))
+        ])
+        direct_analyses = self._analyses_from_records(direct_records)
+        try:
+            collection_records = self._collection_records(normalized_versions)
+        except Exception:
+            if not direct_analyses:
+                raise
+            collection_records = []
+        hydrated = self._join_analyses(collection_records, overlay)
+        analyses = _merge_analyses(hydrated, direct_analyses)
+        setup_platforms, setup_testbeds = _setup_maps(collection_records)
         return DashboardSnapshot(
-            coverage=_extract_coverage(coverage),
-            pass_rate=_extract_pass_rate(summary),
             analyses=analyses,
+            setup_platforms=setup_platforms,
+            setup_testbeds=setup_testbeds,
         )
+
+    def _collection_records(
+        self,
+        versions: Sequence[str],
+    ) -> List[Mapping[str, Any]]:
+        wanted = set(versions)
+        collections = _require_record_list(
+            self._get_json("/api/collections"),
+            "collections",
+        )
+        records_by_id: Dict[Tuple[str, str], Mapping[str, Any]] = {}
+        for collection in collections:
+            collection_versions = {
+                normalize_version(version)
+                for version in _collection_versions(collection)
+            }
+            if not wanted.intersection(collection_versions):
+                continue
+            name = normalize_text(collection.get("name"))
+            if not name:
+                continue
+            payload = self._get_json(
+                "/api/collections/{}".format(quote(name, safe="")),
+                {"rows": "1"},
+            )
+            for record in _require_record_list(payload, "collection"):
+                if normalize_version(record.get("version")) not in wanted:
+                    continue
+                record_id = normalize_text(record.get("id"))
+                if record_id:
+                    identity = (
+                        normalize_version(record.get("version")),
+                        record_id,
+                    )
+                    current = records_by_id.get(identity)
+                    if current is not None and current != record:
+                        raise ValueError(
+                            "dashboard collections contain conflicting record {!r} "
+                            "for version {!r}".format(record_id, identity[0])
+                        )
+                    records_by_id[identity] = record
+        return list(records_by_id.values())
 
     def _get_json(
         self,
@@ -93,7 +144,7 @@ class RegressionReportClient:
             analyses.append(
                 DashboardAnalysis(
                     session_id=normalize_text(record.get("marsSessionId")),
-                    key_id="",
+                    key_id=_dashboard_key_id(record),
                     test_name=normalize_text(record.get("testName")),
                     analysis=normalize_text(record.get("analysis")),
                     redmine_url=normalize_text(record.get("rmUrl")),
@@ -112,11 +163,11 @@ class RegressionReportClient:
         for item in overlays:
             key = normalize_text(item.get("recordKey"))
             if key:
-                if key in overlay_by_key:
-                    raise ValueError(
-                        "failure-analysis contains duplicate recordKey {!r}".format(key)
-                    )
-                overlay_by_key[key] = item
+                current = overlay_by_key.get(key)
+                if current is None or normalize_text(item.get("updatedAt")) > normalize_text(
+                    current.get("updatedAt")
+                ):
+                    overlay_by_key[key] = item
 
         analyses: List[DashboardAnalysis] = []
         for record in records:
@@ -141,6 +192,13 @@ class RegressionReportClient:
                         if engineer
                         else ""
                     ),
+                    verdict=normalize_text(record.get("verdict")),
+                    updated_at=(
+                        normalize_text(engineer.get("updatedAt"))
+                        if engineer
+                        else ""
+                    ),
+                    switch_version=normalize_version(record.get("version")),
                 )
             )
         return analyses
@@ -158,11 +216,75 @@ def _normalized_versions(versions: Union[str, Sequence[str]]) -> List[str]:
     return result
 
 
+def _collection_versions(collection: Mapping[str, Any]) -> Iterable[str]:
+    filters = collection.get("filters")
+    if isinstance(filters, Mapping):
+        versions = filters.get("versions")
+        if isinstance(versions, list):
+            yield from (normalize_text(version) for version in versions)
+            return
+    name = normalize_text(collection.get("name"))
+    match = _COLLECTION_VERSION.match(name)
+    if match:
+        yield match.group(1)
+
+
 def _require_record_list(payload: Any, source: str) -> List[Mapping[str, Any]]:
     records = _find_record_list(payload)
     if records is None:
         raise ValueError("{} response has no recognized record list".format(source))
     return records
+
+
+def _latest_records_by_key(
+    records: Sequence[Mapping[str, Any]],
+) -> List[Mapping[str, Any]]:
+    """Keep the latest dashboard state for each stable failure record."""
+
+    selected: Dict[Tuple[str, str], Mapping[str, Any]] = {}
+    unkeyed: List[Mapping[str, Any]] = []
+    for record in records:
+        key = normalize_text(record.get("recordKey"))
+        if not key:
+            unkeyed.append(record)
+            continue
+        identity = (
+            normalize_text(record.get("marsSessionId")),
+            key,
+        )
+        current = selected.get(identity)
+        if current is None or normalize_text(record.get("updatedAt")) > normalize_text(
+            current.get("updatedAt")
+        ):
+            selected[identity] = record
+    return unkeyed + list(selected.values())
+
+
+def _dashboard_key_id(record: Mapping[str, Any]) -> str:
+    return normalize_text(record.get("keyId"))
+
+
+def _analysis_identity(analysis: DashboardAnalysis) -> Tuple[str, str, str, str]:
+    return (
+        normalize_version(analysis.switch_version),
+        normalize_text(analysis.session_id),
+        normalize_text(analysis.key_id),
+        normalize_text(analysis.test_name),
+    )
+
+
+def _merge_analyses(
+    primary: Sequence[DashboardAnalysis],
+    fallback: Sequence[DashboardAnalysis],
+) -> List[DashboardAnalysis]:
+    result = list(primary)
+    identities = {_analysis_identity(analysis) for analysis in result}
+    for analysis in fallback:
+        identity = _analysis_identity(analysis)
+        if identity not in identities:
+            identities.add(identity)
+            result.append(analysis)
+    return result
 
 
 def _find_record_list(payload: Any) -> Optional[List[Mapping[str, Any]]]:
@@ -171,7 +293,10 @@ def _find_record_list(payload: Any) -> Optional[List[Mapping[str, Any]]]:
             raise ValueError("dashboard record list contains a non-object item")
         return [item for item in payload if isinstance(item, Mapping)]
     if isinstance(payload, Mapping):
-        for key in ("records", "rows", "items", "data", "failures", "results"):
+        for key in (
+            "records", "rows", "items", "data", "failures", "results",
+            "collections",
+        ):
             candidate = payload.get(key)
             if isinstance(candidate, list):
                 if any(not isinstance(item, Mapping) for item in candidate):

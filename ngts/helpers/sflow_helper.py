@@ -653,24 +653,25 @@ def verify_sflow_sample_polling_interval(engines, topology_obj, collector, polli
     count = 0
     random_port = get_random_port(topology_obj)
     sflowtool_pid = start_sflowtool_process(engines, collector)
-    if polling_interval == 0:
-        logger.info(f"Collect {SflowConsts.POLLING_INTF_0_WAIT_TIME} seconds when polling interval is set to 0")
-        time.sleep(SflowConsts.POLLING_INTF_0_WAIT_TIME)
-        result = hb_engine.run_cmd(
-            f"grep -ia '\"{random_port}\"' {SflowConsts.COLLECTOR[collector]['sample_file']} | wc -l")
-        assert int(result) == 0, f"Sflow samples are received at polling interval 0"
+    try:
+        if polling_interval == 0:
+            logger.info(f"Collect {SflowConsts.POLLING_INTF_0_WAIT_TIME} seconds when polling interval is set to 0")
+            time.sleep(SflowConsts.POLLING_INTF_0_WAIT_TIME)
+            result = hb_engine.run_cmd(
+                f"grep -ia '\"{random_port}\"' {SflowConsts.COLLECTOR[collector]['sample_file']} | wc -l")
+            assert int(result) == 0, f"Sflow samples are received at polling interval 0"
+            return
+        # polling_interval * 5 is for reboot test, polling_interval * 4 is enough for normal test case
+        while count < polling_interval * 5:
+            result = hb_engine.run_cmd(
+                f"grep -ia '\"{random_port}\"' {SflowConsts.COLLECTOR[collector]['sample_file']} | wc -l")
+            # 3 captured samples are enough for calculate time stamp
+            if int(result) >= 3:
+                break
+            time.sleep(1)
+            count += 1
+    finally:
         kill_sflowtool_process(engines, sflowtool_pid)
-        return
-    # polling_interval * 5 is for reboot test, polling_interval * 4 is enough for normal test case
-    while count < polling_interval * 5:
-        result = hb_engine.run_cmd(
-            f"grep -ia '\"{random_port}\"' {SflowConsts.COLLECTOR[collector]['sample_file']} | wc -l")
-        # 3 captured samples are enough for calculate time stamp
-        if int(result) >= 3:
-            break
-        time.sleep(1)
-        count += 1
-    kill_sflowtool_process(engines, sflowtool_pid)
     format_json(engines, SflowConsts.COLLECTOR[collector]['sample_file'])
     copy_sample_file_to_ngts_docker(engines, SflowConsts.COLLECTOR[collector]['sample_file'])
     time_stamp_list, _ = analyze_sample(SflowConsts.COLLECTOR[collector]['sample_file'], random_port)

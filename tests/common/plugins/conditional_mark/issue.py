@@ -138,7 +138,7 @@ class RedmineIssueChecker(IssueCheckerBase):
 def check_if_current_ver_include_bug_fix(issue_url, basic_facts):
     start_time = time.perf_counter()
     current_ver_include_bug_fix = False
-    issue_id = int(re.match(r"https:\/\/redmine\.mellanox\.com\/issues\/(\d+)", issue_url)[1])
+    issue_id = int(re.match(r"https:\/\/redmine\.(mellanox|nvidia)\.com\/issues\/(\d+)", issue_url)[2])
 
     active_issues_fixed_version_dict = get_conditions_redmine_active_issues_fixed_version()
     fixed_in_version = active_issues_fixed_version_dict.get(issue_id, '')

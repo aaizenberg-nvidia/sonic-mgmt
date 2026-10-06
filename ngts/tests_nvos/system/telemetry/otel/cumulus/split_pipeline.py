@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import List, Tuple
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.nvos_constants.constants_nvos import TelemetryConsts
+from ngts.nvos_constants.constants_nvos import ConfState, TelemetryConsts
+from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
     ensure_asic_monitor_running,
@@ -47,7 +50,9 @@ _STATS_GROUP = CumulusOtelConst.SPLIT_PIPELINE_STATS_GROUP_ID
 
 
 def _nv_apply(dut) -> None:
-    dut.run_cmd("nv config apply -y", validate=True)
+    NvueGeneralCli.apply_config(
+        dut, ask_for_confirmation=True, verify_execution=True
+    )
     time.sleep(10)
 
 
@@ -225,6 +230,77 @@ def apply_split_pipeline_test01_stats_group_nvos(
         _nv_apply(dut)
 
 
+def validate_split_pipeline_stats_group_field_unsets(
+    dut,
+    *,
+    stats_group_id: str = _STATS_GROUP,
+) -> None:
+    """Port SSIM insecure split-pipeline test02 unset/show coverage.
+
+    Each field is unset, applied, and immediately read from the applied datastore.
+    The show is intentionally retained even where NVUE renders a schema default after
+    unset; the SSIM assertion is that every unset/show pair completes successfully.
+    """
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
+        get_cumulus_version_tuple,
+    )
+
+    pairs: List[Tuple[str, str]] = [
+        ("buffer-stats/export", "state"),
+        ("buffer-stats", "sample-interval"),
+        ("control-plane-stats/export", "state"),
+        ("control-plane-stats", "sample-interval"),
+        ("histogram/export", "state"),
+        ("interface-stats/export", "state"),
+        ("interface-stats", "sample-interval"),
+        ("platform-stats/export", "state"),
+    ]
+    # get_cumulus_version_tuple is (major, minor) only; (5, 17) means the 5.17 family and later.
+    if get_cumulus_version_tuple(dut) >= (5, 17):
+        pairs.extend(
+            [
+                ("interface-stats/class/debounce", "state"),
+                ("interface-stats/class/debounce", "sample-interval"),
+            ]
+        )
+    for platform_class in (
+        "cpu",
+        "disk",
+        "memory",
+        "file-system",
+        "environment-sensor",
+    ):
+        pairs.extend(
+            [
+                (f"platform-stats/class/{platform_class}", "state"),
+                (f"platform-stats/class/{platform_class}", "sample-interval"),
+            ]
+        )
+
+    failures = []
+    system = System()
+    for path, key in pairs:
+        label = f"stats-group {stats_group_id} {path} {key}"
+        try:
+            node = BaseComponent(
+                system.telemetry,
+                path=f"/stats-group/{stats_group_id}/{path}",
+            )
+            node.unset(
+                key, apply=True, ask_for_confirmation=True, dut_engine=dut
+            ).verify_result()
+            output = node.parse_show(rev=ConfState.APPLIED, dut_engine=dut)
+            logger.info("%s after unset: %s", label, output)
+        except Exception as exc:  # noqa: BLE001 - aggregate all CLI coverage failures
+            logger.exception("nv unset/show %s failed", label)
+            failures.append(f"{label}: {exc}")
+
+    assert not failures, (
+        f"split-pipeline unset/show validations failed ({len(failures)}/{len(pairs)}):\n" +
+        "\n".join(failures)
+    )
+
+
 def prepare_split_pipeline_insecure_pre_run(
     dut,
     *,
@@ -235,8 +311,7 @@ def prepare_split_pipeline_insecure_pre_run(
         system = System()
         _enable_histogram_root(system, dut)
         enable_cumulus_lab_interface_histogram(dut, hostname)
-        dut.run_cmd("nv config apply -y", validate=True)
-        time.sleep(10)
+        _nv_apply(dut)
         restart_nvtelemetry(dut, vrf)
         restart_asic_monitor(dut, vrf)
         ensure_asic_monitor_running(dut, vrf)

@@ -206,6 +206,7 @@ def test_ima_disabled_state(random_api, engines, devices, ima_tool, remote_engin
             ImaConsts.TPM_EVENT_LOG_FILENAME, event_log_url).verify_result()
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.security
 @pytest.mark.ima
 @pytest.mark.timeout(45 * MINUTE, func_only=True)
@@ -341,6 +342,7 @@ def test_ima_enabled_measure_attest_and_tamper(random_api, engines, devices, ima
                      f'pre-reboot entries (before={disabled_count_before}, after={disabled_count_after})')
 
 
+@pytest.mark.dut_reboot
 @pytest.mark.security
 @pytest.mark.ima
 @pytest.mark.timeout(40 * MINUTE, func_only=True)

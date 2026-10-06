@@ -3,13 +3,46 @@ import logging
 import os
 import pytest
 
-from ngts.nvos_constants.constants_nvos import IssuConsts
+from ngts.nvos_constants.constants_nvos import IssuConsts, SystemConsts
+from ngts.nvos_tools.infra.IbRouterTool import IbRouterTool
 from ngts.nvos_tools.infra.NvosGitTool import NvosGitTool
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.tests_nvos.ib_router.constants import IbRouterConsts
 from ngts.tests_nvos.system.issu.test_system_issu import install_system_image_and_start_opensm
 
 logger = logging.getLogger()
+
+
+@pytest.fixture(scope='session', autouse=True)
+def ensure_ib_routing_disabled(engines, devices):
+    """Make sure ib-routing is disabled before the ISSU tests run, and restore it after.
+
+    ISSU is rejected while ib-routing is enabled, so a profile left enabled by an aborted run
+    might fail several test in this package. Each profile change reboots the switch.
+    """
+    profile_output = OutputParsingTool.parse_json_str_to_dictionary(
+        System().profile.show()).get_returned_value()
+
+    if SystemConsts.PROFILE_IB_ROUTING not in profile_output:
+        logger.info(f"System profile has no '{SystemConsts.PROFILE_IB_ROUTING}' field. Nothing to disable")
+    elif profile_output[SystemConsts.PROFILE_IB_ROUTING] == SystemConsts.PROFILE_STATE_DISABLED:
+        logger.info('ib-routing is already disabled')
+    else:
+        with allure.step('Disable the ib-routing profile before running ISSU tests'):
+            IbRouterTool.disable_ib_router_profile()
+            IbRouterTool.verify_profile_status(SystemConsts.PROFILE_STATE_DISABLED, SystemConsts.DEFAULT_NUM_SWIDS)
+
+    yield
+
+    with allure.step('Restore the ib-routing profile to its original state after running ISSU tests'):
+        if profile_output.get(SystemConsts.PROFILE_IB_ROUTING) != SystemConsts.PROFILE_STATE_ENABLED:
+            logger.info('ib-routing was already disabled, nothing to restore')
+        else:
+            number_of_swids = profile_output.get(SystemConsts.PROFILE_NUMBER_OF_SWIDS, IbRouterConsts.SWID_NUM)
+            IbRouterTool.enable_ib_router_profile(number_of_swids=number_of_swids)
+            IbRouterTool.verify_profile_status(SystemConsts.PROFILE_STATE_ENABLED, number_of_swids)
 
 
 @pytest.fixture(scope='session', autouse=True)

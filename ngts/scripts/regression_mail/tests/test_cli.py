@@ -39,8 +39,10 @@ class CliTest(unittest.TestCase):
         self.assertEqual(
             {
                 "GITHUB_API_TOKEN",
+                "GERRIT_API_KEY",
                 "INFERENCE_API_KEY",
                 "REDMINE_API_TOKEN",
+                "SVC_SONIC_VER_BOT",
                 "REGRESSION_MAIL_API_BASE_URL",
                 "REGRESSION_MAIL_CC",
                 "REGRESSION_MAIL_ENABLED",
@@ -102,6 +104,8 @@ class CliTest(unittest.TestCase):
         for setting in (
             "github_api_token: env.GITHUB_API_TOKEN",
             "redmine_api_token: env.REDMINE_API_TOKEN",
+            "gerrit_username: env.SVC_SONIC_VER_BOT",
+            "gerrit_api_key: env.GERRIT_API_KEY",
             "inference_api_key: env.INFERENCE_API_KEY",
         ):
             self.assertIn(setting, groovy)

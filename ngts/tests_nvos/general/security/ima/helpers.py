@@ -366,12 +366,12 @@ def set_ima_state(state: str, apply: bool = True, expected_apply_message: str = 
     """
     Set IMA ``state`` to the given value and (by default) apply the config.
 
-    Enabling IMA makes NVUE warn that the change requires ``nv config save`` and
-    a reboot, then request confirmation.  ``ask_for_confirmation=True`` uses the
-    common NVUE wrapper's non-interactive approval (``nv config apply
-    --assume-yes``), preventing the automated test from blocking at
-    ``Are you sure?``.  OpenAPI apply is non-interactive and safely ignores this
-    argument.
+    Any IMA state change (enable, disable, or unset) makes NVUE warn that the
+    change requires ``nv config save`` and a reboot, then request confirmation.
+    ``ask_for_confirmation=True`` uses the common NVUE wrapper's non-interactive
+    approval (``nv config apply --assume-yes``), preventing the automated test
+    from blocking at ``Are you sure?``.  OpenAPI apply is non-interactive and
+    safely ignores this argument.
 
     Persisting across a reboot additionally requires :func:`save_config`.
 
@@ -389,12 +389,12 @@ def set_ima_state(state: str, apply: bool = True, expected_apply_message: str = 
             ImaConsts.STATE,
             state,
             apply=apply and not validate_apply,
-            ask_for_confirmation=apply and not validate_apply and state == ImaConsts.ENABLED,
+            ask_for_confirmation=apply and not validate_apply,
         ).verify_result()
         if apply and validate_apply:
             output = NvueGeneralCli.apply_config(
                 TestToolkit.get_engine(),
-                ask_for_confirmation=state == ImaConsts.ENABLED,
+                ask_for_confirmation=True,
             )
             assert expected_apply_message in output, \
                 (f'expected apply message was not found:\n{expected_apply_message}\n'
@@ -463,9 +463,14 @@ def disable_ima_and_restore_default(engines, devices, topology_obj=None):
 
 
 def unset_ima_state(apply: bool = True):
-    """Revert IMA ``state`` to its default (disabled)."""
+    """Revert IMA ``state`` to its default (disabled).
+
+    Unset also triggers NVUE's IMA reboot-warning confirmation prompt, so pass
+    ``ask_for_confirmation`` whenever apply is requested (same as :func:`set_ima_state`).
+    """
     with allure.step('unset IMA state (revert to default)'):
-        System().security.ima.unset(ImaConsts.STATE, apply=apply).verify_result()
+        System().security.ima.unset(
+            ImaConsts.STATE, apply=apply, ask_for_confirmation=apply).verify_result()
 
 
 # --------------------------------------------------------------------------- #

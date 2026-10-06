@@ -158,6 +158,19 @@ def clear_conf(engine, device, config_yml, root_dir, version=""):
         raise
 
 
+def wait_for_rsyslog_reconfiguration(engine, timeout=10):
+    """
+    @summary: A config apply/save can make hostcfgd regenerate rsyslog's config, which briefly
+        restarts rsyslog.service. Wait until that settles so callers don't race a status check
+        (e.g. loganalyzer) against the restart.
+    """
+    for _ in range(int(timeout * 2)):
+        status = engine.run_cmd('systemctl is-active rsyslog-config.service', validate=False)
+        if status.strip() not in ('active', 'activating'):
+            return
+        time.sleep(0.5)
+
+
 def clear_config_using_unset(engine, device):
     try:
         with allure.step("Detach config"):
@@ -173,6 +186,7 @@ def clear_config_using_unset(engine, device):
                     allure.attach("Config diff", output)
                     with allure.step("Set base configurations"):
                         set_base_configurations(dut_engine=engine, apply=True, save_conf=True)
+                        wait_for_rsyslog_reconfiguration(engine)
 
     except BaseException as ex:
         allure.attach("Exception", str(ex))
