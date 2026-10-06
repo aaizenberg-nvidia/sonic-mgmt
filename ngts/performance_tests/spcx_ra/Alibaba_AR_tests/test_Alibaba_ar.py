@@ -11,7 +11,6 @@ from ngts.performance_tests.spcx_ra.Alibaba_AR_tests.conftest import (AlibabaSce
                                                                       get_alibaba_traffic, extract_acl_counters,
                                                                       get_conf_args)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
-from ngts.helpers.performance.performance_counter_helpers import should_validate_performance_counters
 
 logger = logging.getLogger()
 
@@ -89,8 +88,6 @@ class Test_Alibaba_scenarios_with_reset:
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
-                                      packet_size=packet_size,
-                                      run_validate_performance_counters=should_validate_performance_counters(self.cli_object),
                                       tc_occ_threshold=PerfConsts.OCC_TH_DICT,
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       skip_first_counters_iteration=skip_first_counters_iteration)

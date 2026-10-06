@@ -663,69 +663,9 @@ class PerformanceCommon:
             logging.error(f"Error running traffic: {e}")
             raise TestIssue(msg=f"Error running traffic: {type(e).__name__}: {e}") from e
 
-    def _create_sdk_dump_dirs(self):
-        """Create dump directories required by the SDK TrafficValidator.
-
-        The SDK daemon (sx_sdk) may run with systemd PrivateTmp, giving it an
-        isolated /tmp.  The daemon writes dump files into its private /tmp,
-        but the SDK test process (TrafficValidator) runs outside that namespace
-        and needs to read those files.
-
-        The solution is by finding the daemon's actual private tmp path and
-        creating symlinks from /tmp/dump_* to the physical location.  This
-        lets both the daemon and the test process access the same files.
-        If PrivateTmp is not detected, we use nsenter into the daemon's mount
-        namespace as a safe default (handles PrivateTmp regardless of whether
-        we can discover the path).
-        """
-        dump_dir_names = ["dump_with_perf_counters", "dump_without_perf_counters"]
-        try:
-            priv_tmp = self._find_private_tmp()
-            if priv_tmp:
-                for d in dump_dir_names:
-                    self.execute_cmd(f"sudo mkdir -p {priv_tmp}/{d}")
-                    self.execute_cmd(f"sudo ln -sfnT {priv_tmp}/{d} /tmp/{d}")
-                return
-        except Exception:
-            logging.warning("Symlink approach failed, falling back to nsenter + plain mkdir")
-
-        self._create_sdk_dump_dirs_via_nsenter(dump_dir_names)
-
-    def _find_private_tmp(self):
-        """Find the systemd PrivateTmp path for the SDK service.
-
-        The systemd-private-* directories under /tmp are owned by root with
-        mode 0700, so both the glob expansion and the listing must run as
-        root.  We use ``sudo bash -c '...'`` so the shell that expands the
-        glob is already privileged.
-        """
-        for service in ("sx_sdk", "switchd"):
-            try:
-                path = self.execute_cmd(
-                    f"sudo bash -c 'ls -d /tmp/systemd-private-*-{service}.service-*/tmp 2>/dev/null | head -1'"
-                ).strip()
-                if path:
-                    return path
-            except Exception:
-                continue
-        return None
-
-    def _create_sdk_dump_dirs_via_nsenter(self, dump_dir_names):
-        """Enter the SDK daemon mount namespace and create dump directories."""
-        dump_dirs = " ".join(f"/tmp/{d}" for d in dump_dir_names)
-        try:
-            self.execute_cmd(
-                f"sudo bash -c 'PID=$(pgrep -ox sx_sdk || pgrep -ox switchd) && "
-                f"nsenter -m -t $PID -- mkdir -p {dump_dirs} || "
-                f"mkdir -p {dump_dirs}'"
-            )
-        except Exception as e:
-            raise TestIssue(msg=f"Failed to create SDK dump directories: {e}") from e
-
     @retry(exceptions=TestIssue, tries=2, delay=2)
     def validate_traffic(self, json_path, samples_params_dict, dst_dut_dir="/tmp"):
         logging.info("Running traffic validator on the dut")
-        self._create_sdk_dump_dirs()
         env_variables = self.get_power_sensor_env_variables()
         for env_var_name, param_val in samples_params_dict.items():
             set_interval_cmd = f"export {env_var_name}={param_val}"

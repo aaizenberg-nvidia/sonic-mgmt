@@ -14,11 +14,7 @@ logger = logging.getLogger()
 
 class ValidationConsts:
     IGNORE_COUNTER_LIST = "ignore_counter_list"
-    DEVIATION = "deviation"
-    DEVIATION_ABOVE_THRESHOLD = "deviationAboveThreshold"
     SPEED = "speed"
-    INSTANCE = "instance"
-    DUMP_GENERATION_TIME = "dumpGenerationTime"
     VALIDATION_KEY = "validation_key"
     PORT_GROUPS = "port_groups"
     # Metadata block of TrafficValidator.json. TrafficValidator fills the DUT-side
@@ -62,7 +58,6 @@ class ValidationConsts:
         PG_BUFFER_DATAFRAME: [OCC_AVG, OCC_99, OCC_MAX, MAX_WATERMARK]
     }
     COUNTERS_SAMPLES = "Counters_samples"
-    PERF_COUNTERS_SAMPLES = "perf_counters_samples"
     SAMPLES_PARAMS = "sample_params"
     COUNTERS_DATAFRAME = "counters_dataframe"
     BW_SAMPLES = "Bandwidth_samples"
@@ -75,13 +70,6 @@ class ValidationConsts:
     TX = 'tx'
     RX = 'rx'
     PORT = "port"
-    PERFORMANCE_COUNTERS_DATAFRAME = "performanceCountersDataframe"
-    PERFORMANCE_COUNTER_NAME = "performanceCounterName"
-    PERFORMANCE_COUNTER_VALUE = "performanceCounterValue"
-    SDK_GENERATION_TIME_WITH_PERF_COUNTERS = "sdkGenerationTimeWithPerfCounters"
-    SDK_GENERATION_TIME_WITHOUT_PERF_COUNTERS = "sdkGenerationTimeWithoutPerfCounters"
-    PERFORMANCE_COUNTER_EXPECTED_VALUE = "performanceCounterExpectedValue"
-    PORT_BW = "portBandwidth"
     QUEUE = "queue"
     ACL = "acl"
     OS_PORT_NAME = "osPortName"
@@ -123,11 +111,9 @@ class PerfConsts:
         "COUNTERS_SAMPLE_DELAY": 5,
         "CLEAR_COUNTERS": "True",
         "COLLECT_TC_LATENCY": "False",
-        "COLLECT_SDK_DUMP": "False",
         DISABLE_HFT_ENV_VAR: DISABLE_HFT,
     }
     COLLECT_TC_LATENCY_ENV_VAR = "COLLECT_TC_LATENCY"
-    COLLECT_SDK_DUMP_ENV_VAR = "COLLECT_SDK_DUMP"
     SENSORS_CMD_ENV_VAR = "SENSORS_CMD"
     DEFAULT_SENSORS_CMD = r"sensors *-i2c-5-*"
     SPC6_SENSORS_CMD = "sensors"
@@ -169,8 +155,6 @@ class PerfConsts:
     HIGH_AR_THRESHOLD_EXTENDED_SPC6 = 567
     AR_EXTENDED_THRESHOLDS_SPC6 = (750, 933, 1117, 1300)
     ECMP_SIZE_MAX = 4096
-    SDK_GENERATION_SECONDS_THRESHOLD = 30
-    PERF_COUNTERS_ALLOWED_DEVIATION = 2.5
     DEFAULT_FAIRNESS_THRESHOLD = 0.05
     DEFAULT_TC_OCC_FAIRNESS_THRESHOLD = 0.05
 
@@ -845,7 +829,6 @@ class SPCXRAConsts:
 
 
 class MongoDbConsts:
-    PERFORMANCE_COUNTERS_DATA = "performanceCountersData"
     PERF_MONGO_DB_FILENAME = "perf_res.db"
     PERF_MONGO_DB_RESULTS_PATH = os.path.join(PerfConsts.REQUIRMENTS_DIR, PERF_MONGO_DB_FILENAME)
     PORT_GROUP_NAME = "portGroupName"

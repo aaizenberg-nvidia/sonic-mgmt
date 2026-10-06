@@ -103,8 +103,6 @@ def create_test_validation_entry_to_db(players, test_name):
     cli_object = players['dut']['cli']
     test_specific_values = cli_object.performance.get_test_specific_values(test_name)
     validation_json = test_specific_values.pop(MongoDbConsts.VALIDATOR_RESULTS, None)
-    performance_counters_df = test_specific_values.pop(ValidationConsts.PERFORMANCE_COUNTERS_DATAFRAME, [])
-    performance_counters_data = test_specific_values.pop(MongoDbConsts.PERFORMANCE_COUNTERS_DATA, {})
     ports_group_df = pd.DataFrame(test_specific_values.pop(MongoDbConsts.PORT_GROUP_DF, []))
     os_ports_name_mapping_df = pd.DataFrame(test_specific_values.pop(ValidationConsts.OS_PORTS_NAME_MAPPING_DATAFRAME, []))
     power_total = test_specific_values.pop(MongoDbConsts.POWER_TOTAL, [])
@@ -116,16 +114,15 @@ def create_test_validation_entry_to_db(players, test_name):
                                                                                               os_ports_name_mapping_df,
                                                                                               power_total,
                                                                                               power_by_collectors_group,
-                                                                                              trimmed_untrimmed_dropped_percentages,
-                                                                                              performance_counters_df,
-                                                                                              performance_counters_data)
+                                                                                              trimmed_untrimmed_dropped_percentages)
 
     test_info_path = os.path.join(PerfConsts.REQUIRMENTS_DIR, f"{test_name}_info_dump.json")
     with open(test_info_path, "w") as f:
         json.dump(test_specific_values, f, indent=4)
 
 
-def restructure_validator_results(validation_json, ports_group_df, os_ports_name_mapping_df, power_total, power_by_collectors_group, trimmed_untrimmed_dropped_percentages, performance_counters_df, performance_counters_data):
+def restructure_validator_results(validation_json, ports_group_df, os_ports_name_mapping_df, power_total,
+                                  power_by_collectors_group, trimmed_untrimmed_dropped_percentages):
     """
     Args:
         validation_json: the JSON from the SDK TrafficValidator
@@ -138,7 +135,8 @@ def restructure_validator_results(validation_json, ports_group_df, os_ports_name
         an updated dict with the validator info for mongo db
     """
     test_validation_to_mongo_db = {}
-    test_validation_to_mongo_db[MongoDbConsts.BW_COUTERS_DATA] = get_bw_counters_data(validation_json, ports_group_df, os_ports_name_mapping_df, trimmed_untrimmed_dropped_percentages, performance_counters_df)
+    test_validation_to_mongo_db[MongoDbConsts.BW_COUTERS_DATA] = get_bw_counters_data(
+        validation_json, ports_group_df, os_ports_name_mapping_df, trimmed_untrimmed_dropped_percentages)
     test_validation_to_mongo_db[MongoDbConsts.TC_DATA] = get_tc_and_pg_info(validation_json, ValidationConsts.TC_PG_SAMPLES, ValidationConsts.TC_DATAFRAME)
     test_validation_to_mongo_db[MongoDbConsts.PG_DATA] = get_tc_and_pg_info(validation_json, ValidationConsts.TC_PG_SAMPLES, ValidationConsts.PG_BUFFER_DATAFRAME)
     test_validation_to_mongo_db[MongoDbConsts.TC_LATENCY_DATA] = get_tc_and_pg_info(validation_json, ValidationConsts.TC_LATENCY_SAMPLES, ValidationConsts.TC_LATENCY_DATAFRAME)
@@ -147,8 +145,6 @@ def restructure_validator_results(validation_json, ports_group_df, os_ports_name
     test_validation_to_mongo_db[MongoDbConsts.POWER_BY_COLLECTORS] = restructure_power(power_by_collectors_group)
     if not test_validation_to_mongo_db[MongoDbConsts.TC_DATA]:
         test_validation_to_mongo_db.pop(MongoDbConsts.TC_DATA)
-    if performance_counters_data:
-        test_validation_to_mongo_db[MongoDbConsts.PERFORMANCE_COUNTERS_DATA] = performance_counters_data
     return test_validation_to_mongo_db
 
 
@@ -228,27 +224,6 @@ def restructure_bw(validation_json):
     return final_df
 
 
-def restructure_performance_counters(validation_json):
-    """
-    Args:
-        validation_json: the JSON from the SDK TrafficValidator
-
-    Returns:
-        a single df with the performance counters avg values based on all the samples
-    """
-    performance_counters_samples = validation_json[ValidationConsts.PERF_COUNTERS_SAMPLES]
-    performance_counters_samples.pop(ValidationConsts.SAMPLES_PARAMS, None)
-    df_dict = collect_all_samples_into_df_list(performance_counters_samples, ValidationConsts.PERFORMANCE_COUNTERS_DATAFRAME, use_port_groups=False)
-    sdk_generation_time_with_perf_counters = calculate_avg_on_all_samples(list(performance_counters_samples.values()), ValidationConsts.SDK_GENERATION_TIME_WITH_PERF_COUNTERS)
-    sdk_generation_time_without_perf_counters = calculate_avg_on_all_samples(list(performance_counters_samples.values()), ValidationConsts.SDK_GENERATION_TIME_WITHOUT_PERF_COUNTERS)
-    final_df = pd.DataFrame()
-    for port_group, df_list in df_dict.items():
-        df_result = get_base_df(df_list)
-        df_result[ValidationConsts.PERFORMANCE_COUNTER_VALUE] = calculate_avg_on_all_samples(df_list, ValidationConsts.PERFORMANCE_COUNTER_VALUE)
-        final_df = pd.concat([final_df, df_result])
-    return final_df, sdk_generation_time_with_perf_counters, sdk_generation_time_without_perf_counters
-
-
 def get_tc_and_pg_info(validation_json, sample_key, df_key):
     """
     Args:
@@ -293,7 +268,8 @@ def calculate_avg_on_all_samples(df_list, sample_key):
     return sum(df[sample_key] for df in df_list) / len(df_list)
 
 
-def get_bw_counters_data(validation_json, ports_group_df, os_ports_name_mapping_df, trimmed_untrimmed_dropped_percentages, performance_counters_df):
+def get_bw_counters_data(validation_json, ports_group_df, os_ports_name_mapping_df,
+                         trimmed_untrimmed_dropped_percentages):
     """
     Args:
         validation_json: the JSON from the SDK TrafficValidator
@@ -304,15 +280,11 @@ def get_bw_counters_data(validation_json, ports_group_df, os_ports_name_mapping_
     """
     counters_df = restructure_counters(validation_json)
     bw_df = restructure_bw(validation_json)
-    performance_counters_df = pd.DataFrame(performance_counters_df)
     bw_counters_data = pd.merge(counters_df, bw_df, on=ValidationConsts.PORT)
     if not ports_group_df.empty and ValidationConsts.PORT in ports_group_df.columns:
         merged_df = pd.merge(bw_counters_data, ports_group_df, on=ValidationConsts.PORT)
     else:
         merged_df = bw_counters_data
-    if not performance_counters_df.empty:
-        performance_counters_df.rename(columns={col: change_name_to_camel_case(col) for col in performance_counters_df.columns}, inplace=True)
-        merged_df = pd.merge(merged_df, performance_counters_df, on=ValidationConsts.PORT)
     if not os_ports_name_mapping_df.empty:
         merged_df = pd.merge(merged_df, os_ports_name_mapping_df, on=ValidationConsts.PORT)
     if trimmed_untrimmed_dropped_percentages:

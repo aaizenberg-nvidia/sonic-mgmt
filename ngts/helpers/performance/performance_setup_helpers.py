@@ -20,7 +20,6 @@ from ngts.helpers.performance.performance_db_helpers import add_test_mongo_metad
 from ngts.helpers.performance.traffic_helpers import (validate_bw, validate_bw_utilization_fairness, validate_tc,
                                                       validate_counters, validate_no_drops_on_tg_ports,
                                                       validate_required_counters, validate_tc_occupancy_fairness)
-from ngts.helpers.performance.performance_counter_helpers import validate_performance_counters
 from ngts.helpers.performance.topology_helpers import get_dvs_topology_obj, get_nvue_sonic_topology_obj
 from ngts.helpers.performance.power_temp_helpers import validate_temperature, validate_power
 from ngts.helpers.performance.port_selection import clear_resolved_excluded_ports
@@ -109,9 +108,6 @@ class ValidationConfig:
     validate_bw_rx: bool = True
     samples_params_dict: Dict = field(default_factory=lambda: PerfConsts.SAMPLES_PARAMS)
     tc_occ_threshold: Dict = field(default_factory=lambda: PerfConsts.OCC_TH_DICT)
-    run_validate_performance_counters: bool = False
-    allowed_deviation: float = PerfConsts.PERF_COUNTERS_ALLOWED_DEVIATION
-    packet_size: Optional[int] = None
     temperature_threshold: float = PerfConsts.TEMPERATURE_TH
     bw_threshold: Optional[float] = None
     power_threshold: Optional[float] = None
@@ -126,11 +122,7 @@ class ValidationConfig:
 
     def __post_init__(self):
         self.max_tc_occ_variance_per_port_group = OccupancyVarianceConfig.from_tc_occ_threshold(self.tc_occ_threshold)
-        # Copy so per-test overrides (and auto-enable below) do not mutate PerfConsts.SAMPLES_PARAMS.
         self.samples_params_dict = dict(self.samples_params_dict)
-        # validate_performance_counters skips while #4731421 is open, and the dumps load the SDK during sampling
-        if self.run_validate_performance_counters and not is_redmine_issue_active([4731421])[0]:
-            self.samples_params_dict[PerfConsts.COLLECT_SDK_DUMP_ENV_VAR] = "True"
 
     def get_validations(self) -> Dict[str, Validation]:
         """
@@ -186,13 +178,6 @@ class ValidationConfig:
                 'traffic_pattern', validate_no_drops_on_tg_ports,
                 lambda: {'players': self.players},
                 lambda: self.run_validate_no_drops_on_tg_ports,
-            ),
-            _validation_spec(
-                'performance_counters', validate_performance_counters,
-                lambda: {'cli_object': self.players['dut']['cli'],
-                         'allowed_deviation': self.allowed_deviation,
-                         'packet_size': self.packet_size, 'test_name': self.test_name},
-                lambda: not is_simx and self.run_validate_performance_counters and bool(self.packet_size),
             ),
             _validation_spec(
                 'tx_rx_counters', _validate_simx_tx_rx_validation,

@@ -40,10 +40,6 @@ class DvsPerformance(PerformanceCommon):
             conf_json["sdk_test_conf"][ValidationConsts.COLLECTORS_LIST] = collectors_list
         self.save_configuration_file(conf_path, conf_json)
 
-    def _create_sdk_dump_dirs(self):
-        "This is not needed in DVS"
-        pass
-
     def get_cmd_for_sdk(self, cmd, env_variables=None):
         """
         Returns:

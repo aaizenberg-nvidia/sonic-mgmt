@@ -5,7 +5,6 @@ import pytest
 import random
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
-from ngts.helpers.performance.performance_counter_helpers import should_validate_performance_counters
 from ngts.helpers.performance.performance_setup_helpers import (ValidationConfig, run_traffic, run_validation, get_topology_obj,
                                                                 validate_traffic_results,
                                                                 set_ports_admin_state,
@@ -63,8 +62,6 @@ class TestSpcX400GTo200G:
                                       bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
                                       tc_occ_threshold=PerfConsts.OCC_TH_DICT,
-                                      packet_size=packet_size,
-                                      run_validate_performance_counters=should_validate_performance_counters(self.cli_object),
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       skip_first_counters_iteration=skip_first_counters_iteration)
             run_validation(config)

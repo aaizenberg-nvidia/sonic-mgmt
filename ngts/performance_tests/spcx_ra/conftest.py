@@ -126,8 +126,7 @@ class ControlStreamSpec:
 
 
 # Control packets the ai_mix profile layers on top of the RoCE data stream, one
-# of each per send cycle, keyed by stream name. Shared by the traffic builder
-# and the mean-frame-size calculation so the two cannot drift.
+# of each per send cycle, keyed by stream name.
 AI_MIX_CONTROL_STREAM_SPECS = {
     "RoCE_ack": ControlStreamSpec(AI_MIX_ROCE_ACK_SIZE, AI_MIX_LOSSLESS_TC),
     "RTT_probe": ControlStreamSpec(PerfConsts.RTT_PROB_SIZE, AI_MIX_LOSSLESS_TC),
@@ -497,12 +496,10 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
         data_packet_count: Number of RoCE data packets per port per cycle.
             Defaults to ``None``, which keeps the chip/split-specific count
             supplied by the CLI wrapper (``traffic_parameters["num_packets"]``).
-            Pass an explicit value to override it (e.g. for a lighter/heavier
-            data load experiment). Must match whatever is passed to
-            :func:`get_ai_mix_mean_packet_size` for validation to stay correct.
+            Pass an explicit value to override it for a lighter or heavier
+            data-load experiment.
         control_packet_count: Number of packets sent per control stream (RoCE
             ACK, RTT probe, RTT probe response, CNP) per cycle. Defaults to 1.
-            Must match whatever is passed to :func:`get_ai_mix_mean_packet_size`.
         template_suite: Directory under ``performance_tests`` holding the
             generated traffic JSONs.
 
@@ -547,42 +544,6 @@ def get_spcx_ra_ai_mix_spine_traffic(players, conf_args,
     logger.info(f"AI-mix spine traffic JSONs: {traffic_jsons}")
 
     return traffic_jsons
-
-
-def get_ai_mix_mean_packet_size(data_packet_count,
-                                data_packet_size=PerfConsts.PACKET_SIZE_4K,
-                                control_packet_count=1):
-    """Return the byte-weighted mean frame size of one AI-mix send cycle.
-
-    The performance-counter validation derives expected PPS by dividing a port's
-    byte rate by a single frame size, so on the ai_mix profile it has to be given
-    this mean rather than ``data_packet_size``. Handing it the data size instead
-    understates the packet rate by the ratio between the two - 13% to 43% at the
-    SPC6 per-port packet counts, against a 2.5% allowed deviation.
-
-    Every stream is emitted on the same port list, so the per-port count cancels
-    and the mean depends only on the packet counts and sizes of one cycle.
-
-    Args:
-        data_packet_count: RoCE data packets per port per cycle. Must match
-            whatever was passed as ``data_packet_count`` to
-            :func:`get_spcx_ra_ai_mix_spine_traffic` (or its default, the
-            chip's ``traffic_packets_per_port``, if that was left unset).
-        data_packet_size: Frame size of the RoCE data stream, in bytes. Must
-            match what was passed to :func:`get_spcx_ra_ai_mix_spine_traffic`.
-        control_packet_count: Packets sent per control stream per cycle. Must
-            match ``control_packet_count`` passed to
-            :func:`get_spcx_ra_ai_mix_spine_traffic`.
-
-    Returns:
-        The mean frame size in bytes, rounded down.
-    """
-    control_bytes_per_cycle = control_packet_count * sum(
-        stream_spec.packet_size for stream_spec in AI_MIX_CONTROL_STREAM_SPECS.values())
-    total_bytes = control_bytes_per_cycle + data_packet_size * data_packet_count
-    total_packets = (len(AI_MIX_CONTROL_STREAM_SPECS) * control_packet_count +
-                     data_packet_count)
-    return total_bytes // total_packets
 
 
 def get_spcx_ra_leaf_traffic(players, conf_args, template_suite="traffic_packets_json_files",
