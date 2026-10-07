@@ -265,11 +265,12 @@ GNMI_LEAKAGE_COMPONENT_STATE_SUBPATH = "state"
 GNMI_LEAKAGE_OPER_STATUS_SUBPATH = "state/oper-status"
 GNMI_OPER_STATUS_ACTIVE = "ACTIVE"
 GNMI_OPER_STATUS_INACTIVE = "INACTIVE"
-# Collected when gnmic is missing on every candidate host — setup issue, not DUT/gNMI-server failure.
+# Collected when gnmic is missing on every candidate host and the pinned auto-install did
+# not recover it either — setup issue, not DUT/gNMI-server failure.
 GNMI_SETUP_ERR_GNMIC_MISSING = (
     "gNMI SETUP (test player): gnmic binary not found on the pytest host or on the "
-    "sonic-mgmt player — install gnmic on one of them; this is not a DUT / switch "
-    "gNMI failure"
+    "sonic-mgmt player, and the pinned auto-install failed on both — install gnmic "
+    "manually on one of them; this is not a DUT / switch gNMI failure"
 )
 # ON_CHANGE cannot use a remote player even when one carries gnmic — see
 # open_gnmi_on_change_subscription for why the stream has to be local.
@@ -281,6 +282,9 @@ GNMI_ON_CHANGE_ERR_LOCAL_GNMIC_REQUIRED = (
 )
 # Short probe: 'which gnmic' either answers at once or the host is not usable as a player.
 GNMI_PLAYER_PROBE_TIMEOUT = 10
+# Bounds the installer: it fetches a release archive, so it needs far longer than the
+# probe, but a player without outbound network must not hang the suite.
+GNMIC_INSTALL_TIMEOUT = 180
 # gnmic resolves every flag from a GNMIC_-prefixed environment variable, so --password can
 # be supplied without reaching argv. Used by open_gnmi_on_change_subscription: that process
 # stays alive for a whole injection window, and /proc/<pid>/cmdline is readable by any
@@ -509,11 +513,23 @@ def _parse_cpld_bundle(bundle: str) -> Dict[str, int]:
     return parsed
 
 
+class CpldBundleTooOld(AssertionError):
+    """A CPLD bundle that parsed cleanly but sits below the required revision.
+
+    Separate type so the module gate can tell "this build predates the feature", which
+    makes the suite inapplicable, from "this bundle string makes no sense", which is a
+    real gap worth failing on. Subclasses ``AssertionError`` so anything catching that
+    keeps working.
+    """
+
+
 def cpld_bundle_meets_minimum(actual: str, minimum: str) -> None:
     """Assert each CPLD id in ``minimum`` is present in ``actual`` with REV >= min.
 
-    Extra CPLD ids in ``actual`` are allowed. Raises ``AssertionError`` on missing
-    id or older revision.
+    Extra CPLD ids in ``actual`` are allowed. Raises :class:`CpldBundleTooOld` when a
+    revision is simply below the minimum, and plain ``AssertionError`` when the data
+    cannot be trusted — an unparseable minimum, or an id the minimum requires that the
+    DUT does not report at all.
     """
     actual_revs = _parse_cpld_bundle(actual)
     minimum_revs = _parse_cpld_bundle(minimum)
@@ -526,7 +542,7 @@ def cpld_bundle_meets_minimum(actual: str, minimum: str) -> None:
             )
         actual_rev = actual_revs[cpld_id]
         if actual_rev < min_rev:
-            raise AssertionError(
+            raise CpldBundleTooOld(
                 f"CPLD {cpld_id} REV{actual_rev:04d} is below minimum REV{min_rev:04d} "
                 f"(actual={actual!r}, required minimum={minimum!r})"
             )
@@ -590,8 +606,11 @@ def verify_platform_versions(engines, devices) -> None:
     - BMC firmware: ordered minimum (``>= LEAKAGE_MIN_BMC_VERSION``).
     - CPLD bundle: per-component REV >= ``LEAKAGE_MIN_CPLD_BUNDLE`` (same CPLD IDs).
 
-    Set a constant to None to skip that check. With
-    ``LEAKAGE_ENFORCE_VERSION_CHECK`` True, mismatches raise ``AssertionError``.
+    Set a constant to None to skip that check. With ``LEAKAGE_ENFORCE_VERSION_CHECK``
+    True, a version that reads fine but sits below its minimum skips the module (the
+    build predates the feature, so the suite does not apply), while a version that
+    cannot be read at all raises ``AssertionError`` (a real gap). With it False, both
+    only warn.
     """
     assert_cpld_i2c_platform_supported(devices)
 
@@ -603,8 +622,21 @@ def verify_platform_versions(engines, devices) -> None:
         )
 
     def _version_fail(msg: str) -> None:
+        """A gate that could not be evaluated at all — always a real gap, so fail."""
         if LEAKAGE_ENFORCE_VERSION_CHECK:
             raise AssertionError(msg)
+        logger.warning("Version check (non-enforced): %s", msg)
+
+    def _version_too_old(msg: str) -> None:
+        """A version read fine and is below a documented minimum — skip, do not fail.
+
+        The build simply predates the feature, so the suite is not applicable to it.
+        Failing would report an old image as broken leak detection every night in the
+        shared regression. Deliberately distinct from :func:`_version_fail`: a version
+        that cannot be read at all is a real gap and still fails.
+        """
+        if LEAKAGE_ENFORCE_VERSION_CHECK:
+            pytest.skip(msg)
         logger.warning("Version check (non-enforced): %s", msg)
 
     raw_ver = engines.dut.run_cmd("nv show system version -o json", validate=False)
@@ -615,7 +647,7 @@ def verify_platform_versions(engines, devices) -> None:
         if not cl_build_id:
             _version_fail("Could not read CL build-id from 'nv show system version'")
         elif _version_tuple(cl_build_id) < _version_tuple(LEAKAGE_MIN_CL_BUILD_ID):
-            _version_fail(
+            _version_too_old(
                 f"CL build-id {cl_build_id!r} is below minimum required {LEAKAGE_MIN_CL_BUILD_ID!r}"
             )
 
@@ -625,7 +657,7 @@ def verify_platform_versions(engines, devices) -> None:
         if bmc_ver is None:
             _version_fail("Could not read BMC version from 'nv show platform firmware BMC'")
         elif _version_tuple(bmc_ver) < _version_tuple(LEAKAGE_MIN_BMC_VERSION):
-            _version_fail(f"BMC version {bmc_ver!r} is below minimum required {LEAKAGE_MIN_BMC_VERSION!r}")
+            _version_too_old(f"BMC version {bmc_ver!r} is below minimum required {LEAKAGE_MIN_BMC_VERSION!r}")
 
     cpld_bundle = read_cpld_bundle_version(engines.dut)
     logger.info(
@@ -639,7 +671,10 @@ def verify_platform_versions(engines, devices) -> None:
         else:
             try:
                 cpld_bundle_meets_minimum(cpld_bundle, LEAKAGE_MIN_CPLD_BUNDLE)
+            except CpldBundleTooOld as err:
+                _version_too_old(str(err))
             except AssertionError as err:
+                # Unparseable bundle or an id the DUT never reported: not an old build.
                 _version_fail(str(err))
 
 
@@ -801,6 +836,27 @@ def probe_leakage_sensor_count(engine: LinuxSshEngine) -> Optional[int]:
         f"attempts — cannot determine whether this DUT has leakage sensors, so the "
         f"suite fails instead of skipping green"
     )
+
+
+def skip_suite_unless_supported_platform(devices) -> None:
+    """Module gate: skip the whole suite when the DUT is not a platform it supports.
+
+    Runs ahead of :func:`verify_platform_versions` and skips rather than fails, because
+    the suite is part of the shared Cumulus regression, where most DUTs are not SN6600.
+    An inapplicable platform is not a defect, and failing there would report every other
+    Cumulus setup as broken leak detection.
+
+    :func:`assert_cpld_i2c_platform_supported` stays in the version gate as the
+    fail-closed guard on the injection path itself, so a direct run that reaches
+    i2ctransfer on a wrong SKU still errors instead of writing to it.
+    """
+    dut = getattr(devices, "dut", None)
+    type_name = type(dut).__name__ if dut is not None else "<no-dut>"
+    if type_name not in LEAKAGE_CPLD_I2C_SUPPORTED_DUT_TYPES:
+        pytest.skip(
+            f"SPC-6 leakage suite supports {sorted(LEAKAGE_CPLD_I2C_SUPPORTED_DUT_TYPES)}; "
+            f"DUT type is {type_name!r} — suite not applicable, skipping module"
+        )
 
 
 def skip_suite_unless_leakage_sensors(engine: LinuxSshEngine) -> int:
@@ -2828,6 +2884,28 @@ def _candidate_gnmi_player_hosts(engines) -> List[Tuple[str, object]]:
     return candidates
 
 
+def _install_gnmic_on(engine, description) -> bool:
+    """Best-effort install of gnmic on that host. True once the binary answers.
+
+    Delegates to ``GnmiClient.verify_gnmic_installation`` rather than carrying an install
+    command here: that is the installer the rest of NGTS already depends on through
+    ``verify_tools_installed``, it retries, and it does not assume sudo exists — which
+    matters when the player is a container. Only gnmic is installed; the full
+    ``verify_tools_installed`` path would also fetch grpcurl, which this suite never calls.
+
+    Best-effort on purpose: a player with no outbound network leaves the caller free to
+    try the next candidate instead of turning a tooling gap into a suite error here.
+    """
+    logger.info("gnmic missing on %s; attempting install", description)
+    try:
+        installer = GnmiClient("", "", "", "", cmd_time=GNMIC_INSTALL_TIMEOUT, engine=engine)
+        installer.verify_gnmic_installation()
+    except Exception as exc:  # noqa: BLE001 - install is best-effort, next candidate follows
+        logger.warning("gnmic install on %s did not succeed: %r", description, exc)
+        return False
+    return gnmic_available_on(engine)
+
+
 def resolve_gnmi_player_engine(engines) -> Optional[Tuple[object, str]]:
     """Pick the host that will run gnmic: ``(engine_or_None, description)``, or None.
 
@@ -2839,14 +2917,40 @@ def resolve_gnmi_player_engine(engines) -> Optional[Tuple[object, str]]:
     actually installed it instead of assuming one host. CL BSP topologies attach only
     DUT (+ BMC) and resolve to the pytest host; setups that keep tooling on sonic-mgmt
     resolve there.
+
+    A local player is preferred over a remote one that already has the binary, strongly
+    enough to install for it: ``open_gnmi_on_change_subscription`` reads a live stdout
+    pipe, which only works locally, so settling for a remote player silently costs the
+    ON_CHANGE surface. Installing is also why this does not simply give up when nothing
+    has gnmic — regression runs the suite inside the sonic-mgmt container, which does
+    not ship it, and a missing binary would read as a DUT fault rather than a setup gap.
     """
-    probed = []
-    for description, engine in _candidate_gnmi_player_hosts(engines):
+    candidates = _candidate_gnmi_player_hosts(engines)
+    local_description, local_engine = candidates[0]
+    remote_candidates = candidates[1:]
+
+    if gnmic_available_on(local_engine):
+        logger.info("gnmic player host: %s", local_description)
+        return local_engine, local_description
+    if _install_gnmic_on(local_engine, local_description):
+        logger.info("gnmic player host: %s (auto-installed)", local_description)
+        return local_engine, local_description
+
+    probed = [local_description]
+    for description, engine in remote_candidates:
         probed.append(description)
         if gnmic_available_on(engine):
-            logger.info("gnmic player host: %s", description)
+            logger.info("gnmic player host: %s (remote — ON_CHANGE unavailable)", description)
             return engine, description
-    logger.warning("gnmic not found on any candidate host: %s", ", ".join(probed))
+
+    # Last resort. Only sonic-mgmt is an install target among the remotes; the management
+    # hosts are not somewhere test tooling belongs.
+    for description, engine in remote_candidates:
+        if description.startswith("engines.sonic_mgmt") and _install_gnmic_on(engine, description):
+            logger.info("gnmic player host: %s (remote, auto-installed — ON_CHANGE unavailable)", description)
+            return engine, description
+
+    logger.warning("gnmic unavailable on all candidates after install attempts: %s", ", ".join(probed))
     return None
 
 

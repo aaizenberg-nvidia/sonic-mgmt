@@ -12,7 +12,7 @@ TODO — generalization for platforms with more than 2 sensors:
     Inventory/asserts are already dynamic (``leakage_counter`` / ``get_leakage_sensors``).
     Core #2 parametrizes over ``CPLD_MASK_BY_SENSOR_INDEX`` keys. The remaining bind is
     the CPLD bit map + lab sim (today Salamandra / mlx-6600: 2 sensors, bus 5, 0x31, 0x20).
-    Unsupported DUT classes fail the whole module via ``assert_cpld_i2c_platform_supported``
+    Unsupported DUT classes skip the whole module via ``skip_suite_unless_supported_platform``
     (``LEAKAGE_CPLD_I2C_SUPPORTED_DUT_TYPES``). Before extending (e.g. Chameleon6M):
       - Which I2C bus / address / register controls each sensor's bit?
       - What is the bitmask for each sensor index beyond index 2?
@@ -131,6 +131,7 @@ from ngts.tests_nvos.platform.leakage_helpers import (
     smonctl_stubbed,
     assert_cpld_masks_cover_all_sensors,
     skip_suite_unless_leakage_sensors,
+    skip_suite_unless_supported_platform,
     verify_platform_versions,
     wait_for_bmc_hwmgmt_leakage_values,
     wait_for_bmc_oob_ssh,
@@ -195,12 +196,15 @@ def _require_bmc(devices):
 def check_platform_versions(engines, devices):
     """Verify platform / CL / BMC / CPLD gates once per module before any leakage test.
 
-    Includes the CPLD i2ctransfer SKU allowlist — unsupported DUT → entire suite fails.
-    After version/SKU gates: skip the module if ``leakage_counter`` is missing or 0
-    (DUT has no leakage sensors — suite not applicable), then require the CPLD mask
-    table to cover exactly this DUT's sensors so injection coverage cannot drift
-    without failing (partial coverage must never report green).
+    Order matters. An unsupported DUT class skips the module first: the suite runs from
+    the shared Cumulus regression, where a non-SN6600 setup means "not applicable", not
+    "leak detection is broken". Only then do the strict CL / BMC / CPLD version gates
+    run, which still fail on a supported platform that does not meet them. After those:
+    skip if ``leakage_counter`` is missing or 0 (DUT has no leakage sensors), then
+    require the CPLD mask table to cover exactly this DUT's sensors so injection
+    coverage cannot drift without failing (partial coverage must never report green).
     """
+    skip_suite_unless_supported_platform(devices)
     verify_platform_versions(engines, devices)
     sensor_count = skip_suite_unless_leakage_sensors(engines.dut)
     assert_cpld_masks_cover_all_sensors(sensor_count)
