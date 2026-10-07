@@ -1708,9 +1708,11 @@ high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_full_port_co
 
 high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_disabled_stream:
   skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4983538"
+    reason: "Testcase skipped due to RM issues: https://redmine.mellanox.com/issues/4983538 and https://redmine.mellanox.com/issues/5330048"
+    conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/4983538"
+    - "https://redmine.mellanox.com/issues/5330048"
 
 high_frequency_telemetry/test_high_frequency_telemetry.py::test_hft_config_deletion_stream:
   skip:
@@ -1735,6 +1737,10 @@ high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py:
     - "https://redmine.mellanox.com/issues/5240144"
 
 high_frequency_telemetry_wjh_toggle/test_high_frequency_telemetry_wjh_toggle.py::test_hft_disabled_stream:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5330048 after WJH toggle"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5330048"
   xfail:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5240144 after WJH toggle"
     conditions:
