@@ -94,9 +94,12 @@ class TestSRv6Leaf(TestSRv6Base):
         with allure.step(f"Set test correct allure title with {self.ip} parameter"):
             test_name = get_perf_test_name(request)
             num_of_ports = MRCConsts.UPSTREAM_DOWNSTREAM_NUM_OF_PORTS_BY_CHIP_TYPE[self.chip_type]
+            max_ports_per_lane_group = (MRCConsts.MAX_PORTS_PER_LANE_GROUP
+                                        if is_min_packet_size and not isinstance(self.cli_object, NvueCli) else None)
             upstream, downstream, port_group_df = get_upstream_downstream_port_group_df(self.players, upstream_ports_num=num_of_ports,
                                                                                         downstream_ports_num=num_of_ports,
-                                                                                        sequential=is_drop_over_max)
+                                                                                        sequential=is_drop_over_max,
+                                                                                        max_ports_per_lane_group=max_ports_per_lane_group)
             self.cli_object.performance.update_port_group_df_on_dut(port_group_df)
             add_test_mongo_metadata(test_name, {MongoDbConsts.CONF_NAME: "bisection",
                                                 MongoDbConsts.TEST_WORKLOAD: workload,

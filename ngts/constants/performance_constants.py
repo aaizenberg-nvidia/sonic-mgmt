@@ -1099,6 +1099,7 @@ class MRCConsts:
         "SPC5": 180,
         "SPC6": 180
     }
+    MAX_PORTS_PER_LANE_GROUP = 3
     VICTIM_PORTS_NUM = 90
     LEAF_ROUND_ROBIN_PORTS_NUM_BY_CHIP_TYPE = {
         "SPC4": {'group_size': 16, 'group_num': 8},
@@ -1291,7 +1292,7 @@ class MRCConsts:
     # Only SRv6 traffic has a measured minimum; a chip type or traffic type absent here is skipped by the test.
     MIN_PACKET_SIZE_BY_CHIP_TYPE = {
         "SPC5": {
-            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=462, mrc_num_packets=66, retransmit_num_packets=13),
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=328, mrc_num_packets=90, retransmit_num_packets=22),
         },
         "SPC6": {
             TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=1496, mrc_num_packets=23, retransmit_num_packets=4),
