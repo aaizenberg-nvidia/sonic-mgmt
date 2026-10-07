@@ -326,7 +326,9 @@ def otel_cli_coverage_baseline(engines, otel_suite_mgmt) -> OtelSuiteContext:
     """``OtelMgmtVrfNoTLSConfig`` NVUE baseline for unset CLI coverage tests."""
     from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
         apply_otel_cli_coverage_baseline,
+        capture_otel_cli_coverage_golden,
         cleanup_otel_cli_coverage_labels,
+        restore_otel_cli_coverage_golden,
     )
 
     _ensure_nvue_api()
@@ -334,7 +336,13 @@ def otel_cli_coverage_baseline(engines, otel_suite_mgmt) -> OtelSuiteContext:
         engines.dut, otel_suite_mgmt.collector_ips, suite=otel_suite_mgmt
     )
     try:
+        capture_otel_cli_coverage_golden(engines.dut)
         yield otel_suite_mgmt
     finally:
         _ensure_nvue_api()
-        cleanup_otel_cli_coverage_labels(engines.dut)
+        # Interface tests leave per-port histogram/label edits in place. Put the
+        # baseline back once, then drop the coverage labels for the next module.
+        try:
+            restore_otel_cli_coverage_golden(engines.dut, missing_ok=True)
+        finally:
+            cleanup_otel_cli_coverage_labels(engines.dut)
