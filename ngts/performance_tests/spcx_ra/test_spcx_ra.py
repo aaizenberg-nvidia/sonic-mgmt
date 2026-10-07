@@ -24,33 +24,37 @@ import logging
 import random
 from dataclasses import dataclass, field
 from time import sleep
-from typing import ClassVar, Dict, Optional, Tuple
+from typing import Callable, ClassVar, Dict, List, Optional, Tuple
 
 import allure
 import pytest
 
 from infra.tools.exceptions.test_issue import TestIssue
 from infra.tools.redmine.redmine_api import is_redmine_issue_active
+from ngts.cli_wrappers.dvs.dvs_cli import DvsCli
 from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.nvue.nvue_performance_clis import get_swp_parent_port_names
 from ngts.constants.constants import CliType, InfraConst
 from ngts.constants.performance_constants import (
     MongoDbConsts, PerfConsts, SPCXRAConsts, ValidationConsts, BwFairnessThreshold)
+from ngts.helpers.performance.leaf_dip_groups import LEAF_DIP_CONF_KEYS, LeafDipPlan
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.performance.performance_recovery import get_performance_session_state
 from ngts.helpers.performance.performance_setup_helpers import (
     ValidationConfig, apply_test_configuration_guarded, configure_incremental_dips_on_tg,
+    configure_leaf_dip_groups_on_tg, configure_ports_shaper_on_tg, remove_leaf_dip_groups_on_tg,
     get_obj_method, restore_session_basic_configuration, run_traffic,
-    run_validation, set_ports_admin_state, skip_dvs_leaf_scenario_on_active_bug,
+    run_validation, set_ports_admin_state,
     skip_performance_test_conditionally, skip_test_on_unsupported_chip_type,
     skip_test_on_unsupported_os, validate_perf_dut_ingress_buffer_mode,
     validate_perf_dut_rebalancer_buffer_mode, validate_traffic_results)
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
-    TESTS_SCENARIO, TRAFFIC_PROFILE_AI_MIX, compute_flap_validation_overrides,
-    get_leaf_scenario_traffic, get_spcx_ra_ai_mix_spine_traffic,
-    resolve_ar_algorithm)
+    LEAF_DIP_GROUPS_OPTION, LEAF_DIP_GROUPS_TEST_NAME, TESTS_SCENARIO, TRAFFIC_PROFILE_AI_MIX,
+    attach_leaf_dip_groups_resets, build_spcx_ra_leaf_dip_plan, compute_flap_validation_overrides,
+    get_leaf_dip_groups_options, get_leaf_dip_groups_traffic, get_leaf_scenario_traffic,
+    get_spcx_ra_ai_mix_spine_traffic, resolve_ar_algorithm)
 
 logger = logging.getLogger()
 
@@ -121,6 +125,12 @@ class ChipBandwidth:
             only honored while the ``--ar_extended_thresholds`` pytest flag is
             passed - see :meth:`LanesConfig.to_template_args`. The legacy
             3-grade thresholds are the default.
+        leaf_dip_groups_packets_per_port: Resident packets per spine TG
+            generator port in ``test_ar_perf_max_bandwidth_leaf_dip_groups``.
+            Left None for ``LEAF_DIP_GROUPS_PACKETS_PER_PORT_MULTIPLIER`` x
+            ``traffic_packets_per_port``; set where that exceeds the resident
+            packet budget (SPC6). ``--spcx-ra-leaf-dip-packets-per-port``
+            overrides both.
     """
 
     port_split: int
@@ -134,6 +144,7 @@ class ChipBandwidth:
     mid_ar_threshold: int = PerfConsts.MED_AR_THRESHOLD
     high_ar_threshold: Optional[int] = None
     ar_extended_thresholds: Optional[Tuple[int, int, int, int]] = None
+    leaf_dip_groups_packets_per_port: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +255,26 @@ class LanesConfig:
             A string like ``"x2_800G_leaf"``.
         """
         return f"{self.name(chip_type)}_leaf"
+
+    def mongo_conf_name_leaf_dip_groups(self, chip_type: str, dip_count: int, group_count: int,
+                                        packets_per_port: int, shaper_value: float) -> str:
+        """Build the leaf DIP groups Mongo CONF_NAME entry for ``chip_type``.
+
+        Carries the DIP count, the generator port group count, the resident packets per port and the TG
+        shaper so the arms of a sweep stay apart in the database.
+
+        Args:
+            chip_type: Chip type identifier.
+            dip_count: Leaf DIPs in the range.
+            group_count: Spine TG generator port groups.
+            packets_per_port: Resident packets per spine TG generator port.
+            shaper_value: TG egress shaper during the test, fraction of the port speed.
+
+        Returns:
+            A string like ``"x2_400G_leaf_dip_groups_8000_groups12_pkts24_shaper0.95"``.
+        """
+        return (f"{self.mongo_conf_name_leaf(chip_type)}_dip_groups_{dip_count}_groups{group_count}"
+                f"_pkts{packets_per_port}_shaper{shaper_value:g}")
 
     def allure_title_suffix(self, chip_type: str) -> str:
         """Build the bracketed allure-title suffix for ``chip_type``.
@@ -509,10 +540,14 @@ class _SpcXRATestBase:
     def test_ar_perf_max_bandwidth_leaf(self, request):
         """Verify port utilization with AR enabled on one side only (leaf).
 
+        Skipped on DVS on every chip: there the leaf scenario is covered by
+        ``test_ar_perf_max_bandwidth_leaf_dip_groups``.
+
         Args:
             request: pytest ``FixtureRequest``.
         """
-        skip_dvs_leaf_scenario_on_active_bug(self.cli_object, self.chip_type)
+        if isinstance(self.cli_object, DvsCli):
+            pytest.skip(f"Leaf scenario on {CliType.DVS} runs as {LEAF_DIP_GROUPS_TEST_NAME}")
         test_name = get_perf_test_name(request)
         packet_size = PerfConsts.PACKET_SIZE_4K
         add_test_mongo_metadata(
@@ -538,6 +573,65 @@ class _SpcXRATestBase:
             self._validate(test_name, packet_size, skip_first_counters_iteration=True)
         finally:
             self._restore_two_sided_ar()
+
+    @allure.description('AR enabled on one side (leaf scenario), spine TG sweeping a DIP range in port '
+                        'groups. Verify port utilization.')
+    @_with_lanes_allure_title
+    def test_ar_perf_max_bandwidth_leaf_dip_groups(self, request):
+        """Verify leaf port utilization while the spine TG sweeps a DIP range in port groups.
+
+        Collected only with ``--spcx-ra-leaf-dip-groups``, and skipped on any NOS other than DVS and any chip
+        outside ``SPCXRAConsts.LEAF_DIP_GROUPS_SUPPORTED_CHIPS``. Being opt-in, it runs on DVS SPC6 even
+        while the leaf scenarios there are skipped for Redmine 5308120. The spine TG
+        generator ports are split into groups, each sweeping its own slice of the leaf DIP range, and
+        the DUT spreads the range over its right ports with a seeded permutation. Both TGs run at the
+        ``--spcx-ra-leaf-dip-shaper`` egress shaper during the test. The TG rules, the TG shaper and the
+        leaf DUT configuration are fully restored afterwards, so later tests see the class baseline.
+
+        Args:
+            request: pytest ``FixtureRequest``.
+        """
+        options = get_leaf_dip_groups_options(request)
+        if options is None:
+            pytest.skip(f"Requires {LEAF_DIP_GROUPS_OPTION}")
+        if not isinstance(self.cli_object, DvsCli):
+            pytest.skip(f"{LEAF_DIP_GROUPS_OPTION} runs on DVS only, got {type(self.cli_object).__name__}")
+        if self.chip_type not in SPCXRAConsts.LEAF_DIP_GROUPS_SUPPORTED_CHIPS:
+            pytest.skip(f"{LEAF_DIP_GROUPS_OPTION} runs on {', '.join(SPCXRAConsts.LEAF_DIP_GROUPS_SUPPORTED_CHIPS)} "
+                        f"only, got {self.chip_type}")
+        chip_config = self.CONFIG.chip_dict[self.chip_type]
+        test_name = get_perf_test_name(request)
+        with allure.step("Plan the leaf DIP groups"):
+            plan = build_spcx_ra_leaf_dip_plan(
+                self.players, self.conf_args, self.is_ipv6, options,
+                calibrated_packets_per_port=chip_config.traffic_packets_per_port,
+                chip_packets_per_port=chip_config.leaf_dip_groups_packets_per_port)
+            allure.attach(plan.to_table(), name="leaf_dip_groups_plan",
+                          attachment_type=allure.attachment_type.TEXT)
+            allure.dynamic.parameter(SPCXRAConsts.LEAF_DIP_RANGE_ALLURE_PARAMETER, plan.dip_range_summary())
+            allure.dynamic.parameter(SPCXRAConsts.LEAF_DIP_GROUPS_ALLURE_PARAMETER, len(plan.group_plans))
+        add_test_mongo_metadata(
+            test_name,
+            {MongoDbConsts.CONF_NAME: self.CONFIG.mongo_conf_name_leaf_dip_groups(
+                self.chip_type, plan.request.dip_count, len(plan.group_plans), plan.request.packets_per_port,
+                options.shaper_value)})
+
+        self.conf_args.update(plan.to_dut_conf_args(options.seed))
+        is_shaper_change_attempted = False
+        is_tg_install_attempted = False
+        try:
+            self._reconfigure_as_one_sided_ar()
+            is_shaper_change_attempted = True
+            with allure.step(f"Set the TG egress shaper to {options.shaper_value}"):
+                configure_ports_shaper_on_tg(self.players, options.shaper_value)
+            is_tg_install_attempted = True
+            self._run_leaf_dip_groups_traffic(test_name, PerfConsts.PACKET_SIZE_4K, plan)
+        except BaseException:
+            self._teardown_leaf_dip_groups(is_shaper_change_attempted=is_shaper_change_attempted,
+                                           is_tg_install_attempted=is_tg_install_attempted, should_raise=False)
+            raise
+        self._teardown_leaf_dip_groups(is_shaper_change_attempted=is_shaper_change_attempted,
+                                       is_tg_install_attempted=is_tg_install_attempted, should_raise=True)
 
     @pytest.mark.parametrize("flap_scenario", FLAP_SCENARIO_NAMES)
     @allure.description('Verify traffic converges to initial state after an interface flap.')
@@ -671,6 +765,83 @@ class _SpcXRATestBase:
         if not two_sided:
             self._wait_for_leaf_routes()
             sleep(SPCXRAConsts.LEAF_FORWARDING_SETTLE_SECONDS)
+
+    def _run_leaf_dip_groups_traffic(self, test_name: str, packet_size: int, plan: LeafDipPlan) -> None:
+        """Installs the leaf DIP groups on the spine TG, runs the leaf traffic and validates it.
+
+        Expects the DUT to be in the one-sided leaf configuration already.
+
+        Args:
+            test_name: Test identifier captured from the pytest request.
+            packet_size: Frame size in bytes.
+            plan: Leaf DIP groups plan.
+        """
+        spine_tg = self.conf_args["spine"]
+        with allure.step(f"Install {len(plan.group_plans)} leaf DIP groups on {spine_tg}"):
+            configure_leaf_dip_groups_on_tg(self.players, plan.to_tg_plan_json(), players_aliases=(spine_tg,))
+        leaf_traffic_jsons = get_leaf_dip_groups_traffic(self.players, self.conf_args, plan)
+        with allure.step(f"Run {packet_size}B packet Traffic on all the ports"):
+            run_traffic(self.players, self.scenario, leaf_traffic_jsons)
+        self._wait_for_nexthop_resolution()
+        self._settle_leaf_traffic()
+        self._validate(test_name, packet_size, skip_first_counters_iteration=True)
+
+    def _teardown_leaf_dip_groups(self, is_shaper_change_attempted: bool, is_tg_install_attempted: bool,
+                                  should_raise: bool) -> None:
+        """Returns the setup to the class baseline after the leaf DIP groups test.
+
+        Removes the spine TG DIP groups (the SDK side also checks the generator ports are back to their
+        pre-install ACL bindings and saves the per-group reset counts, attached here to Allure), restores the
+        class TG shaper, drops the leaf DIP keys from ``conf_args`` and restores the two-sided DUT
+        configuration. Every step runs even if an earlier one fails.
+
+        Args:
+            is_shaper_change_attempted: Whether the TG shaper change was started, so it may need restoring.
+            is_tg_install_attempted: Whether the TG install was started, so something may need removing.
+            should_raise: Raise the teardown failures. False while a test failure is already propagating,
+                so the teardown only logs and the original failure is reported.
+
+        Raises:
+            TestIssue: If a teardown step failed and should_raise is True.
+        """
+        teardown_errors = []
+        if is_tg_install_attempted:
+            spine_tg = self.conf_args["spine"]
+            self._run_teardown_step(
+                f"Remove the leaf DIP groups from {spine_tg}",
+                lambda: remove_leaf_dip_groups_on_tg(self.players, players_aliases=(spine_tg,)), teardown_errors)
+            with allure.step(f"Attach the leaf DIP groups reset counts of {spine_tg}"):
+                attach_leaf_dip_groups_resets(self.players, spine_tg)
+        if is_shaper_change_attempted:
+            class_shaper_value = self.conf_args["shaper_value"]
+            self._run_teardown_step(
+                f"Restore the TG egress shaper to {class_shaper_value}",
+                lambda: configure_ports_shaper_on_tg(self.players, class_shaper_value,
+                                                     step="Tear down - configure_ports_shaper_on_tg"),
+                teardown_errors)
+        for conf_key in LEAF_DIP_CONF_KEYS:
+            self.conf_args.pop(conf_key, None)
+        self._run_teardown_step("Restore the two-sided DUT configuration", self._restore_two_sided_ar,
+                                teardown_errors)
+        if teardown_errors and should_raise:
+            raise TestIssue(f"Leaf DIP groups teardown failed | expected a clean restore, got "
+                            f"{len(teardown_errors)} error(s): {teardown_errors}") from teardown_errors[0]
+
+    @staticmethod
+    def _run_teardown_step(step_name: str, action: Callable[[], None], teardown_errors: List[Exception]) -> None:
+        """Runs one teardown step, logging and collecting its failure so the next steps still run.
+
+        Args:
+            step_name: Allure step name, also used in the failure log.
+            action: The step.
+            teardown_errors: Failures collected so far, extended in place.
+        """
+        with allure.step(step_name):
+            try:
+                action()
+            except Exception as error:
+                logger.exception(f"{step_name} failed: {error}")
+                teardown_errors.append(error)
 
     def _wait_for_leaf_ports_ready(self) -> None:
         """
@@ -1008,6 +1179,7 @@ class TestSpcXRA_4x_lanes(_SpcXRATestBase):
                 port_split=1,
                 port_speed_bps="800000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_800G_x1["SPC6"],
+                leaf_dip_groups_packets_per_port=SPCXRAConsts.LEAF_DIP_GROUPS_PACKETS_PER_PORT_800G_x1["SPC6"],
                 low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_EXTENDED_SPC6,
                 mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_EXTENDED_SPC6,
                 high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_EXTENDED_SPC6,
@@ -1037,6 +1209,7 @@ class TestSpcXRA_2x_lanes(_SpcXRATestBase):
                 port_split=2,
                 port_speed_bps="400000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_400G_x2["SPC6"],
+                leaf_dip_groups_packets_per_port=SPCXRAConsts.LEAF_DIP_GROUPS_PACKETS_PER_PORT_400G_x2["SPC6"],
                 low_ar_threshold=PerfConsts.LOW_AR_THRESHOLD_EXTENDED_SPC6,
                 mid_ar_threshold=PerfConsts.MED_AR_THRESHOLD_EXTENDED_SPC6,
                 high_ar_threshold=PerfConsts.HIGH_AR_THRESHOLD_EXTENDED_SPC6,
@@ -1062,6 +1235,7 @@ class TestSpcXRA_1x_lanes(_SpcXRATestBase):
                 port_split=4,
                 port_speed_bps="200000000",
                 traffic_packets_per_port=SPCXRAConsts.PACKET_NUM_200G_x4["SPC6"],
+                leaf_dip_groups_packets_per_port=SPCXRAConsts.LEAF_DIP_GROUPS_PACKETS_PER_PORT_200G_x4["SPC6"],
                 skip_first_iteration_redmine_issue=5144323,
                 # Cumulus max-breakout mloop ports need an explicit phy speed
                 # (same pattern as Yehuda's SPC6 x8 NVUE bring-up).

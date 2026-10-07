@@ -214,11 +214,24 @@ class PerfConsts:
     DVS_TG_VALIDATOR_NAME = "TrafficValidator"
     DVS_TG_MLOOP_CONFIGURATION = "ConfigureMloopOnTG"
     DVS_TG_REMOVE_MLOOP_CONFIGURATION = "RemoveMloopOnTG"
+    # Sets the egress max shaper of every TG traffic port to SHAPER_VALUE_ENV_VAR x the port speed.
+    DVS_CONFIGURE_PORTS_SHAPER = "ConfigureShaperOnAllPorts"
     DVS_GET_PORTS = "GetPorts"
     DVS_UNSPLIT_ALL_PORTS = "UnsplitAllPorts"
     DVS_DYNAMIC_CONF_PREFIX = "DynamicConfiguration"
     DVS_CREATE_INCREMENTAL_DIPS = "MultiDipsTG"
     DVS_AR_L3_SNAKE_ROUTE_HITS = "ArL3SnakeRouteHits"
+    # Grouped incremental DIPs for the leaf scenario: each generator port group sweeps its own DIP slice.
+    # The TG reads the plan from the file the environment variable points at, the DUT class is selected
+    # by the DVS spcx_ra dut.jinja when the leaf DIP keys are rendered.
+    DVS_CREATE_LEAF_DIP_GROUPS = "MultiDipsGroupedTG"
+    DVS_REMOVE_LEAF_DIP_GROUPS = "RemoveMultiDipsGroupedTG"
+    DVS_SPCX_RA_LEAF_DIP_GROUPS_DUT = "SPCXRALeafDipGroupsDUT"
+    LEAF_DIP_GROUPS_PLAN_ENV_VAR = "LEAF_DIP_GROUPS_PLAN_PATH"
+    LEAF_DIP_GROUPS_PLAN_FILE_NAME = "leaf_dip_groups_plan.json"
+    # Per-group limit-reset counts saved by the TG teardown and copied back for Allure.
+    LEAF_DIP_GROUPS_RESETS_ENV_VAR = "LEAF_DIP_GROUPS_RESETS_PATH"
+    LEAF_DIP_GROUPS_RESETS_FILE_NAME = "leaf_dip_groups_resets.json"
     DVS_MODIFY_PG_BUFFER_CONNECTED_PORTS = "ModifyPGBufferConnectedPorts"
     # Written by ArL3SnakeDUT on the player; re-written with packet
     # counts by ArL3SnakeRouteHits so pytest can attach them.
@@ -799,6 +812,27 @@ class SPCXRAConsts:
     LEAF_DIP_BASE_IPV4 = "10.0.1.0"
     LEAF_DIP_BASE_IPV6 = "192:168:5:1:1:1:2:0"
     LEAF_DIP_STEP = 1
+    # Grouped incremental DIPs (--spcx-ra-leaf-dip-groups, DVS only). The seed drives the DUT's DIP to
+    # right port permutation, fixed so two runs program the same routes.
+    LEAF_DIP_GROUPS_DEFAULT_SEED = "spcx_ra_leaf_dip_groups"
+    # Resident packets per generator port = this x the chip's calibrated count. The calibration is for a
+    # plain flood loop; with the DIP rewrite ACL on every pass the loop needs more packets to stay at the
+    # shaper (the Alibaba suite runs 3x on its spine TG for the same rewrite).
+    LEAF_DIP_GROUPS_PACKETS_PER_PORT_MULTIPLIER = 3
+    # Where the multiplier above exceeds LEAF_RESIDENT_PACKET_BUDGET, the chip entry sets resident packets per
+    # generator port explicitly: the budget over the SPC6 generator ports (64 at 800G, 128 at 400G, 256 at 200G).
+    LEAF_DIP_GROUPS_PACKETS_PER_PORT_800G_x1 = {"SPC6": 64}
+    LEAF_DIP_GROUPS_PACKETS_PER_PORT_400G_x2 = {"SPC6": 32}
+    LEAF_DIP_GROUPS_PACKETS_PER_PORT_200G_x4 = {"SPC6": 16}
+    # Chips the leaf DIP groups test runs on; it skips on any other chip.
+    LEAF_DIP_GROUPS_SUPPORTED_CHIPS = ("SPC4", "SPC6")
+    # Allure parameter names of the leaf DIP groups test.
+    LEAF_DIP_RANGE_ALLURE_PARAMETER = "leaf_dip_range"
+    LEAF_DIP_GROUPS_ALLURE_PARAMETER = "unconnected_port_groups"
+    # TG egress shaper during the leaf DIP groups test, as a fraction of the port speed. The seeded DIP to
+    # right port mapping makes egress collisions the class shaper cannot absorb: at 0.975 the right ports'
+    # TC 0 occupancy averaged ~440 cells (limit 400), at 0.95 ~165 cells with 0.951 utilization.
+    LEAF_DIP_GROUPS_SHAPER_VALUE = 0.95
 
     # PFC port buffer in bytes, per chip. SPC6 uses 250000: the Spectrum-X v2.2 deployment guide
     # figure (363000, Spectrum-4 / SN5600) plus the 75000 xoff reserves almost the whole SPC6 buffer

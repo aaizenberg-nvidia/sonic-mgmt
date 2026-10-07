@@ -19,12 +19,13 @@ This module uses duck typing (getattr(cls, "CONFIG", None)) so it has no
 dependency on the dataclass.
 """
 import copy
+import json
 import logging
 import os
 import random
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import allure
 import pytest
@@ -36,6 +37,9 @@ from ngts.constants.performance_constants import (
     ArAlgorithm, MongoDbConsts, PerfConsts, SPCXRAConsts)
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
+from ngts.helpers.performance.leaf_dip_groups import (
+    IPV4_FAMILY, IPV6_FAMILY, LeafDipGroupsRequest, LeafDipPlan, build_leaf_dip_plan,
+    format_reset_summary, summarize_reset_counts)
 from ngts.helpers.performance.performance_recovery import has_primary_test_failure
 from ngts.helpers.performance.performance_setup_helpers import (
     allure_attach_performance_conf_context, apply_test_configuration_guarded,
@@ -154,6 +158,78 @@ def pytest_addoption(parser):
         help=(f"Spine traffic profile. '{TRAFFIC_PROFILE_SANITY}' (default) sends the "
               f"single RoCE data stream; '{TRAFFIC_PROFILE_AI_MIX}' adds the AI "
               "control-packet mix (RoCE ACK, RTT probe, RTT probe response, CNP)."))
+    _add_leaf_dip_groups_options(parser)
+
+
+# Leaf DIP groups (DVS only): the spine TG generator ports are split into groups, each sweeping its
+# own slice of a leaf DIP range. Off unless LEAF_DIP_GROUPS_OPTION is given, and the test that runs it
+# is only collected then.
+LEAF_DIP_GROUPS_OPTION = "--spcx-ra-leaf-dip-groups"
+LEAF_DIP_COUNT_OPTION = "--spcx-ra-leaf-dip-count"
+LEAF_DIP_BASE_IPV4_OPTION = "--spcx-ra-leaf-dip-base-ipv4"
+LEAF_DIP_BASE_IPV6_OPTION = "--spcx-ra-leaf-dip-base-ipv6"
+LEAF_DIP_SEED_OPTION = "--spcx-ra-leaf-dip-seed"
+LEAF_DIP_NO_STAGGER_OPTION = "--spcx-ra-leaf-dip-no-stagger"
+LEAF_DIP_PACKETS_PER_PORT_OPTION = "--spcx-ra-leaf-dip-packets-per-port"
+LEAF_DIP_SHAPER_OPTION = "--spcx-ra-leaf-dip-shaper"
+LEAF_DIP_GROUPS_TEST_NAME = "test_ar_perf_max_bandwidth_leaf_dip_groups"
+
+
+def _add_leaf_dip_groups_options(parser):
+    """
+    Registers the leaf DIP groups options.
+
+    Args:
+        parser: pytest ``Parser``.
+    """
+    parser.addoption(
+        LEAF_DIP_GROUPS_OPTION, action="store", type=int, default=None,
+        help=(f"Run {LEAF_DIP_GROUPS_TEST_NAME} (DVS only) with this many spine TG generator port "
+              "groups, each sweeping its own slice of the leaf DIP range. Off by default, and the "
+              "test is not collected without it."))
+    parser.addoption(
+        LEAF_DIP_COUNT_OPTION, action="store", type=int, default=None,
+        help="Leaf DIPs in the range. Defaults to one per DUT right port.")
+    parser.addoption(
+        LEAF_DIP_BASE_IPV4_OPTION, action="store", default=SPCXRAConsts.LEAF_DIP_BASE_IPV4,
+        help=f"First IPv4 leaf DIP. Defaults to {SPCXRAConsts.LEAF_DIP_BASE_IPV4}.")
+    parser.addoption(
+        LEAF_DIP_BASE_IPV6_OPTION, action="store", default=SPCXRAConsts.LEAF_DIP_BASE_IPV6,
+        help=f"First IPv6 leaf DIP. Defaults to {SPCXRAConsts.LEAF_DIP_BASE_IPV6}.")
+    parser.addoption(
+        LEAF_DIP_SEED_OPTION, action="store", default=SPCXRAConsts.LEAF_DIP_GROUPS_DEFAULT_SEED,
+        help="Seed of the DUT's DIP to right port permutation.")
+    parser.addoption(
+        LEAF_DIP_NO_STAGGER_OPTION, action="store_true", default=False,
+        help="Start every port of a group at the group's first DIP instead of at its own share.")
+    parser.addoption(
+        LEAF_DIP_PACKETS_PER_PORT_OPTION, action="store", type=int, default=None,
+        help=(f"Resident packets per spine TG generator port, each starting at its own DIP. Defaults to the "
+              f"chip entry's leaf_dip_groups_packets_per_port where set (SPC6), else "
+              f"{SPCXRAConsts.LEAF_DIP_GROUPS_PACKETS_PER_PORT_MULTIPLIER}x the chip's calibrated count."))
+    parser.addoption(
+        LEAF_DIP_SHAPER_OPTION, action="store", type=float, default=SPCXRAConsts.LEAF_DIP_GROUPS_SHAPER_VALUE,
+        help=(f"Egress shaper of both TGs during {LEAF_DIP_GROUPS_TEST_NAME}, as a fraction of the port "
+              f"speed in (0, 1]. Defaults to {SPCXRAConsts.LEAF_DIP_GROUPS_SHAPER_VALUE}. The class value is "
+              "restored after the test."))
+
+
+def pytest_collection_modifyitems(config, items):
+    """
+    Deselects the leaf DIP groups test unless its option is given, so regular runs never list it.
+
+    Args:
+        config: pytest ``Config``.
+        items: Collected test items, edited in place.
+    """
+    if config.getoption(LEAF_DIP_GROUPS_OPTION, default=None) is not None:
+        return
+    deselected_items = [item for item in items if getattr(item, "originalname", None) == LEAF_DIP_GROUPS_TEST_NAME]
+    if not deselected_items:
+        return
+    deselected_ids = {id(item) for item in deselected_items}
+    config.hook.pytest_deselected(items=deselected_items)
+    items[:] = [item for item in items if id(item) not in deselected_ids]
 
 
 def _get_test_config(request):
@@ -932,6 +1008,237 @@ def _resolve_leaf_dip_list(players, spine_tg, conf_args):
     logger.debug(f"Resolved {len(leaf_dst_ips)} leaf destinations | "
                  f"first={leaf_dst_ips[0]}, last={leaf_dst_ips[-1]}")
     return leaf_dst_ips
+
+
+# ------------------------------------------------- leaf DIP groups helpers
+
+@dataclass(frozen=True)
+class LeafDipGroupsOptions:
+    """Leaf DIP groups options of the run."""
+    group_count: int  # Spine TG generator port groups
+    dip_count: Optional[int]  # Leaf DIPs in the range, None for one per DUT right port
+    dip_base_ipv4: str  # First IPv4 leaf DIP
+    dip_base_ipv6: str  # First IPv6 leaf DIP
+    seed: str  # Base seed of the DUT's DIP to right port permutation
+    is_staggered: bool  # Start each port at its own share of its group slice
+    packets_per_port: Optional[int]  # Resident packets per generator port, None for the chip default
+    shaper_value: float  # TG egress shaper during the test, fraction of the port speed
+
+
+def get_leaf_dip_groups_options(request) -> Optional[LeafDipGroupsOptions]:
+    """
+    Reads the leaf DIP groups options.
+
+    Args:
+        request: pytest ``FixtureRequest``.
+
+    Returns:
+        LeafDipGroupsOptions: The options, or None when LEAF_DIP_GROUPS_OPTION is not given.
+
+    Raises:
+        TestIssue: If the shaper is not a fraction of the port speed in (0, 1].
+    """
+    group_count = request.config.getoption(LEAF_DIP_GROUPS_OPTION, default=None)
+    if group_count is None:
+        return None
+    shaper_value = request.config.getoption(LEAF_DIP_SHAPER_OPTION)
+    if not 0 < shaper_value <= 1:
+        raise TestIssue(f"{LEAF_DIP_SHAPER_OPTION} must be a fraction of the port speed | "
+                        f"expected 0 < value <= 1, got {shaper_value}")
+    return LeafDipGroupsOptions(
+        group_count=group_count,
+        dip_count=request.config.getoption(LEAF_DIP_COUNT_OPTION),
+        dip_base_ipv4=request.config.getoption(LEAF_DIP_BASE_IPV4_OPTION),
+        dip_base_ipv6=request.config.getoption(LEAF_DIP_BASE_IPV6_OPTION),
+        seed=request.config.getoption(LEAF_DIP_SEED_OPTION),
+        is_staggered=not request.config.getoption(LEAF_DIP_NO_STAGGER_OPTION),
+        packets_per_port=request.config.getoption(LEAF_DIP_PACKETS_PER_PORT_OPTION),
+        shaper_value=shaper_value)
+
+
+def resolve_leaf_dip_packets_per_port(option_packets_per_port: Optional[int], chip_packets_per_port: Optional[int],
+                                      calibrated_packets_per_port: int) -> int:
+    """
+    Picks the resident packets per spine TG generator port.
+
+    The command-line option wins, then the chip entry's value, then LEAF_DIP_GROUPS_PACKETS_PER_PORT_MULTIPLIER
+    x the chip's calibrated count.
+
+    Args:
+        option_packets_per_port (Optional[int]): LEAF_DIP_PACKETS_PER_PORT_OPTION, None when not given.
+        chip_packets_per_port (Optional[int]): The chip entry's leaf_dip_groups_packets_per_port, None when unset.
+        calibrated_packets_per_port (int): The chip's calibrated resident packets per port.
+
+    Returns:
+        int: Resident packets per generator port.
+    """
+    if option_packets_per_port is not None:
+        return option_packets_per_port
+    if chip_packets_per_port is not None:
+        return chip_packets_per_port
+    return SPCXRAConsts.LEAF_DIP_GROUPS_PACKETS_PER_PORT_MULTIPLIER * calibrated_packets_per_port
+
+
+def build_spcx_ra_leaf_dip_plan(players, conf_args, is_ipv6: bool, options: LeafDipGroupsOptions,
+                                calibrated_packets_per_port: int,
+                                chip_packets_per_port: Optional[int] = None) -> LeafDipPlan:
+    """
+    Builds the leaf DIP groups plan from the live port lists, before anything is configured.
+
+    The generator ports are read from the spine TG the same way the traffic JSON reads them, so the
+    plan and the streams name the same ports. The right port count comes from the DUT split the DVS
+    dut.jinja renders, and the reverse direction DIP is kept out of the range. Resident packets per port
+    come from resolve_leaf_dip_packets_per_port.
+
+    Args:
+        players (dict): Test players mapping.
+        conf_args (dict): Test configuration arguments.
+        is_ipv6 (bool): Whether the run is IPv6.
+        options (LeafDipGroupsOptions): Leaf DIP groups options.
+        calibrated_packets_per_port (int): The chip's calibrated resident packets per port.
+        chip_packets_per_port (Optional[int]): The chip entry's leaf_dip_groups_packets_per_port, None when unset.
+
+    Returns:
+        LeafDipPlan: The validated plan.
+
+    Raises:
+        TestIssue: If the options cannot be planned on this setup, or the resident packets exceed the
+            generator budget.
+    """
+    dut_performance = players[PerfConsts.DUT_ALIAS]['cli'].performance
+    spine_performance = players[conf_args["spine"]]['cli'].performance
+    tg_ports = tuple(spine_performance.get_tg_unconnected_ports())
+    right_ports = dut_performance.get_split_ports(
+        conf_args["split_right"], conf_args["split_left"])["right_split_ports"]
+    dut_configuration = dut_performance.get_device_configuration(conf_args=conf_args)
+    packets_per_port = resolve_leaf_dip_packets_per_port(options.packets_per_port, chip_packets_per_port,
+                                                         calibrated_packets_per_port)
+    resident_packets = packets_per_port * len(tg_ports)
+    if resident_packets > SPCXRAConsts.LEAF_RESIDENT_PACKET_BUDGET:
+        raise TestIssue(f"Leaf DIP groups exceed the generator budget | {len(tg_ports)} ports x "
+                        f"{packets_per_port} packets = {resident_packets} resident, expected <= "
+                        f"{SPCXRAConsts.LEAF_RESIDENT_PACKET_BUDGET}")
+    request = LeafDipGroupsRequest(
+        family=IPV6_FAMILY if is_ipv6 else IPV4_FAMILY,
+        tg_ports=tg_ports,
+        egress_port_count=len(right_ports),
+        dip_base=options.dip_base_ipv6 if is_ipv6 else options.dip_base_ipv4,
+        dip_count=options.dip_count if options.dip_count is not None else len(right_ports),
+        group_count=options.group_count,
+        is_staggered=options.is_staggered,
+        reserved_dips=(dut_configuration["dip_right_to_left"],),
+        packets_per_port=packets_per_port)
+    logger.info(f"Planning leaf DIP groups | {len(tg_ports)} generator ports on {conf_args['spine']}, "
+                f"{len(right_ports)} DUT right ports, {request.dip_count} {request.family} DIPs from "
+                f"{request.dip_base}, {request.group_count} groups, staggered={request.is_staggered}, "
+                f"{packets_per_port} packets per port (option {options.packets_per_port}, chip entry "
+                f"{chip_packets_per_port}, calibrated {calibrated_packets_per_port})")
+    return build_leaf_dip_plan(request)
+
+
+def get_leaf_dip_groups_traffic(players, conf_args, plan: LeafDipPlan,
+                                template_suite="traffic_packets_json_files") -> Dict[str, str]:
+    """
+    Builds the traffic JSON files for the leaf DIP groups run.
+
+    The host TG keeps its usual traffic. The spine TG gets one single-packet stream per resident packet
+    of every generator port, each starting at the DIP the plan gives that packet; MultiDipsGroupedTG
+    then moves every packet through its group slice.
+
+    Args:
+        players (dict): Test players mapping.
+        conf_args (dict): Test configuration arguments.
+        plan (LeafDipPlan): Leaf DIP groups plan.
+        template_suite (str): Directory holding the traffic JSON templates.
+
+    Returns:
+        dict: Traffic JSON path per player alias.
+    """
+    traffic_jsons = {}
+    pkt_size = PerfConsts.PACKET_SIZE_LIST[0]
+    for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
+        player_cli_obj = players[player_alias]['cli']
+        json_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests", template_suite,
+                                 TESTS_SCENARIO,
+                                 f"{player_alias}_{TESTS_SCENARIO.replace('/', '_')}_{pkt_size}.json")
+        traffic_parameters = player_cli_obj.performance.get_traffic_parameters(
+            scenario=TESTS_SCENARIO, conf_args=conf_args)
+        if player_alias == conf_args["host"]:
+            create_json_traffic_file(
+                player_alias=player_alias, traffic_parameters=traffic_parameters,
+                json_path=json_path)
+        else:
+            build_leaf_dip_groups_stream_list(
+                player_alias, traffic_parameters, json_path, plan)
+        traffic_jsons[player_alias] = json_path
+    return traffic_jsons
+
+
+def build_leaf_dip_groups_stream_list(spine_tg, traffic_parameters, json_path, plan: LeafDipPlan,
+                                      ip_protocol=PerfConsts.IP_PROTOCOL_UDP) -> None:
+    """
+    Writes the spine TG traffic JSON: one single-packet stream per resident packet, at that packet's
+    first DIP, so no two resident packets of a port share a DIP (while the port share allows it).
+
+    Args:
+        spine_tg (str): Spine traffic-generator alias.
+        traffic_parameters (dict): Traffic parameters from get_traffic_parameters.
+        json_path (str): Output path for the traffic JSON file.
+        plan (LeafDipPlan): Leaf DIP groups plan.
+        ip_protocol (str): IP protocol constant, UDP by default.
+
+    Raises:
+        TestIssue: If the plan names a port the spine TG does not send from.
+    """
+    tg_ports = list(traffic_parameters["ports"])
+    missing_ports = [port_plan.tg_port for port_plan in plan.port_plans() if port_plan.tg_port not in tg_ports]
+    if missing_ports:
+        raise TestIssue(f"Leaf DIP plan names ports {spine_tg} does not send from | expected a subset of "
+                        f"{tg_ports}, got {missing_ports}")
+    traffic_parameters["num_packets"] = 1
+    stream_list = []
+    for group_plan in plan.group_plans:
+        for port_plan in group_plan.port_plans:
+            traffic_parameters["ports"] = [port_plan.tg_port]
+            for packet_index, packet_dip in enumerate(port_plan.packet_dips):
+                traffic_parameters["IP"]["dst"] = packet_dip
+                stream = create_json_traffic_stream(
+                    spine_tg, traffic_parameters,
+                    f"spine_to_leaf_group{group_plan.index}_port{port_plan.tg_port}_pkt{packet_index}_ip_{packet_dip}",
+                    ip_protocol=ip_protocol)
+                stream_list.append(_shrink_stream_payload(stream, spine_tg))
+    traffic_parameters["ports"] = tg_ports
+    logger.info(f"Leaf DIP groups traffic on {spine_tg} | {len(stream_list)} single-packet streams, "
+                f"{plan.request.packets_per_port} per generator port")
+    create_json_traffic_file_with_stream_list(
+        spine_tg, traffic_parameters, json_path, stream_list)
+
+
+def attach_leaf_dip_groups_resets(players, spine_tg: str) -> None:
+    """
+    Attaches the spine TG's per-group reset counts to Allure, raw and as a relative port-rate table.
+
+    The counts are diagnostics: a missing or unreadable file is logged and the test goes on.
+
+    Args:
+        players (dict): Test players mapping.
+        spine_tg (str): Spine traffic-generator alias.
+    """
+    resets_path = players[spine_tg]['cli'].performance.get_leaf_dip_groups_resets_local_path()
+    if not os.path.isfile(resets_path):
+        logger.warning(f"No leaf DIP groups reset counts from {spine_tg} at {resets_path}")
+        return
+    try:
+        with open(resets_path) as resets_file:
+            resets_json = json.load(resets_file)
+        summary_table = format_reset_summary(summarize_reset_counts(resets_json), resets_json)
+    except (OSError, ValueError, KeyError) as error:
+        logger.warning(f"Could not read the leaf DIP groups reset counts in {resets_path}: {error}")
+        return
+    logger.info(f"Leaf DIP groups reset counts on {spine_tg}:\n{summary_table}")
+    allure.attach(summary_table, name="leaf_dip_groups_resets_summary", attachment_type=allure.attachment_type.TEXT)
+    allure.attach(json.dumps(resets_json, indent=2), name="leaf_dip_groups_resets",
+                  attachment_type=allure.attachment_type.JSON)
 
 
 # ------------------------------------------------- link-flap validation helpers

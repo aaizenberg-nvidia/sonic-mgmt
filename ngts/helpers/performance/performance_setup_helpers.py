@@ -1066,6 +1066,58 @@ def configure_incremental_dips_on_tg(players, players_aliases=PerfConsts.PERF_SE
                                            performance_clis_function_args=(), step=step)
 
 
+def configure_leaf_dip_groups_on_tg(players, plan_json, players_aliases=(PerfConsts.LEFT_TG_ALIAS,),
+                                    step="Test Body - configure_leaf_dip_groups_on_tg"):
+    """
+    Installs the grouped incremental-DIP plan on the traffic generators.
+
+    Args:
+        players (dict): Test players mapping.
+        plan_json (dict): Plan built by LeafDipPlan.to_tg_plan_json.
+        players_aliases (tuple): Traffic generators to install the plan on. Defaults to the spine TG.
+        step (str): Allure step name.
+    """
+    call_performance_function_with_threads(players, players_aliases=list(players_aliases),
+                                           action="configure leaf dip groups",
+                                           performance_clis_function_name="configure_leaf_dip_groups_on_tg",
+                                           performance_clis_function_args=(plan_json,), step=step)
+
+
+def remove_leaf_dip_groups_on_tg(players, players_aliases=(PerfConsts.LEFT_TG_ALIAS,),
+                                 step="Tear down - remove_leaf_dip_groups_on_tg"):
+    """
+    Removes the grouped incremental-DIP configuration from the traffic generators and verifies their
+    generator ports are back to the ACL bindings they had before the install.
+
+    Args:
+        players (dict): Test players mapping.
+        players_aliases (tuple): Traffic generators to clean. Defaults to the spine TG.
+        step (str): Allure step name.
+    """
+    call_performance_function_with_threads(players, players_aliases=list(players_aliases),
+                                           action="remove leaf dip groups",
+                                           performance_clis_function_name="remove_leaf_dip_groups_on_tg",
+                                           performance_clis_function_args=(), step=step)
+
+
+def configure_ports_shaper_on_tg(players, shaper_value, players_aliases=tuple(PerfConsts.PERF_SETUP_TG_ALIASES),
+                                 step="Test Body - configure_ports_shaper_on_tg"):
+    """
+    Sets the egress max shaper of every traffic port on the traffic generators to shaper_value x the port
+    speed, replacing the value the class configuration applied.
+
+    Args:
+        players (dict): Test players mapping.
+        shaper_value (float): Fraction of the port speed, in (0, 1].
+        players_aliases (tuple): Traffic generators to shape. Defaults to both.
+        step (str): Allure step name.
+    """
+    call_performance_function_with_threads(players, players_aliases=list(players_aliases),
+                                           action=f"configure ports shaper {shaper_value}",
+                                           performance_clis_function_name="configure_ports_shaper",
+                                           performance_clis_function_args=(shaper_value,), step=step)
+
+
 def modify_pg_buffer_for_connected_ports(players, step="Test Body - modify_pg_buffer_for_connected_ports", parallel_run=True):
     """
     Modify PG buffer configuration for connected ports on traffic generators.

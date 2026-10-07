@@ -19,7 +19,7 @@
     <info> </info>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/ --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/Alibaba_AR_tests --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/400G_to_200G_Configuration\'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/ --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/Alibaba_AR_tests --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/400G_to_200G_Configuration --spcx-ra-leaf-dip-groups=12 --spcx-ra-leaf-dip-count=64000\'"</static_args>
       </params>
     </cmd>
   </case>

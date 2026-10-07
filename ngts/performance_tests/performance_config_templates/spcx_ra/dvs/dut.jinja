@@ -1,8 +1,11 @@
 {
+    {# Leaf DIP groups (--spcx-ra-leaf-dip-groups): one-sided leaf with a DIP range spread over the right ports #}
+    {% set is_leaf_dip_groups = conf_args.leaf_dip_count is defined and not conf_args.two_sided_ar %}
+
     {# Test configuration metadata #}
     "sdk_test_info": {
         "sdk_test_path": "sx_sdk_py_tests/tests/multi_os_tests/spcx_tests/spx_ra_dut.py",
-        "sdk_test_name": "SPCXRADUT"
+        "sdk_test_name": {% if is_leaf_dip_groups %}"{{ PerfConsts.DVS_SPCX_RA_LEAF_DIP_GROUPS_DUT }}"{% else %}"SPCXRADUT"{% endif %}
     },
     "{{ PerfConsts.SDK_TEST_CONF }}": {
         {# VLAN configuration #}
@@ -72,6 +75,13 @@
 
         "split_ports": {{ split_ports | tojson }},
         "two_sided_ar": "{{ conf_args.two_sided_ar }}",
+
+        {% if is_leaf_dip_groups %}
+        {# One host route per DIP of the leaf range, pinned to a right port by a seeded permutation #}
+        "leaf_dip_base": "{{ conf_args.leaf_dip_base }}",
+        "leaf_dip_count": {{ conf_args.leaf_dip_count }},
+        "leaf_dip_seed": "{{ conf_args.leaf_dip_seed }}",
+        {% endif %}
 
         {# Configure port groups - either from provided config or default mapping #}
         {% if conf_args.port_groups is defined %}

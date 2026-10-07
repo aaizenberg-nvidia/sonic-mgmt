@@ -1228,3 +1228,33 @@ class PerformanceCommon:
                     f"parsed={value!r}, raw stdout={out.strip()!r}")
         except Exception:
             logging.exception("disable_split_sharing failed (ignored in teardown)")
+
+    def configure_ports_shaper(self, shaper_value):
+        """
+        Sets the egress max shaper of the traffic generator ports to shaper_value x the port speed.
+
+        Args:
+            shaper_value (float): Fraction of the port speed.
+        """
+        raise NotImplementedError
+
+    def configure_leaf_dip_groups_on_tg(self, plan_json):
+        """
+        Installs the grouped incremental-DIP plan on the traffic generator.
+
+        Args:
+            plan_json (dict): Plan built by LeafDipPlan.to_tg_plan_json.
+        """
+        raise NotImplementedError
+
+    def remove_leaf_dip_groups_on_tg(self):
+        """
+        Removes the grouped incremental-DIP configuration from the traffic generator.
+        """
+        raise NotImplementedError
+
+    def get_leaf_dip_groups_resets_local_path(self):
+        """
+        Returns the local path the traffic generator's leaf DIP groups reset counts are copied to.
+        """
+        raise NotImplementedError

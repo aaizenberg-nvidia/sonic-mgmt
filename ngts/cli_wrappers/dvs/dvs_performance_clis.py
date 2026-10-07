@@ -1001,3 +1001,123 @@ class DvsPerformance(PerformanceCommon):
         summary = "\n".join(lines)
         allure.attach(summary, f"Scale-route hit summary ({self.dut_alias})", allure.attachment_type.TEXT)
         logging.info(summary)
+
+    def configure_ports_shaper(self, shaper_value):
+        """
+        Sets the egress max shaper of every connected and unconnected port of this traffic generator to
+        shaper_value x the port speed, replacing the value the class configuration applied.
+
+        Args:
+            shaper_value (float): Fraction of the port speed, in (0, 1].
+        """
+        logging.info(f"Set the ports shaper to {shaper_value} on {self.dut_alias}")
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_CONFIGURE_PORTS_SHAPER}"
+        self.execute_cmd(self.get_cmd_for_sdk(
+            cmd, env_variables=[f"{PerfConsts.SHAPER_VALUE_ENV_VAR}={shaper_value}"]))
+
+    def _get_leaf_dip_groups_plan_remote_path(self, dst_dut_dir="/tmp"):
+        """
+        Returns:
+            str: Path of the leaf DIP groups plan file on this traffic generator.
+        """
+        return os.path.join(dst_dut_dir, PerfConsts.LEAF_DIP_GROUPS_PLAN_FILE_NAME)
+
+    def configure_leaf_dip_groups_on_tg(self, plan_json, dst_dut_dir="/tmp"):
+        """
+        Copies the grouped incremental-DIP plan to this traffic generator and installs it.
+
+        The plan goes in its own file rather than in /tmp/conf.json, so the class-level traffic generator
+        configuration is left as it was rendered.
+
+        Args:
+            plan_json (dict): Plan built by LeafDipPlan.to_tg_plan_json.
+            dst_dut_dir (str): Directory of the plan file on the traffic generator.
+        """
+        local_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                  f"{self.dut_alias}_{PerfConsts.LEAF_DIP_GROUPS_PLAN_FILE_NAME}")
+        remote_path = self._get_leaf_dip_groups_plan_remote_path(dst_dut_dir)
+        logging.info(f"Install {len(plan_json['groups'])} leaf DIP groups on {self.dut_alias}, plan at {remote_path}")
+        self._write_json_to_remote(local_path, plan_json, dst_dut_dir, PerfConsts.LEAF_DIP_GROUPS_PLAN_FILE_NAME)
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_CREATE_LEAF_DIP_GROUPS}"
+        self.execute_cmd(self.get_cmd_for_sdk(
+            cmd, env_variables=[f"{PerfConsts.LEAF_DIP_GROUPS_PLAN_ENV_VAR}={remote_path}"]))
+
+    def remove_leaf_dip_groups_on_tg(self, dst_dut_dir="/tmp"):
+        """
+        Removes everything the leaf DIP groups install created on this traffic generator and checks the
+        generator ports are back to their pre-install ACL bindings. A no-op when nothing was installed.
+
+        The removal first saves the per-group reset counts on the traffic generator; they are copied back
+        to get_leaf_dip_groups_resets_local_path() even when the removal itself fails. The counts a previous
+        run left on the traffic generator are deleted first, so only counts written by this removal are
+        copied back.
+
+        Args:
+            dst_dut_dir (str): Directory of the plan and reset files on the traffic generator.
+        """
+        plan_path = self._get_leaf_dip_groups_plan_remote_path(dst_dut_dir)
+        resets_path = os.path.join(dst_dut_dir, PerfConsts.LEAF_DIP_GROUPS_RESETS_FILE_NAME)
+        local_resets_path = self.get_leaf_dip_groups_resets_local_path()
+        if os.path.isfile(local_resets_path):
+            os.remove(local_resets_path)
+        logging.info(f"Remove leaf DIP groups from {self.dut_alias}")
+        is_previous_resets_removed = self._remove_remote_leaf_dip_groups_resets(resets_path)
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_REMOVE_LEAF_DIP_GROUPS}"
+        try:
+            self.execute_cmd(self.get_cmd_for_sdk(
+                cmd, env_variables=[f"{PerfConsts.LEAF_DIP_GROUPS_PLAN_ENV_VAR}={plan_path}",
+                                    f"{PerfConsts.LEAF_DIP_GROUPS_RESETS_ENV_VAR}={resets_path}"]))
+        finally:
+            if is_previous_resets_removed:
+                self._copy_leaf_dip_groups_resets(resets_path, local_resets_path, dst_dut_dir)
+
+    def _remove_remote_leaf_dip_groups_resets(self, resets_path):
+        """
+        Deletes the reset counts a previous run left on this traffic generator. Diagnostics only: a failure
+        is logged and this run's counts are then not collected, rather than risking the previous run's being
+        reported as this run's.
+
+        Args:
+            resets_path (str): Reset counts file on the traffic generator.
+
+        Returns:
+            bool: True when no previous reset counts file remains.
+        """
+        try:
+            self.execute_cmd(f"sudo rm -f {resets_path}")
+        except Exception as error:
+            logging.warning(f"Could not delete the previous leaf DIP groups reset counts {resets_path} on "
+                            f"{self.dut_alias}, this run's counts will not be collected: {error}")
+            return False
+        return True
+
+    def get_leaf_dip_groups_resets_local_path(self):
+        """
+        Returns:
+            str: Local path the leaf DIP groups reset counts of this traffic generator are copied to.
+        """
+        return os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                            f"{self.dut_alias}_{PerfConsts.LEAF_DIP_GROUPS_RESETS_FILE_NAME}")
+
+    def _copy_leaf_dip_groups_resets(self, resets_path, local_resets_path, dst_dut_dir):
+        """
+        Copies the reset counts file from the traffic generator when the teardown wrote one. The counts are
+        diagnostics, so a missing file (nothing was installed) or a failed copy is logged, never raised: it
+        must not fail the teardown or hide the teardown's own error.
+
+        Args:
+            resets_path (str): Reset counts file on the traffic generator.
+            local_resets_path (str): Local destination.
+            dst_dut_dir (str): Directory of the reset counts file on the traffic generator.
+        """
+        try:
+            if not self.execute_cmd(f"ls {resets_path} 2>/dev/null || true").strip():
+                logging.warning(f"No leaf DIP groups reset counts at {resets_path} on {self.dut_alias}")
+                return
+            self.engine.copy_file(source_file=PerfConsts.LEAF_DIP_GROUPS_RESETS_FILE_NAME, file_system=dst_dut_dir,
+                                  dest_file=local_resets_path, overwrite_file=True, verify_file=False,
+                                  direction='get')
+        except Exception as error:
+            logging.warning(f"Could not copy the leaf DIP groups reset counts from {self.dut_alias}: {error}")
+            return
+        logging.info(f"Leaf DIP groups reset counts copied from {self.dut_alias} to {local_resets_path}")
