@@ -62,10 +62,6 @@ class Test_Alibaba_scenarios_with_reset:
             configure_mloops(self.players)
             pytest.skip("Skipping test due to active Redmine issue 4584135 for IPv6")
 
-        with allure.step(f"Adjusting min packet size for SDK branch {sdk_branch}"):
-            if sdk_branch == "sx_sdk_4_7_4500" and is_redmine_issue_active([4885962])[0]:
-                packet_size += 100
-
         test_name = get_perf_test_name(request)
 
         with allure.step("Adding dynamic description to allure report"):
