@@ -40,14 +40,14 @@ class TestCpoShowFields:
             Cpov2Consts.FW_VERSION,
             Cpov2Consts.PORTS,
             Cpov2Consts.LASER_SOURCES,
-            Cpov2Consts.THRESHOLDS,
+            Cpov2Consts.THRESHOLD,
             Cpov2Consts.OE,
             Cpov2Consts.CHANNEL,
         ):
             assert field in detail, f"missing {field} in cpo detail"
 
     def test_cpo_thresholds_fields(self):
-        thresholds = samples.SHOW_PLATFORM_CPO_DETAIL["cpo1"][Cpov2Consts.THRESHOLDS]
+        thresholds = samples.SHOW_PLATFORM_CPO_DETAIL["cpo1"][Cpov2Consts.THRESHOLD]
         for measured in (
             Cpov2Consts.CH_LASER_SOURCE_INPUT_POWER,
             Cpov2Consts.CH_RX_POWER,
@@ -172,25 +172,10 @@ class TestInterfaceCpoFields:
 
 
 class TestFaeSystemCpoFields:
-    def test_els_initialization_all_steps(self):
-        for els, steps in samples.SHOW_FAE_ELS_INITIALIZATION.items():
-            for step in Cpov2Consts.ALL_ACTIVATE_STEPS:
-                assert step in steps, f"{els}: missing step {step}"
-
-    def test_els_initialization_per_laser(self):
-        per_laser = samples.SHOW_FAE_ELS_INITIALIZATION_PER_LASER["els1"][Cpov2Consts.ELS_INITIALIZATION]
-        assert len(per_laser) == TOPOLOGY.lasers_per_els
-        # per HLD, the per-laser breakdown keys lasers as laser1.. (no dash) and
-        # reports 'fiber-tuning' (unlike the summary table's 'laser-tuning')
-        for field in (
-            Cpov2Consts.STEP_FIBER_CHECK,
-            Cpov2Consts.INIT_FIBER_TUNING,
-            Cpov2Consts.STEP_LASER_UP,
-            Cpov2Consts.STEP_LASER_FINE_TUNE,
-            Cpov2Consts.STEP_POWER_SETPOINT,
-            Cpov2Consts.INIT_ERROR,
-        ):
-            assert field in per_laser["laser1"], f"missing {field}"
+    def test_fae_laser_source_operation_status(self):
+        for els, detail in samples.SHOW_FAE_PLATFORM_LASER_SOURCE.items():
+            lasers = detail[Cpov2Consts.LASER]
+            assert list(lasers) == TOPOLOGY.laser_names(), els
 
     def test_cpo_dump_state(self):
         assert Cpov2Consts.CPO_DUMP_STATE in samples.SHOW_FAE_SYSTEM_CPO

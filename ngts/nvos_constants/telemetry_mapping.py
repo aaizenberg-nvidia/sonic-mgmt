@@ -116,7 +116,7 @@ def _cpo_thresholds() -> dict[str, TelemetryLeaf]:
     db_suffixes = {Cpov2Consts.HIGH_ALARM: "high_alarm", Cpov2Consts.LOW_ALARM: "low_alarm",
                    Cpov2Consts.HIGH_WARNING: "high_warning", Cpov2Consts.LOW_WARNING: "low_warning"}
     return {
-        f"{Cpov2Consts.THRESHOLDS}/{measure}/{bound}": TelemetryLeaf(
+        f"{Cpov2Consts.THRESHOLD}/{measure}/{bound}": TelemetryLeaf(
             gnmi=f"{_CPO}/cpo/thresholds/threshold[severity={severity}]/state/{gnmi_names[measure]}-{direction}",
             db=(*_CPO_INFO, f"{db_prefixes[measure]}_{db_suffixes[bound]}"),
             kind="float")

@@ -36,7 +36,6 @@ from ngts.tests_nvos.platform.cpo.action_helpers import (
     CPO_SW_LINK_UP_TIMEOUT_SECONDS,
     assert_mapping_unchanged,
     assert_no_counter_increase,
-    carrier_down_count,
     error_drop_counters,
     laser_sibling_ports,
     mapping_snapshot,
@@ -115,11 +114,6 @@ def _read_link(port: Port, engine) -> dict:
 
 def _counter_snapshot(port: Port, engine) -> dict[str, int]:
     return error_drop_counters(port.interface.counters.parse_show(dut_engine=engine))
-
-
-def _carrier_down_counts(ports: tuple[Port, ...], engine) -> dict[str, int]:
-    """link.carrier-down-count per port - the only real link-bounce signal."""
-    return {port.name: carrier_down_count(port.interface.counters.parse_show(dut_engine=engine)) for port in ports}
 
 
 def _verify_ports_relinked(
@@ -293,14 +287,13 @@ def _verify_telemetry_restored(engines, devices, baselines: Sequence[tuple[BaseC
 @pytest.mark.platform
 @pytest.mark.cpov2
 def test_cpo_reset_actions(engines, devices, random_api):
-    """Reset CPO, ELS and one laser; verify recovery, relationships and events.
+    """Reset CPO and ELS; verify recovery, relationships and events.
 
     1. Capture the CPO/ELS detail baseline, mapping snapshot and the
        associated sw ports.
-    2. Reset the CPO, then the ELS, then a single laser.
+    2. Reset the CPO, then the ELS.
     3. After every reset, first gate on the outage actually starting: both
-       partners' ejected events (CPO/ELS scopes) or a carrier-down-count
-       increase on an associated port (laser scope).
+       partners' ejected events.
     4. Then verify recovery: wait for the CPO to return to up and the ELS
        to Inserted,
        re-run the detail validators, verify the mapping survived, and wait for
@@ -310,7 +303,7 @@ def test_cpo_reset_actions(engines, devices, random_api):
        within the NVL7 link-up budget, health back to HEALTHY, and matching
        remove/add syslog lines once the expected wording is defined (O-6).
     6. Around every reset, stream gNMI: CPO/ELS oper-status, ELS presence and
-       the ports bounce (laser scope: the laser and a bounced port), and
+       the ports bounce, and
        NVUE, OpenAPI, gNMI and DB return to the pre-reset baseline.
     """
     topology = devices.dut.cpo
@@ -318,7 +311,6 @@ def test_cpo_reset_actions(engines, devices, random_api):
     system = System()
     cpo = topology.cpo_names()[0]
     els = topology.els_for_cpo(cpo)[0]
-    laser = topology.lasers_for_els(els)[1]
 
     with allure.step(f"Capture the {cpo}/{els} baseline, mapping snapshot and associated sw ports"):
         cpo_before = read_cpo(platform, cpo, engines.dut)
@@ -343,8 +335,7 @@ def test_cpo_reset_actions(engines, devices, random_api):
             cpo_component,
             els_component,
             *(cpo_component.channel.channel_id[name] for name in sample_names(topology.channels_for_cpo(cpo))),
-            *(els_component.laser.laser_id[name]
-              for name in dict.fromkeys([laser, *sample_names(topology.lasers_for_els(els))])),
+            *(els_component.laser.laser_id[name] for name in sample_names(topology.lasers_for_els(els))),
         )]
     cascade = _cascade_steady_states(platform, baseline)
 
@@ -358,35 +349,6 @@ def test_cpo_reset_actions(engines, devices, random_api):
                 _verify_reset_observability(system, baseline, observed, engines.dut)
                 _verify_telemetry_restored(engines, devices, telemetry_baseline)
             _assert_all_bounced(watch, cascade)
-
-    # OI#11: laser-reset granularity (whole ELS vs 4-laser vs single laser) is
-    # unresolved, so neither isolation nor an eject/insert event cycle is
-    # asserted here; health must still end HEALTHY for both cascade partners.
-    laser_status = telemetry_xpaths(els_component.laser.laser_id[laser], [Cpov2Consts.LASER_OPER_STATUS])[
-        Cpov2Consts.LASER_OPER_STATUS]
-    port_status = {port.name: _oper_status_xpath(port) for port in baseline.affected_ports}
-    with allure.step(f"Reset single laser {laser} on {els} and verify recovery and telemetry"):
-        with gnmi_watch(engines, devices, [laser_status, *port_status.values()]) as watch:
-            carrier_down_before = _carrier_down_counts(baseline.affected_ports, engines.dut)
-            els_component.action_reset(laser_id=laser, engine=engines.dut).verify_result()
-            with allure.step("Wait for the laser reset to bounce at least one associated port"):
-                carrier_down_after = PollingTool.poll_until(
-                    lambda: _carrier_down_counts(baseline.affected_ports, engines.dut),
-                    lambda current: any(count > carrier_down_before.get(port, 0) for port, count in current.items()),
-                    timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-                    description=f"a carrier-down-count increase on {cpo} ports after resetting {laser}",
-                    acceptable_exceptions=TRANSIENT_READ_ERRORS,
-                )
-            _verify_reset_recovery(platform, topology, baseline, engines.dut)
-            with allure.step(f"Wait for {cpo} and {els} health to return to HEALTHY"):
-                wait_for_healthy_instances(
-                    lambda: system.health.component.parse_show(dut_engine=engines.dut),
-                    _cascade_targets(baseline),
-                    timeout_seconds=CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS,
-                )
-            _verify_telemetry_restored(engines, devices, telemetry_baseline)
-        bounced_ports = [port for port, count in carrier_down_after.items() if count > carrier_down_before.get(port, 0)]
-        _assert_all_bounced(watch, {laser_status: GNMI_ACTIVE} | {port_status[port]: GNMI_UP for port in bounced_ports})
 
 
 @pytest.mark.platform

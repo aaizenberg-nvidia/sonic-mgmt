@@ -31,6 +31,9 @@ class CpoTopology:
     lasers_per_els: int = 16
     lanes_per_oe: int = 16
     channels_per_cpo: int = 64
+    # per-laser keys of `nv show fae platform laser-source [elsN] [laser laser-N]`, set by the
+    # device class; values are "N/A", "In progress", "Succeeded", "Failed" or "Failed (<reason>)"
+    laser_operation_steps: tuple[str, ...] = ()
 
     # Name prefixes. ClassVar => shared class constants, NOT dataclass fields, so
     # they are excluded from __init__, from equality and from __slots__.
@@ -124,7 +127,7 @@ class CpoTopology:
         In the platform model OE/ELS are top-level components which the CPO
         references (gNMI: components/component[name=cpoN]/subcomponents/
         subcomponent[name=...] leafrefs; CLI: the `laser-sources` field and the
-        `optical-engines` container) - they are not contained children.
+        `optical-engine` container) - they are not contained children.
         """
         return self.els_for_cpo(cpo) + self.oes_for_cpo(cpo)
 
