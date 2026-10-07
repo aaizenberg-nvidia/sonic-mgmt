@@ -4144,6 +4144,9 @@ class PortiaSurrogateNex(PortiaSwitch):
     """Four-ASIC Portia NEX surrogate tray (N7210_LD): two SWB floors of 2 ASICs, no fans."""
 
     ACP_PORTS_PER_ASIC = 72
+    SWB_FLOORS = 2
+    PMICS_PER_ASIC = 3
+    COMEX_PMICS = 2
 
     def _init_constants(self):
         super()._init_constants()
@@ -4161,6 +4164,47 @@ class PortiaSurrogateNex(PortiaSwitch):
             "hardware-version": None,
             "model": ExpectedString(regex="920-9K51W-02L7-SR0"),
         })
+
+    def _init_temperature(self):
+        super()._init_temperature()
+        asic_pmic_amount = self.asic_amount * self.PMICS_PER_ASIC
+        floors = range(1, self.SWB_FLOORS + 1)
+        self.temperature_sensors = (
+            [f"ASIC{asic_num}" for asic_num in range(1, self.asic_amount + 1)] +
+            ["CPU-Pack-Temp", "Drive-Temp", "HSC-VinDC-Temp"] +
+            [f"PDB-Conv-{floor}-Temp" for floor in floors] +
+            [f"PMIC-{pmic_num}-Temp" for pmic_num in range(1, asic_pmic_amount + self.COMEX_PMICS + 1)] +
+            ["SODIMM-1-Temp", "SODIMM-2-Temp"]
+        )
+        self.voltage_sensors = []
+        for vdd_pmic in range(1, asic_pmic_amount + 1, self.PMICS_PER_ASIC):
+            pl0_pmic, pl1_pmic = vdd_pmic + 1, vdd_pmic + 2
+            self.voltage_sensors += [
+                f"PMIC-{vdd_pmic}-PVIN1-VDD-ASIC-In-1",
+                f"PMIC-{vdd_pmic}-ASIC-VDD-Out-1",
+                f"PMIC-{pl0_pmic}-PVIN1-HVDD-DVDD-ASIC-In-1",
+                f"PMIC-{pl0_pmic}-ASIC-HVDD-PL0-Out-1",
+                f"PMIC-{pl0_pmic}-ASIC-DVDD-PL0-Out-2",
+                f"PMIC-{pl1_pmic}-PVIN1-HVDD-DVDD-ASIC-In-1",
+                f"PMIC-{pl1_pmic}-ASIC-HVDD-PL1-Out-1",
+                f"PMIC-{pl1_pmic}-ASIC-DVDD-PL1-Out-2",
+            ]
+        for floor in floors:
+            self.voltage_sensors += [
+                f"HSC-{floor}-VinDC-In-1",
+                f"HSC-{floor}-Vout-Out-1",
+                f"PWR-CONV-{floor}-VinDC-HV-BUCK1-HV-BUCK2-In-1",
+                f"PWR-CONV-{floor}-HV-BUCK1-Out-1",
+                f"PWR-CONV-{floor}-HV-BUCK2-Out-2",
+            ]
+        self.voltage_sensors += [
+            "CPU-PMIC-VDDCR-In-1",
+            "CPU-PMIC-VDDCR-CPU-Out-1",
+            "CPU-PMIC-VDDCR-SOC-Out-2",
+            "DDR-PMIC-VDD-MEM-In-1",
+            "DDR-PMIC-VDD-MEMIO-Out-1",
+            "DDR-PMIC-VDD-MEM-Out-2",
+        ]
 
 
 class PortiaSurrogateNpo(PortiaNpoSwitch):
