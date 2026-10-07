@@ -481,7 +481,7 @@ class IbSwitch(BaseSwitch):
                                                       'empty.sh', 'nv-bridge_reconcile', 'gpu_telemetry_enable', 'event_db.json']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
-        self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
+        self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh', 'hw-mgmt-i2c-trace.log']
         self.techsupport_skynet_hw_mgmt_empty_files_to_ignore = ['udev_events.log']
         # System message constants for IB devices - set after pre/post login messages are initialized
         self.default_user_name = SystemConsts.DEFAULT_USER_ADMIN
