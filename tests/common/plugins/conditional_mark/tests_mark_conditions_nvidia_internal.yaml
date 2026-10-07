@@ -2046,3 +2046,9 @@ vrf/test_vrf.py::TestVrfWarmReboot::test_vrf_system_warm_reboot:
     - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 ########################## IGNORE WARM REBOOT ON SN6(SN6600_LD and SN6810_LD) END ##########################
+
+upgrade_path/test_upgrade_path.py::test_upgrade_path:
+  xfail:
+    reason: "Testcase expected to fail on SN2700 due to RM issue: https://redmine.mellanox.com/issues/4865113"
+    conditions:
+    - "https://redmine.mellanox.com/issues/4865113 and 'sn2700' in platform"
