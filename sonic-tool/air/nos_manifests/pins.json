@@ -3,31 +3,31 @@
   "os_template_version": "1",
   "platforms": {
     "MSN2700": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "MSN4700": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN5600": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN5640": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN6600": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN6600_LD": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN5800_LD": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN5810_LD": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     },
     "SN6810_LD": {
-      "platform_information_version": "1"
+      "platform_information_version": "2"
     }
   }
 }

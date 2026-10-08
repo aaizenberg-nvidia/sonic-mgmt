@@ -11,6 +11,7 @@ from ngts.nvos_constants.constants_nvos import (
     ActionConsts,
     CableCartridgeConsts,
     ChassisLocationConsts,
+    Cpov2Consts,
     DatabaseConst,
     DateTimeConsts,
     DocumentsConsts,
@@ -4033,7 +4034,21 @@ class PortiaCpoSwitch(PortiaSwitch):
 
     def __init__(self, asic_amount=8):
         super().__init__(asic_amount=asic_amount)
-        SwitchCapabilityHandler.apply_capability(self, PortiaCpoCapability())
+        SwitchCapabilityHandler.apply_capability(self, PortiaCpoCapability(
+            oe_per_cpo=4,
+            els_per_cpo=1,
+            lasers_per_els=16,
+            lanes_per_oe=16,
+            channels_per_cpo=64,
+            laser_operation_steps=(
+                Cpov2Consts.STEP_FIBER_CHECK,
+                Cpov2Consts.STEP_LASER_TUNING,
+                Cpov2Consts.STEP_LASER_ON,
+                Cpov2Consts.STEP_LASER_OFF,
+                Cpov2Consts.STEP_LASER_FINE_TUNE,
+                Cpov2Consts.STEP_LASER_WAVELENGTH,
+            ),
+        ))
 
     def _init_constants(self):
         super()._init_constants()

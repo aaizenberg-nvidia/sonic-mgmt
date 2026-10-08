@@ -318,9 +318,13 @@ class OutputParsingTool:
 
         if '2004l' in output_json:
             output_json = ''.join(output_json.split('\n')[1:])
-        if output_json == '{}' or output_json == '':
-            return ResultObj(True, "", {})
+        # Strip BEFORE the empty check: the '2004l' cleanup above (and terminal
+        # escape output, e.g. a failed fetch from an unreachable URL) can leave a
+        # whitespace-only string. Without stripping first it slips past this guard
+        # and then output_json[0] below raises IndexError on the empty string.
         output_json = output_json.strip()
+        if not output_json or output_json == '{}':
+            return ResultObj(True, "", {})
         if (output_json[0] != '{' or output_json[-1] != '}') and (output_json[0] != "[" or output_json[-1] != "]"):  # Need to parse output from serial engine
             start = output_json.find('{')
             end = output_json.rfind('}')
@@ -458,6 +462,10 @@ class OutputParsingTool:
             return ResultObj(True, lslogins_output, lslogins_output)
         result = {}
         lines = lslogins_output.splitlines()
+        # The 'Last logs' section is separated from the fields by a blank line.
+        # Some environments (e.g. OpenBMC busybox, which has no real 'lslogins')
+        # return empty or non-standard output with no blank separator -- handle
+        # that gracefully instead of crashing on lines.index('').
         if '' in lines:
             blank_line_index = lines.index('')
             logs = lines[blank_line_index + 1:][1:]
@@ -466,6 +474,8 @@ class OutputParsingTool:
             logs = []
 
         for line in lines:
+            if ':' not in line:
+                continue
             splitted_line = line.split(':', 1)
             result[splitted_line[0]] = splitted_line[1].strip()
 

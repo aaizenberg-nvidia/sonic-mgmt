@@ -1,11 +1,18 @@
 import re
 from collections.abc import Iterable, Mapping
 
+from ngts.ngts_types import DevicesT, EnginesT
 from ngts.nvos_constants.constants_nvos import Cpov2Consts, HealthConsts
+from ngts.nvos_constants.telemetry_mapping import GNMI_CHANNEL_INDEX, GNMI_CHANNEL_INTERFACE, GNMI_SUBCOMPONENTS
 from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoTopology
 from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
+from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.PollingTool import PollingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.platform.Cpo import Cpo
+from ngts.nvos_tools.platform.Platform import Platform
+from ngts.tests_nvos.system.gnmi.constants import TELEMETRY_CONVERGENCE_TIMEOUT_SEC
+from ngts.tests_nvos.system.telemetry.telemetry_watch import Reads, gnmi_instances, read_all, read_mismatches
 
 CPO_SUMMARY_FIELDS = (
     Cpov2Consts.FW_VERSION,
@@ -19,11 +26,11 @@ CPO_DETAIL_FIELDS = (
     Cpov2Consts.FW_VERSION,
     Cpov2Consts.PORTS,
     Cpov2Consts.LASER_SOURCES,
-    Cpov2Consts.THRESHOLDS,
+    Cpov2Consts.THRESHOLD,
     Cpov2Consts.OE,
     Cpov2Consts.CHANNEL,
 )
-# `thresholds` is keyed by measured value, each carrying the four bounds
+# `threshold` is keyed by measured value, each carrying the four bounds
 CPO_THRESHOLD_TYPES = (
     Cpov2Consts.CH_LASER_SOURCE_INPUT_POWER,
     Cpov2Consts.CH_RX_POWER,
@@ -143,7 +150,7 @@ def _assert_severity_first_threshold_order(thresholds: Mapping, fields: Iterable
 
 
 def _assert_cpo_threshold_order(thresholds: Mapping, context: str) -> None:
-    """Order check for the measured-value-first shape (`platform cpo` THRESHOLDS).
+    """Order check for the measured-value-first shape (`platform cpo` threshold).
 
     Each measured value carries its own four bounds, so alarm must sit outside
     warning on both ends and the low pair must sit below the high pair.
@@ -180,7 +187,7 @@ def validate_cpo_detail(cpo: str, detail: Mapping, topology: CpoTopology) -> Non
         ValidationTool.validate_subset_in_superset(CHANNEL_FIELDS, data).verify_result()
         for field in (Cpov2Consts.CH_RX_POWER, Cpov2Consts.CH_TX_POWER):
             ValidationTool.validate_subset_in_superset(POWER_FIELDS, data[field]).verify_result()
-    _assert_cpo_threshold_order(detail[Cpov2Consts.THRESHOLDS], f"{cpo} thresholds")
+    _assert_cpo_threshold_order(detail[Cpov2Consts.THRESHOLD], f"{cpo} thresholds")
 
 
 def validate_laser_source_summary(summary: Mapping, topology: CpoTopology) -> None:
@@ -251,3 +258,52 @@ def validate_healthy_instances(component: str, data: Mapping, expected: Iterable
     values = [HealthConsts.Component.HEALTHY, 0]
     for health in instances.values():
         ValidationTool.validate_fields_values_in_output(fields, values, health).verify_result()
+
+
+def wait_for_parity(engines: EnginesT, devices: DevicesT, component: BaseComponent, fields: list[str] | None = None,
+                    expected: Reads | None = None, **read_all_keys: str) -> Reads:
+    return PollingTool.poll_until(
+        lambda: read_all(engines, devices, component, fields, **read_all_keys),
+        lambda reads: not read_mismatches(component, reads, expected),
+        timeout_seconds=TELEMETRY_CONVERGENCE_TIMEOUT_SEC,
+        description=f"NVUE, OpenAPI, gNMI and DB agree on {component.get_resource_path()}")
+
+
+def read_gnmi_topology(engines: EnginesT, devices: DevicesT, platform: Platform,
+                       topology: CpoTopology) -> dict:
+    """`CpoTopology.assert_consistent` maps from gNMI, once every gNMI reference matches its reverse."""
+    cpos = {cpo: platform.cpo.cpo_id[cpo] for cpo in topology.cpo_names()}
+    all_ports = Interface(parent_obj=None, port_name="*").cpo
+
+    subcomponents = {cpo: sorted(gnmi_instances(engines, devices, component, GNMI_SUBCOMPONENTS))
+                     for cpo, component in cpos.items()}
+    # OE and ELS share the component `parent` leaf, so one read covers both
+    parents = gnmi_instances(engines, devices, platform.laser_source.els_id["*"], Cpov2Consts.PARENT)
+    children = {cpo: sorted(child for child, parent in parents.items() if parent == cpo) for cpo in cpos}
+    assert children == subcomponents, f"gNMI parent {children} != gNMI subcomponents {subcomponents}"
+
+    channel_ports = {cpo: gnmi_instances(engines, devices, component.channel.channel_id["*"], GNMI_CHANNEL_INTERFACE)
+                     for cpo, component in cpos.items()}
+    port_modules = gnmi_instances(engines, devices, all_ports, Cpov2Consts.PARENT)
+    port_to_cpo = {port: str(cpo) for port, cpo in port_modules.items() if cpo}
+    port_channels = gnmi_instances(engines, devices, all_ports, Cpov2Consts.CHANNEL)
+    by_channel = {(cpo, int(index), port) for cpo, mapping in channel_ports.items()
+                  for index, port in mapping.items() if port}
+    by_port = {(port_to_cpo.get(port), index, port) for port, indices in port_channels.items()
+               if isinstance(indices, list) for index in indices}
+    assert by_channel == by_port, (f"channel mapping/interface only: {by_channel - by_port}, "
+                                   f"interface cpo-module/cpo-channels only: {by_port - by_channel}")
+
+    channels = {cpo: gnmi_instances(engines, devices, component.channel.channel_id["*"], GNMI_CHANNEL_INDEX)
+                for cpo, component in cpos.items()}
+    return {
+        "cpo_to_oes": {cpo: [name for name in names if name.startswith(topology.OE_PREFIX)]
+                       for cpo, names in subcomponents.items()},
+        "cpo_to_els": {cpo: [name for name in names if name.startswith(topology.ELS_PREFIX)]
+                       for cpo, names in subcomponents.items()},
+        "cpo_to_channels": {cpo: [f"{topology.CHANNEL_PREFIX}{index}" for index in indices]
+                            for cpo, indices in channels.items()},
+        "cpo_to_ports": {cpo: sorted({str(port) for port in mapping.values() if port})
+                         for cpo, mapping in channel_ports.items()},
+        "port_to_cpo": port_to_cpo,
+    }

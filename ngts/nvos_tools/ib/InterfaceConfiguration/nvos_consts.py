@@ -8,6 +8,7 @@ class InternalNvosConsts:
     OPERATIONAL_INDEX = 0
     APPLIED_INDEX = 1
     DEFAULT_TIMEOUT = 120  # Non-ACP ports (FNM/SW)
+    DEFAULT_POLL_INTERVAL_SECONDS = 2
     NVL5_ACP_LINK_UP_TIMEOUT_LTX_ENABLED = 60  # NVL5 ACP ports with LTX enabled
     NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED = 30  # NVL5 ACP ports with LTX (fec-measure-mode) disabled
     NVL6_ACP_LINK_UP_TIMEOUT_LTX_ENABLED = 375  # NVL6 ACP ports with fec-measure-mode enabled

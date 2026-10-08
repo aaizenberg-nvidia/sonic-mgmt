@@ -2,7 +2,11 @@ from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
 from devts.infra.tools.general_constants.constants import DefaultConnectionValues
 from ngts.nvos_tools.infra.PexpectTool import PexpectTool
 from ngts.nvos_tools.infra.SshCmdBuilder import SshCmdBuilder, SshPassCmdBuilder
+from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import get_bmc_backup_password
 from ngts.tools.test_utils import allure_utils as allure
+import logging
+
+logger = logging.getLogger()
 
 PEXPECT_SSH_ERR = 'failed to start pexpect ssh session'
 BMC_SESSION_ERR = 'failure in ssh session with BMC'
@@ -12,9 +16,10 @@ SHELL_PROMPT_PATTERNS = DefaultConnectionValues.DEFAULT_PROMPTS + ['#', r'\$']
 ENTER_PASSWORD_PATTERNS = ['[Pp]assword:']
 CHANGE_PASSWORD_PATTERNS = ['Enter.*old password:']
 
-BACKUP_PW = 'ABYX12#14artb'
-
 SSN_CMD = 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {usr}@{ip}'
+
+# LinuxSshEngine kwargs that BmcSshEngine does not implement (Y24).
+_UNSUPPORTED_RUN_CMD_KWARGS = frozenset({'validate', 'print_output', 'max_loops'})
 
 
 class BmcSshEngine:
@@ -22,20 +27,41 @@ class BmcSshEngine:
     This class provides ssh engine to internal BMC, using pexpect tool
     """
 
-    def __init__(self, dut_engine: LinuxSshEngine, bmc_username, bmc_default_password, bmc_another_password=''):
+    def __init__(self, dut_engine: LinuxSshEngine, bmc_username, bmc_default_password, bmc_another_password='',
+                 bmc_internal_ip='10.0.1.1'):
+        """
+        :param bmc_internal_ip: CPU-side address of the BMC over the internal link.
+            IB/NVOS platforms use 10.0.1.1 (default); CL/SPC6 reaches the BMC over
+            usb0 at ``BMC_IP`` (see ``BmcCliTool``) -- pass that explicitly for CL setups.
+        """
         self._session: PexpectTool = None
         self.dut_engine: LinuxSshEngine = dut_engine
         self.bmc_username = bmc_username
         self.bmc_default_password = bmc_default_password
         self.bmc_another_password = bmc_another_password
+        self.bmc_internal_ip = bmc_internal_ip
 
     def run_cmd(self, cmd, **kwargs) -> str:
         """
         Run command on BMC via pexpect SSH session.
-        :param cmd: command to execute
-        :param kwargs: accepts but does not implement validate, print_output, max_loops
-                       from the SSH engine interface
+
+        Supported kwargs: ``sanitized_cmd`` (Allure/log title without secrets).
+        Unsupported LinuxSshEngine kwargs (``validate``, ``print_output``,
+        ``max_loops``) raise ``TypeError`` so callers do not silently lose
+        validation (full parity deferred).
         """
+        bad = sorted(_UNSUPPORTED_RUN_CMD_KWARGS.intersection(kwargs))
+        if bad:
+            raise TypeError(
+                f"BmcSshEngine.run_cmd does not implement kwargs {bad}. "
+                f"supported optional kwargs: ['sanitized_cmd']"
+            )
+        unknown = sorted(set(kwargs) - {'sanitized_cmd'})
+        if unknown:
+            raise TypeError(
+                f"BmcSshEngine.run_cmd got unexpected kwargs {unknown}. "
+                f"supported optional kwargs: ['sanitized_cmd']"
+            )
         exc: Exception = None
         try:
             if not self._session:
@@ -55,19 +81,46 @@ class BmcSshEngine:
                 self.disconnect()
 
     def connect(self):
-        #   TODO: handle: "There were too many logins for 'admin'." ?
         with allure.step(self._msg('connect bmc session')):
-            passwords = [BACKUP_PW, self.bmc_default_password, self.bmc_another_password]
-            for pw in passwords:
+            # Known gap: the BMC may reject a new session with "There were too
+            # many logins for 'admin'." when prior sessions are still open. That
+            # surfaces as a generic connect failure here; automatic
+            # detection/backoff/cleanup of stale sessions is a follow-up.
+            # Skip empty candidates (e.g. default bmc_another_password='').
+            passwords = [
+                pw for pw in (
+                    get_bmc_backup_password(),
+                    self.bmc_default_password,
+                    self.bmc_another_password,
+                )
+                if pw
+            ]
+            if not passwords:
+                raise RuntimeError(
+                    f'{BMC_SESSION_ERR}: no non-empty BMC password candidates'
+                )
+            last_err = None
+            for idx, pw in enumerate(passwords, start=1):
                 try:
-                    with allure.step(self._msg(f'ssh bmc using user: {self.bmc_username} , password: {pw}')):
+                    # Never put candidate passwords in Allure titles / logs.
+                    with allure.step(self._msg(
+                            f'ssh bmc using user: {self.bmc_username} '
+                            f'(candidate {idx}/{len(passwords)})')):
                         session = self._start_new_bmc_ssh_session(pw)
                         self._session = session
                         return
-                except Exception:
-                    if pw == passwords[-1]:
+                except Exception as err:
+                    last_err = err
+                    logger.warning(
+                        "%s: BMC ssh candidate %s/%s failed (%s: %s)",
+                        self.bmc_username, idx, len(passwords),
+                        type(err).__name__, err,
+                    )
+                    if idx == len(passwords):
                         self.disconnect()
                         raise
+            if last_err:
+                raise last_err
 
     def disconnect(self):
         if self._session is not None:
@@ -94,14 +147,14 @@ class BmcSshEngine:
 
     def _connect_bmc_from_nos_pexpect_session(self, nos_shell: PexpectTool, password) -> PexpectTool:
         with allure.step('start ssh to bmc from nos shell'):
-            ssn_cmd = SshCmdBuilder(self.bmc_username, '10.0.1.1').set_ssn().build()
+            ssn_cmd = SshCmdBuilder(self.bmc_username, self.bmc_internal_ip).set_ssn().build()
             nos_shell.sendline(ssn_cmd)
             res = nos_shell.expect(ENTER_PASSWORD_PATTERNS)
             assert res < len(ENTER_PASSWORD_PATTERNS), f'{PEXPECT_SSH_ERR}: no password prompt'
-        with allure.step(f'enter password: {password}'):
+        with allure.step('enter password'):
             nos_shell.sendline(password)
-            password = self._handle_change_password_prompt(nos_shell, password)
-            # TODO: save the new password somehow?
+            # On forced rotation, new password is get_bmc_backup_password() (lab env).
+            self._handle_change_password_prompt(nos_shell, password)
             bmc_shell = nos_shell
         return bmc_shell
 
@@ -117,7 +170,7 @@ class BmcSshEngine:
         res = session.expect(expect)
         assert res < len(expect), f'{PEXPECT_SSH_ERR}: did not get expected prompt. expected: {expect}'
 
-        new_password = BACKUP_PW
+        new_password = get_bmc_backup_password()
         session.sendline(new_password)
         expect = ['Retype.*new password:']
         res = session.expect(expect)

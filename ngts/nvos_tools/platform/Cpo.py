@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class OeComponent(BaseComponent):
-    """A single optical engine: `nv show platform cpo cpoN optical-engines oeM`."""
+    """A single optical engine: `nv show platform cpo cpoN optical-engine oeM`."""
 
     def __init__(self, parent_obj=None, oe_id=None):
         super().__init__(parent=parent_obj, path=f"/{oe_id}")
@@ -21,7 +21,7 @@ class OeComponent(BaseComponent):
 
 
 class OeCollection(BaseComponent):
-    """The OE list container under a CPO: `nv show platform cpo cpoN optical-engines [oeM]`."""
+    """The OE list container under a CPO: `nv show platform cpo cpoN optical-engine [oeM]`."""
 
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path=f"/{Cpov2Consts.OE}")
@@ -31,7 +31,7 @@ class OeCollection(BaseComponent):
 
 
 class ChannelComponent(BaseComponent):
-    """A single CPO channel: `nv show platform cpo cpoN channels channel-M`."""
+    """A single CPO channel: `nv show platform cpo cpoN channel channel-M`."""
 
     def __init__(self, parent_obj=None, channel_id=None):
         super().__init__(parent=parent_obj, path=f"/{channel_id}")
@@ -39,7 +39,7 @@ class ChannelComponent(BaseComponent):
 
 
 class ChannelCollection(BaseComponent):
-    """The channel list container under a CPO: `nv show platform cpo cpoN channels [channel-M]`."""
+    """The channel list container under a CPO: `nv show platform cpo cpoN channel [channel-M]`."""
 
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path=f"/{Cpov2Consts.CHANNEL}")
@@ -53,10 +53,10 @@ class CpoComponent(BaseComponent):
 
     The `oe`/`channel` children mirror the YANG list containers (the same keys
     that nest their data in this component's show output), so drill-down paths
-    include the collection segment: `platform cpo cpo1 optical-engines oe1`.
+    include the collection segment: `platform cpo cpo1 optical-engine oe1`.
     The CPO->ELS *relationship* is a reference (gNMI ``subcomponents`` leafrefs;
     CLI ``laser-sources``), while OE membership is read straight off the nested
-    `optical-engines` container keys.
+    `optical-engine` container keys.
     """
 
     def __init__(self, parent_obj=None, cpo_id=None):

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> PERFORMANCE </group>
+      <name> MRC SRv6 SONiC short regression </name>
+      <info> MRC SRv6 SONiC short regression </info>
+      <owner> lchekroun </owner>
+    </Test>
+    <Case>
+      <tags> performance </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/perf_mars_pytest_runner.py </wrapper>
+      <tout> 43200 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> srv6 sonic short regression - TestSRv6Leaf bisection </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf.py::TestSRv6Leaf::test_bisection_srv6[False-SRv6-workload_1] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals --ignore-conditional-mark --disable_loganalyzer --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf_calibration.py\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> srv6 sonic short regression - TestSRv6NoSrhPerf </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_no_srh_perf.py::TestSRv6NoSrhPerf::test_no_srh_single_cage_baseline[MIN-port_split0] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals --ignore-conditional-mark --disable_loganalyzer --ignore=/root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf_calibration.py\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
+    <name> srv6 sonic short regression - TestSRv6Spine many to one </name>
+    <info> One test per class, single hardcoded parametrize each </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/spine/test_srv6_spine.py::TestSRv6Spine::test_spine_srv6_trimming_many_to_one[4-non_consecutive-SRv6-workload_1] --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals --ignore-conditional-mark --disable_loganalyzer\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

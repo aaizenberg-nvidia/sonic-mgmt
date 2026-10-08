@@ -199,6 +199,8 @@ class PortiaCpoCapability(BaseCapability):
         oe_per_cpo / els_per_cpo / lasers_per_els / lanes_per_oe /
         channels_per_cpo: Optional CpoTopology field overrides for a
             future CPO device whose vModule layout differs from the Portia default.
+        laser_operation_steps: Per-laser ELS operation steps the device's firmware
+            reports.
     """
 
     def __init__(  # noqa: PLR0913 - one keyword per CpoTopology field that can be overridden
@@ -210,11 +212,12 @@ class PortiaCpoCapability(BaseCapability):
         lasers_per_els: int | None = None,
         lanes_per_oe: int | None = None,
         channels_per_cpo: int | None = None,
+        laser_operation_steps: tuple[str, ...] | None = None,
     ) -> None:
         self._cpo_count: int | None = cpo_count
         # Collect only the overrides that were explicitly given; the rest keep
         # CpoTopology's defaults.
-        self._topology_overrides: dict[str, int] = {
+        self._topology_overrides: dict[str, int | tuple[str, ...]] = {
             field: value
             for field, value in (
                 ("oe_per_cpo", oe_per_cpo),
@@ -222,6 +225,7 @@ class PortiaCpoCapability(BaseCapability):
                 ("lasers_per_els", lasers_per_els),
                 ("lanes_per_oe", lanes_per_oe),
                 ("channels_per_cpo", channels_per_cpo),
+                ("laser_operation_steps", laser_operation_steps),
             )
             if value is not None
         }

@@ -697,12 +697,15 @@ def _download_ztp_script_reboot(engines):
     return engines.dut.run_cmd("echo '{}' | sudo tee {} > /dev/null".format(success_str, '/var/lib/cumulus/ztp/cumulus-ztp'))
 
 
-@retry(Exception, tries=30, delay=2)
-def _wait_until_ztp_status(system, ztp_status=''):
-    with allure.step("Waiting for ztp status changed to status {}".format(ztp_status)):
+def _wait_until_ztp_status(system, ztp_status='', tries=30, delay=2):
+    @retry(Exception, tries=tries, delay=delay)
+    def _wait():
         ztp_output = OutputParsingTool.parse_json_str_to_dictionary(system.ztp.show()).get_returned_value()
         logger.info(ztp_output)
         assert ztp_output['status'] == ztp_status, f'ztp status not changed to {ztp_status}'
+
+    with allure.step("Waiting for ztp status changed to status {}".format(ztp_status)):
+        _wait()
 
 
 @retry(Exception, tries=30, delay=2)
@@ -789,10 +792,44 @@ def verify_ztp_output_legacy(engines, expected_result, expected_state):
 
 
 def reset_ztp(engines, system):
+    """
+    Reset ZTP back to a stable, idle 'enabled' state.
+    Fall back to disable/enable if the initial reset cannot be verified.
+    """
     logger.info('Resetting ZTP')
-    engines.dut.run_cmd('sudo ztp -R')
-    time.sleep(200)
-    _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_ENABLED)
+    reset_started = time.monotonic()
+    try:
+        engines.dut.run_cmd('sudo ztp -R')
+        # Preserve the previous ~260s budget while polling immediately instead of sleeping first.
+        _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_ENABLED, tries=53, delay=5)
+        logger.info("ZTP settled to 'enabled' %.1f seconds after 'ztp -R'",
+                    time.monotonic() - reset_started)
+        return
+    except Exception as reset_error:
+        logger.warning("Unable to verify ZTP reached 'enabled' %.1f seconds after 'ztp -R'. "
+                       "Forcing a clean 'enabled' state via disable/enable. Initial error (%s): %s",
+                       time.monotonic() - reset_started, type(reset_error).__name__, reset_error)
+
+        try:
+            # Stop the run through the supported ZTP CLI, then re-enable it for the next test.
+            with allure.step("Force ZTP to a stable 'enabled' state (disable, enable)"):
+                engines.dut.run_cmd('sudo ztp -d')
+                engines.dut.run_cmd('sudo systemctl reset-failed ztp.service')
+                engines.dut.run_cmd('sudo ztp -e')
+                _wait_until_ztp_status(system, SystemConsts.ZTP_STATUS_ENABLED)
+        except Exception as recovery_error:
+            try:
+                ztp_status_output = engines.dut.run_cmd('sudo ztp -s')
+            except Exception as status_error:
+                ztp_status_output = (
+                    f"<unavailable due to {type(status_error).__name__}: {status_error}>"
+                )
+            raise AssertionError(
+                "ZTP reset could not be verified after the initial attempt and disable/enable recovery. "
+                f"Initial error ({type(reset_error).__name__}): {reset_error}\n"
+                f"Recovery error ({type(recovery_error).__name__}): {recovery_error}\n"
+                f"Current 'ztp -s':\n{ztp_status_output}"
+            ) from recovery_error
 
 
 def get_platform_info(engines):

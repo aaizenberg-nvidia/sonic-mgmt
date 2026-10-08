@@ -743,7 +743,7 @@ def system_image_install_reject_with_prompt(system, prompt_response, original_ve
         image_name = system.version.get_nvos_image_version()
 
     with allure.step("Attempt install image and reject the prompt"):
-        # Capture existing jobs to verify that rejecting the prompt does not start an action.
+        # Capture existing jobs to identify any action created by the rejected install.
         exempted_err_msgs = ['action_error', 'File not found', 'Failed to install', 'Action failed']
         action = Action()
         output = OutputParsingTool.parse_json_str_to_dictionary(
@@ -759,11 +759,29 @@ def system_image_install_reject_with_prompt(system, prompt_response, original_ve
             expected_output=('',),
         ).verify_result()
 
-    with allure.step("Verify rejected install did not start an action"):
-        output = OutputParsingTool.parse_json_str_to_dictionary(
-            action.show(exempted_err_msgs=exempted_err_msgs)
-        ).get_returned_value()
-        assert set(output or ()) == action_job_ids_before, "Rejected image install unexpectedly created an action"
+    if devices.dut.is_eth():
+        with allure.step("Verify rejected install action status"):
+            output = OutputParsingTool.parse_json_str_to_dictionary(
+                action.show(exempted_err_msgs=exempted_err_msgs)
+            ).get_returned_value()
+            new_action_job_ids = set(output or ()) - action_job_ids_before
+            assert len(new_action_job_ids) == 1, \
+                "Rejected image install did not create exactly one action: {}".format(new_action_job_ids)
+            action_job_id = str(new_action_job_ids.pop())
+            action_output = OutputParsingTool.parse_json_str_to_dictionary(
+                action.show(action_job_id, exempted_err_msgs=exempted_err_msgs)
+            ).get_returned_value()
+            assert action_output.get('detail') == devices.dut.image_install_abort_message and \
+                action_output.get('http_status') == devices.dut.image_install_abort_http_status and \
+                action_output.get('state') == devices.dut.image_install_abort_state, \
+                "Image install abort action failed: {}".format(action_output)
+    else:
+        with allure.step("Verify rejected install did not start an action"):
+            output = OutputParsingTool.parse_json_str_to_dictionary(
+                action.show(exempted_err_msgs=exempted_err_msgs)
+            ).get_returned_value()
+            assert set(output or ()) == action_job_ids_before, \
+                "Rejected image install unexpectedly created an action"
 
     with allure.step("Verify image is unchanged"):
         image_name_post = system.version.get_nvos_image_version()

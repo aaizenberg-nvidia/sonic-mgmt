@@ -9,7 +9,8 @@ from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 
 def get_tg_bisection_traffic_params(players, player_alias, conf_args, traffic_type, template_suite, create_workload_stream,
                                     dut_interfaces_ipv6_configuration_dict, traffic_jsons, port_bisection_pairs,
-                                    mrc_data_packet_size=None, mrc_num_packets=None, vary_src_ip=False):
+                                    mrc_data_packet_size=None, mrc_num_packets=None,
+                                    retransmit_num_packets=None, vary_src_ip=False):
     player_cli_obj = players[player_alias]['cli']
     traffic_parameters = player_cli_obj.performance.get_traffic_parameters(scenario=conf_args["scenario"],
                                                                            conf_args=conf_args)
@@ -17,6 +18,8 @@ def get_tg_bisection_traffic_params(players, player_alias, conf_args, traffic_ty
         traffic_parameters["mrc_data_packet_size"] = mrc_data_packet_size
     if mrc_num_packets is not None:
         traffic_parameters["mrc_num_packets"] = mrc_num_packets
+    if retransmit_num_packets is not None:
+        traffic_parameters["retransmit_num_packets"] = retransmit_num_packets
     if vary_src_ip:
         traffic_parameters["vary_src_ip"] = True
     json_path = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests", template_suite,

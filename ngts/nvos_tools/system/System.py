@@ -26,6 +26,7 @@ from ngts.nvos_tools.system.Debug_log import DebugLog
 from ngts.nvos_tools.system.Disk import Disk
 from ngts.nvos_tools.system.AsicDebugConfig import AsicDebugConfig
 from ngts.nvos_tools.system.Events import Events
+from ngts.nvos_tools.system.FilePath import FilePath
 from ngts.nvos_tools.system.Files import Files
 from ngts.nvos_tools.system.GnmiServer import GnmiServer
 from ngts.nvos_tools.system.Health import Health
@@ -77,6 +78,7 @@ class System(BaseComponent):
         self.stats = Stats(self, devices_dut)
         self.techsupport = TechSupport(self)
         self.image = Image(self)
+        self.file_path = FilePath(self)
         self.message = BaseComponent(self, path='/message')
         self.version = Version(self)
         self.events = Events(self)
