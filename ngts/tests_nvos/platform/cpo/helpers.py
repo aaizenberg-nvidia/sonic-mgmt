@@ -26,11 +26,11 @@ CPO_DETAIL_FIELDS = (
     Cpov2Consts.FW_VERSION,
     Cpov2Consts.PORTS,
     Cpov2Consts.LASER_SOURCES,
-    Cpov2Consts.THRESHOLDS,
+    Cpov2Consts.THRESHOLD,
     Cpov2Consts.OE,
     Cpov2Consts.CHANNEL,
 )
-# `thresholds` is keyed by measured value, each carrying the four bounds
+# `threshold` is keyed by measured value, each carrying the four bounds
 CPO_THRESHOLD_TYPES = (
     Cpov2Consts.CH_LASER_SOURCE_INPUT_POWER,
     Cpov2Consts.CH_RX_POWER,
@@ -150,7 +150,7 @@ def _assert_severity_first_threshold_order(thresholds: Mapping, fields: Iterable
 
 
 def _assert_cpo_threshold_order(thresholds: Mapping, context: str) -> None:
-    """Order check for the measured-value-first shape (`platform cpo` THRESHOLDS).
+    """Order check for the measured-value-first shape (`platform cpo` threshold).
 
     Each measured value carries its own four bounds, so alarm must sit outside
     warning on both ends and the low pair must sit below the high pair.
@@ -187,7 +187,7 @@ def validate_cpo_detail(cpo: str, detail: Mapping, topology: CpoTopology) -> Non
         ValidationTool.validate_subset_in_superset(CHANNEL_FIELDS, data).verify_result()
         for field in (Cpov2Consts.CH_RX_POWER, Cpov2Consts.CH_TX_POWER):
             ValidationTool.validate_subset_in_superset(POWER_FIELDS, data[field]).verify_result()
-    _assert_cpo_threshold_order(detail[Cpov2Consts.THRESHOLDS], f"{cpo} thresholds")
+    _assert_cpo_threshold_order(detail[Cpov2Consts.THRESHOLD], f"{cpo} thresholds")
 
 
 def validate_laser_source_summary(summary: Mapping, topology: CpoTopology) -> None:

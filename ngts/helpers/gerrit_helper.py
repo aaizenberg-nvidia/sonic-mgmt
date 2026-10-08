@@ -5,13 +5,19 @@ number (e.g. ``--perf_sys_sdk_change``, ``--sonic_mgmt_change``), so the
 ``git ls-remote`` + latest-patchset-selection logic lives in one place instead of being
 duplicated per component.
 """
+import json
 import logging
 import re
 import subprocess
 
+import requests
+
 from devts.infra.tools.exceptions.test_issue import TestIssue
 
 logger = logging.getLogger()
+
+GERRIT_REST_API_URL = "https://git-nbu-sw.nvidia.com/r/a"
+GERRIT_CHANGE_STATUS_MERGED = "MERGED"
 
 # Any `git` invocation that talks to a remote over SSH (fetch, ls-remote) blocks
 # indefinitely on a first-contact host-key confirmation prompt when the running
@@ -92,3 +98,27 @@ def get_latest_patchset_ref(repo, change_number, cwd=None, extra_git_config=None
     latest_ref = patchsets[latest_patchset]
     logger.info(f"Resolved Gerrit change {change_number} to latest patchset {latest_patchset}: {latest_ref}")
     return latest_ref
+
+
+def get_change_status(change_number, username, password):
+    """Return a Gerrit change's status via the REST API.
+
+    Args:
+        change_number (str | int): Gerrit change number.
+        username (str): Gerrit username for HTTP basic auth.
+        password (str): Gerrit HTTP password / API token.
+
+    Returns:
+        str: The change status, e.g. ``'NEW'``, ``'MERGED'`` or ``'ABANDONED'``.
+
+    Raises:
+        requests.HTTPError: If the request fails, e.g. the change does not exist.
+    """
+    url = f"{GERRIT_REST_API_URL}/changes/{change_number}"
+    logger.info("Querying Gerrit change status: %s", url)
+    response = requests.get(url, auth=(username, password), timeout=30)
+    response.raise_for_status()
+    # Gerrit prefixes every JSON response with a ")]}'" line to prevent cross-site script inclusion.
+    status = json.loads(response.text.split("\n", 1)[1])["status"]
+    logger.info(f"Gerrit change {change_number} status: {status}")
+    return status

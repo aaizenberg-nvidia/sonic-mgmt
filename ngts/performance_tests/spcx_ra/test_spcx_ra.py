@@ -313,7 +313,7 @@ class LanesConfig:
             high_ar_threshold = PerfConsts.get_high_ar_threshold(chip_type)
             ar_extended_thresholds = None
         conf_args = {
-            "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+            "auto_buffer_mode": "True",
             "congestion_thresh_lo": low_ar_threshold,
             "congestion_thresh_med": mid_ar_threshold,
             "congestion_thresh_hi": high_ar_threshold,

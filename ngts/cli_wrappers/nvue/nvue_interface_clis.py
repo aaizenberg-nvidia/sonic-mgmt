@@ -8,6 +8,23 @@ from ngts.cli_wrappers.nvue.nvue_json_utils import parse_nvue_json_cli_output
 from ngts.constants.performance_constants import Cl_Consts
 from ngts.helpers.performance.nvue_port_count import get_nvue_physical_ports_count
 
+# Matches a Cumulus switch port name, capturing the parent of a split child: both "swp65"
+# and "swp65s1" yield "swp65".
+_SWP_PARENT_RE = re.compile(r"^(swp\d+)(?:s\d+)?$")
+
+
+def _swp_parent_name(port):
+    """Return a port's parent ``swpN`` name, or the name unchanged if it is not a swp port.
+
+    Args:
+        port: Interface name, split ("swp65s1") or not ("swp65").
+
+    Returns:
+        The parent port name.
+    """
+    match = _SWP_PARENT_RE.match(port)
+    return match.group(1) if match else port
+
 
 class NvueInterfaceCli(SonicInterfaceCli):
     """
@@ -100,15 +117,27 @@ class NvueInterfaceCli(SonicInterfaceCli):
         return ports
 
     def bring_all_existing_swp_ports_up(self):
-        """Bring every currently exposed Cumulus switch interface administratively up.
+        """Bring every data-plane Cumulus switch interface administratively up.
+
+        Platform bonus ports are left alone. They carry no test traffic, and configuring
+        them is not always accepted: an SN6600_LD on Cumulus 5.19 lists swp65s0/swp65s1
+        under /sys/class/net and declares them in ports.conf as ``65=2x``, yet rejects the
+        apply with "swp65s1: Not a valid swp interface for this platform" - which failed
+        the whole session before any test ran. get_down_ports already excludes them for the
+        same reason.
 
         Returns:
-            List of existing ``swp*`` interface names updated through NVUE.
+            List of data-plane ``swp*`` interface names updated through NVUE.
 
         Raises:
             RuntimeError: If the switch exposes no ``swp*`` interfaces.
         """
-        ports = self.get_existing_swp_ports()
+        # Compared by parent port, because BONUS_PORTS mixes conventions: Spectrum-4/5 list
+        # parents ("swp65") while Spectrum-6 lists split children ("swp65s0"). An exact-name
+        # match would let a split bonus child through on the generations that list parents.
+        bonus_parents = {_swp_parent_name(port) for port in self.get_bonus_ports(self.engine)}
+        ports = [port for port in self.get_existing_swp_ports()
+                 if _swp_parent_name(port) not in bonus_parents]
         for port in ports:
             self.engine.run_cmd(f"nv set interface {port} link state up")
         self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)

@@ -106,10 +106,10 @@ class MellanoxDeviceMocker(DeviceMocker):
             if psu_data.power_on and psu_data.is_temperature_supported():
                 self.psu_data = psu_data
                 break
-        if self.psu_data is None:
-            raise RuntimeError('No powered PSU found for system health mocking')
-
         self.pdb_data = self._init_pdb_data()
+        # PDB-only platforms (e.g. SN6600_LD) report psu_num == 0 and expose only PDBs
+        if self.psu_data is None and self.pdb_data is None:
+            raise RuntimeError('No powered PSU or PDB found for system health mocking')
 
     def _init_pdb_data(self):
         for i in range(1, 5):

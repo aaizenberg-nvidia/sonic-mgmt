@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+import shlex
 import subprocess
 import time
 from typing import Tuple, List
@@ -88,16 +90,93 @@ class CurlTool:
         )
 
     def run_redfish_command(self, rest_op: str, data: str = '', username: str = '',
-                            password: str = '', path: str = '', dut_engine=None, validate=False):
+                            password: str = '', path: str = '', dut_engine=None,
+                            validate=False, max_time: int = 30):
+        """Run a Redfish request via curl on the DUT.
+
+        :param validate: passed to the engine so a non-zero curl exit can raise;
+            ``change_root_password`` above relies on it.
+        :param max_time: curl ``--max-time`` seconds (default 30). Keeps CL from
+            hanging on dead paths; IB/long POSTs can pass a larger value.
+        """
         dut_engine: LinuxSshEngine = dut_engine or TestToolkit.get_engine()
         with allure.step('compose the curl command'):
             username = username or self.username
             password = password or self.password
 
-        if data:
-            data = f'-d \'{data}\''
-        curl_cmd = f"curl -k -w '\\n' -u {username}:{password} -H 'Content-Type:application/json' -X {rest_op} {data} https://{self.server_host}/redfish/v1{path}"
+        # --noproxy '*': the switch/DUT may have http(s)_proxy set; without this curl
+        #   routes the BMC address through the proxy and hangs.
+        # --max-time: never block indefinitely (e.g. usb0:443 with no listener).
+        # Bracket IPv6 literals like _compose_curl_cmd; quote the full URL so
+        # host/path concatenation cannot go wrong after quoting pieces separately.
+        host = (
+            '[{}]'.format(self.server_host)
+            if IpTool.is_address_ipv6(self.server_host)
+            else self.server_host
+        )
+        url = 'https://{}/redfish/v1{}'.format(host, path)
+        auth = shlex.quote("{}:{}".format(username, password))
+        data_flag = '-d {}'.format(shlex.quote(data)) if data else ''
+        curl_cmd = (
+            "curl -k --noproxy '*' --max-time {} -w '\\n' "
+            "-u {} -H 'Content-Type: application/json' "
+            "-X {} {} {}"
+            .format(
+                int(max_time),
+                auth,
+                shlex.quote(rest_op),
+                data_flag,
+                shlex.quote(url),
+            )
+        )
         return dut_engine.run_cmd(curl_cmd, validate=validate)
+
+    def run_redfish_multipart_update(self, file_path: str, targets: list = None,
+                                     force_update: bool = False,
+                                     path: str = '/UpdateService/update-multipart',
+                                     username: str = '', password: str = '', dut_engine=None,
+                                     max_time: int = 600):
+        """POST a firmware package to the Redfish ``UpdateService`` as multipart form data.
+
+        The BMC advertises ``MultipartHttpPushUri`` and offers neither
+        ``SimpleUpdate`` nor a plain ``HttpPushUri``, so a multipart POST is the
+        only Redfish route for a firmware update.
+
+        curl runs on ``dut_engine``, so ``file_path`` must already be on that host.
+
+        :param targets: Redfish FirmwareInventory ids to update, e.g.
+            ``['/redfish/v1/UpdateService/FirmwareInventory/MGX_FW_BMC_0']``. An
+            empty list lets the package's own device records choose the target.
+        :param max_time: curl ``--max-time``. bmcweb answers with a Task as soon
+            as the upload lands, so this bounds the upload rather than the burn.
+        :return: raw response text (a Redfish Task resource on success).
+        """
+        dut_engine: LinuxSshEngine = dut_engine or TestToolkit.get_engine()
+        username = username or self.username
+        password = password or self.password
+
+        host = (
+            '[{}]'.format(self.server_host)
+            if IpTool.is_address_ipv6(self.server_host)
+            else self.server_host
+        )
+        url = 'https://{}/redfish/v1{}'.format(host, path)
+        params = json.dumps({'Targets': list(targets or []), 'ForceUpdate': bool(force_update)})
+        auth = shlex.quote('{}:{}'.format(username, password))
+        # Both parts carry an explicit content type: bmcweb rejects the form when
+        # UpdateParameters arrives as text/plain rather than application/json.
+        curl_cmd = (
+            "curl -k --noproxy '*' --max-time {} -w '\\n' -u {} -F {} -F {} {}"
+            .format(
+                int(max_time),
+                auth,
+                shlex.quote('UpdateParameters={};type=application/json'.format(params)),
+                shlex.quote('UpdateFile=@{};type=application/octet-stream'.format(file_path)),
+                shlex.quote(url),
+            )
+        )
+        with allure.step('Redfish multipart firmware push to {}'.format(url)):
+            return dut_engine.run_cmd(curl_cmd)
 
     def wait_for_bmc_available(self, username: str = '', password: str = '',
                                timeout: int = 3 * 60, retry_interval: int = 10,

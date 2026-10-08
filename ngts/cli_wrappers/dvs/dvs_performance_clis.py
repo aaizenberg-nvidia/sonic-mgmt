@@ -603,6 +603,7 @@ class DvsPerformance(PerformanceCommon):
         return split_ports
 
     def get_all_breakout_ports(self, split_num, ports_list):
+        self._validate_ports_can_be_split(split_num, ports_list)
         breakout_ports = []
         for port in ports_list:
             lane = self.ports_lanes[self.get_sdk_port(port)]
@@ -610,6 +611,49 @@ class DvsPerformance(PerformanceCommon):
             lanes_after_breakout = list(range(0, lane, num_lanes_after_breakout))
             breakout_ports += [str(int(self.get_sdk_port(port), 16) + lane) for lane in lanes_after_breakout]
         return breakout_ports
+
+    def _validate_ports_can_be_split(self, split_num, ports_list):
+        """
+        Fails with an actionable message when ports are too narrow for the requested split.
+
+        The lane width of each port is derived from the gap between consecutive log ports in the
+        live sx_api_ports_dump.py output, so a port that is already broken out reports a smaller
+        width. Splitting it again by split_num would yield zero lanes per sub-port.
+
+        Args:
+            split_num: Requested number of sub-ports per port, i.e, 4
+            ports_list: Ports to be split, as SDK hex strings or ints
+
+        Raises:
+            TestIssue: If any port has fewer lanes than split_num
+        """
+        split_num = int(split_num)
+        too_narrow_ports = {}
+        for port in ports_list:
+            sdk_port = self.get_sdk_port(port)
+            lanes = self.ports_lanes[sdk_port]
+            if lanes // split_num == 0:
+                too_narrow_ports[sdk_port] = lanes
+        if not too_narrow_ports:
+            return
+
+        lanes_per_port_summary = {}
+        for lanes in self.ports_lanes.values():
+            lanes_per_port_summary[lanes] = lanes_per_port_summary.get(lanes, 0) + 1
+        examples = ", ".join(f"{port} ({lanes} lanes)" for port, lanes in list(too_narrow_ports.items())[:8])
+        raise TestIssue(
+            f"[{self.dut_alias}] Cannot split ports by {split_num}: {len(too_narrow_ports)} of "
+            f"{len(ports_list)} ports have fewer than {split_num} lanes, e.g. {examples}.\n"
+            f"Lanes per port currently reported by sx_api_ports_dump.py "
+            f"(lanes: number of ports): {dict(sorted(lanes_per_port_summary.items()))}.\n"
+            f"Likely reason: {self.dut_alias} is not at its default breakout. It is still split by an earlier "
+            f"test or session whose teardown did not run or did not finish, so the ports it reports are "
+            f"already sub-ports.\n"
+            f"How to fix: restore the default configuration on {self.dut_alias} and rerun, for example "
+            f"'dvs_stop.sh && dvs_start.sh --sdk_bridge_mode=HYBRID --boot_mode=NORMAL' "
+            f"(the same restart restore_basic_configuration runs; on SPC6 add "
+            f"--custom_config_file={PerfConsts.SPC6_DVS_CUSTOM_CONFIG_FILE}), then check that sx_api_ports_dump.py "
+            f"shows only unsplit ports. Also check that no other session is using the setup.")
 
     def get_traffic_parameters(self, scenario, conf_args, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR):
         """

@@ -252,6 +252,33 @@ class SonicTrimmingCli(TrimmingCommon):
         action = result.strip().strip('"')
         return action if action else "drop"
 
+    def get_trimming_eligible_queues_alpha(self, port, queues=MRCConsts.TRIMMING_ELEGABLE_QUEUE_NUM):
+        """
+        Get the buffer alpha currently configured for a port's TC 1, 2 and 3 queues.
+        CONFIG_DB stores the alpha as dynamic_th, the exponent of a power of two,
+        so dynamic_th=-7 is returned as 1/128 and dynamic_th=0 as 1.
+        The queues are expected to share a single alpha, so a mismatch is raised rather
+        than collapsed - it means the buffer profiles diverged and no single occupancy
+        threshold applies to all of them.
+        :param port: Port name, i.e 'Ethernet0'
+        :param queues: Queue numbers, defaults to the trimming eligible queues (TC 1, 2, 3)
+        :return: Buffer alpha as a float, i.e 0.0078125 for dynamic_th=-7
+        """
+        alpha_per_queue = {}
+        for queue in queues:
+            queue_key = f"BUFFER_QUEUE|{port}|{queue}"
+            profile = self.engine.run_cmd(f"redis-cli -n 4 hget '{queue_key}' profile").strip().strip('"')
+            if not profile:
+                raise ValueError(f"No buffer profile is bound to {queue_key} in CONFIG_DB")
+            dynamic_th = self.engine.run_cmd(f"redis-cli -n 4 hget 'BUFFER_PROFILE|{profile}' dynamic_th").strip().strip('"')
+            if not dynamic_th:
+                raise ValueError(f"Buffer profile {profile} has no dynamic_th field in CONFIG_DB")
+            logger.info(f"Port {port} queue {queue} uses buffer profile {profile} with dynamic_th={dynamic_th}")
+            alpha_per_queue[queue] = 2 ** int(dynamic_th)
+        if len(set(alpha_per_queue.values())) > 1:
+            raise ValueError(f"Queues on port {port} do not share a single alpha: {alpha_per_queue}")
+        return next(iter(alpha_per_queue.values()))
+
     def get_all_buffer_profile_keys(self):
         """
         Get all buffer profile names from CONFIG_DB.

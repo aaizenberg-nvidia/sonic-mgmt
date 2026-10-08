@@ -2210,6 +2210,14 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             f"install_traffic_generator (SONiC): latest_version={latest_version}, "
             f"perf_sys_sdk_change={perf_sys_sdk_change!r}"
         )
+        if perf_sys_sdk_change is not None:
+            self.engine.run_cmd(f'echo "{perf_sys_sdk_change}" > {PerfConsts.PERF_SYS_SDK_CHANGE_FILE}')
+        else:
+            persisted_perf_sys_sdk_change = self.engine.run_cmd(
+                f'cat {PerfConsts.PERF_SYS_SDK_CHANGE_FILE} 2>/dev/null || true', validate=False).strip()
+            if persisted_perf_sys_sdk_change:
+                perf_sys_sdk_change = persisted_perf_sys_sdk_change
+
         perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         with allure.step('Get SDK_VER git'):
             sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(

@@ -56,18 +56,6 @@ def laser_sibling_ports(port_name: str, available_ports: Iterable[str], lanes_pe
     return sorted(expected - {port_name})
 
 
-def carrier_down_count(counters: Mapping) -> int:
-    """Extract link.carrier-down-count from a counters payload.
-
-    Reset tests use its delta to prove a port actually dropped.
-    """
-    link_counters = counters.get("link")
-    assert isinstance(link_counters, Mapping), f"counters payload has no link section: {sorted(counters)}"
-    value = link_counters.get("carrier-down-count")
-    assert value is not None, f"link counters have no carrier-down-count: {sorted(link_counters)}"
-    return int(str(value).replace(",", ""))
-
-
 def error_drop_counters(data: Mapping, prefix: str = "") -> dict[str, int]:
     """Flatten numeric error/drop counters from a nested counter payload."""
     counters: dict[str, int] = {}

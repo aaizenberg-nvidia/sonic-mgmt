@@ -4,7 +4,7 @@ from dotted_dict import DottedDict
 
 from ngts.helpers.object_filters import filter_objects
 from ngts.nvos_tools.Devices.EthDevice import Mlx2410Switch, Mlx4600Switch, Mlx4600cSwitch, Mlx4700Switch, \
-    Mlx5600Switch, Mlx6600Switch, \
+    Mlx5600Switch, Mlx6600Switch, Mlx6800Switch, Mlx6810Switch, \
     Mlx5400Switch, Mlx4410Switch, Mlx3750sxSwitch, Mlx3700csSwitch, Mlx3700cSwitch, Mlx3420Switch, Mlx2700Switch, \
     Mlx2201Switch, Mlx2100Switch, \
     Mlx2010Switch, Mlx3700Switch, Mlx5640Switch
@@ -46,6 +46,9 @@ class DeviceFactory:
             'Mellanox SN5600': Mlx5600Switch,
             'Mellanox SN5640': Mlx5640Switch,
             'Mellanox SN6600': Mlx6600Switch,
+            'Mellanox SN6650': Mlx6600Switch,
+            'SN6800_LD': Mlx6800Switch,
+            'SN6810_LD': Mlx6810Switch,
             'Mellanox SN5400': Mlx5400Switch,
             'Mellanox SN4700': Mlx4700Switch,
             'Mellanox SN4600': Mlx4600Switch,
@@ -99,7 +102,11 @@ class DeviceFactory:
     def create_device(device_name):
         try:
             if device_name not in DeviceFactory.device_type_dict.keys():
-                if "6600" in device_name:
+                if "6800" in device_name:
+                    device_name = 'SN6800_LD'
+                elif "6810" in device_name:
+                    device_name = 'SN6810_LD'
+                elif "6600" in device_name or "6650" in device_name:
                     device_name = 'Mellanox SN6600'
                 elif "5600" in device_name:
                     device_name = 'Mellanox SN5600'

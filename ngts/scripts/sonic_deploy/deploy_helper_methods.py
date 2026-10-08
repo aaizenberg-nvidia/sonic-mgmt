@@ -22,6 +22,7 @@ except ImportError:
 from devts.infra.tools.topology_tools.nogaq import upload_data_to_noga, get_noga_resource_data
 from devts.infra.tools.general_constants.constants import NogaConstants
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
+from devts.infra.tools.exceptions.test_issue import TestIssue
 
 from ngts.constants.constants import (
     PlayersAliases, SonicDeployConstants, BmcDeployConstants, MarsConstants,
@@ -31,7 +32,7 @@ from ngts.constants.performance_constants import PerfConsts, Cl_Consts
 from ngts.scripts.sonic_deploy.image_preparetion_methods import get_real_paths, prepare_images
 from ngts.tools.align_components.nogaq import CACHE_FILE_NAME as NOGA_CACHE_FILE
 from ngts.helpers.general_helper import extract_host_details_from_topo_obj, get_cli_obj
-from ngts.helpers.gerrit_helper import get_latest_patchset_ref
+from ngts.helpers.gerrit_helper import get_latest_patchset_ref, get_change_status, GERRIT_CHANGE_STATUS_MERGED
 from ngts.scripts.sonic_deploy.sonic_only_methods import is_community, SonicInstallationSteps
 from ngts.scripts.sonic_deploy.community_only_methods import get_deploy_minigraph_cmd, execute_script
 from ngts.nvos_tools.Devices.IbDevice import BlackMambaSwitch, CrocodileSwitch
@@ -48,6 +49,35 @@ from ngts.tools.infra import get_dumps_folder
 logger = logging.getLogger()
 
 
+class GitCommandError(subprocess.CalledProcessError):
+    """CalledProcessError whose message includes git's stderr, so it reaches the Allure report."""
+
+    def __str__(self):
+        return f"{super().__str__()} stderr: {(self.stderr or '').strip()}"
+
+
+def _run_git_command(git_command, cwd):
+    """Run a git command, logging its captured stdout/stderr.
+
+    Args:
+        git_command (list): The git command and its arguments.
+        cwd (str): Directory to run the command in.
+
+    Returns:
+        subprocess.CompletedProcess: The completed process, with text stdout/stderr.
+
+    Raises:
+        GitCommandError: if the command exits with a non-zero status.
+    """
+    logger.info("About to execute command: %s", git_command)
+    result = subprocess.run(git_command, cwd=cwd, capture_output=True, text=True)
+    logger.info("Command exited with %s. stdout: %s stderr: %s",
+                result.returncode, result.stdout.strip(), result.stderr.strip())
+    if result.returncode:
+        raise GitCommandError(result.returncode, git_command, output=result.stdout, stderr=result.stderr)
+    return result
+
+
 def checkout_sonic_mgmt_change(sonic_mgmt_change):
     """Check out the requested tag, branch, or Gerrit change in the local sonic-mgmt
     working copy.
@@ -57,17 +87,31 @@ def checkout_sonic_mgmt_change(sonic_mgmt_change):
     process; it affects files read from disk at runtime and any subprocess spawned
     after the checkout completes.
 
+    Best effort: a malformed ``sonic_mgmt_change``, or one that refers to a branch/change
+    that is no longer an open ref (already merged), is logged and skipped rather than
+    raised. Any other failure is raised.
+
     Args:
         sonic_mgmt_change (str): ``'branch_<name>'`` for a branch, ``'tag_<name>'`` for
             a tag, or a numeric Gerrit change number to check out that change's latest
             patchset (e.g. an unmerged CR).
 
     Raises:
-        ValueError: if ``sonic_mgmt_change`` starts with neither prefix and is not all
-            digits.
-        subprocess.CalledProcessError: if the fetch or checkout fails (e.g. the ref
-            does not exist on origin).
+        subprocess.CalledProcessError: if a git command fails for a reason other than
+            the branch/change already being merged.
     """
+    if not (
+        sonic_mgmt_change.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX) or
+        sonic_mgmt_change.startswith(SonicMgmtChangeConstants.TAG_PREFIX) or
+        sonic_mgmt_change.isdigit()
+    ):
+        logger.warning(
+            f"Invalid sonic_mgmt_change={sonic_mgmt_change!r}. Must start with "
+            f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}' or '{SonicMgmtChangeConstants.TAG_PREFIX}', "
+            f"or be a numeric Gerrit change number. Skipping checkout."
+        )
+        return
+
     # Git refuses to operate on a checkout whose owning UID isn't in the local user
     # database ("dubious ownership"), which is common on shared/NFS-mounted MARS player
     # hosts and ephemeral containers. Scoping "-c safe.directory=..." to each invocation
@@ -75,11 +119,7 @@ def checkout_sonic_mgmt_change(sonic_mgmt_change):
     # persistent git config, so this self-heals on every machine that runs this step
     # instead of requiring a one-off manual fix per host/container.
     git_rev_parse_command = ["git", "-c", "safe.directory=*", "rev-parse", "--show-toplevel"]
-    logger.info("About to execute command: %s", git_rev_parse_command)
-    repo_root = subprocess.run(
-        git_rev_parse_command,
-        cwd=os.path.dirname(__file__), check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    repo_root = _run_git_command(git_rev_parse_command, cwd=os.path.dirname(__file__)).stdout.strip()
     safe_directory_arg = f"safe.directory={repo_root}"
 
     # Fetch over HTTPS using the SONiC verification service account instead of the local
@@ -98,35 +138,65 @@ def checkout_sonic_mgmt_change(sonic_mgmt_change):
     credential_helper_arg = f"credential.https://git-nbu-sw.nvidia.com.helper={credential_helper}"
 
     if sonic_mgmt_change.startswith(SonicMgmtChangeConstants.BRANCH_PREFIX):
-        ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.BRANCH_PREFIX):]
-        refspec = f"refs/heads/{ref}:refs/remotes/origin/{ref}"
+        branch = sonic_mgmt_change[len(SonicMgmtChangeConstants.BRANCH_PREFIX):]
+        # "+" lets the fetch update origin/<branch> even after the branch was force-pushed.
+        refspec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+        # Check out the just-fetched remote-tracking ref, not the bare branch name, which
+        # git resolves to a possibly stale local branch of that name if one exists.
+        ref = f"refs/remotes/origin/{branch}"
     elif sonic_mgmt_change.startswith(SonicMgmtChangeConstants.TAG_PREFIX):
         ref = sonic_mgmt_change[len(SonicMgmtChangeConstants.TAG_PREFIX):]
         refspec = f"refs/tags/{ref}:refs/tags/{ref}"
-    elif sonic_mgmt_change.isdigit():
-        change_ref = get_latest_patchset_ref(
-            repo_url, sonic_mgmt_change, cwd=repo_root, extra_git_config=[credential_helper_arg],
+    else:
+        # A merged change keeps its patchset refs, so only its status tells it apart from
+        # an open one; checking it out would deploy the pre-merge patchset.
+        change_status = get_change_status(
+            sonic_mgmt_change, Sonic_Cache.gerrit_username, Sonic_Cache.gerrit_api_token,
         )
+        if change_status == GERRIT_CHANGE_STATUS_MERGED:
+            logger.warning(
+                f"sonic_mgmt_change={sonic_mgmt_change!r} is already merged; skipping checkout"
+            )
+            return
+        try:
+            change_ref = get_latest_patchset_ref(
+                repo_url, sonic_mgmt_change, cwd=repo_root, extra_git_config=[credential_helper_arg],
+            )
+        except TestIssue as err:
+            # A merged change's patchset refs are not guaranteed to stay published, so
+            # "no patch sets found" for a change number reads as "already merged".
+            if "No patch sets found" in str(err):
+                logger.warning(
+                    f"sonic_mgmt_change={sonic_mgmt_change!r} has no open ref ({err}); "
+                    f"treating as already merged and skipping checkout"
+                )
+                return
+            raise
         ref = "FETCH_HEAD"
         refspec = change_ref
-    else:
-        raise ValueError(
-            f"Invalid sonic_mgmt_change={sonic_mgmt_change!r}. Must start with "
-            f"'{SonicMgmtChangeConstants.BRANCH_PREFIX}' or '{SonicMgmtChangeConstants.TAG_PREFIX}', "
-            f"or be a numeric Gerrit change number."
-        )
 
     logger.info(f"Checking out sonic-mgmt {sonic_mgmt_change!r} in {repo_root}")
 
     git_fetch_command = [
         "git", "-c", safe_directory_arg, "-c", credential_helper_arg, "fetch", repo_url, refspec,
     ]
-    logger.info("About to execute command: %s", git_fetch_command)
-    subprocess.run(git_fetch_command, cwd=repo_root, check=True)
+    try:
+        _run_git_command(git_fetch_command, cwd=repo_root)
+    except subprocess.CalledProcessError as err:
+        # A branch/tag ref that no longer exists on origin (e.g. a feature branch
+        # deleted after merging) means it was already merged.
+        if "couldn't find remote ref" in (err.stderr or ''):
+            logger.warning(
+                f"sonic_mgmt_change={sonic_mgmt_change!r} has no open ref ({err}); "
+                f"treating as already merged and skipping checkout"
+            )
+            return
+        raise
 
-    git_checkout_command = ["git", "-c", safe_directory_arg, "checkout", ref]
-    logger.info("About to execute command: %s", git_checkout_command)
-    subprocess.run(git_checkout_command, cwd=repo_root, check=True)
+    # --force discards local changes to tracked files and overwrites untracked files in
+    # the way; without it, leftover edits on a shared player host make the checkout fail.
+    git_checkout_command = ["git", "-c", safe_directory_arg, "checkout", "--force", ref]
+    _run_git_command(git_checkout_command, cwd=repo_root)
 
 
 def get_image_fw_version(image_path):

@@ -212,7 +212,7 @@ FOUR_WAY_CASES = {
     "cpo": (CPO, {}, {
         Cpov2Consts.STATUS: "up",
         Cpov2Consts.ERROR_STATUS: "N/A",
-        Cpov2Consts.THRESHOLDS: {Cpov2Consts.CH_TX_POWER: {Cpov2Consts.LOW_WARNING: -6.0}},
+        Cpov2Consts.THRESHOLD: {Cpov2Consts.CH_TX_POWER: {Cpov2Consts.LOW_WARNING: -6.0}},
     }, {
         f"{CPO1}/state/oper-status": "openconfig-platform-types:ACTIVE",
         f"{CPO1}/state/error-status": "none",

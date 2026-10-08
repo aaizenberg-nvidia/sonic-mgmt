@@ -326,10 +326,10 @@ class TestSRv6Base:
         num_of_groups = len(upstream_downstream_group)
         return all_ports_in_test, group_size, num_of_groups
 
-    def get_max_watermark_th(self, num_of_congested_ports, num_of_congested_tc):
+    def get_max_watermark_th(self, alpha, num_of_congested_ports, num_of_congested_tc):
         n = num_of_congested_ports * num_of_congested_tc
         pool_size_cells = MRCConsts.POOL_SIZE_CELLS_BY_CHIP_TYPE[self.chip_type]
-        tc_max_occ_th = pool_size_cells * MRCConsts.TC_1_2_3_ALPHA / (1 + MRCConsts.TC_1_2_3_ALPHA * n)
+        tc_max_occ_th = pool_size_cells * alpha / (1 + alpha * n)
         return {MRCConsts.EGRESS_PORT_GROUP_NAME: {ValidationConsts.MAX_WATERMARK: tc_max_occ_th},
                 MRCConsts.INGRESS_PORT_GROUP_NAME: {}}
 
@@ -405,7 +405,8 @@ class TestSRv6Base:
     def get_many_to_few_additional_validations(self, egress_ports, tc_threshold):
         additional_validations = {}
         if not is_redmine_issue_active([4668758])[0]:
-            max_watermark_th = self.get_max_watermark_th(num_of_congested_ports=len(egress_ports), num_of_congested_tc=len(MRCConsts.TRIMMING_ELEGABLE_QUEUE_NUM))
+            alpha = self.cli_object.trimming.get_trimming_eligible_queues_alpha(egress_ports[0])
+            max_watermark_th = self.get_max_watermark_th(alpha, num_of_congested_ports=len(egress_ports), num_of_congested_tc=len(MRCConsts.TRIMMING_ELEGABLE_QUEUE_NUM))
             additional_validations = {
                 'validate_max_watermark_on_trimming_queue': Validation(validate_per_tc, {'tc_occ_threshold': max_watermark_th,
                                                                                          'tc_to_validate': MRCConsts.TRIMMING_QUEUE_NUM,
@@ -423,8 +424,11 @@ class TestSRv6Base:
         return additional_validations
 
     def get_trimming_bw_threshold(self, traffic_type):
+        dut_tx_util_th = MRCConsts.DUT_TX_UTIL_TH
+        if self.chip_type == "SPC6" and is_redmine_issue_active([5239628])[0]:
+            dut_tx_util_th = MRCConsts.SPC6_TRIMMING_DUT_TX_UTIL_TH
         bw_threshold = {
-            MRCConsts.EGRESS_PORT_GROUP_NAME: {ValidationConsts.TX: min(self.shaper_value, MRCConsts.DUT_TX_UTIL_TH),
+            MRCConsts.EGRESS_PORT_GROUP_NAME: {ValidationConsts.TX: min(self.shaper_value, dut_tx_util_th),
                                                ValidationConsts.RX: None},
             MRCConsts.INGRESS_PORT_GROUP_NAME: {ValidationConsts.TX: None,
                                                 ValidationConsts.RX: self.shaper_value}

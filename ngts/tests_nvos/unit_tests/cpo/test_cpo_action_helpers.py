@@ -5,7 +5,6 @@ from ngts.nvos_tools.infra.PollingTool import PollingTool
 from ngts.tests_nvos.platform.cpo.action_helpers import (
     assert_mapping_unchanged,
     assert_no_counter_increase,
-    carrier_down_count,
     error_drop_counters,
     laser_sibling_ports,
     mapping_snapshot,
@@ -28,18 +27,6 @@ def test_mapping_change_is_reported():
     changed[Cpov2Consts.PORTS] = "sw99p1s1"
     with pytest.raises(AssertionError, match="mapping changed"):
         assert_mapping_unchanged(before, changed, els)
-
-
-def test_carrier_down_count_from_real_nvl6_capture():
-    """The link-bounce counter extracts from the real counters payload."""
-    assert carrier_down_count(samples.SHOW_INTERFACE_ACP_COUNTERS_NVL6) == 0
-
-
-def test_carrier_down_count_rejects_missing_sections():
-    with pytest.raises(AssertionError, match="no link section"):
-        carrier_down_count({"in-errors": 0})
-    with pytest.raises(AssertionError, match="no carrier-down-count"):
-        carrier_down_count({"link": {"error-recovery": 0}})
 
 
 @pytest.mark.parametrize(

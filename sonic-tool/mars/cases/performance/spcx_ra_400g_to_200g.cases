@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> PERFORMANCE </group>
+      <name> Spectrum-X RA 400G to 200G tests </name>
+      <info> Spectrum-X RA 400G to 200G tests </info>
+      <owner> ayussinghal </owner>
+    </Test>
+    <Case>
+      <tags> performance </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/perf_mars_pytest_runner.py </wrapper>
+      <tout> 43200 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+  <case>
+    <name> spcx ra 400g to 200g tests </name>
+    <info> </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/performance_tests/spcx_ra/400G_to_200G_Configuration/ --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals -s --disable_loganalyzer --ignore-conditional-mark\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

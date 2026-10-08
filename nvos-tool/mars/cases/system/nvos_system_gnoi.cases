@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> NVOS </group>
+      <name> NVOS system gnoi </name>
+      <info> gNOI on NVOS: the eight supported RPCs driven with gnoic, the new gnoi-rpc counters node, the system file-path actions and the boot-next 'other' enum. Verification TP: tp/gnoi_TP.md </info>
+      <owner> Akash Srivastava </owner>
+    </Test>
+    <Case>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <name> test_gnoi_enablement_and_observability </name>
+    <info> gNOI availability follows the gNMI-server config; the gnoi-rpc counters node is validated against nv-gnoid's own state file; gNOI artifacts appear in tech-support (TP 4.1) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_counters.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_enablement_and_observability --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_gnoi_file_service_lifecycle </name>
+    <info> The new /system/file-path NVUE actions and all four gNOI File RPCs, including tech-support dump retrieval, staged-file ownership and staging cleanup (TP 5.1) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_file_service.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_file_service_lifecycle --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_gnoi_os_install_activate_reboot </name>
+    <info> OS.Install / OS.Activate / System.Reboot composition, incl. the boot-next 'other' enum and image retention. Transfers the image given as --target_version, so the scenario must supply one; reboots the switch (TP 5.2) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_os_install.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_os_install_activate_reboot --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --target_version=[[conf:extra_info.target_version]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 2400   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_gnoi_firmware_setpackage_modes </name>
+    <info> System.SetPackage in per-component mode: fetch-only staging, relayed NVUE validation errors and the traversal guard. The component is picked at random from those the components JSON supplies a file for, so --fw_versions_json_file is required. Installs nothing unless GNOI_ALLOW_FW_ACTIVATE / GNOI_ALLOW_FW_BURN are set (TP 5.3) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_firmware.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_firmware_setpackage_modes --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --fw_versions_json_file=[[conf:extra_info.fw_versions_json_file]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_gnoi_error_flows_and_access_control </name>
+    <info> Negative paths and access control: unsupported RPCs and reboot modes, authentication failures, the RBAC role gate on the File actions, Unix-permission bounds, the directory denylist and path traversal, with log-side checks. Ends with a real HALT and a remote-reboot recovery, so the setup needs a remote-reboot command; set GNOI_SKIP_HALT to skip it (TP 6.1) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_error_flows.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_error_flows_and_access_control --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 2400   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> test_gnoi_staging_bounds_and_service_recovery </name>
+    <info> The staging area's properties and the service lifecycle: per-user staging and ownership, no memory cost for a multi-GB transfer, an oversized transfer contained as ENOSPC inside the loop image, the concurrent-install lock, and gNOI serving again after a service restart and an unclean reboot. Needs ~5 GB of sparse-file room on the player and the image given as --target_version (TP 7.1) </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/gnoi/test_gnoi_staging.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -k test_gnoi_staging_bounds_and_service_recovery --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --target_version=[[conf:extra_info.target_version]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 2400   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+</CASEDEF>

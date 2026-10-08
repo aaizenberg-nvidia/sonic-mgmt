@@ -114,5 +114,10 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/cumulus/cumulus_general.cases </cases>
 	</test>
 
+	<!-- SPC-6 Leakage Detection Tests -->
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/cumulus/cumulus_leakage.cases </cases>
+	</test>
+
 </DBDEF>
 

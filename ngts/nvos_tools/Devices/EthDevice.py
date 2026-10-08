@@ -897,6 +897,22 @@ class Mlx6600Switch(EthSwitch):
 
     def _init_constants(self):
         super()._init_constants()
+        # SKU-level BMC flag (same pattern as IbDevice BMC platforms). DeviceFactory
+        # maps SN6600/SN6650 here; non-BMC Ethernet SKUs use other device classes.
+        # Runtime BMC suites still gate via skip_if_no_bmc + ensure_usb0_up.
+        self.has_bmc = True
+        # Resolved from the repo so any worktree/checkout reads its own catalog.
+        self.fw_versions_json_file_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', '..',
+            'tests_nvos', 'bmc', 'cl_spc6_bmc_fw_versions.json'))
+        # A secured (rel-prod ERoT) switch rejects debug-signed images with
+        # "security keys used to sign the image has been revoked", so the burn
+        # tests must reference the erot_sign_prod build.
+        self.bmc_older_version_path = (
+            "/auto/sw_system_release/low_level/openbmc/88.0060.2110/SPC6_AST2600_BMC/"
+            "dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2110.fwpkg")
+        bmc_dump_files = ['bmc_debug_log_dump.tar.xz']
+        self.constants = self.constants._replace(bmc_dump_files=bmc_dump_files)
         self.core_count = 16
         self.ib_ports_num = 66
         self.asic_type = 'Spectrum-6'
@@ -952,6 +968,170 @@ class Mlx6600Switch(EthSwitch):
 
     def _init_psu_list(self):
         self.psu_list = ["PDB1", "PDB2"]
+        self.psu_fan_list = []
+        self.platform_env_psu_prop = ["state"]
+
+    def _init_fan_list(self):
+        self.fan_list = []
+
+    def _init_led_list(self):
+        self.led_list = ["POWER", "SYSTEM"]
+
+    def _init_sensors_dict(self):
+        super()._init_sensors_dict()
+        self.sensors_dict["LEAKAGE"] = self.list_of_leakages
+
+
+# -------------------------- Mlx6810 Switch -----------------------------
+
+
+class Mlx6810Switch(EthSwitch):
+    """Chameleon 6S (SN6810_LD): single-ASIC Spectrum-6 system."""
+
+    def __init__(self):
+        super().__init__(asic_amount=1)
+
+    def _init_constants(self):
+        super()._init_constants()
+        self.has_bmc = True
+        # SN6810-only catalog. The shared SN6600 file points at 2112/2110, and
+        # those images are not what this platform runs. mlx-6810-01 is on
+        # 88.0060.2216, so the files-listing test can fetch that SPC6 AST2600
+        # package. Same burn rule as SN6800: bmc_older_version_path stays unset
+        # because there is no second image that is known to boot, and the
+        # install tests must skip. latest and previous in the JSON are the
+        # same 2216 file so a lookup cannot fall through to 2112.
+        self.fw_versions_json_file_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', '..',
+            'tests_nvos', 'bmc', 'cl_sn6810_bmc_fw_versions.json'))
+        bmc_dump_files = ['bmc_debug_log_dump.tar.xz']
+        self.constants = self.constants._replace(bmc_dump_files=bmc_dump_files)
+        self.core_count = 16
+        self.asic_type = 'Spectrum-6'
+        self.constants.firmware.append(PlatformConsts.FW_SPECTRUM6)
+        # Same "nv show platform" shape as the other Nvidia SPC6 systems:
+        # no product-name, no asic-revision.
+        self.show_platform_output.pop("product-name", None)
+        self.show_platform_output.pop("asic-revision", None)
+        self.show_platform_output.update({
+            "manufacturer": "Nvidia",
+            "system-type": "SN6810_LD",
+            "asic-model": self.asic_type,
+        })
+
+    def _init_psu_list(self):
+        self.psu_list = []
+        self.psu_fan_list = []
+        self.platform_env_psu_prop = ["state"]
+
+    def _init_fan_list(self):
+        self.fan_list = []
+
+    def _init_led_list(self):
+        self.led_list = ["POWER", "SYSTEM"]
+
+
+# -------------------------- Mlx6800 Switch -----------------------------
+
+
+class Mlx6800Switch(EthSwitch):
+    """Chameleon 6M (SN6800_LD, HI187): liquid cooled 4-ASIC Spectrum-6 system."""
+
+    _ASIC_COUNT = 4
+    # The per-ASIC TILE PMIC rails repeat identically on each of the four I2C buses.
+    _PMIC_I2C_BUSES = (15, 31, 47, 63)
+    _PMIC_RAILS = (
+        ("6A", "PMIC-11-PVIN1_DVDD_TILE4_TILE0_ASIC"),
+        ("6B", "PMIC-12-PVIN1_DVDD_TILE5_TILE6_ASIC"),
+        ("6C", "PMIC-13-PVIN1_AVDD_TILE7_TILE3_ASIC"),
+        ("6D", "PMIC-14-PVIN1_AVDD_TILE1_TILE2_ASIC"),
+        ("6E", "PMIC-15-PVIN1_AVDD_TILE4_TILE0_ASIC"),
+        ("6F", "PMIC-16-PVIN1_AVDD_TILE5_TILE6_ASIC"),
+        ("60", "PMIC-1-PVIN1_VDD_ASIC"),
+        ("61", "PMIC-2-PVIN1_HVDD"),
+        ("62", "PMIC-3-PVIN1_HBID_TILE12_37_ASIC"),
+        ("63", "PMIC-4-PVIN1_HBID_TILE04_56_ASIC"),
+        ("64", "PMIC-5-PVIN1_VDD_TILE7_TILE3_ASIC"),
+        ("65", "PMIC-6-PVIN1_VDD_TILE1_TILE2_ASIC"),
+        ("66", "PMIC-7-PVIN1_VDD_TILE4_TILE0_ASIC"),
+        ("67", "PMIC-8-PVIN1_VDD_TILE5_TILE6_ASIC"),
+        ("68", "PMIC-9-PVIN1_DVDD_TILE7_TILE3_ASIC"),
+        ("69", "PMIC-10-PVIN1_DVDD_TILE1_TILE2_ASIC"),
+    )
+    # One HSC + converter pair per power distribution board.
+    _PDB_I2C_BUSES = (6, 22, 38, 54)
+
+    def __init__(self):
+        super().__init__(asic_amount=self._ASIC_COUNT)
+
+    def _init_constants(self):
+        super()._init_constants()
+        # EthSwitch assigns asic_amount only after the _init_* hooks have run, so the
+        # inherited per-ASIC lists are built with the default count of 1. Every other
+        # Ethernet device is single-ASIC, which is why this is the first to matter.
+        self.asic_numbers = [f"ASIC{i}" for i in range(1, self._ASIC_COUNT + 1)]
+        self.has_bmc = True
+        # No BMC firmware attributes on purpose. Sharing the SN6600 catalog looks
+        # right -- both carry an AST2600 BMC -- but the AST2600 images we have do
+        # not boot on this platform. Verified on mlx-6800-151 (2026-10-01): it
+        # ships 88.0060.2216, and installing either 2112 or 2113 reported success
+        # and then left the BMC unbootable, recoverable only by an auxiliary power
+        # cycle, after which it came back on 2216. Chameleon 6M support evidently
+        # landed after 2113. Until a validated latest/previous pair exists for this
+        # platform there is nothing safe to burn, so the install tests skip.
+        bmc_dump_files = ['bmc_debug_log_dump.tar.xz']
+        self.constants = self.constants._replace(bmc_dump_files=bmc_dump_files)
+        self.core_count = 16
+        self.asic_type = 'Spectrum-6'
+        # Unlike the single-ASIC SN6600, this platform reports every ASIC and all
+        # ten CPLDs as separate firmware components.
+        self.cpld_amount = 10
+        self._extend_firmware_by_cpld_amount()
+        self.constants.firmware.extend(
+            f"{PlatformConsts.FW_SPECTRUM6}-{i}" for i in range(1, self._ASIC_COUNT + 1))
+        # This platform's "nv show platform" emits neither product-name nor
+        # asic-revision, and reports Nvidia rather than the inherited Mellanox.
+        self.show_platform_output.pop("product-name", None)
+        self.show_platform_output.pop("asic-revision", None)
+        self.show_platform_output.update({
+            "manufacturer": "Nvidia",
+            "system-type": "SN6800_LD",
+            "asic-model": self.asic_type,
+        })
+
+        self.voltage_sensors = [
+            "CPU-PMIC-VDDCR-VOLT-IN",
+            "CPU-PMIC-VDDCR_CPU-VOLT-OUT1",
+            "CPU-PMIC-VDDCR_SOC-VOLT-OUT2",
+            "DDR-PMIC-VDD_MEM-VOLT-IN",
+            "DDR-PMIC-VDD_MEM-VOLT-OUT2",
+            "DDR-PMIC-VDD_MEMIO-VOLT-OUT1",
+        ]
+        for bus in self._PDB_I2C_BUSES:
+            self.voltage_sensors += [
+                f"LM5066I-I2C-{bus}-12-PDB-HSC-VINDC-VOLT-IN",
+                f"LM5066I-I2C-{bus}-12-PDB-HSC-VOUT-VOLT-OUT",
+            ]
+        for bus in self._PMIC_I2C_BUSES:
+            self.voltage_sensors += [
+                f"MP29816-I2C-{bus}-{addr}-{rail}-VOLT-IN" for addr, rail in self._PMIC_RAILS
+            ]
+        for bus in self._PDB_I2C_BUSES:
+            self.voltage_sensors += [
+                f"RAA228004-I2C-{bus}-60-PDB-PWR_CONV-VINDC-VOLT-IN",
+                f"RAA228004-I2C-{bus}-60-PDB-PWR_CONV-VOUT-VOLT-OUT",
+            ]
+
+        self.leakage_sensors_count = 5
+        self.list_of_leakages = [f"leakage{i}" for i in range(1, self.leakage_sensors_count + 1)]
+
+    def _init_temperature(self):
+        super()._init_temperature()
+        self.temperature_sensors = \
+            [f"Asic{i}-Temp-Sensor" for i in range(1, self._ASIC_COUNT + 1)] + ["CPU-Package-Sensor"]
+
+    def _init_psu_list(self):
+        self.psu_list = ["PDB1", "PDB2", "PDB3", "PDB4"]
         self.psu_fan_list = []
         self.platform_env_psu_prop = ["state"]
 

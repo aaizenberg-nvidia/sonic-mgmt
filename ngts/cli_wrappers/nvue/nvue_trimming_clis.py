@@ -30,6 +30,34 @@ class NvueTrimmingCli(TrimmingCommon):
         self.cli_obj.performance.execute_cmd(f"nv set system forwarding packet-trim size {trimming_size}")
         self.cli_obj.performance.execute_cmd(f"nv config apply -y")
 
+    def get_trimming_eligible_queues_alpha(self, pool_id, profile="default-global"):
+        """
+        Get the shared buffer alpha currently configured for the egress pool that serves
+        the TC 1, 2 and 3 queues. Cumulus configures the alpha per egress pool rather
+        than per queue, so the pool serving those queues is passed in by the caller.
+        NVUE reports the alpha as a name rather than a number, so 'alpha_1_128' is
+        returned as 1/128, 'alpha_8' as 8 and 'alpha_infinity' as inf.
+        :param pool_id: Egress pool id serving TC 1, 2 and 3, i.e 13
+        :param profile: advance-buffer-config profile, defaults to 'default-global'
+        :return: Buffer alpha as a float, i.e 0.0078125 for 'alpha_1_128'
+        """
+        cmd = f"nv show qos advance-buffer-config {profile} egress-pool {pool_id} -o json"
+        output = self.engine.run_cmd(cmd, print_output=False)
+        try:
+            pool_config = json.loads(output)
+        except json.JSONDecodeError:
+            raise TestIssue(f"Failed to parse JSON output of '{cmd}', received: {output}")
+        shared_alpha = pool_config.get("shared-alpha")
+        if not shared_alpha:
+            raise TestIssue(f"No shared-alpha reported for egress pool {pool_id} in profile {profile}, "
+                            f"received: {pool_config}")
+        logging.info(f"Egress pool {pool_id} in profile {profile} uses shared-alpha={shared_alpha}")
+        alpha_value = shared_alpha.lower().replace("alpha_", "")
+        if alpha_value == "infinity":
+            return float("inf")
+        numerator, _, denominator = alpha_value.partition("_")
+        return int(numerator) / int(denominator) if denominator else float(numerator)
+
     def build_pre_traffic_packet_trim_state_json(self, scenario_tag):
         """Collect pre-traffic packet-trim and WJH service state for NVUE diagnostics.
 

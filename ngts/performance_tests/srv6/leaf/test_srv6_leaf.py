@@ -63,11 +63,34 @@ class TestSRv6Leaf(TestSRv6Base):
     @pytest.mark.parametrize("traffic_type", MRCConsts.REGRESSION_TRAFFIC_TYPE_LIST)
     @pytest.mark.parametrize("is_drop_over_max", [False, True])
     @pytest.mark.FR_4911232()
-    def test_bisection_srv6(self, request, traffic_type, workload, is_drop_over_max):
+    def test_bisection_srv6(self, request, traffic_type, workload, is_drop_over_max, is_min_packet_size):
+        # Set before any skip/raise below, otherwise skipped/broken runs keep the default title.
+        title = request.node.name
+        if is_min_packet_size:
+            # Surface the --min_packet_size flag in the title so these runs
+            # aren't indistinguishable in the allure report from default
+            # (max) packet size runs with the same params.
+            title = f"{title[:-1]}, min_packet_size]"
+        allure.dynamic.title(title)
+        if is_min_packet_size and is_drop_over_max:
+            raise TestIssue("--min_packet_size cannot run together with Drop Over Max: both override the MRC data "
+                            "packet size, so the run would measure neither of them")
         condition, skip_message = get_srv6_tests_skip_condition(self.cli_object, self.chip_type)
         skip_performance_test_conditionally(condition, skip_message)
         if is_drop_over_max:
             skip_test_on_unsupported_os(self.cli_object, CliType.NVUE)
+        min_packet_config = None
+        if is_min_packet_size:
+            min_packet_by_traffic_type = MRCConsts.MIN_PACKET_SIZE_BY_CHIP_TYPE.get(self.chip_type)
+            skip_performance_test_conditionally(
+                min_packet_by_traffic_type is None,
+                f"Min packet size not configured for chip type {self.chip_type}. "
+                f"Supported chip types: {list(MRCConsts.MIN_PACKET_SIZE_BY_CHIP_TYPE.keys())}")
+            min_packet_config = min_packet_by_traffic_type.get(traffic_type)
+            skip_performance_test_conditionally(
+                min_packet_config is None,
+                f"--min_packet_size has no measured minimum for traffic type {traffic_type} on chip type "
+                f"{self.chip_type}. Supported traffic types: {list(min_packet_by_traffic_type.keys())}")
         with allure.step(f"Set test correct allure title with {self.ip} parameter"):
             test_name = get_perf_test_name(request)
             num_of_ports = MRCConsts.UPSTREAM_DOWNSTREAM_NUM_OF_PORTS_BY_CHIP_TYPE[self.chip_type]
@@ -93,12 +116,27 @@ class TestSRv6Leaf(TestSRv6Base):
 
         with allure.step(f"Run bisection traffic pattern on {len(upstream)} upstream ports <-> {len(downstream)} downstream ports"):
             create_workload_stream = get_workload_method(workload)
-            packet_size = drop_over_max_config['packet_size'] if is_drop_over_max else None
+            if is_drop_over_max:
+                packet_size = drop_over_max_config['packet_size']
+                logger.info(f"Drop Over Max mode: using MRC data packet_size={packet_size}B")
+            elif is_min_packet_size:
+                packet_size = min_packet_config.packet_size
+                logger.info(f"Min packet size mode: using MRC data packet_size={packet_size}B "
+                            f"for chip type {self.chip_type}")
+            else:
+                packet_size = None
+                logger.info("Default mode: MRC data packet_size not overridden (None); "
+                            "default resolved during stream creation")
             mrc_num_packets = drop_over_max_config['mrc_num_packets'] if is_drop_over_max else None
+            retransmit_num_packets = None
+            if is_min_packet_size:
+                mrc_num_packets = min_packet_config.mrc_num_packets
+                retransmit_num_packets = min_packet_config.retransmit_num_packets
             traffic_jsons = get_bisection_traffic(self.players, self.conf_args, traffic_type,
                                                   self.dut_interfaces_ipv6_configuration_dict,
                                                   create_workload_stream, upstream_ports=upstream, downstream_ports=downstream,
                                                   packet_size=packet_size, mrc_num_packets=mrc_num_packets,
+                                                  retransmit_num_packets=retransmit_num_packets,
                                                   vary_src_ip=is_drop_over_max)
             set_shaper_on_traffic_gen(self.players, speed=self.conf_args["speed"], shaper_value=self.shaper_value)
             run_traffic(self.players, self.scenario, traffic_jsons, attach_traffic_json=False)

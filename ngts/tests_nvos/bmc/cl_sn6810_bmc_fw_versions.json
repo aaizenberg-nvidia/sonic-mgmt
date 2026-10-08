@@ -1,0 +1,34 @@
+{
+  "prod": {
+    "bmc": {
+      "latest": {
+        "path": "/auto/sw_system_release/low_level/openbmc/88.0060.2216/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "filename": "sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "version_name": "88.0060.2216",
+        "base_url": "http://fit-build-116"
+      },
+      "previous": {
+        "path": "/auto/sw_system_release/low_level/openbmc/88.0060.2216/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "filename": "sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "version_name": "88.0060.2216",
+        "base_url": "http://fit-build-116"
+      }
+    }
+  },
+  "dev": {
+    "bmc": {
+      "latest": {
+        "path": "/auto/sw_system_release/low_level/openbmc/88.0060.2216/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "filename": "sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "version_name": "88.0060.2216",
+        "base_url": "http://fit-build-116"
+      },
+      "previous": {
+        "path": "/auto/sw_system_release/low_level/openbmc/88.0060.2216/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "filename": "sw_bmc_arm_spc6_ast2600_bmc_88.0060.2216.fwpkg",
+        "version_name": "88.0060.2216",
+        "base_url": "http://fit-build-116"
+      }
+    }
+  }
+}

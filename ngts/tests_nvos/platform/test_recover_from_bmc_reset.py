@@ -4,7 +4,8 @@ from time import sleep
 import pytest
 
 from ngts.nvos_constants.constants_nvos import SystemConsts, PlatformConsts, FansConsts, HealthConsts
-from ngts.nvos_tools.infra.BmcTool import BmcTool
+from ngts.nvos_tools.infra.BmcTool import (BmcTool, assert_usb0_bmc_link_addrs, read_usb0_ifindex,
+                                           wait_for_usb0_bmc_link)
 from ngts.nvos_tools.infra.CurlTool import CurlTool
 from ngts.nvos_tools.infra.DeviceLogTool import grep_log_lines_after_datetime
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool, wait_for_specific_regex_in_logs
@@ -14,7 +15,9 @@ from ngts.nvos_tools.system.System import System
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tools.test_utils.switch_recovery import recover_dut_with_remote_reboot
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
+from ngts.nvos_tools.Devices.EthDevice import EthSwitch
 from ngts.nvos_tools.Devices.IbDevice import JulietNonScaleoutSwitchGB300
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import BmcUsers
 
 logger = logging.getLogger()
@@ -35,6 +38,7 @@ def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
     system = System()
     platform = Platform()
     engine = engines.dut
+    is_cl = isinstance(TestToolkit.get_device(), EthSwitch)
 
     with allure.step("Add health.err to loganalyzer ignore list"):
         for log_analyzer_instance in (loganalyzer or {}).values():
@@ -59,11 +63,18 @@ def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
 
     with allure.step("Reset BMC"):
         start_time = datetime.now()
+        # Read before the reset: the usb0 re-enumeration is what CL waits on below.
+        usb0_ifindex_before = read_usb0_ifindex(engine) if is_cl else None
         BmcTool.reset(engine)
 
     try:
-        with allure.step("Wait for log line indicating BMC is back on"):
-            wait_for_specific_regex_in_logs(engine, BMC_ON_LOG_LINE, LOG_DELAY)
+        with allure.step("Wait for the BMC to come back"):
+            if is_cl:
+                # Cumulus does not emit BMC_ON_LOG_LINE; wait on the usb0 link instead.
+                wait_for_usb0_bmc_link(engine, timeout_sec=LOG_DELAY,
+                                       previous_ifindex=usb0_ifindex_before)
+            else:
+                wait_for_specific_regex_in_logs(engine, BMC_ON_LOG_LINE, LOG_DELAY)
             logger.info("waiting 2:30 minutes for system to recover...")
             sleep(150)
 
@@ -78,6 +89,10 @@ def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
                 BmcTool.get_bmc_ip_addresses(engines, topology_obj)
             except Exception as e:
                 raise Exception("Unable to reach BMC") from e
+
+        # The CL wait above accepts the bare address; re-check with the prefix so a
+        # mask regression after re-enumeration is caught too (#5124733).
+        assert_usb0_bmc_link_addrs(engine)
 
         with allure.step("Assert BMC status is ok"):
             final_bmc_status = OutputParsingTool.parse_json_str_to_dictionary(
@@ -125,12 +140,19 @@ def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
             recover_dut_with_remote_reboot(topology_obj, engines)
         raise
     finally:
-        with allure.step("Restore BMC root password to known state"):
-            try:
-                platform.bmc_password.action_reset()
-                client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP,
-                                  username=BmcUsers.root.username,
-                                  password=BmcUsers.root.default_password)
-                client.change_root_password(password=BmcUsers.root.default_password)
-            except Exception as e:
-                logger.warning(f"Failed to restore BMC root password: {e}")
+        # CL has no `nv action reset platform bmc-password` ("'bmc-password' is not
+        # one of ['transceiver']"), and BMC_INTERNAL_IP is the IB path, not usb0.
+        # The failure is recorded as a ResultObj, so try/except is not enough to
+        # keep it out of the verify_result_objects teardown — skip the block.
+        if is_cl:
+            logger.info("Skipping NVUE BMC password restore: not supported on CL")
+        else:
+            with allure.step("Restore BMC root password to known state"):
+                try:
+                    platform.bmc_password.action_reset()
+                    client = CurlTool(server_host=PlatformConsts.BMC_INTERNAL_IP,
+                                      username=BmcUsers.root.username,
+                                      password=BmcUsers.root.default_password)
+                    client.change_root_password(password=BmcUsers.root.default_password)
+                except Exception as e:
+                    logger.warning(f"Failed to restore BMC root password: {e}")

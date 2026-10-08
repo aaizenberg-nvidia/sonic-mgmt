@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!--
+  gNOI on NVOS - the six tests of tp/gnoi_TP.md, as a DB of their own.
+
+  The same cases also run as part of nvos_system.db, which is what puts them in the nightly system
+  regression. This DB exists for runs that want gNOI alone: a feature-branch code-coverage scenario,
+  or a targeted re-run, without pulling in the whole system suite.
+
+  Two of the cases transfer a NOS image and therefore need the scenario to supply target_version,
+  and one needs fw_versions_json_file. See the case <info> fields for what each requires.
+-->
+<DBDEF>
+	<global>
+		<default_params_type> extended_setup_step_params </default_params_type>
+		<DB>
+			<info> gNOI: the eight supported RPCs, the gnoi-rpc counters node, the system file-path actions and the boot-next 'other' enum </info>
+			<owner> Akash Srivastava </owner>
+			<group> NVOS </group>
+			<dimension> VER </dimension>
+
+            <pre>
+            </pre>
+
+		</DB>
+		<Test>
+			<post> </post>
+		</Test>
+		<Case>			<pre>
+                <type> reg_exec_func </type>
+                <name> set_environment_variables </name>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <tout> 60 </tout>
+                <params>
+                    <env> MARS_CASE_NAME=[[run_time:mars_last_case_name]] </env>
+                    <env> MARS_TEST_NAME=[[run_time:test_name]] </env>
+                    <env> MARS_DB_NAME=[[run_time:db_name]] </env>
+                </params>
+</pre>
+ </Case>
+	</global>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/system/nvos_system_gnoi.cases </cases>
+	</test>
+</DBDEF>
