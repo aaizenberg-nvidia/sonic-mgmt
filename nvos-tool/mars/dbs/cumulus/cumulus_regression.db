@@ -119,5 +119,10 @@
 		<cases> sonic-mgmt/nvos-tool/mars/cases/cumulus/cumulus_leakage.cases </cases>
 	</test>
 
+	<!-- BMC Tests -->
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/cumulus/cumulus_bmc.cases </cases>
+	</test>
+
 </DBDEF>
 

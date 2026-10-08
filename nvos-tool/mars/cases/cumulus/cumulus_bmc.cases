@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> Cumulus </group>
+      <name> Cumulus BMC </name>
+      <info> BMC coverage for SPC6 / SN6810 / SN6800; skips cleanly where the DUT has no BMC. Excludes the firmware upgrade/downgrade stress loops - those live in cumulus_bmc_full.cases </info>
+      <owner> Guy Paz Ben Itzhak </owner>
+    </Test>
+    <Case>
+      <tags> BMC </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <name> BMC Data Model NVUE vs Redfish </name>
+    <info> Observed median 15s, slowest recorded run 21s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_data_model.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC usb0 Product Path </name>
+    <info> Observed median 15s, slowest recorded run 21s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_usb0_product_path.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Firmware Inventory </name>
+    <info> Observed median 16s, slowest recorded run 40s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_show_info.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Reachability </name>
+    <info> Observed median 20s, slowest recorded run 25s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_reachability.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Serial Console Mux </name>
+    <info> Observed median 43s, slowest recorded run 46s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system/test_bmc_serial_console.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> NVUE Show Platform BMC </name>
+    <info> Observed median 56s, slowest recorded run 1m01s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_nvue_show.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC CLI Smoke </name>
+    <info> Observed median 2m24s, slowest recorded run 17s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_cli_smoke.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> Recover From BMC Reset </name>
+    <info> Observed median 3m08s, slowest recorded run 4m19s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_recover_from_bmc_reset.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC cl-support Dump </name>
+    <info> Observed median 4m00s, slowest recorded run 3m20s </info>
+    <tout> 3600 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_cl_support.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Negative Error Handling </name>
+    <info> Observed median 2m42s, slowest recorded run 10m29s </info>
+    <tout> 7200 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_negative.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 3600   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC CLI Destructive </name>
+    <info> Observed median 3m26s, slowest recorded run 2h52m </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_cli_destructive.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 3600   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC NVUE Power Cycle </name>
+    <info> Observed median 13m10s, slowest recorded run 51m04s </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_nvue_power_cycle.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 3600   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Reset NOS </name>
+    <info> Observed median 25m26s, slowest recorded run 1h42m </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_bmc_reset_nos.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 3600   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC Install Checklist </name>
+    <info> No recorded timing yet </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/checklist/test_bmc_install.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 7200   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+  <case>
+    <name> BMC NVUE Firmware Install </name>
+    <info> Single-burn firmware installs only; the 12-burn stress loops are deselected by -m not stress </info>
+    <tout> 14400 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/checklist/test_bmc_nvue_firmware.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus and not stress\" --log-level=INFO --clean-alluredir  --alluredir=/tmp/allure-results  --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 7200   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+
+</CASEDEF>

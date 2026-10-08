@@ -20,6 +20,7 @@ logger = logging.getLogger()
 
 @pytest.mark.timeout(60 * MINUTE, func_only=True)
 @pytest.mark.bmc
+@pytest.mark.cumulus
 @pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 @pytest.mark.parametrize("platform_component_with_clear", ["bmc"], indirect=True)

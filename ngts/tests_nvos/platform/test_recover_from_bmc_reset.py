@@ -18,6 +18,7 @@ from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
 from ngts.nvos_tools.Devices.EthDevice import EthSwitch
 from ngts.nvos_tools.Devices.IbDevice import JulietNonScaleoutSwitchGB300
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+from ngts.tests_nvos.platform.bmc_helpers import skip_if_no_bmc
 from ngts.tests_nvos.general.security.bmc.bmc_creds.constants import BmcUsers
 
 logger = logging.getLogger()
@@ -29,9 +30,15 @@ CPU_MAX_UTILIZATION = 40.0
 BMC_LOG_LINES_MAX = 30
 
 
+@pytest.mark.bmc
+@pytest.mark.cumulus
 @pytest.mark.dut_reboot
 @pytest.mark.disable_loganalyzer
 def test_recover_from_bmc_reset(engines, devices, topology_obj, loganalyzer):
+    # Resets the BMC, so a DUT without one cannot run this at all. Engines are not
+    # passed: the usb0 handling below is guarded by is_cl, and the NVOS platforms
+    # that reach here must not pick up the CL-only usb0 preparation.
+    skip_if_no_bmc(devices)
     # LA ignores some BMC errors during this test, pending on FR 4210208
     if is_bug_active(4359149) and isinstance(devices.dut, JulietNonScaleoutSwitchGB300):
         pytest.skip("Skipping test because we have a bug in bmc reset factory for gb300.")
