@@ -663,6 +663,18 @@ dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_with_different_non_default_vrf:
     conditions:
     - "https://redmine.mellanox.com/issues/5240149"
 
+dhcp_relay/test_dhcpv4_relay.py::test_dhcp_relay_agent_mode:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5285997"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5285997 and 'dual-tor-leopard' in testbed"
+
+dhcp_relay/test_dhcpv4_relay.py::test_dhcp_max_hop_count[2-sonic-relay-agent]:
+  xfail:
+    reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5285997"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5285997 and 'dual-tor-leopard' in testbed"
+
 dhcp_relay/test_dhcpv4_relay.py:
   xfail:
     reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/5134776"
