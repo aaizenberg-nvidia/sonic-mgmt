@@ -179,6 +179,8 @@ class PerfConsts:
     # Paths and Directories
 
     DVS_RUN_TEST_PATH = "/root/sys_sdk/sx_sdk_py_tests/tests/run_tests.py"
+    # The runner's per-invocation cable table runs mlxcables on every port (~10-18s) and is never consumed here
+    DVS_RUN_TEST_CMD = f"{DVS_RUN_TEST_PATH} --skip-cable-info"
     PORTS_JSON_FILENAME = "ports.json"
     PORTS_JSON_PATH = f"/{PORTS_JSON_FILENAME}"
     PERF_SYS_SDK_CHANGE_FILE = "/tmp/perf_sys_sdk_change"

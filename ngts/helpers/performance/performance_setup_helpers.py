@@ -7,6 +7,7 @@ import json
 import time
 import pytest
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from ngts.helpers.general_helper import get_pytest_test_name
 from ngts.constants.constants import BugHandlerConst, CliType
@@ -127,7 +128,8 @@ class ValidationConfig:
         self.max_tc_occ_variance_per_port_group = OccupancyVarianceConfig.from_tc_occ_threshold(self.tc_occ_threshold)
         # Copy so per-test overrides (and auto-enable below) do not mutate PerfConsts.SAMPLES_PARAMS.
         self.samples_params_dict = dict(self.samples_params_dict)
-        if self.run_validate_performance_counters:
+        # validate_performance_counters skips while #4731421 is open, and the dumps load the SDK during sampling
+        if self.run_validate_performance_counters and not is_redmine_issue_active([4731421])[0]:
             self.samples_params_dict[PerfConsts.COLLECT_SDK_DUMP_ENV_VAR] = "True"
 
     def get_validations(self) -> Dict[str, Validation]:
@@ -827,10 +829,9 @@ def call_performance_function_with_threads(players, players_aliases, action,
     logging.info(f"Start {action} on {players_aliases_str}")
     threads_list = []
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _log_default_routes(players, players_aliases, f"{current_time} Action {action} started")
     for player_alias in players_aliases:
         player_cli_obj = players[player_alias]['cli']
-        ip_route = player_cli_obj.performance.retrieve_default_route()
-        logger.debug(f"{current_time} Action {action} started on {player_alias}. IP Route: {ip_route}")
         with allure.step(f"[{current_time}] Start {action} on player {player_alias}."):
             performance_method = get_obj_method(player_cli_obj.performance, performance_clis_function_name)
             thread = CatchExceptionThread(target=redirect_thread_stdout,
@@ -843,10 +844,16 @@ def call_performance_function_with_threads(players, players_aliases, action,
     with allure.step(f"Check {action} on {players_aliases_str} was applied correctly"):
         parse_threads_exceptions_at_join(threads_list, players, step)
     completion_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for player_alias in players_aliases:
-        player_cli_obj = players[player_alias]['cli']
-        ip_route = player_cli_obj.performance.retrieve_default_route()
-        logger.debug(f"{completion_time} Action {action} completed on {player_alias}. IP Route: {ip_route}")
+    _log_default_routes(players, players_aliases, f"{completion_time} Action {action} completed")
+
+
+def _log_default_routes(players, players_aliases, prefix):
+    # The first command on a player opens its SSH session (several seconds), so query all players concurrently
+    with ThreadPoolExecutor(max_workers=len(players_aliases) or 1) as executor:
+        routes = dict(zip(players_aliases, executor.map(
+            lambda alias: players[alias]['cli'].performance.retrieve_default_route(), players_aliases)))
+    for player_alias, ip_route in routes.items():
+        logger.debug(f"{prefix} on {player_alias}. IP Route: {ip_route}")
 
 
 def get_obj_method(cli_obj, method_name):
