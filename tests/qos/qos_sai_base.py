@@ -53,7 +53,7 @@ class QosBase:
         "t0-standalone-128", "t0-standalone-256", "t0-28", "t0-isolated-d16u16s1", "t0-isolated-d16u16s2",
         "t0-isolated-v6-d32u32s2", "t0-isolated-d128u128s1", "t0-isolated-d128u128s2", "t0-isolated-d256u256s2",
         "t0-isolated-d96u32s2",  "t0-isolated-d32u32s2", "t0-isolated-d32u32s2-mix",
-        "t0-88-o8c80", "t0-f2-d40u8", "t0-f2-d40u8-po2vlan"
+        "t0-88-o8c80", "t0-f2-d40u8", "t0-f2-d40u8-po2vlan", "t0-d96-u30s2"
     ]
     SUPPORTED_T1_TOPOS = ["t1", "t1-lag", "t1-64-lag", "t1-56-lag", "t1-backend", "t1-28-lag", "t1-32-lag", "t1-48-lag",
                           "t1-f2-d10u8", "t1-isolated-d32u1s2",
@@ -62,7 +62,7 @@ class QosBase:
                           "t1-isolated-d448u16", "t1-isolated-v6-d448u16", "t1-isolated-d224u8",
                           "t1-isolated-d128", "t1-isolated-d32",
                           "t1-isolated-d448u15-lag", "t1-isolated-v6-d448u15-lag",
-                          't1-d118u8s2', 't1-d96u4', 't0-d96-u30s2']
+                          't1-d118u8s2', 't1-d96u4', 't1-d118u8s2']
     SUPPORTED_PTF_TOPOS = ['ptf32', 'ptf64']
     SUPPORTED_ASIC_LIST = ["pac", "gr", "gr2", "gr2x", "gb", "p200", "td2", "th", "th2", "spc1", "spc2", "spc3",
                            "spc4", "spc5", "spc6", "td3", "th3", "j2c+", "jr2", "th5", "th6", "q3d"]
