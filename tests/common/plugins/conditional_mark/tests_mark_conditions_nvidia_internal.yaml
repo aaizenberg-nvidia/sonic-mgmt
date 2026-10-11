@@ -551,6 +551,12 @@ bgp/test_bgp_bbr.py::test_bbr_enabled_dut_asn_in_aspath:
     conditions:
     - "platform == 'x86_64-mlnx_msn2700-r0' and https://redmine.mellanox.com/issues/4989648"
 
+bgp/test_bgp_gr_suppress_fib.py::test_bgp_gr_with_suppress_fib:
+  xfail:
+    reason: "Xfail due to RM https://redmine.mellanox.com/issues/5298866"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5298866"
+
 crm/test_crm.py::test_crm_nexthop_group:
   skip:
     reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/4978891"
