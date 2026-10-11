@@ -1029,6 +1029,12 @@ generic_config_updater/test_cacl.py:
     conditions:
     - "https://redmine.mellanox.com/issues/4692207 and 'sn5640' in platform"
 
+mellanox/test_table_size.py::test_more_resources_for_ipv6:
+  xfail:
+    reason: "xfail due to GitHub issue: https://github.com/sonic-net/sonic-mgmt/issues/27566"
+    conditions:
+    - "https://github.com/sonic-net/sonic-mgmt/issues/27566 and 'dualtor' in topo_name"
+
 minigraph/test_masked_services.py::test_masked_services:
   xfail:
     reason: "xfail due to RM issue: https://redmine.mellanox.com/issues/4692207"
