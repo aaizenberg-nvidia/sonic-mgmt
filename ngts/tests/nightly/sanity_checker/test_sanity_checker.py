@@ -738,7 +738,7 @@ def parse_readme_versions(sonic_image):
     :param sonic_image: the current sonic image deployed on the dut
     :return: A dictionary, stating for each component what is the readme version of it, example - {"SDK", "4.6.2202"}
     """
-    readme_path = resolve_sonic_image_readme_path(sonic_image)
+    readme_path = resolve_sonic_image_readme_path(sonic_image, ci_build_fallback=True)
     if not readme_path:
         raise Exception(
             f"Sonic image path: /auto/sw_system_release/sonic/{sonic_image}/dev/README "
