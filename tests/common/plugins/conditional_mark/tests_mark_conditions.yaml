@@ -4481,7 +4481,7 @@ platform_tests/api/test_sfp.py::TestSfpApi::test_get_error_description:
   xfail:
     reason: "xfail due to RM issue: https://github.com/sonic-net/sonic-buildimage/issues/29043"
     conditions:
-    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and 'sn6600_ld' in platform"
+    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and ('sn6600_ld' in platform or 'sn5640' in platform)"
 
 platform_tests/api/test_sfp.py::TestSfpApi::test_get_transceiver_info:
   xfail:
