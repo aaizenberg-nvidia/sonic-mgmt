@@ -165,9 +165,9 @@ tests_nvos/platform/test_platform_environment.py::test_show_platform_environment
 
 tests_nvos/platform/test_platform_environment.py::test_show_platform_environment_psu:
   skip:
-    reason: Testcase skipped on Juliet systems, Juliet Does not have PSU
+    reason: Testcase skipped on Juliet, Rosalind and Portia systems, they do not have PSU
     conditions:
-    - '''juliet'' in testbed'
+    - '''juliet'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed'
 
 tests_nvos/interfaces/test_ib_interface_state.py::test_ib_interface_state:
   skip:
