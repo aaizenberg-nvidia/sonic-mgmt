@@ -772,6 +772,18 @@ dut_console/test_console_baud_rate.py::test_baud_rate_sonic_connect:
   skip:
     reason: "test not supported for non-sonic console switch."
 
+dualtor/test_mux_port_iptables_entries.py::test_mux_port_iptables_entries:
+  xfail:
+    reason: "Xfail due to https://github.com/sonic-net/sonic-mgmt/issues/26179"
+    conditions:
+    - "https://github.com/sonic-net/sonic-mgmt/issues/26179"
+
+dualtor/test_mux_port_iptables_entries.py::test_multivlan_mux_port_iptables_entries:
+  xfail:
+    reason: "Xfail due to https://github.com/sonic-net/sonic-mgmt/issues/26179"
+    conditions:
+    - "https://github.com/sonic-net/sonic-mgmt/issues/26179"
+
 dualtor_io/test_link_failure.py::test_active_link_down_downstream_active_soc[active-active]:
   xfail:
     reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/4978928"
