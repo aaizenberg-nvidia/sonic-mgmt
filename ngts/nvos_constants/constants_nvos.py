@@ -2744,7 +2744,7 @@ class DiskConsts:
 
 
 class BiosConsts:
-    BIOS_START_REGEX = "American Megatrends"
+    BIOS_START_REGEX = r"American Megatrends|Copyright \(C\) \d{4} AMI"  # newer AMI BIOS banner lacks "American Megatrends"
     BIOS_PASSWORD_PROMPT = "Enter Password"
     CTRL_B = "\x02"
     ENTER = "\015"
