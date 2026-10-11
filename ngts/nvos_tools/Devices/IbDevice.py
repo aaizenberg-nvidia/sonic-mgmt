@@ -693,6 +693,10 @@ class IbSwitch(BaseSwitch):
         # Initialize link error counters for traffic validation
         self.system_log_value = "part-number"
         self.system_log_timestamp_regex = NvosConst.DATE_TIME_REGEX[0]
+        self.default_delayed_recovery_values = {
+            "OPER_DISABLED_LOSS_TH": "126",
+            "OPER_DISABLED_RETRY_TH": "32"
+        }
 
     def _init_link_error_counters(self):
         """
@@ -3416,6 +3420,12 @@ class RosalindSwitch(RosalindSurrogateSwitch):
                 PhyRecoveryConsts.STATE_67_TO_68_TIME_PRESET2: '0',
                 PhyRecoveryConsts.STATE_67_TO_68_TIME_PRESET3: '0',
             }
+        }
+        self.default_delayed_recovery_values = {
+            "OPER_DISABLED_LOSS_TH": "60",
+            "OPER_DISABLED_RETRY_TH": "16",
+            "OPER_ENABLED_LOSS_TH": "60",
+            "OPER_ENABLED_RETRY_TH": "255"
         }
         self.memory_size: list[float] = [30.77, 31.21]
         self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.VTPM24GLXI160_BM11, SSDConsts.VTPM24GLXI160_BM12]
