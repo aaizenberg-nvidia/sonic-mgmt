@@ -1826,6 +1826,18 @@ platform_tests/cli/test_show_platform.py::test_show_platform_fan:
     conditions:
     - "'6600_simx' in platform or '6600_ld_simx' in platform"
 
+qos/test_buffer.py::test_change_speed_cable:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.nvidia.com/issues/5165805 and 'sn6810_ld' in platform"
+    conditions:
+    - "https://redmine.nvidia.com/issues/5165805 and 'sn6810_ld' in platform"
+
+iface_namingmode/test_iface_namingmode.py::TestConfigInterface::test_config_interface_speed:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.nvidia.com/issues/5165805 and 'sn6810_ld' in platform"
+    conditions:
+    - "https://redmine.nvidia.com/issues/5165805 and 'sn6810_ld' in platform"
+
 qos/test_buffer.py::test_shared_headroom_pool_configure:
   xfail:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4997273 and '6810_ld_simx' in platform"
