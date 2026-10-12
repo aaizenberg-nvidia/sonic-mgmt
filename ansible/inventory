@@ -1089,6 +1089,9 @@ portia-chipsim-87 ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=M
 # NVOS testbed prt-sur-134 topologies
 prt-sur-134-ptf-any ansible_host=prt-sur-134  sonic_version=v2  sonic_hwsku=Mellanox-N7210_LD            serial_console="ssh -t sws-console-1 console -y prt-sur-134" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=80:7D:F9:47:05:7C serial=MT2640600EML model=N7210_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n7210_ld-r0', '0x22': u'920-9K51W-02L7-SR0', '0x21': u'N7210_LD', '0x23': u'MT2640600EML', '0x24': u'80:7D:F9:47:05:7C', '0x2b': u'NVIDIA', '0x2a': u'254'}"
 prt-sur-134 ansible_host=prt-sur-134  sonic_version=v2  sonic_hwsku=Mellanox-N7210_LD             serial_console="ssh -t sws-console-1 console -y prt-sur-134" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=80:7D:F9:47:05:7C serial=MT2640600EML model=N7210_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n7210_ld-r0', '0x22': u'920-9K51W-02L7-SR0', '0x21': u'N7210_LD', '0x23': u'MT2640600EML', '0x24': u'80:7D:F9:47:05:7C', '0x2b': u'NVIDIA', '0x2a': u'254'}"
+# NVOS testbed prt-sur-135 topologies
+prt-sur-135-ptf-any ansible_host=prt-sur-135  sonic_version=v2  sonic_hwsku=Mellanox-N7210_LD            serial_console="ssh -t sws-console-1 console -y prt-sur-135" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=80:7D:F9:46:F8:F4 serial=MT2640600EMP model=N7210_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n7210_ld-r0', '0x29': u'5.3.0021', '0x22': u'920-9K51W-02L7-SR0', '0x23': u'MT2640600EMP', '0x21': u'N7210_LD', '0x26': u'69', '0x24': u'80:7D:F9:46:F8:F4', '0x25': u'09/22/2026 22:12:04', '0xfe': u'0x56B6A926', '0x2b': u'Nvidia', '0x2a': u'64'}"
+prt-sur-135 ansible_host=prt-sur-135  sonic_version=v2  sonic_hwsku=Mellanox-N7210_LD             serial_console="ssh -t sws-console-1 console -y prt-sur-135" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=80:7D:F9:46:F8:F4 serial=MT2640600EMP model=N7210_LD syseeprom_info="{'0x28': u'x86_64-nvidia_n7210_ld-r0', '0x29': u'5.3.0021', '0x22': u'920-9K51W-02L7-SR0', '0x23': u'MT2640600EMP', '0x21': u'N7210_LD', '0x26': u'69', '0x24': u'80:7D:F9:46:F8:F4', '0x25': u'09/22/2026 22:12:04', '0xfe': u'0x56B6A926', '0x2b': u'Nvidia', '0x2a': u'64'}"
 
 # NVOS testbed nvos-chipsim-64 topologies
 nvos-chipsim-64-ptf-any ansible_host=nvidia-arm-orion  sonic_version=v2  sonic_hwsku=ACS-MQM9700            serial_console="telnet fit-vrt-60 64" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-10-208-2-33 base_mac=00:50:56:1f:4b:40 serial=MT2142X05750 model=MQM9700-WS2F_QP1 syseeprom_info="{'0x28': u'x86_64-mlnx_MQM9700', '0x29': u'2021.05-5.3.0008-9600', '0x22': u'MQM9700-WS2F_QP1', '0x23': u'MT2142X05750', '0x21': u'mqm9700', '0x26': u'17', '0x24': u'08:c0:eb:58:7f:90', '0x25': u'04/01/2021 22:27:42', '0xfe': u'0xF3E7B840', '0x2b': u'Mellanox', '0x2a': u'254'}"
@@ -2588,6 +2591,8 @@ portia-chipsim-87-ptf-any
 portia-chipsim-87
 prt-sur-134-ptf-any
 prt-sur-134
+prt-sur-135-ptf-any
+prt-sur-135
 
 nvos-chipsim-64-ptf-any
 nvos-chipsim-64
