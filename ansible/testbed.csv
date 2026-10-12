@@ -446,7 +446,6 @@ r-moose-simx-242-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,ser
 r-moose-simx-246-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-moose-simx-246,Mellanox MTR testbed
 r-bison-simx-250-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-250,Mellanox MTR testbed
 r-bison-simx-03-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-03,Mellanox MTR testbed
-r-bison-simx-12-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-12,Mellanox MTR testbed
 r-bison-simx-121-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-121,Mellanox MTR testbed
 r-bison-simx-125-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-125,Mellanox MTR testbed
 r-bison-simx-129-ptf-any,vm-t1,ptf-any,docker-ptf-mlnx,ptf-dummy,1.1.1.1/16,,server_54,VM0000,r-bison-simx-129,Mellanox MTR testbed

@@ -84,10 +84,6 @@ r-bison-simx-250 ansible_host=r-bison-simx-250  sonic_version=v2  sonic_hwsku=AC
 r-bison-simx-03-ptf-any ansible_host=r-bison-simx-03  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet r-r6515-02 27000" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-  base_mac=EC:0D:9A:55:55:95 serial=MT2315XZ04ZJ model=920-9N42F-00RS-5NA syseeprom_info="{'0x21': 'sn5640_simx', '0x22': '920-9N42F-00RS-5NA', '0x23': 'MT2315XZ04ZJ', '0x24': 'EC:0D:9A:55:55:95', '0x25': '04/19/2023 15:57:27', '0x26': '0', '0x28': 'x86_64-nvidia_sn5640-r0', '0x29': '2023.11-5.3.0013-rc2-115200-dev', '0x2a': '512', '0x2b': 'Nvidia', '0xfe': '0x802EC3CB'}"
 r-bison-simx-03 ansible_host=r-bison-simx-03  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet r-r6515-02 27000" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu- base_mac=EC:0D:9A:55:55:95 serial=MT2315XZ04ZJ model=920-9N42F-00RS-5NA syseeprom_info="{'0x21': 'sn5640_simx', '0x22': '920-9N42F-00RS-5NA', '0x23': 'MT2315XZ04ZJ', '0x24': 'EC:0D:9A:55:55:95', '0x25': '04/19/2023 15:57:27', '0x26': '0', '0x28': 'x86_64-nvidia_sn5640-r0', '0x29': '2023.11-5.3.0013-rc2-115200-dev', '0x2a': '512', '0x2b': 'Nvidia', '0xfe': '0x802EC3CB'}"
 
-# MTR canonical testbed r-bison-simx-12 topologies
-r-bison-simx-12-ptf-any ansible_host=r-bison-simx-12  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet dev-r-vrt-171 13003" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-  base_mac=EC:0D:9A:55:55:95 serial=MT2315XZ04ZJ model=920-9N42F-00RS-5NA syseeprom_info="{'0x21': 'sn5640_simx', '0x22': '920-9N42F-00RS-5NA', '0x23': 'MT2315XZ04ZJ', '0x24': 'EC:0D:9A:55:55:95', '0x25': '04/19/2023 15:57:27', '0x26': '0', '0x28': 'x86_64-nvidia_sn5640-r0', '0x29': '2023.11-5.3.0013-rc2-115200-dev', '0x2a': '512', '0x2b': 'Nvidia', '0xfe': '0x802EC3CB'}"
-r-bison-simx-12 ansible_host=r-bison-simx-12  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet dev-r-vrt-171 13003" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu- base_mac=EC:0D:9A:55:55:95 serial=MT2315XZ04ZJ model=920-9N42F-00RS-5NA syseeprom_info="{'0x21': 'sn5640_simx', '0x22': '920-9N42F-00RS-5NA', '0x23': 'MT2315XZ04ZJ', '0x24': 'EC:0D:9A:55:55:95', '0x25': '04/19/2023 15:57:27', '0x26': '0', '0x28': 'x86_64-nvidia_sn5640-r0', '0x29': '2023.11-5.3.0013-rc2-115200-dev', '0x2a': '512', '0x2b': 'Nvidia', '0xfe': '0x802EC3CB'}"
-
 # MTR canonical testbed r-bison-simx-121 topologies
 r-bison-simx-121-ptf-any ansible_host=r-bison-simx-121  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet r-dl360-02 13000" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-
 r-bison-simx-121 ansible_host=r-bison-simx-121  sonic_version=v2  sonic_hwsku=ACS-SN5640             serial_console="telnet r-dl360-02 13000" ptf_host=ptf-dummy ptf_portmap="" pdu_host=pdu-
@@ -1919,9 +1915,6 @@ r-bison-simx-250
 
 r-bison-simx-03-ptf-any
 r-bison-simx-03
-
-r-bison-simx-12-ptf-any
-r-bison-simx-12
 
 r-bison-simx-121-ptf-any
 r-bison-simx-121
