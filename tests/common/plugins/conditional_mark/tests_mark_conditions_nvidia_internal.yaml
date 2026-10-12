@@ -1339,6 +1339,10 @@ platform_tests/test_reboot.py::test_cold_reboot:
     - "https://redmine.mellanox.com/issues/4958590"
 
 platform_tests/test_reboot.py::test_fast_reboot:
+  skip:
+    reason: "fast-reboot is disabled on sn6810_ld platform - RM https://redmine.nvidia.com/issues/4799042"
+    conditions:
+    - "https://redmine.nvidia.com/issues/4799042 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/4967124"
     conditions:
@@ -2006,6 +2010,10 @@ pfcwd/test_pfcwd_warm_reboot.py:
     - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
 platform_tests/test_advanced_reboot.py::test_fast_reboot:
+  skip:
+    reason: "fast-reboot is disabled on sn6810_ld platform - RM https://redmine.nvidia.com/issues/4799042"
+    conditions:
+    - "https://redmine.nvidia.com/issues/4799042 and 'sn6810_ld' in platform"
   xfail:
     reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5064631"
     conditions:
