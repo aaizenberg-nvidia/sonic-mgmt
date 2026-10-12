@@ -20,7 +20,7 @@
             lockout-state: disabled
         tacacs:
           server:
-            fdfd:fdfd:10:237:240:56ff:fe1b:56:
+            2604:a140:6200:204:250:56ff:fe1f:a363:
               auth-mode: login
               port: 52
               secret: secret
