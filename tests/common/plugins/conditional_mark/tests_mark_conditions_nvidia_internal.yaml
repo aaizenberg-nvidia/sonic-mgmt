@@ -1898,6 +1898,12 @@ span/test_port_mirroring.py::test_mirroring_tx:
     conditions:
     - "'sn6600' in platform"
 
+span/test_erspan_sampling_truncation.py:
+  skip:
+    reason: "ERSPAN sampling/truncation is supported only on SPC5 and above"
+    conditions:
+    - "asic_gen in ['spc1', 'spc2', 'spc3', 'spc4']"
+
 tests/push_build_tests/general/qos/test_qos_reload.py::test_qos_reload_ports:
   xfail:
     reason: "Testcase xfailed due to RM issue: https://redmine.mellanox.com/issues/4854055 on simx platform"
