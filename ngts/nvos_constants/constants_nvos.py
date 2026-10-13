@@ -138,7 +138,7 @@ class NvosConst:
     QTM2 = "Quantum2"
     QTM3 = "Quantum3"
     QTM4 = "Quantum4"
-    NVL5 = 'NVLink-5 switch'
+    NVL5 = 'NVLink-5 Switch'
     NVL6 = 'NVLink-6 Switch'
     NVL7 = 'NVLink-7 Switch'
     NVL_ACCESS_PORTS_LIST = 'nvl_access_ports_list'

@@ -4162,15 +4162,23 @@ class PortiaSurrogateNex(PortiaSwitch):
     SWB_FLOORS = 2
     PMICS_PER_ASIC = 3
     COMEX_PMICS = 2
+    SMA_AMOUNT = 3
 
     def _init_constants(self):
         super()._init_constants()
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-nex.json"
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7210_ld-r0")
+        self.asic_type = NvosConst.NVL5
+        self.mst_dev_name = tuple(f'/dev/mst/mt54002_pciconf{i}' for i in range(self.asic_amount))
         self.show_platform_output.update({
             PlatformConsts.SYSTEM_TYPE: "N7210_LD",
+            "asic-model": self.asic_type,
         })
+        self.cpld_amount = 3
+        self._extend_firmware_by_cpld_amount()
+        self.memory_size: list[float] = [14.9]
+        self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.MD681GEEBC82]
 
     def _init_platform_lists(self):
         super()._init_platform_lists()

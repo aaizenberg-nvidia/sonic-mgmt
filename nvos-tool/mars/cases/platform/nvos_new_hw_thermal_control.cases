@@ -27,7 +27,7 @@
       <condition>
         <key>dut_hwsku</key>
         <op> in </op>
-        <value>[N5500_LD - JulietNonScaleoutSwitchGB300, N5500_LD - JulietNonScaleoutSwitchGB300QS, N6100_LD - Rosalind, N6150_LD - RosalindSurrogate, N6100_LD - RosalindChipless, Q3450_LD - Taipan]</value>
+        <value>[N5500_LD - JulietNonScaleoutSwitchGB300, N5500_LD - JulietNonScaleoutSwitchGB300QS, N6100_LD - Rosalind, N6150_LD - RosalindSurrogate, N6100_LD - RosalindChipless, Q3450_LD - Taipan, N7210_LD - PortiaSurrogateNex]</value>
       </condition>
     </ignore>
   </case>
@@ -45,7 +45,7 @@
       <condition>
         <key>dut_hwsku</key>
         <op> in </op>
-        <value>[N5500_LD - JulietNonScaleoutSwitchGB300, N5500_LD - JulietNonScaleoutSwitchGB300QS, N6100_LD - Rosalind, N6150_LD - RosalindSurrogate, N6100_LD - RosalindChipless, Q3450_LD - Taipan]</value>
+        <value>[N5500_LD - JulietNonScaleoutSwitchGB300, N5500_LD - JulietNonScaleoutSwitchGB300QS, N6100_LD - Rosalind, N6150_LD - RosalindSurrogate, N6100_LD - RosalindChipless, Q3450_LD - Taipan, N7210_LD - PortiaSurrogateNex]</value>
       </condition>
     </ignore>
   </case>
