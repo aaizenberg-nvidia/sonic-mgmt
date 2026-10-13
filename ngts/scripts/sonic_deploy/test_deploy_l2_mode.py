@@ -23,8 +23,6 @@ HWSKU_PORT_OVERRIDES = {
     }
 }
 
-MAX_BSL_L2_VLAN_MEMBERS = 32
-
 
 @pytest.fixture(scope="function", autouse=True)
 def confirm_setup_ready(cli_objects):
@@ -138,7 +136,7 @@ def apply_hwsku_port_overrides(config_data, hwsku):
 
 
 @allure.title('Deploy L2 mode')
-def test_deploy_l2_mode(cli_objects, engines, sonic_topo, topology_obj, workspace_path, platform_params):
+def test_deploy_l2_mode(cli_objects, engines, topology_obj, workspace_path, platform_params):
     """
     This test will deploy l2 mode on the dut
     """
@@ -150,8 +148,6 @@ def test_deploy_l2_mode(cli_objects, engines, sonic_topo, topology_obj, workspac
     setup_info = DeployTopologyHelper.get_info_from_topology(topology_obj, workspace_path)
     csv_path = setup_info['ansible_path'] + 'files/sonic_nvidia_links.csv'
     ansible_cmd = f"ansible-playbook -i lab testbed_set_l2_mode.yml --vault-password-file=vault -l {dut_name} -vvv"
-    if sonic_topo in SonicDeployConstants.SCALE_TOPOLOGIES_LIST:
-        ansible_cmd += f" -e max_l2_vlan_members={MAX_BSL_L2_VLAN_MEMBERS}"
     csv_port_config = read_csv_config(csv_path, dut_name)
     passive_phy_ports = cli_objects.dut.interface.get_passive_phy_ports()
 
