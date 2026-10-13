@@ -352,8 +352,12 @@ def test_replace_functionality_with_acls(engines, random_api):
             logger.info("✓ All 5 ACL rules confirmed before replace")
 
         with allure.step('Create replace config with NO ACL (only hostname)'):
-            # Replace with minimal config - ACL should be completely removed
-            replace_config = f"""nv set system hostname {hostname}"""
+            # Replace with minimal config - ACL should be completely removed.
+            # Keep admin AAA access, otherwise replace wipes the admin password
+            # and the next OpenAPI call fails with HTTP 401.
+            replace_config = f"""nv set system hostname {hostname}
+nv set system aaa user admin password $y$j9T$Uay927sQ.WFouaJb1uHpd/$Vn58Jt3rx4TElcI7KUYbtA/qQtK/qKM2qWy9J9wanF3
+nv set system security password-hardening state disabled"""
 
         with create_temp_file(engines.dut, f'replace_no_acl_{random_api}.txt', replace_config) as filepath:
             with allure.step(f'Replace config via {random_api} (includes apply)'):
@@ -407,6 +411,8 @@ def test_replace_functionality_with_acls(engines, random_api):
         with allure.step('Replace with DIFFERENT rules (100, 200 instead of 10, 20, 30)'):
             # Replace ACL with completely different rule numbers
             replace_config_new_rules = f"""nv set system hostname {hostname}
+nv set system aaa user admin password $y$j9T$Uay927sQ.WFouaJb1uHpd/$Vn58Jt3rx4TElcI7KUYbtA/qQtK/qKM2qWy9J9wanF3
+nv set system security password-hardening state disabled
 nv set acl test_acl_replace type ipv4
 nv set acl test_acl_replace rule 100 action permit
 nv set acl test_acl_replace rule 200 action deny"""
