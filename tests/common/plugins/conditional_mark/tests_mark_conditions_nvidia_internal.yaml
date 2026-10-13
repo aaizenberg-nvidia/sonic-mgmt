@@ -1854,6 +1854,12 @@ qos/test_buffer.py::test_port_admin_down:
     conditions:
     - "https://redmine.mellanox.com/issues/4997273 and ('6810_ld_simx' in platform or 'sn6600_ld' in platform)"
 
+show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_sai_sdk_dump:
+  skip:
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/5056883"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5056883"
+
 span/test_port_mirroring.py::test_mirroring_both:
   skip:
     reason: "tx mirroring not supported on SPC6"
