@@ -1,21 +1,33 @@
+from __future__ import annotations
+
 import argparse
 import json
 import os.path
+import re
 import signal
 import subprocess
-import traceback
-from typing import List
 import time
+import traceback
 
 import nogaq
-from Component import Component, BmcComponent
+from Component import BmcComponent, Component, normalize_cpld_versions
 from ComponentManager import ComponentManager
-from Redfish_rest_api import RedFishRestApi
-from Constants import Defaults, NogaConstants, RedfishCollection
+from Constants import FW_INVENTORY_IDS, Defaults, NogaConstants, RedfishCollection
 from ip_utils import resolve_bmc_ip
+from Redfish_rest_api import RedFishRestApi
+
+COMPONENT_PATH_ARGS = {
+    Defaults.BMC_NAME: "bmc_path",
+    Defaults.BIOS_NAME: "bios_path",
+    Defaults.EROT_NAME: "erot_path",
+    Defaults.FPGA_NAME: "fpga_path",
+    Defaults.FPGA_ENCRYPTED_NAME: "fpga_path",
+    Defaults.SMA_NAME: "sma_path",
+    Defaults.CPLD_NAME: "cpld_path",
+}
 
 
-def get_switch_info(setup_name: str) -> List[str]:
+def get_switch_info(setup_name: str) -> dict:
     setup_dict = nogaq.get_noga_resource_data(resource_name=setup_name)
     switch_names = [item[NogaConstants.NAME] for item in
                     setup_dict[NogaConstants.RELATIONS][NogaConstants.HAS_A]
@@ -36,7 +48,8 @@ def start_components_update(_args):
     provisioning = get_provisioning(switch_info)
     switch_name = switch_info[NogaConstants.ATTRIBUTES][NogaConstants.COMMON]['Name'].strip()
     assert bmc_ip, "No bmc ip found in noga"
-    update_via_parameter = bool(_args.bmc_path or _args.bios_path or _args.erot_path or _args.fpga_path)
+    update_via_parameter = any(getattr(_args, arg) for arg in COMPONENT_PATH_ARGS.values())
+    cli_paths = _get_cli_paths(_args)
     rf_api = get_reachable_rf_api(bmc_ip, switch_info, _args)
     json_dict = create_json_dict(_args.fw_versions_json_file)
     devices_with_rel_prod_erot = {
@@ -47,44 +60,34 @@ def start_components_update(_args):
         "juliet-126": {Defaults.EROT_NAME, Defaults.BMC_NAME},
     }
 
-    components_mapping = {
-        Defaults.BMC_NAME: "bmc_path",
-        Defaults.FPGA_NAME: "fpga_path",
-        Defaults.FPGA_ENCRYPTED_NAME: "fpga_path",
-        Defaults.EROT_NAME: "erot_path",
-        Defaults.BIOS_NAME: "bios_path",
-        Defaults.PLDM_NAME: "pldm_path",
-        Defaults.SMA_NAME: "sma_path"
-    }
-    components_to_update = _get_components_for_update(_args, update_via_parameter)
-    if _has_non_encrypted_fpga(bmc_ip) and any(Defaults.FPGA_NAME in comp for comp in components_to_update):
-        components_to_update.remove(Defaults.FPGA_ENCRYPTED_NAME)
-        components_to_update.append(Defaults.FPGA_NAME)
+    unused_fpga = Defaults.FPGA_ENCRYPTED_NAME if _has_non_encrypted_fpga(bmc_ip) else Defaults.FPGA_NAME
+    components_to_update = list(cli_paths) if update_via_parameter else \
+        _get_recipe_components(json_dict.get(provisioning, {}))
+    if unused_fpga in components_to_update:
+        print(f"{unused_fpga}: this BMC takes the other fpga package, skipping")
+        components_to_update.remove(unused_fpga)
+    inventory = _member_ids(rf_api.get_query(RedfishCollection.FIRMWARE_INVENTORY))
 
-    respond = rf_api.get_query(f'{RedfishCollection.FIRMWARE_INVENTORY}')
-
-    # If no FPGA hardware found, remove all FPGA-related components
-    if Defaults.FPGA_NAME not in str(respond).lower():
-        components_to_update = [comp for comp in components_to_update if Defaults.FPGA_NAME not in comp.lower()]
-
-    if (not update_via_parameter) and (Defaults.SMA_NAME in json_dict.get(provisioning, {})):
-        components_to_update.append(Defaults.SMA_NAME)
-
-    components: List[Component] = []
+    components: list[Component] = []
     missing_path_errors = []
 
     for component_name in components_to_update:
+        fw_ids = [fw_id for fw_id in inventory if re.fullmatch(FW_INVENTORY_IDS[component_name], fw_id)]
+        if not fw_ids:  # the versions json lists the platform components, so the BMC must have them
+            print(f"ERROR: {component_name} is not in the BMC firmware inventory")
+            missing_path_errors.append(f"{component_name}: not in the BMC firmware inventory")
+            continue
+
         required_version = None
 
         if update_via_parameter:
-            install_path = _args.__dict__[components_mapping[component_name]]
+            install_path = cli_paths[component_name]
         else:
-            if switch_name in devices_with_rel_prod_erot and component_name in devices_with_rel_prod_erot[switch_name]:
-                required_version = json_dict['prod'][component_name]['latest']['version_name']
-                install_path = json_dict['prod'][component_name]['latest']['path']
-            else:
-                required_version = json_dict[provisioning][component_name]['latest']['version_name']
-                install_path = json_dict[provisioning][component_name]['latest']['path']
+            use_prod = component_name in devices_with_rel_prod_erot.get(switch_name, ())
+            latest = json_dict[Defaults.PRODUCTION if use_prod else provisioning][component_name]['latest']
+            install_path = latest['path']
+            required_version = normalize_cpld_versions(latest['version_name']) \
+                if component_name == Defaults.CPLD_NAME else latest['version_name']
 
         install_path = install_path.strip()  # Make sure there are no extra spaces in the path
 
@@ -94,14 +97,13 @@ def start_components_update(_args):
             missing_path_errors.append(error_msg)
             continue  # Skip this component but continue with others
 
-        component = _create_bmc_component(component_name, version=required_version, install_path=install_path,
-                                          rf_api=rf_api)
-        components.append(component)
+        components.append(BmcComponent(component_name, install_path, required_version, rf_api, fw_ids))
 
-    # If no valid components found, fail early
     if not components:
-        error_summary = "No valid components found to install. All paths were missing:\\n" + "\\n".join(missing_path_errors)
-        raise FileNotFoundError(error_summary)
+        if missing_path_errors:
+            raise FileNotFoundError("No valid components found to install:\n" + "\n".join(missing_path_errors))
+        print("No component to align through the BMC")
+        return
 
     component_manager = ComponentManager(components)
 
@@ -113,7 +115,8 @@ def start_components_update(_args):
         component_manager.perform_pc(switch_info)
         try:
             _wait_for_bmc(rf_api, RedfishCollection.FIRMWARE_INVENTORY, "CPU firmware inventory",
-                          lambda r: any(RedfishCollection.CPU_REDFISH_NAME in m["@odata.id"] for m in r["Members"]))
+                          lambda r: any(re.fullmatch(FW_INVENTORY_IDS[Defaults.BIOS_NAME], fw_id)
+                                        for fw_id in _member_ids(r)))
             _wait_for_bmc(rf_api, RedfishCollection.BMC_MANAGER, "BMC manager",
                           lambda r: r["Status"]["State"] == "Enabled")
         except Exception as e:
@@ -126,7 +129,7 @@ def start_components_update(_args):
     all_errors = missing_path_errors + update_errors
 
     if all_errors:
-        error_summary = "The following errors occurred during component alignment:\\n" + "\\n".join(all_errors)
+        error_summary = "The following errors occurred during component alignment:\n" + "\n".join(all_errors)
         raise Exception(error_summary)
 
 
@@ -176,7 +179,7 @@ def is_bmc_pingable(bmc_ip, count: int = 3, wait: int = 2) -> bool:
     :param wait: seconds to wait for a reply of each request
     """
     ping_cmd = ['ping', '-c', str(count), '-W', str(wait), bmc_ip]
-    return subprocess.run(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    return subprocess.run(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
 
 
 def reset_bmc_root_password(bmc_ip, switch_info, _args):
@@ -207,11 +210,11 @@ def run_ssh_cmd(switch_ip, ssh_user, ssh_pass, command, timeout=Defaults.SSH_CMD
                                start_new_session=True)
     try:
         output, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as err:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         output, _ = process.communicate()
         raise Exception(f"Ssh command on {switch_ip} did not complete within {timeout} seconds\n"
-                        f"{output.decode('latin-1').strip()}")
+                        f"{output.decode('latin-1').strip()}") from err
 
     output = output.decode('latin-1').strip()
     if process.returncode:
@@ -224,36 +227,45 @@ def verify_install_path(install_path):
     return os.path.exists(install_path)
 
 
-def _create_bmc_component(component_name, version, install_path, rf_api):
-    component = BmcComponent(name=component_name, required_version=version,
-                             install_path=install_path, rf_api=rf_api)
-    return component
-
-
 def create_json_dict(json_file_path):
     print(f'Read platform components info from json {json_file_path}')
     if not verify_install_path(json_file_path):
         print(f"Json file path does not exist {json_file_path}")
         raise FileNotFoundError(json_file_path)
-    with open(json_file_path, 'r') as file:
+    with open(json_file_path) as file:
         return json.load(file)
 
 
-def _get_components_for_update(_args, update_via_parameter):
-    if not update_via_parameter:
-        return [Defaults.BMC_NAME, Defaults.BIOS_NAME, Defaults.EROT_NAME, Defaults.FPGA_ENCRYPTED_NAME]
-    components_to_update = []
-    if _args.bmc_path:
-        components_to_update.append(Defaults.BMC_NAME)
-    if _args.bios_path:
-        components_to_update.append(Defaults.BIOS_NAME)
-    if _args.erot_path:
-        components_to_update.append(Defaults.EROT_NAME)
-    if _args.fpga_path:
-        components_to_update.append(Defaults.FPGA_ENCRYPTED_NAME)
-    if _args.sma_path:
-        components_to_update.append(Defaults.SMA_NAME)
-    return components_to_update
+def _get_cli_paths(_args):
+    """Packages given as --<component>_path arguments."""
+    return {name: path for name, arg in COMPONENT_PATH_ARGS.items()
+            if (path := getattr(_args, arg)) and not _is_align_cpld_package(name, path)}
+
+
+def _is_align_cpld_package(name, path):
+    """A .vme cpld package is flashed over ssh by align_cpld.py, only a .fwpkg one goes through the BMC."""
+    if name != Defaults.CPLD_NAME or path.endswith(Defaults.BMC_PACKAGE_SUFFIX):
+        return False
+    print(f"{name}: {os.path.basename(path)} is not a {Defaults.BMC_PACKAGE_SUFFIX}, left to align_cpld.py")
+    return True
+
+
+def _get_recipe_components(recipe):
+    """Components with a package in the versions json (no key / empty path = skip)."""
+    components = []
+    for name in FW_INVENTORY_IDS:
+        path = recipe.get(name, {}).get('latest', {}).get('path', '').strip()
+        if name not in recipe:
+            print(f"{name}: not in the versions json, skipping")
+        elif not path:
+            print(f"{name}: empty package path in the versions json, skipping")
+        elif not _is_align_cpld_package(name, path):
+            components.append(name)
+    return components
+
+
+def _member_ids(respond):
+    return [member['@odata.id'].rsplit('/', 1)[1] for member in respond['Members']]
 
 
 def _has_non_encrypted_fpga(bmc_ip):
@@ -294,11 +306,13 @@ def parse_args():
     parser.add_argument('--setup_name',
                         help='Setup name in NOGA', required=True)
     parser.add_argument('--sonic_mgmt_repo_branch',
-                        help='Release branch target', required=False, type=parse_mars_default, default=Defaults.DEFAULT_BRANCH_NAME)
+                        help='Release branch target', required=False, type=parse_mars_default,
+                        default=Defaults.DEFAULT_BRANCH_NAME)
     parser.add_argument('--bmc_user',
                         help='Bmc username', required=False, type=parse_mars_default, default=Defaults.DEFAULT_BMC_USER)
     parser.add_argument('--bmc_pass',
-                        help='Bmc password', required=False, type=parse_mars_default, default=Defaults.DEFAULT_BMC_PASSWORD)
+                        help='Bmc password', required=False, type=parse_mars_default,
+                        default=Defaults.DEFAULT_BMC_PASSWORD)
 
     parser.add_argument('--fw_versions_json_file',
                         help='Path to file containing required version',
@@ -321,9 +335,11 @@ def parse_args():
                         help='Path to pldm fwpkg', required=False, type=parse_mars_default, default=None)
 
     parser.add_argument('--ssh_user',
-                        help='SSH username', required=False, type=parse_mars_default, default=Defaults.DEFAULT_SWITCH_USERNAME)
+                        help='SSH username', required=False, type=parse_mars_default,
+                        default=Defaults.DEFAULT_SWITCH_USERNAME)
     parser.add_argument('--ssh_pass',
-                        help='SSH password', required=False, type=parse_mars_default, default=Defaults.DEFAULT_SWITCH_PASSWORD)
+                        help='SSH password', required=False, type=parse_mars_default,
+                        default=Defaults.DEFAULT_SWITCH_PASSWORD)
 
     args = parser.parse_args()
     for arg, value in vars(args).items():

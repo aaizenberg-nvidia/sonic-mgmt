@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import os.path
+import re
 import subprocess
 import time
 from abc import ABC, abstractmethod
 
 import rf_progress
-from Constants import NogaConstants, RedfishCollection, Defaults
+from Constants import Defaults, RedfishCollection
 from ip_utils import bracket_for_url, is_ipv6
 from Redfish_rest_api import RedFishRestApi
 
@@ -18,8 +21,14 @@ def _redact_sshpass(cmd_list):
     return redacted
 
 
+def normalize_cpld_versions(versions: str | dict[str, str]) -> str:
+    """CPLD000505_REV0006-style tokens in CPLD1..N order, from a json version_name, a file name or system/cpld."""
+    text = ' '.join(versions.values()) if isinstance(versions, dict) else versions
+    return '_'.join(re.findall(r'CPLD\d+_REV\d+', text))
+
+
 class Component(ABC):
-    def __init__(self, name: str, install_path: str, required_version: str = None):
+    def __init__(self, name: str, install_path: str, required_version: str | None = None):
         self.name = name
         self.required_version = required_version
         self.install_path = install_path
@@ -43,28 +52,28 @@ class Component(ABC):
 
 
 class BmcComponent(Component):
-    def __init__(self, name: str, install_path: str, required_version: str, rf_api: RedFishRestApi):
+    def __init__(self, name: str, install_path: str, required_version: str | None, rf_api: RedFishRestApi,
+                 fw_ids: list[str]):
         super().__init__(name, install_path, required_version)
         self.rf_api = rf_api
-        self.comp_mapping = {Defaults.BIOS_NAME: "MGX_FW_CPU_0", Defaults.BMC_NAME: "MGX_FW_BMC_0", Defaults.FPGA_NAME: "MGX_FW_FPGA_0",
-                             Defaults.FPGA_ENCRYPTED_NAME: "MGX_FW_FPGA_0", Defaults.EROT_NAME: "MGX_FW_ERoT_BMC_0"}
-
-        respond = self.rf_api.get_query(f'{RedfishCollection.FIRMWARE_INVENTORY}')
-        if 'sma'.lower() in str(respond).lower():
-            self.comp_mapping[Defaults.SMA_NAME] = "MGX_FW_NVSwitch_SMA_0"
+        self.fw_ids = fw_ids
 
     def get_installed_version(self) -> str:
-        endpoint: str = f'{RedfishCollection.FIRMWARE_INVENTORY}/{self.comp_mapping[self.name]}'
-        respond = self.rf_api.get_query(endpoint)
-        if 'Version' not in respond:
-            raise RuntimeError(f"'Version' missing for {self.name}. Response: {respond}")
-        return respond['Version']
+        versions = set()
+        for fw_id in self.fw_ids:
+            respond = self.rf_api.get_query(f'{RedfishCollection.FIRMWARE_INVENTORY}/{fw_id}')
+            if 'Version' not in respond:
+                raise RuntimeError(f"'Version' missing for {fw_id}. Response: {respond}")
+            versions.add(respond['Version'])
+        # instances on different versions never match the required one, so they get updated
+        return versions.pop() if len(versions) == 1 else ', '.join(sorted(versions))
 
     def update(self) -> bool:
         print(
-            f"Performing update for {self.name} to {self.required_version if self.required_version else self.install_path}")
+            f"Performing update for {self.name} to {self.required_version or self.install_path}")
 
-        targets_list = [] if self.name in [Defaults.EROT_NAME, Defaults.SMA_NAME] else [f"/{RedfishCollection.FIRMWARE_INVENTORY}/{self.comp_mapping[self.name]}"]
+        targets_list = [] if self.name in [Defaults.EROT_NAME, Defaults.SMA_NAME] else \
+            [f"/{RedfishCollection.FIRMWARE_INVENTORY}/{self.fw_ids[0]}"]
         respond = self.rf_api.post_multipart_update(RedfishCollection.UPDATE_SERVICE_MULTIPART, self.install_path,
                                                     targets_list=targets_list)
         od_task = rf_progress.Task(**respond)
@@ -100,8 +109,7 @@ class CpldComponent(Component):
 
     def get_installed_version(self) -> str:
         cmd = 'cat /var/run/hw-management/system/cpld'
-        res = self._run_ssh(command=cmd)
-        return res
+        return normalize_cpld_versions(self._run_ssh(command=cmd))
 
     def update(self) -> bool:
         file_name = os.path.basename(self.install_path)
@@ -111,7 +119,7 @@ class CpldComponent(Component):
         try:
             self._run_ssh(update_cmd)
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     NVOS_READY_TIMEOUT = 10 * 60
@@ -123,7 +131,8 @@ class CpldComponent(Component):
             "ResetType": f"{reset_type}"
         }
         respond, _ = self.rf_api.post_query(RedfishCollection.RESET, data)
-        print(f"Power cycle request sent. Waiting up to {self.NVOS_READY_TIMEOUT // 60} minutes for NVOS to be ready...")
+        print(f"Power cycle request sent. "
+              f"Waiting up to {self.NVOS_READY_TIMEOUT // 60} minutes for NVOS to be ready...")
         self._wait_for_nvos_ready()
 
     def _wait_for_nvos_ready(self):
