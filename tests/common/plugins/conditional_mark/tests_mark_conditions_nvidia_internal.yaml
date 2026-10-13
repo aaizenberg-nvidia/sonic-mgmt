@@ -340,6 +340,12 @@ tests/nightly/sanity_checker/test_sanity_checker.py::test_cpld_version_check:
     conditions:
     - "'simx' in platform"
 
+tests/nightly/sanity_checker/test_sanity_checker.py::test_bios_version_check:
+  skip:
+    reason: "Testcase skipped on simx platforms"
+    conditions:
+    - "'simx' in platform"
+
 tests/nightly/sensors/test_psu.py:
   skip:
     reason: "SPC6 simx and liquid cooling platforms are DC and don't have PSUs"
