@@ -7,7 +7,8 @@ from ngts.nvos_tools.acl.acl import Acl
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_constants.constants_nvos import FastRecoveryConsts, LinkDetectionConsts, ActionConsts, HealthConsts, \
     FansConsts
-from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ApiType, AclConsts, IpConsts, EventConsts
+from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ApiType, AclConsts, IpConsts, EventConsts, \
+    ConfState
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import (
     IbInterfaceConsts,
@@ -366,8 +367,8 @@ def test_save_reboot(engines, devices):
                     selected_port.interface.wait_for_port_state(
                         NvosConsts.LINK_STATE_UP, **wait_kwargs).verify_result()
                 with allure.step("Verify fec mode is {} which was configured before config save".format(fec_mode)):
-                    link_dict = OutputParsingTool.parse_json_str_to_dictionary(selected_port.interface.link.show()). \
-                        get_returned_value()
+                    link_dict = OutputParsingTool.parse_json_str_to_dictionary(
+                        selected_port.interface.link.show(rev=ConfState.APPLIED)).get_returned_value()
                     ValidationTool.verify_field_value_in_output(link_dict, LinkDetectionConsts.FEC_MODE,
                                                                 fec_mode).verify_result()
 
