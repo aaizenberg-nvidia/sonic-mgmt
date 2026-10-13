@@ -5,6 +5,8 @@ from retry.api import retry_call
 import re
 import logging
 import tarfile
+import time
+from datetime import datetime
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.helpers.sonic_branch_helper import get_sonic_branch
 from ngts.common.checkers import is_ver1_greater_or_equal_ver2
@@ -21,6 +23,10 @@ MAX_SDK_DFW_DUMPS_BEFORE_CLEANUP = 5
 MAX_SDK_DFW_WARN_DUMPS_BEFORE_CLEANUP = 2
 SAI_DFW_DUMP_PREFIX = 'sai-dfw-'
 SAI_DFW_WARN_DUMP_PREFIX = 'sai-dfw-warn-'
+SYSLOG_PATH = '/var/log/syslog'
+SYSLOG_TIME_FORMAT = '%Y %b %d %H:%M:%S.%f'
+FW_DUMP_END_SYSLOG_MSG = 'Summary file closed'
+SDK_DUMP_START_SYSLOG_MSG = 'Started DEBUG-DUMP'
 HEALTH_CHECK_INJECT_FILE_PATH = '/proc/mlx_sx/sx_core'
 
 SAI_PROFILE_PATH = "/etc/mlnx/sai-common.profile"
@@ -64,6 +70,49 @@ def test_techsupport_fw_stuck_dump(topology_obj, engines, cli_objects, fw_event)
     finally:
         with allure.step('Rebooting the system - necessary to restart the iRISCs'):
             cli_objects.dut.general.reboot_reload_flow(topology_obj=topology_obj)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.parametrize('disable_rsyslog_ratelimit', ['syncd'], indirect=True)
+@pytest.mark.parametrize("fw_event", ["FW_FATAL_EVENT", "FW_WARN_EVENT"])
+@allure.title('Tests that FW dumps are generated before SDK dump on health event')
+def test_health_event_fw_dump_before_sdk_dump(topology_obj, engines, cli_objects, chip_type, fw_event,
+                                              disable_rsyslog_ratelimit):
+    duthost = engines.dut
+    fatal_dumps, warn_dumps = check_sai_sdk_dumps(duthost)
+    syslog_marker = f'test_health_event_fw_dump_before_sdk_dump_{fw_event}_{int(time.time())}'
+
+    try:
+        with allure.step(f'Add marker {syslog_marker} to syslog'):
+            duthost.run_cmd(f'sudo logger {syslog_marker}')
+
+        with allure.step(f'Trigger {fw_event} event'):
+            trigger_sdk_health_event(duthost, HealthEventConst.FW_EVENTS_DICT[fw_event])
+
+        with allure.step('Wait for dump file to be created'):
+            retry_call(
+                verify_sdkdump_created,
+                fargs=[duthost, fatal_dumps + warn_dumps],
+                tries=30,
+                delay=10,
+                logger=logger,
+            )
+
+        with allure.step('Validate that the dump file contain all of the SDK extended dump files'):
+            check_all_dumps_file_exsits(topology_obj, duthost, chip_type)
+
+        with allure.step('Validate in syslog that FW dump ended before SDK dump started'):
+            fw_dump_end_time = get_syslog_msg_time_after_marker(duthost, syslog_marker, FW_DUMP_END_SYSLOG_MSG)
+            sdk_dump_start_time = get_syslog_msg_time_after_marker(duthost, syslog_marker, SDK_DUMP_START_SYSLOG_MSG)
+            assert fw_dump_end_time < sdk_dump_start_time, \
+                f'SDK dump started before FW dump ended: FW dump end {fw_dump_end_time}, ' \
+                f'SDK dump start {sdk_dump_start_time}'
+
+    except Exception as err:
+        raise err
+    finally:
+        with allure.step('Reload switch'):
+            cli_objects.dut.general.reload_flow(topology_obj=topology_obj, reload_force=True)
 
 
 @pytest.mark.parametrize('disable_rsyslog_ratelimit', ['syncd'], indirect=True)
@@ -278,6 +327,16 @@ def verify_sdkdump_created(engine, before):
     after_fatal_dumps, after_warn_dumps = check_sai_sdk_dumps(engine)
     new_files = list(set(after_fatal_dumps + after_warn_dumps) - set(before))
     assert len(new_files) > 0, 'Did not create dump file'
+
+
+def get_syslog_msg_time_after_marker(engine, marker, msg):
+    """
+    Return the time of the first syslog line with 'msg' that was written after 'marker'.
+    """
+    output = engine.run_cmd(f"sudo awk '/{marker}/{{found=1}} found' {SYSLOG_PATH} | grep -m1 '{msg}'")
+    assert output.strip(), f'"{msg}" was not found in syslog after marker {marker}'
+    year, month, day, time_of_day = output.split()[:4]
+    return datetime.strptime(f'{year} {month} {day} {time_of_day}', SYSLOG_TIME_FORMAT)
 
 
 def stop_irisics(chip_type, host):

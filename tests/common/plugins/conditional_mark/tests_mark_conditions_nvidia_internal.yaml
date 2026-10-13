@@ -167,6 +167,14 @@ tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_fw_stuck_du
     conditions:
     - "https://redmine.mellanox.com/issues/4967073"
 
+tests/nightly/show_techsupport/test_techsupport.py::test_health_event_fw_dump_before_sdk_dump:
+  skip:
+    reason: "Ignored on simx. The leaks reported by ASAN during test are not real leaks, test should not run on ASAN image."
+    conditions_logical_operator: or
+    conditions:
+    - "'simx' in platform"
+    - "'ASAN' in build_version"
+
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_mellanox_sdk_dump[PLL_LOCK_EVENT-syncd]:
   skip:
     reason: "Skipped on SPC/SPC2 as PLL_LOCK event is supported only on SPC3+ devices; skipped on S sn6600_ld due to RM issue: https://redmine.mellanox.com/issues/5139368"
