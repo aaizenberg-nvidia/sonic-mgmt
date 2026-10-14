@@ -90,7 +90,7 @@ tests_nvos/general/security/bmc:
     reason: BMC tests should run only on Juliet
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/general/security/test_aaa_ldap/test_aaa_ldap.py::test_ldap_bad_connection:
   skip:
@@ -208,7 +208,7 @@ tests_nvos/checklist/test_bios_manual_update.py:
     conditions_logical_operator: or
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
     - '''juliet-146'' in testbed'
     - '''juliet-160'' in testbed'
     - '''juliet-195'' in testbed'
@@ -218,19 +218,19 @@ tests_nvos/interfaces/nvl_port/test_nvl_port.py:
     reason: Testcase skipped on XDR systems
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_link_health_attention_and_toggle_stress:
   skip:
     reason: link-health is supported on NVL6 Rosalind only (skip_if_link_health_not_supported); skip before the mloop setup on Portia
     conditions:
-    - '''portia'' in testbed'
+    - '''portia'' in testbed or ''prt-sur'' in testbed'
 
 tests_nvos/interfaces/nvl_port/test_nvl_port.py::test_time_to_link_up:
   skip:
     reason: fec-measure-mode link training is QTM4/NVL6 Rosalind only (skip_if_fec_measure_not_supported); skip before the mloop setup on Portia
     conditions:
-    - '''portia'' in testbed'
+    - '''portia'' in testbed or ''prt-sur'' in testbed'
 
 tests_nvos/platform/test_platform_environment.py::test_platform_environment_fan_shared_led:
   skip:
@@ -249,7 +249,7 @@ tests_nvos/system/test_techsupport_feature.py::test_techsupport_bmc_badflow:
     reason: Testcase skipped on non Juliet systems, only Juliet has BMC
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/system/test_techsupport_feature.py::test_techsupport_expected_files:
   skip:
@@ -266,7 +266,7 @@ tests_nvos/general/security/bmc/bmc_erot_attestation/test_bmc_erot_attestation.p
     reason: BMC ERoT Attestation tests should run only on Juliet
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/general/security/bmc/bmc_erot_attestation/test_bmc_erot_attestation.py::test_generate_give_different_measurement:
   skip:
@@ -344,7 +344,13 @@ tests_nvos/checklist/test_fpga_install.py:
   skip:
     reason: Testcase skipped on Systems without FPGA - Surrogate and Rosalind
     conditions:
-    - '''surrogate'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed'
+    - '''surrogate'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
+
+tests_nvos/checklist/test_ssd_install.py:
+  skip:
+    reason: No SSD FW package for the Portia NEX surrogate (no ssd block in portia-surrogate-nex.json)
+    conditions:
+    - '''prt-sur'' in testbed'
 
 tests_nvos/checklist/test_sma_install.py:
   skip:
@@ -352,7 +358,7 @@ tests_nvos/checklist/test_sma_install.py:
       or Rosalind
     conditions:
     - '''surrogate'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/checklist/test_firmware_install_same_version.py::test_fae_sma_firmware_install:
   skip:
@@ -360,7 +366,7 @@ tests_nvos/checklist/test_firmware_install_same_version.py::test_fae_sma_firmwar
       or Rosalind
     conditions:
     - '''surrogate'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/checklist/test_firmware_install_same_version.py::test_fae_erot_firmware_install:
   skip:
@@ -374,26 +380,26 @@ tests_nvos/checklist/test_sma_info.py:
       or Rosalind
     conditions:
     - '''surrogate'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/interfaces/test_ib_show_interface.py::test_ib_show_interface_all_state_up:
   skip:
     reason: Testcase skipped on Juliet systems, ability is not implemented in Juliet
     conditions:
-    - '''juliet'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed'
+    - '''juliet'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
 
 tests_nvos/platform/test_platform_firmware_bios/test_platform_firmware_bios.py:
   skip:
     reason: Testcase skipped on Juliet or Rosalind systems, feature is pruned in Juliet
     conditions:
-    - '''juliet'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed'
+    - '''juliet'' in testbed or ''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
 
 tests_nvos/fae/test_debug_token.py::test_debug_token_upload_good_flow:
   skip:
     reason: 'Debug token v2 not supported on Rosalind/Surrogate - blocked by RM #4682596'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed or ''surrogate'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed or ''surrogate'' in testbed'
     - https://redmine.mellanox.com/issues/4682596
 
 tests_nvos/fae/test_debug_token.py::test_debug_token_upload_bad_flow:
@@ -401,7 +407,7 @@ tests_nvos/fae/test_debug_token.py::test_debug_token_upload_bad_flow:
     reason: 'Debug token v2 not supported on Rosalind/Surrogate - blocked by RM #4682596'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed or ''surrogate'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed or ''surrogate'' in testbed'
     - https://redmine.mellanox.com/issues/4682596
 
 tests_nvos/fae/test_debug_token.py::test_debug_info_generate_mulitple:
@@ -409,7 +415,7 @@ tests_nvos/fae/test_debug_token.py::test_debug_info_generate_mulitple:
     reason: 'Debug token v2 not supported on Rosalind/Surrogate - blocked by RM #4682596'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed or ''surrogate'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed or ''surrogate'' in testbed'
     - https://redmine.mellanox.com/issues/4682596
 
 tests_nvos/fae/test_debug_token.py::test_debug_info_rename_good_flow:
@@ -417,7 +423,7 @@ tests_nvos/fae/test_debug_token.py::test_debug_info_rename_good_flow:
     reason: 'Debug token v2 not supported on Rosalind/Surrogate - blocked by RM #4682596'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed or ''surrogate'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed or ''surrogate'' in testbed'
     - https://redmine.mellanox.com/issues/4682596
 
 tests_nvos/fae/test_debug_token.py::test_debug_info_rename_bad_flow:
@@ -425,7 +431,7 @@ tests_nvos/fae/test_debug_token.py::test_debug_info_rename_bad_flow:
     reason: 'Debug token v2 not supported on Rosalind/Surrogate - blocked by RM #4682596'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed or ''surrogate'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed or ''surrogate'' in testbed'
     - https://redmine.mellanox.com/issues/4682596
 
 tests_nvos/interfaces/test_eth0_interface_dhcp.py::test_interface_eth0_speed_duplex_autoneg:
@@ -440,7 +446,7 @@ tests_nvos/checklist/test_bios_upgrade.py::test_bios_manual_update:
       changes the upgrade's flow
     conditions:
     - '''juliet'' not in testbed and ''rosalind'' not in testbed and ''portia'' not
-      in testbed'
+      in testbed and ''prt-sur'' not in testbed'
 
 tests_nvos/interfaces/test_ib_interface_configuration.py::test_ib_interface_lanes:
   skip:
@@ -455,7 +461,7 @@ tests_nvos/general/security/bmc/bmc_creds/test_bmc_creds.py::test_bmc_creds_flow
       Vadim Pasternak | Status: Assigned'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
     - https://redmine.mellanox.com/issues/4742847
 
 tests_nvos/general/security/bmc/test_reset_bmc_root_password.py::test_reset_bmc_root_password_while_bmc_down:
@@ -465,7 +471,7 @@ tests_nvos/general/security/bmc/test_reset_bmc_root_password.py::test_reset_bmc_
       Vadim Pasternak | Status: Assigned'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
     - https://redmine.mellanox.com/issues/4742847
 
 tests_nvos/platform/test_recover_from_bmc_reset.py::test_recover_from_bmc_reset:
@@ -475,7 +481,7 @@ tests_nvos/platform/test_recover_from_bmc_reset.py::test_recover_from_bmc_reset:
       Vadim Pasternak | Status: Assigned'
     conditions_logical_operator: and
     conditions:
-    - '''rosalind'' in testbed or ''portia'' in testbed'
+    - '''rosalind'' in testbed or ''portia'' in testbed or ''prt-sur'' in testbed'
     - https://redmine.mellanox.com/issues/4742847
 
 tests_nvos/system/ztp/test_system_ztp.py::test_ztp_nmx_negative:
