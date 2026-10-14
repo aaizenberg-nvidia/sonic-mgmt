@@ -328,8 +328,11 @@ class SonicGeneralCliDefault(GeneralCliCommon):
     def is_logs_in_tmpfs(self):
         log_filesystem = self.engine.run_cmd("df --output=fstype -h /var/log")
         logs_in_tmpfs = log_filesystem and "tmpfs" in log_filesystem
-        config_db = self.get_config_db()
-        platform = config_db['DEVICE_METADATA']['localhost']['platform']
+        try:
+            platform = self.get_config_db()['DEVICE_METADATA']['localhost']['platform']
+        except json.JSONDecodeError:
+            # A multi-ASIC first boot leaves no config_db.json, so read the platform from the hardware info
+            platform = self.engine.run_cmd("sonic-cfggen -H -v DEVICE_METADATA.localhost.platform").strip()
         return logs_in_tmpfs or platform in PlatformTypesConstants.LOGS_ON_TMPFS_PLATFORMS
 
     def copy_logs_before_reboot(self, logs_in_tmpfs):
@@ -654,7 +657,7 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # Validate and reboot if needed for multi-asic Air platforms or when reboot_after_install is True
         if reboot_after_install or (is_air and SonicInstallationSteps.is_multi_asic_platform(platform_params=platform_params)):
             with allure.step("Validate dockers are up, reboot if any docker is not up"):
-                self.validate_dockers_are_up_reboot_if_fail(topology_obj, retries=3)
+                self.validate_dockers_are_up_reboot_if_fail(topology_obj, retries=3, platform_params=platform_params)
 
         if set_timezone:
             with allure.step("Set dut NTP timezone to {} time.".format(set_timezone)):
