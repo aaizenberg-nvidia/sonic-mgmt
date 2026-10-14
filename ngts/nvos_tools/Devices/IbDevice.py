@@ -4179,6 +4179,17 @@ class PortiaSurrogateNex(PortiaSwitch):
         self._extend_firmware_by_cpld_amount()
         self.memory_size: list[float] = [14.9]
         self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.MD681GEEBC82]
+        # QTM3 access links behave like Juliet, not the inherited NVL7 Portia ones
+        self.supported_nvl_speeds = ['200G', '400G']
+        self.access_port_speed = '400G'
+        self.expected_operation_durations[InternalNvosConsts.ACP_PORT_GOES_UP] = \
+            InternalNvosConsts.NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED
+        # no FAE core-clock profiles on QTM3 (same as Juliet)
+        del self.fae_supported_core_clocks
+
+    def _init_interfaces_ib_lanes(self):
+        super()._init_interfaces_ib_lanes()
+        self.supported_lanes = '2X'
 
     def _init_platform_lists(self):
         super()._init_platform_lists()
