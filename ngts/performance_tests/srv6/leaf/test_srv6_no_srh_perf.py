@@ -6,7 +6,7 @@ import tempfile
 import allure
 import logging
 import pytest
-from ngts.constants.constants import InfraConst, SonicConst, BugHandlerConst
+from ngts.constants.constants import InfraConst, BugHandlerConst
 from ngts.constants.performance_constants import (PerfConsts, MongoDbConsts, MRCConsts,
                                                   ValidationConsts, NoSrhPerfConsts)
 from ngts.helpers.config_db_utils import save_config_db_json
@@ -57,9 +57,31 @@ CHOSEN_PACKET_SIZES_ENTROPY_COMPARISON = [PACKET_SIZE_MIN_SENTINEL]
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope='class')
-def port_split(request):
-    """Parameterized port split (left, right) tuple injected via pytest.mark.parametrize indirect."""
+def port_split(request, chip_type):
+    """Parameterized port split (left, right) tuple injected via pytest.mark.parametrize indirect.
+
+    Unsupported chip / split combinations are skipped here, before any class fixture configures the
+    switches for a split the chip cannot run.
+    """
+    split_left, split_right = request.param
+    skip_performance_test_conditionally(
+        chip_type not in NoSrhPerfConsts.SUPPORTED_CHIP_TYPES,
+        f"No-SRH test not supported on {chip_type}")
+    skip_performance_test_conditionally(
+        request.param not in NoSrhPerfConsts.PORT_SPLITS_BY_CHIP_TYPE.get(chip_type, []),
+        f"Port split ({split_left}x, {split_right}x) not supported on {chip_type}")
     return request.param
+
+
+@pytest.fixture(scope='class', autouse=True)
+def shaper_value(basic_setup_configuration, shaper_value):
+    """Per-split wrapper of srv6/conftest.py's shaper_value.
+
+    The shared fixture pulls basic_setup_configuration via getfixturevalue, so pytest caches it once for
+    the class regardless of the split and replays the first split's skip or setup failure for every
+    other split. Depending on basic_setup_configuration statically keys it by port split.
+    """
+    return shaper_value
 
 
 def _resolve_packet_size(chip_type, packet_size):
@@ -380,7 +402,10 @@ def conf_args(chip_type, players, port_split):
     where cage_lanes is derived from the chip's max-breakout entry in
     SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT (single source of truth). The
     per-port Cumulus speed is taken from the same breakout-mode string.
-    SONiC path is unchanged — split_left/right pass through as lanes-per-port.
+    On SONiC split_left/right pass through as lanes-per-port and ``speed`` (Gbps)
+    is the per-port speed of the split, from the same breakout-mode string.
+    ``port_speed_ratio`` is the per-port speed relative to the chip's lowest
+    split; it scales the number of injected packets.
     """
     sku = MRCConsts.HWSKU_BY_CHIP_TYPE[chip_type]["leaf"]
     is_cumulus = players["dut"].get("is_cumulus", False)
@@ -389,16 +414,19 @@ def conf_args(chip_type, players, port_split):
         chip_type, {})
     if not breakout_modes:
         raise TestIssue(f"No breakout-mode table for {chip_type}")
+    per_port_g = _speed_from_breakout_mode(breakout_modes[split_left_lanes])
+    lowest_split_port_g = _speed_from_breakout_mode(breakout_modes[min(breakout_modes)])
     if is_cumulus:
         cage_lanes = max(breakout_modes.keys())
         split_left = cage_lanes // split_left_lanes
         split_right = cage_lanes // split_right_lanes
-        per_port_g = _speed_from_breakout_mode(breakout_modes[split_left_lanes])
         speed = str(per_port_g * 1_000_000)  # NVUE speed param is Kbps
     else:
         split_left = split_left_lanes
         split_right = split_right_lanes
-        speed = SonicConst.HWSKU_DOWNSTREAM_PORTS_SPEED[sku]
+        # The DUT validator and the shaper use this as the port speed, so it must follow the split
+        # (the hwsku default is the lowest-split speed and under-reports 2x/4x ports).
+        speed = per_port_g
     return {
         "is_ipv6": True,
         "packet_size": 4096,
@@ -406,6 +434,7 @@ def conf_args(chip_type, players, port_split):
         "split_left": split_left,
         "split_right": split_right,
         "speed": speed,
+        "port_speed_ratio": per_port_g / lowest_split_port_g,
         "hwsku": sku,
         "dut_mac": players['dut']['cli'].performance.mac,
         "dut": "leaf",
@@ -609,13 +638,6 @@ class TestSRv6NoSrhPerf:
         """
         packet_size = _resolve_packet_size(self.chip_type, packet_size)
         split_left, split_right = self.port_split
-        supported_splits = NoSrhPerfConsts.PORT_SPLITS_BY_CHIP_TYPE.get(self.chip_type, [])
-        skip_performance_test_conditionally(
-            self.port_split not in supported_splits,
-            f"Port split ({split_left}x, {split_right}x) not supported on {self.chip_type}")
-        skip_performance_test_conditionally(
-            self.chip_type not in NoSrhPerfConsts.SUPPORTED_CHIP_TYPES,
-            f"No-SRH test not supported on {self.chip_type}")
 
         test_name = get_perf_test_name(request)
         allure.dynamic.title(
@@ -689,7 +711,8 @@ class TestSRv6NoSrhPerf:
         with allure.step(f"Generate {label}-entropy no-SRH traffic "
                          f"(packet_size={packet_size}B)"):
             no_srh_stream = partial(create_no_srh_stream,
-                                    entropy_type=entropy_type, packet_size=packet_size)
+                                    entropy_type=entropy_type, packet_size=packet_size,
+                                    speed_ratio=self.conf_args["port_speed_ratio"])
             traffic_jsons = get_bisection_traffic(
                 self.players, self.conf_args,
                 traffic_type=NoSrhPerfConsts.TRAFFIC_TYPE_SRV6_NO_SRH,
@@ -785,17 +808,23 @@ def _validate_entropy_equivalence(high_results, low_results):
 
 
 def _extract_avg_bw(validation_jsons):
-    """Extract average TX bandwidth from validation JSON results."""
+    """Extract the average TX bandwidth over all bandwidth samples and port groups.
+
+    tx_avg lives in Bandwidth_samples -> <sample> -> <port group> -> bw_stats.
+    """
     if not validation_jsons:
         return None
     total_tx = 0.0
     count = 0
     for vjson in validation_jsons:
-        if isinstance(vjson, dict):
-            for port_data in vjson.values():
-                if isinstance(port_data, dict):
-                    tx_val = port_data.get(ValidationConsts.TX_BW_AVG)
-                    if tx_val is not None:
-                        total_tx += float(tx_val)
-                        count += 1
+        if not isinstance(vjson, dict):
+            continue
+        for sample_id, bw_sample in vjson.get(ValidationConsts.BW_SAMPLES, {}).items():
+            if sample_id == ValidationConsts.SAMPLES_PARAMS or not isinstance(bw_sample, dict):
+                continue
+            for group_data in bw_sample.values():
+                tx_val = group_data.get(ValidationConsts.BW_STATS, {}).get(ValidationConsts.TX_BW_AVG)
+                if tx_val is not None:
+                    total_tx += float(tx_val)
+                    count += 1
     return total_tx / count if count > 0 else None

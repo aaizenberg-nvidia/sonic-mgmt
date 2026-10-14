@@ -355,6 +355,23 @@ class PerformanceCommon:
             ports_dump,
         )
 
+    def disable_ipv6_dad_if_forced_unconnected(self):
+        """Disable IPv6 DAD on a switch that declares forced-unconnected ports.
+
+        Unlike cable-less MLOOP generator ports, a forced-unconnected port has a cable attached, so
+        its link is up while the test configuration is applied and it briefly bridges the TG VLANs
+        it is cabled between. All TG VLAN interfaces share one MAC-derived IPv6 link-local address,
+        so DAD on one VLAN hears the other's probe and marks its link-local dadfailed; BGP on that
+        VLAN then never establishes and the DUT drops all traffic towards that port. DAD protects
+        nothing here, so it is turned off before the VLAN interfaces are created ("default" covers
+        new interfaces, existing ones are set explicitly). No-op on switches without forced ports.
+        """
+        if not self.forced_unconnected_label_ports:
+            return
+        logging.info(f"[{self.dut_alias}] Disabling IPv6 DAD on {self.hostname}: forced-unconnected label port(s) "
+                     f"{sorted(self.forced_unconnected_label_ports)} are link-up while the configuration is applied")
+        self.execute_cmd("sudo sh -c 'for f in /proc/sys/net/ipv6/conf/*/accept_dad; do echo 0 > \"$f\"; done'")
+
     def execute_cmd(self, cmd, print_output=False):
         """
         All functions on the inheritance classes (DVS, SONiC, Cumulus) will be executed

@@ -686,6 +686,7 @@ class Cl_Consts:
         'Spectrum-6': ['swp65s0', 'swp65s1']
     }
     CL_HOME_DIR = "/home/cumulus"
+    CL_SDK_CLEAR_ALL_COUNTERS_FORCE_CMD = "sudo sx_api_port_counter_clear_all.py --force"
     CL_PYTHON_PATH = "/home/cumulus/sdk_env/bin/python3.11"
     CL_GA_IMAGE = "/auto/sw_system_project/NVOS_INFRA/cumulus_images/GA/5.10/cumulus-linux-mlx-amd64.bin.devsigned"
     COMMON_IP_PREFIX_LEFT = "130"
@@ -1326,9 +1327,8 @@ class NoSrhPerfConsts:
     PACKET_SIZE_SWEEP_LIST = [370, 512, 1024, 2048, 4096]
 
     # Per-chip minimum packet size for the all-ports bisection scenario.
-    # SPC4/SPC5 (100G/lane) sustain line rate down to 370B; SPC6 (200G/lane)
-    # needs 1024B to sustain line rate on all-ports.
-    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 1024}
+    # SPC6 (200G/lane) needs 1024B to sustain line rate on all-ports.
+    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 512, "SPC5": 512, "SPC6": 1024}
 
     ENTROPY_HIGH = "high_entropy"
     ENTROPY_LOW = "low_entropy"
@@ -1351,8 +1351,14 @@ class NoSrhPerfConsts:
 
     NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT = 0.55
 
+    # Faster ports need more in-flight packets to reach line rate. Packets per DIP are also scaled by
+    # (port speed / port speed of the chip's lowest split) ** this exponent.
+    NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT = 0.6
+
+    # Keys are lanes per port; the largest key is the cage width in lanes.
+    # On Cumulus it sets ports per cage (cage width // lanes per port), so it must match the platform.
     SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT = {
-        "SPC4": {1: "4x100G", 2: "2x200G[100G]", 4: "1x400G"},
+        "SPC4": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x800G[400G]"},
         "SPC5": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x400G"},
         "SPC6": {1: "8x200G[100G]", 2: "4x400G[200G]", 4: "2x800G[400G]", 8: "1x800G"},
     }

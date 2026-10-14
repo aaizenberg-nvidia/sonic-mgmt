@@ -193,6 +193,7 @@ class SonicPerformanceCli(PerformanceCommon):
 
         self.disable_im_on_tg()
         self.load_qos_config_on_dut()
+        self.disable_ipv6_dad_if_forced_unconnected()
 
         with allure.step(f'Reload SKU and Test configuration on {self.dut_alias}'):
             self.cli_obj.general.reload_configuration(force=True)

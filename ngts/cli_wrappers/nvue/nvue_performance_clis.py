@@ -345,6 +345,7 @@ class NvuePerformanceCli(PerformanceCommon):
         self.engine.copy_file(source_file=src_file, file_system=dst_dir,
                               dest_file="tmp.yaml", overwrite_file=True, verify_file=False)
         full_path = os.path.join(dst_dir, "tmp.yaml")
+        self.disable_ipv6_dad_if_forced_unconnected()
         self.cli_obj.general.replace_config(self.engine, full_path, output_type="json", verify_execution=True)
         self.cli_obj.general.apply_config(self.engine, option="-y", verify_execution=True)
         logging.info(f"The configuration file on {self.dut_alias} was applied successfully")
