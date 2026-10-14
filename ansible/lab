@@ -4,7 +4,7 @@ r-salamandra-01-bmc      ansible_host=10.209.48.34 sonic_version=v2 hwsku="NVIDI
 salamandra-chipless-109      ansible_host=10.7.145.109 ansible_hostv6="fe80::5e78:45ff:fe38:5c78" sonic_version=v2 hwsku="ACS-SN6600_LD" iface_speed=200000  mgmt_subnet_mask_length=22 vm_base=VM0000
 slm-chipless-2700a1-146      ansible_host=10.7.144.146 ansible_hostv6="fe80::5e78:45ff:fe38:5c78" sonic_version=v2 hwsku="ACS-SN6600_LD" iface_speed=200000  mgmt_subnet_mask_length=22 vm_base=VM0000
 slm-chipless-2700a1-146-bmc      ansible_host=10.7.111.146 sonic_version=v2 hwsku="NVIDIA-AST2700-BMC" sonic_hw_platform=arm64-aspeed_nvidia_ast2700_bmc-r0 asic_type=aspeed mgmt_subnet_mask_length=19 vm_base=VM0000
-slm-60           ansible_host=10.220.12.60 ansible_hostv6="fe80::a6a6:4eff:fec9:52a8" sonic_version=v2 hwsku="Mellanox-SN6600_LD-P64O128C2" iface_speed=400000  mgmt_subnet_mask_length=22 vm_base=VM0000
+slm-60           ansible_host=10.220.12.60 ansible_hostv6="fe80::a6a6:4eff:fec9:52a8" sonic_version=v2 hwsku="ACS-SN6600_LD" iface_speed=400000  mgmt_subnet_mask_length=22 vm_base=VM0000
 chameleon-1      ansible_host=10.7.145.138 ansible_port=22 sonic_version=v2 sonic_hwsku=Mellanox-SN5810-O128A2
 r-tigon-17      ansible_host=10.210.24.160 ansible_hostv6="fe80::e42:a1ff:fe44:44c0" sonic_version=v2 hwsku="ACS-MSN4600C" iface_speed=25000  mgmt_subnet_mask_length=22 vm_base=VM0000
 r-moose-02      ansible_host=10.210.24.236 ansible_hostv6="fe80::c670:bdff:fe92:a77a" sonic_version=v2 hwsku="ACS-SN5600" iface_speed=200000  mgmt_subnet_mask_length=22 vm_base=VM0000
