@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import sys
 import json
+import shlex
 import traceback
 import pandas as pd
 import xml.etree.ElementTree as ET
@@ -1064,7 +1065,8 @@ class ReleaseResultsUploader:
         report_id_dirs.remove(self.result_folder)
         for report_id_dir in report_id_dirs:
             export_results_command = f'python3 {uploader_script_path} -c "test_result" ' \
-                f'{report_id_dir} {ResultUploaderConst.DATABASE_NAME}'
+                f'--version {shlex.quote(self.sonic_version)} ' \
+                f'{shlex.quote(report_id_dir)} {ResultUploaderConst.DATABASE_NAME}'
             logger.info(f"CMD: {export_results_command}")
             if self.sonic_mgmt_ip:
                 logger.info(f"User provided sonic-mgmt IP: {self.sonic_mgmt_ip}")
@@ -1091,8 +1093,27 @@ class ReleaseResultsUploader:
         for session_id in sessions_ids:
             assert re.search(rf"Session\s+{session_id}\s+actions:save_session", output), \
                 f"Not found session:{session_id} in saved sessions output, verify session has been saved"
+        saved_session_root = "/auto/MARS/production/saved_session"
+        setups_by_session = dict(re.findall(
+            r"--session\s+(\d+)\s+--setup\s+[\"']([^\"']+)[\"']",
+            output,
+        ))
+        saved_session_paths = {}
+        for session_id in str_sessions_ids:
+            assert session_id in setups_by_session, \
+                f"No saved setup path found for MARS session {session_id}"
+            saved_session_paths[session_id] = os.path.join(
+                saved_session_root,
+                setups_by_session[session_id],
+                session_id,
+            )
+            logger.info(
+                "Saved MARS session %s: %s",
+                session_id,
+                saved_session_paths[session_id],
+            )
         logger.info(f"Saved sessions are: {sessions_list}")
-        self.compose_save_results_mail(sessions_ids)
+        self.compose_save_results_mail(saved_session_paths)
 
     def get_setups_from_results(self, setups_list):
         setups_in_results = []
@@ -1205,9 +1226,9 @@ class ReleaseResultsUploader:
         }
         self.compose_build_tables_content(build_table_dict_content)
 
-    def compose_save_results_mail(self, saved_sessions):
+    def compose_save_results_mail(self, saved_session_paths):
         build_table_dict_content = {
-            "Saved sessions": {self.get_list_in_html_format(saved_sessions): ""},
+            "Saved sessions": saved_session_paths,
         }
         self.compose_build_tables_content(build_table_dict_content)
 

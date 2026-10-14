@@ -287,7 +287,8 @@ class KustoConnector(ReportDBConnector):
             return
         self._upload_pipeline_results(
             external_tracking_id, report_guid, testbed, os_version)
-        self._upload_metadata(report_json, external_tracking_id, report_guid)
+        self._upload_metadata(
+            report_json, external_tracking_id, report_guid, os_version)
         self._upload_summary(report_json, report_guid)
         self._upload_test_cases(report_json, report_guid)
 
@@ -385,13 +386,16 @@ class KustoConnector(ReportDBConnector):
         print("Upload pipeline result")
         self._ingest_data(self.PIPELINE_TABLE, pipeline_data)
 
-    def _upload_metadata(self, report_json, external_tracking_id, report_guid):
+    def _upload_metadata(
+        self, report_json, external_tracking_id, report_guid, os_version=""
+    ):
         metadata = {
             "id": report_guid,
             "tracking_id": external_tracking_id,
             "upload_time": str(datetime.utcnow())
         }
         metadata.update(report_json["test_metadata"])
+        metadata["os_version"] = os_version or metadata.get("os_version", "")
         print("Upload metadata")
         self._ingest_data(self.METADATA_TABLE, metadata)
 
