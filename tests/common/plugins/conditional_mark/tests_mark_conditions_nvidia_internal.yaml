@@ -1583,6 +1583,12 @@ layer1/test_port_error.py:
     conditions:
     - "https://redmine.mellanox.com/issues/5066052 and 'sn6600_ld' in platform"
 
+layer1/test_port_error.py::TestMACFault::test_mac_remote_fault_increment:
+  xfail:
+    reason: "Testcase xfailed due to RM issue #5275224 on sn6600_ld"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5275224 and 'sn6600_ld' in platform"
+
 qos/test_qos_sai_dual_tor.py:
   skip:
     reason: "test_qos_sai_dual_tor tests only support on Mellanox-SN4600C-C64 and Mellanox-SN2700-D48C8"
