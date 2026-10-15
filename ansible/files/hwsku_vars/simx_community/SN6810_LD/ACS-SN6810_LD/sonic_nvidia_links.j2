@@ -1,0 +1,7 @@
+StartDevice,StartPort,EndDevice,EndPort,BandWidth,VlanID,VlanMode,AutoNeg
+{%- for port in range(0, 504, 4) %}
+{{ setup_name }}-dut,Ethernet{{ port }},{{ setup_name }}-fanout,Ethernet{{ port }},800000,{{ 1101 + (port // 4) }},Access,off
+{%- endfor %}
+{{ setup_name }}-dut,Ethernet512,{{ setup_name }}-fanout,Ethernet512,100000,1227,Access,off
+{{ setup_name }}-dut,Ethernet513,{{ setup_name }}-fanout,Ethernet513,100000,1228,Access,off
+{{ setup_name }}-fanout,Ethernet508,{{ setup_name }}-hypervisor,eth1,800000,1101-1228,Trunk,off

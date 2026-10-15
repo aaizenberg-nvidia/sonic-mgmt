@@ -1,0 +1,29 @@
+- conf-name: {{setup_name}}-dut-t1-d118u8s2
+  group-name: vm-t1
+  topo: t1-d118u8s2
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-{{setup_name}}
+  ptf_ip: {{ptf_ip}}/24
+  ptf_ipv6:
+  server: server_1
+  vm_base: VM0001
+  dut:
+    - {{setup_name}}-dut
+  inv_name: lab
+  comment: Air 6810 T1 (SKU {{hwsku}}, fanout SN6810_LD)
+  use_converged_peers: True
+
+- conf-name: {{setup_name}}-dut-t0-d96-u30s2
+  group-name: vm-t0
+  topo: t0-d96-u30s2
+  ptf_image_name: docker-ptf-mlnx
+  ptf: ptf-{{setup_name}}
+  ptf_ip: {{ptf_ip}}/24
+  ptf_ipv6:
+  server: server_1
+  vm_base: VM0001
+  dut:
+    - {{setup_name}}-dut
+  inv_name: lab
+  comment: Air 6810 T0 (SKU {{hwsku}}, fanout SN6810_LD)
+  use_converged_peers: True
