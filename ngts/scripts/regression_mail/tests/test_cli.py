@@ -79,6 +79,23 @@ class CliTest(unittest.TestCase):
             )
         self.assertRegex(properties, r"(?m)^INFERENCE_API_KEY=\S+$")
         phase_parameters = config["phases"][0]["phase_1"][-1]["parameters"]
+        self.assertEqual(
+            "${KEEP_DOCKER_CONTAINER}",
+            phase_parameters["keep_docker_container"],
+        )
+        self.assertIn(
+            'env."${name}_keep_docker_container" ?: "false"', groovy
+        )
+        self.assertIn("if (keep_container) {", groovy)
+        self.assertIn("Containers older than 3 days", groovy)
+        launcher = (
+            scripts_root /
+            "upload_regression_results_to_msft" /
+            "start_sonic_mgmt_ngts_docker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "STALE_CONTAINER_TIMEOUT = 3 * 24 * 60 * 60", launcher
+        )
         expected_parameters = {
             "regression_mail_to",
             "regression_mail_github_authors",

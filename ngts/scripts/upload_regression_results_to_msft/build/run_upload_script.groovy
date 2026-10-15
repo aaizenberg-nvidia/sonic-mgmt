@@ -249,12 +249,21 @@ def cleanup(name) {
     def container_name = build_container_name(
         env."${name}_container_name"
     )
+    def keep_container = (env."${name}_keep_docker_container" ?: "false")
+        .toBoolean()
     NGCITools().ciTools.run_sh(
         "rm -f '/tmp/${container_name}_env_file.sh'"
     )
-    NGCITools().ciTools.run_sh(
-        "sudo docker rm -f '${container_name}' >/dev/null 2>&1 || true"
-    )
+    if (keep_container) {
+        echo "Keeping Docker container for debugging: ${container_name}"
+        echo "Enter: sudo docker exec -it '${container_name}' bash"
+        echo "Remove: sudo docker rm -f '${container_name}'"
+        echo "Containers older than 3 days are removed when a later build starts."
+    } else {
+        NGCITools().ciTools.run_sh(
+            "sudo docker rm -f '${container_name}' >/dev/null 2>&1 || true"
+        )
+    }
     return true
 }
 

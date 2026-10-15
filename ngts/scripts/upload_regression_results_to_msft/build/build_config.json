@@ -73,7 +73,8 @@
               "regression_mail_rc_status_repository": "${REGRESSION_MAIL_RC_STATUS_REPOSITORY}",
               "regression_mail_rc_status_ref": "${REGRESSION_MAIL_RC_STATUS_REF}",
               "regression_mail_rc_status_tag": "${REGRESSION_MAIL_RC_STATUS_TAG}",
-              "container_name": "sonic-mgmt-${USER}"
+              "container_name": "sonic-mgmt-${USER}",
+              "keep_docker_container": "${KEEP_DOCKER_CONTAINER}"
           },
           "skip": false,
           "on_failure": "stop"

@@ -20,7 +20,7 @@ JENKINS_MANAGED_LABEL = "nvidia.jenkins.managed"
 JENKINS_JOB_LABEL = "nvidia.jenkins.job"
 JENKINS_JOB = "TEST_sonic_upload_regression_results_to_msft"
 JENKINS_CONTAINER_PREFIX = "sonic-mgmt-sw-r2d2-bot-jenkins-{}-".format(JENKINS_JOB)
-STALE_CONTAINER_TIMEOUT = 24 * 60 * 60
+STALE_CONTAINER_TIMEOUT = 3 * 24 * 60 * 60
 SONIC_MGMT_MOUNTPOINTS = {
     '/.autodirect/mswg/projects': '/.autodirect/mswg/projects',
     '/auto/sw_system_project': '/auto/sw_system_project',
