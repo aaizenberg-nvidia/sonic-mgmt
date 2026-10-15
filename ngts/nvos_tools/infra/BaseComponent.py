@@ -2,6 +2,7 @@ import logging
 import os
 
 from typing import Dict, Iterable, Tuple, Union
+from urllib.parse import unquote, urlsplit
 
 from ngts.ngts_types import OperationalAppliedT
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
@@ -407,6 +408,7 @@ class BaseComponent:
         dut_device = dut_device or TestToolkit.get_device()
         topology_obj = topology_obj or (TestToolkit.topology_obj if TestToolkit else None)
         resource_path = self.get_resource_path()
+        param_value = self._add_missing_ssh_port(param_value)
         with allure.step(f"Execute action {action} for {resource_path}"):
             return SendCommandTool.execute_command_expected_str(self._cli_wrapper.action_deprecated, expected_output, dut_engine,
                                                                 dut_device, action, resource_path, suffix, param_name,
@@ -448,6 +450,31 @@ class BaseComponent:
             return self.action(ActionConsts.FETCH, (ActionParamConsts.REMOTE_URL, file_url), engine=engine, device=device,
                                expected_output=['File fetched successfully', 'File has been successfully fetched'])
 
+    @staticmethod
+    def _add_missing_ssh_port(remote_url):
+        """Fill an omitted SCP/SFTP port only for an unambiguous known SSH endpoint."""
+        if not isinstance(remote_url, str):
+            return remote_url
+        try:
+            parsed = urlsplit(remote_url)
+            if parsed.scheme not in ('scp', 'sftp') or parsed.port is not None or parsed.netloc.endswith(':'):
+                return remote_url
+        except ValueError:
+            return remote_url
+
+        ports = set()
+        for remote in (TestToolkit.engines or {}).values():
+            if (parsed.hostname in (getattr(remote, 'ip', None), getattr(remote, 'switch_reachable_ip', None)) and
+                    unquote(parsed.username or '') == getattr(remote, 'username', None) and
+                    unquote(parsed.password or '') == getattr(remote, 'password', None)):
+                ports.add(getattr(remote, 'ssh_port', None))
+        if len(ports) != 1:
+            return remote_url
+        port = ports.pop()
+        if port in (None, 22):
+            return remote_url
+        return parsed._replace(netloc=f'{parsed.netloc}:{port}').geturl()
+
     def action(self,
                action_str: str,  # e.g. 'install'
                main_param: Tuple[str, str] | None = None,  # e.g. ('remote-url', '/path/to/file')
@@ -477,7 +504,11 @@ class BaseComponent:
         :param expected_output: Sub-string we expect to see when the action is finished and before reboot (if expected).
         :param device: BaseDevice. If None, the DUT is used.
         """
-        additional_params = additional_params or {}
+        if main_param:
+            param_name, param_value = main_param
+            main_param = (param_name, self._add_missing_ssh_port(param_value))
+        additional_params = {name: self._add_missing_ssh_port(value)
+                             for name, value in (additional_params or {}).items()}
         engine = engine or TestToolkit.get_engine()
         try:
             device = device or TestToolkit.get_device()
