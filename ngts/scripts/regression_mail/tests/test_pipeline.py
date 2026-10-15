@@ -783,6 +783,18 @@ class PipelineTest(unittest.TestCase):
         )
         self.assertNotIn("public hash: :", rendered.plain)
 
+    def test_excel_nfs_path_is_visible(self) -> None:
+        rendered = ReportRenderer().render(
+            ReportModel(request=self.request)
+        )
+
+        expected = "Excel path on NFS: {}".format(
+            self.request.excel_path
+        )
+        self.assertIn(expected, rendered.plain)
+        self.assertIn("Excel path on NFS:", rendered.html)
+        self.assertIn(str(self.request.excel_path), rendered.html)
+
     def test_empty_internal_error_section_is_present_in_html_and_plain(
         self,
     ) -> None:
