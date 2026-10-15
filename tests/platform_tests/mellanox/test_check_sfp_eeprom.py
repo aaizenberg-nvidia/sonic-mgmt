@@ -67,9 +67,8 @@ def test_check_sfp_eeprom_with_option_dom(rand_selected_dut, show_eeprom_cmd, sf
         if is_cpo_supported:
             with allure.step("Run: {} to get interface status".format(SHOW_INTF_STATUS_CMDS)):
                 intf_status = rand_selected_dut.show_and_parse(SHOW_INTF_STATUS_CMDS)
-                assert intf_status["rc"] == 0, "Failed to read interface status"
                 intf_status_dict = {row["interface"]: row for row in intf_status}
-            non_cpo_ports = get_non_cpo_ports(duthost)
+            non_cpo_ports = get_non_cpo_ports(rand_selected_dut)
             logging.info(f"Non-CPO ports per hwsku.json (CPO checks skipped): {sorted(non_cpo_ports)}")
 
         for intf, inft_support_dom in list(sfp_test_intfs_to_dom_map.items()):
