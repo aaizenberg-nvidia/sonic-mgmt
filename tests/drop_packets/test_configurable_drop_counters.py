@@ -380,11 +380,14 @@ def setup_counters(request, device_capabilities, duthosts, rand_one_dut_hostname
     counter_type = request.param
     supported_reasons = device_capabilities["reasons"][counter_type]
 
-    # skip early if the test's drop_reason parameter is not supported for this counter type
-    drop_reason = request.node.callspec.params.get('drop_reason')
-    if drop_reason and drop_reason not in supported_reasons:
-        pytest.skip("Drop reason {} not supported for counter type {} on target DUT".format(
-            drop_reason, counter_type))
+    callspec = getattr(request.node, "callspec", None)
+    test_drop_reason = callspec.params.get("drop_reason") if callspec else None
+    if test_drop_reason and test_drop_reason not in supported_reasons:
+        pytest.skip("Drop reason {} not supported for {} on target DUT".format(test_drop_reason, counter_type))
+
+    def _setup_counters(drop_reasons):
+        if any(reason not in supported_reasons for reason in drop_reasons):
+            pytest.skip("Drop reasons not supported on target DUT")
 
     def _setup_counters(drop_reasons):
         cdc.create_drop_counter(duthost, "TEST", counter_type, drop_reasons)
@@ -449,8 +452,12 @@ def send_dropped_traffic(duthosts, rand_one_dut_hostname, ptfadapter, testbed_pa
 
 
 @pytest.fixture
-def arp_responder(ptfhost, testbed_params, tbinfo):
-    """Set up the ARP responder utility in the PTF container."""
+def arp_responder(ptfhost, testbed_params, tbinfo, setup_counters):
+    """Set up the ARP responder utility in the PTF container.
+
+    setup_counters is requested only to make it run first, so an unsupported drop
+    reason is skipped before the ARP responder is set up. Its value is not used.
+    """
     vlan_network = testbed_params["vlan_interface"]["subnet"]
     is_storage_backend = "backend" in tbinfo["topo"]["name"]
 
