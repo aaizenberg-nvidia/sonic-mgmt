@@ -173,6 +173,7 @@ def do_cpu_usage_test(results_file_name, dut_engine, expected_cpu_usage_dict):
 
     try:
         assertions_list = []
+        failed_attempts = []
 
         for attempt in range(10):
             logger.info('Checking CPU utilization, attempt number: %s', attempt)
@@ -189,15 +190,18 @@ def do_cpu_usage_test(results_file_name, dut_engine, expected_cpu_usage_dict):
                                                                         cpu_expected_usage_dict_filtered, proc_to_container_mapping_dict, cpu_usage_per_process_dict)
 
             if assertions_list:
-                time.sleep(timeout_between_attempts)
-            else:
+                failed_attempts.append(assertions_list)
+            passed_attempts = attempt + 1 - len(failed_attempts)
+            if passed_attempts > len(failed_attempts):
                 break
+            time.sleep(timeout_between_attempts)
 
         find_missing_processes(cpu_expected_usage_dict_filtered, cpu_usage_per_process_dict, no_simx_proc_list)
-        assert not assertions_list, f'CPU usage: {assertions_list} \n is more than expected: \n {expected_cpu_usage_dict}'
+        assert passed_attempts > len(failed_attempts), \
+            f'CPU usage: {failed_attempts} \n is more than expected: \n {expected_cpu_usage_dict}'
 
     except Exception as err:
-        raise AssertionError(f"CPU usage in these processes is more than expected : {assertions_list}") from err
+        raise AssertionError(f"CPU usage in these processes is more than expected : {failed_attempts}") from err
     finally:
         cpu_usage_per_process.update({'total_cpu_usage': total_cpu_usage_dict['host']})
         store_results_into_file(filename=os.path.join('/tmp/', results_file_name),

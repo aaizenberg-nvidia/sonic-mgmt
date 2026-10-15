@@ -57,6 +57,7 @@ master:
     <<: *platform_defaults
     sx_sdk: 30
     syncd: 5
+    redis-server: 8
   # SPC2
   MSN3420: # Lionfish
     <<: *platform_defaults
