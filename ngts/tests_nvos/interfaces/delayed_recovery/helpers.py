@@ -137,15 +137,21 @@ def get_enabled_loss_th(fae_port):
     """
     Expected operational fec-plr-align-loss-th when delayed recovery is enabled.
 
-    The FW default is module-dependent: passive copper resolves to 127, optical to
-    126. plr-retry-th is 255 regardless. Verified on croc-94 with a copper and an
-    optical loopback pair on the same switch and firmware.
+    Platforms that define OPER_ENABLED_LOSS_TH (Rosalind: 60) use that value.
+    Otherwise the FW default is module-dependent: passive copper resolves to 127,
+    optical to 126. plr-retry-th is 255 regardless. Verified on croc-94 with a
+    copper and an optical loopback pair on the same switch and firmware.
 
     The transceiver is addressed per cage ('swA13p1' -> 'swA13'), resolved with
     Port.get_transceiver_name() so split ('sw13p1s2') and plane ('swA1p1pl1') port
     names map correctly too. A module that is present but reports no cable-type is
     treated as non-passive, i.e. 126.
     """
+    platform_default = TestToolkit.TestToolkit.devices.dut.default_delayed_recovery_values.get(
+        "OPER_ENABLED_LOSS_TH")
+    if platform_default is not None:
+        return platform_default
+
     port_name = fae_port.port.name
     cage_name = fae_port.port.get_transceiver_name()
     with allure.step(f"Get module type of '{cage_name}' to derive the expected loss threshold"):

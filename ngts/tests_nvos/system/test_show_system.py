@@ -339,6 +339,18 @@ def test_system_location_set(test_api, engines, nv_command):
         clear_system_contact_and_location(nv_command.system)
 
 
+def validate_field_default(device, output, field_name):
+    if device.is_eth():
+        assert field_name not in output, \
+            "System {} is still present in system show: {}".format(
+                field_name, output.get(field_name))
+    else:
+        expected_value = device.system_default_value_dict[field_name]
+        assert output.get(field_name) == expected_value, \
+            "System {} in system show is {} instead of default value {}".format(
+                field_name, output.get(field_name), expected_value)
+
+
 @pytest.mark.system
 @pytest.mark.dut_reboot
 @pytest.mark.cumulus
@@ -380,14 +392,11 @@ def test_factory_reset_for_system_contact_location(engines, nv_command, devices)
         with allure.step("Verify the setup is functional"):
             verify_the_setup_is_functional(system, engines)
 
-        with allure.step('Validate system contact is back to default'):
-            system_output = OutputParsingTool.parse_json_str_to_dictionary(nv_command.system.show()).get_returned_value()
-            assert system_output[SystemConsts.CONTACT] == devices.dut.system_default_value_dict[SystemConsts.CONTACT], "System contact in system show is {} instead of default value".\
-                format(devices.dut.system_default_value_dict[SystemConsts.CONTACT])
-
-        with allure.step('Validate system location is back to default'):
-            assert system_output[SystemConsts.LOCATION] == devices.dut.system_default_value_dict[SystemConsts.LOCATION], "System location in system show is {} instead of" \
-                "default value".format(devices.dut.system_default_value_dict[SystemConsts.LOCATION])
+        with allure.step('Validate system contact and location after factory reset'):
+            system_output = OutputParsingTool.parse_json_str_to_dictionary(
+                nv_command.system.show()).get_returned_value()
+            for field_name in (SystemConsts.CONTACT, SystemConsts.LOCATION):
+                validate_field_default(devices.dut, system_output, field_name)
 
     finally:
         clear_system_contact_and_location(nv_command.system)
@@ -401,15 +410,10 @@ def clear_system_contact_and_location(system):
     with allure.step('Unset the system location'):
         system.unset(SystemConsts.LOCATION, apply=True).verify_result()
 
-    with allure.step('Validate system contact is back to default'):
+    with allure.step('Validate system contact and location after unset'):
         system_output = OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
-        assert system_output[SystemConsts.CONTACT] == device.system_default_value_dict[SystemConsts.CONTACT], "System contact in system show is {} instead of default value". \
-            format(device.system_default_value_dict[SystemConsts.CONTACT])
-
-    with allure.step('Validate system location is back to default'):
-        system_output = OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
-        assert system_output[SystemConsts.LOCATION] == device.system_default_value_dict[SystemConsts.LOCATION], "System location in system show is {} instead of default value". \
-            format(device.system_default_value_dict[SystemConsts.LOCATION])
+        for field_name in (SystemConsts.CONTACT, SystemConsts.LOCATION):
+            validate_field_default(device, system_output, field_name)
 
 
 def help_system_contact_location(engines, system, field_name):
@@ -431,8 +435,7 @@ def help_system_contact_location(engines, system, field_name):
 
         with allure.step('Validate system {} is back to default'.format(field_name)):
             system_output = OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
-            assert system_output[field_name] == device.system_default_value_dict[field_name], "System {} in system show is {} instead of default value".\
-                format(field_name, device.system_default_value_dict[field_name])
+            validate_field_default(device, system_output, field_name)
 
 
 def verify_core_count(devices, output_dictionary):

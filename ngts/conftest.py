@@ -89,6 +89,12 @@ def pytest_sessionstart(session: pytest.Session):
     _disable_logging_root_handlers()
 
 
+def is_dvs_run(session, switch_attributes):
+    cli_type = session.config.getoption('--target_cli_type', default=None) or \
+        switch_attributes['Topology Conn.']['CLI_TYPE']
+    return cli_type == CliType.DVS
+
+
 def pytest_collection(session: pytest.Session):
     # If pytest is running in collect-only mode, skip the rest of the code
     # WHY? because we want the collection mode to run faster
@@ -100,7 +106,15 @@ def pytest_collection(session: pytest.Session):
     switch_attributes = topology.players['dut']['attributes'].noga_query_data['attributes']
     devinfo = get_devinfo(switch_attributes)
 
-    platform = json.loads(devinfo).get('platform')
+    try:
+        platform = json.loads(devinfo).get('platform')
+    except json.JSONDecodeError:
+        # Run-local compatibility for NOGA resources whose devdescription is
+        # stored with unquoted values instead of JSON (for example SPC6-07).
+        match = re.search(r"""['"]?platform['"]?\s*:\s*['"]?([^,'"}\s]+)""", devinfo)
+        if not match:
+            raise
+        platform = match.group(1)
     session.config.cache.set(PytestConst.CUSTOM_TEST_SKIP_PLATFORM_TYPE, platform)
 
     # If pytest is running in collect-only mode, skip the rest of the code
@@ -112,6 +126,11 @@ def pytest_collection(session: pytest.Session):
         # Required for prevent SSH attempts into DUT at the beginning of deploy image test(in case when device in ONIE)
         branch = 'master'
         image = ''
+        session.config.cache.set(PytestConst.IS_SANITIZER_IMAGE, False)
+    elif is_dvs_run(session, switch_attributes):
+        # DVS has no /etc/sonic/sonic_version.yml; each sonic-cfggen probe costs a fresh SSH login and fails anyway
+        branch = 'master'
+        image = 'Unknown'
         session.config.cache.set(PytestConst.IS_SANITIZER_IMAGE, False)
     else:
         branch = get_sonic_branch(topology)
@@ -240,6 +259,10 @@ def pytest_addoption(parser):
                           ' and will set the relevant cli')
     parser.addoption('--is_ipv6', dest="is_ipv6", required=False, action="store_true", default=False,
                      help='On Performance tests, this parameter will determine if the tests run with ipv4 or ipv6')
+    parser.addoption('--min_packet_size', dest="min_packet_size", required=False, action="store_true",
+                     default=False,
+                     help='On Performance tests, when set the test runs with the minimum packet size configured '
+                          'for the chip type and traffic type instead of the default packet size')
     parser.addoption('--parameter_file_location', dest="parameter_file_location", required=False, action='store', default=None,
                      help='location of the parameter file for ar parameters optimiser')
     parser.addoption('--perf-exclude-ports', dest="perf_exclude_ports", required=False,

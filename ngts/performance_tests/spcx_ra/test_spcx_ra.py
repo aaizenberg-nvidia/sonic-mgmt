@@ -313,12 +313,15 @@ class LanesConfig:
             high_ar_threshold = PerfConsts.get_high_ar_threshold(chip_type)
             ar_extended_thresholds = None
         conf_args = {
-            "auto_buffer_mode": "True" if chip_type == "SPC6" else "False",
+            "auto_buffer_mode": "True",
             "congestion_thresh_lo": low_ar_threshold,
             "congestion_thresh_med": mid_ar_threshold,
             "congestion_thresh_hi": high_ar_threshold,
             PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
             **PerfConsts.get_ar_extended_grading_conf_args(chip_type, ar_extended_thresholds),
+            "ecmp_type_stateless": "True",
+            "ecmp_size": PerfConsts.ECMP_SIZE_MAX,
+            "hash_type": "random",
             "two_sided_ar": True,
             "is_ipv6": is_ipv6,
             "is_ipv4": is_ipv4,

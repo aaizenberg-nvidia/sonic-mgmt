@@ -86,8 +86,8 @@ class NvBridgeRevertiveConsts:
     CONN_IS_HEALTHY = "is-healthy"
     STATE_ACTIVE = "active"
 
-    # server-id looks like: chassis-sn-3210987654321-tray-index-1
-    SERVER_ID_RE = re.compile(r"^chassis-sn-\S+-tray-index-\d+$")
+    # server-id looks like: chassis-sn-1823725410024:slot-id-1
+    SERVER_ID_RE = re.compile(r"^chassis-sn-[^:\s]+:slot-id-\d+$")
 
     # --- Revertive-mode policy values --------------------------------
     MODE_NON_REVERTIVE = "non-revertive"

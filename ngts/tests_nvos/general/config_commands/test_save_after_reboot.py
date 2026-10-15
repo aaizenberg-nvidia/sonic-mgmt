@@ -7,9 +7,13 @@ from ngts.nvos_tools.acl.acl import Acl
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
 from ngts.nvos_constants.constants_nvos import FastRecoveryConsts, LinkDetectionConsts, ActionConsts, HealthConsts, \
     FansConsts
-from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ApiType, AclConsts, IpConsts, EventConsts
+from ngts.nvos_constants.constants_nvos import SystemConsts, NvosConst, ApiType, AclConsts, IpConsts, EventConsts, \
+    ConfState
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import (
+    IbInterfaceConsts,
+    NvosConsts,
+)
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
@@ -23,9 +27,10 @@ from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.nmx.Cluster import Cluster
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools
+from ngts.tests_nvos.interfaces.nvl_port.helpers import acp_link_up_timeout
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger()
@@ -147,7 +152,8 @@ def test_save_reboot(engines, devices):
 
         fec_capable = devices.dut.check_fec_capability()
         if fec_capable:
-            selected_port = Tools.RandomizationTool.select_random_port(requested_ports_state=None).get_returned_value()
+            selected_port = Tools.RandomizationTool.select_random_port(
+                requested_ports_state=NvosConsts.LINK_STATE_UP).get_returned_value()
             fec_mode = LinkDetectionConsts.FEC_MODE_DOUBLE
             with allure.step("Set the fec mode to {} for the selected port {} - and apply".format(fec_mode, selected_port.name)):
                 selected_port.interface.link.set(op_param_name=LinkDetectionConsts.FEC_MODE, op_param_value=fec_mode, apply=True, ask_for_confirmation=True).\
@@ -354,9 +360,15 @@ def test_save_reboot(engines, devices):
             if fec_capable:
                 # Platform is FEC capable
                 fec_mode = LinkDetectionConsts.FEC_MODE_DOUBLE
+                with allure.step("Wait for selected port {} to reach LinkUp after reboot".format(
+                        selected_port.name)):
+                    timeout = acp_link_up_timeout(devices) if selected_port.name.startswith('acp') else None
+                    wait_kwargs = {'timeout': timeout} if timeout is not None else {}
+                    selected_port.interface.wait_for_port_state(
+                        NvosConsts.LINK_STATE_UP, **wait_kwargs).verify_result()
                 with allure.step("Verify fec mode is {} which was configured before config save".format(fec_mode)):
-                    link_dict = OutputParsingTool.parse_json_str_to_dictionary(selected_port.interface.link.show()). \
-                        get_returned_value()
+                    link_dict = OutputParsingTool.parse_json_str_to_dictionary(
+                        selected_port.interface.link.show(rev=ConfState.APPLIED)).get_returned_value()
                     ValidationTool.verify_field_value_in_output(link_dict, LinkDetectionConsts.FEC_MODE,
                                                                 fec_mode).verify_result()
 

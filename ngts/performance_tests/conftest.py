@@ -204,6 +204,16 @@ def burst_config():
     return None
 
 
+@pytest.fixture(scope="session")
+def is_min_packet_size(request):
+    """
+    Whether the test should run with the minimum packet size configured for the chip type and traffic type
+    :param request: pytest builtin
+    :return: True when --min_packet_size was supplied with a true value, False otherwise
+    """
+    return request.config.getoption('--min_packet_size')
+
+
 @pytest.fixture(scope='function', autouse=True)
 def basic_test_configuration(request, players, basic_setup_configuration, burst_config: Optional[BurstConfig]):
     mloops_configured = False

@@ -12,11 +12,11 @@
         "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O8C40"]
     },
     "r-bobcat-09_setup": {
-        "default_hwsku": "Mellanox-SN4280-O8C40",
+        "default_hwsku": "Mellanox-SN4280-O28",
         "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O4X96"]
     },
     "r-bobcat-10_setup": {
-        "default_hwsku": "Mellanox-SN4280-O8C40",
+        "default_hwsku": "Mellanox-SN4280-O28",
         "support_hwsku": ["Mellanox-SN4280-O28", "Mellanox-SN4280-O8C80", "Mellanox-SN4280-O4X96"]
     },
     "sonic-bobcat-01-03-ha": {
@@ -67,7 +67,7 @@
     },
     "mtvr-panther-03_setup": {
         "default_hwsku": "Mellanox-SN2700-D40C8S8",
-        "support_hwsku": ["Mellanox-SN2700-D40C8S8"]
+        "support_hwsku": ["Mellanox-SN2700-D40C8S8", "Mellanox-SN2700-D48C8"]
     },
     "sonic-dual-tor-leopard": {
         "default_hwsku": "Mellanox-SN4700-V64",
@@ -208,7 +208,7 @@
     },
     "slm-174_setup": {
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",
-        "support_hwsku": ["Mellanox-SN6600_LD-P128C2"]
+        "support_hwsku": ["Mellanox-SN6600_LD-P128C2", "Mellanox-SN6600_LD-P64O128C2"]
     },
     "slm-16_setup": {
         "default_hwsku": "Mellanox-SN6600_LD-P128C2",

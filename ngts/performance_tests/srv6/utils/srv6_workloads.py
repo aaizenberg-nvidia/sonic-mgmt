@@ -73,16 +73,16 @@ def create_workload1_stream(player_alias, cli_obj, src_ports, dst_port, traffic_
                             mrc1_num_packets=6, mrc2_num_packets=6,
                             send_roce_ack=True, send_rtt_and_probe_ack=True, congestion=False, send_retransmission=True):
     """
-    packet breakdown:
-    +------------------------+------------------+
-    | Packet Type           | Number of Packets |
-    +------------------------+------------------+
-    | MRC1 data packets     | 6                 |
-    | MRC2 data packets     | 6                 |
-    | MRC retransmission    | 1                 |
-    +------------------------+------------------+
-    | Total                 | 13                |
-    +------------------------+------------------+
+    packet breakdown (defaults; each count can be overridden via traffic_parameters):
+    +------------------------+-------------------+---------------------------+
+    | Packet Type            | Number of Packets | traffic_parameters key   |
+    +------------------------+-------------------+---------------------------+
+    | MRC1 data packets      | 6                 | mrc_num_packets           |
+    | MRC2 data packets      | 6                 | mrc_num_packets           |
+    | MRC retransmission     | 1                 | retransmit_num_packets    |
+    +------------------------+-------------------+---------------------------+
+    | Total (default)        | 13                |                           |
+    +------------------------+-------------------+---------------------------+
     """
     mrc1_num_packets = traffic_parameters.get("mrc_num_packets", mrc1_num_packets)
     mrc2_num_packets = traffic_parameters.get("mrc_num_packets", mrc2_num_packets)
@@ -107,7 +107,8 @@ def create_workload1_stream(player_alias, cli_obj, src_ports, dst_port, traffic_
     if send_retransmission:
         dscp = random.choice([MRCConsts.MRC1_RETRANSMISSION_DSCP, MRCConsts.MRC2_RETRANSMISSION_DSCP])
         stream_num = 1 if dscp == MRCConsts.MRC1_RETRANSMISSION_DSCP else 2
-        mrc_retransmit_stream = get_mrc_stream(player_alias, traffic_parameters, 1, src_ports, dst_port,
+        retransmit_num_packets = traffic_parameters.get("retransmit_num_packets", 1)
+        mrc_retransmit_stream = get_mrc_stream(player_alias, traffic_parameters, retransmit_num_packets, src_ports, dst_port,
                                                dscp, mrc_stream_name=f"{stream_num}_RETRANSMIT")
         stream_list.extend([mrc_retransmit_stream])
 
@@ -343,7 +344,7 @@ def get_gfp_streams(player_alias, traffic_parameters, src_ports, dst_port, both=
 def create_no_srh_stream(player_alias, cli_obj, src_ports, dst_port, traffic_parameters, traffic_type,
                          mloops_dict, dut_interfaces_ipv6_configuration_dict, stream_list,
                          entropy_type=NoSrhPerfConsts.ENTROPY_LOW, packet_size=None,
-                         num_packets=NoSrhPerfConsts.NO_SRH_NUM_DATA_PACKETS, **kwargs):
+                         num_packets=NoSrhPerfConsts.NO_SRH_NUM_DATA_PACKETS, speed_ratio=1.0, **kwargs):
     """Create regular IPv6/UDP traffic stream for no-SRH SRv6 testing (no BTH/MRC headers).
 
     For high entropy: each packet gets a different DIPv6 lower 64 bits (many flows).
@@ -362,16 +363,18 @@ def create_no_srh_stream(player_alias, cli_obj, src_ports, dst_port, traffic_par
         entropy_type: ENTROPY_HIGH or ENTROPY_LOW
         packet_size: Override packet size (if None, uses traffic_parameters default)
         num_packets: Number of data packets per stream
+        speed_ratio: Port speed relative to the chip's lowest split; see get_no_srh_data_stream
     """
     set_workload_traffic_parameters(cli_obj, traffic_parameters, mloops_dict, src_ports, dst_port,
                                     dut_interfaces_ipv6_configuration_dict, traffic_type)
     get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
                            num_packets=num_packets, stream_list=stream_list,
-                           entropy_type=entropy_type, packet_size=packet_size)
+                           entropy_type=entropy_type, packet_size=packet_size,
+                           speed_ratio=speed_ratio)
 
 
 def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
-                           num_packets, stream_list, entropy_type, packet_size=None):
+                           num_packets, stream_list, entropy_type, packet_size=None, speed_ratio=1.0):
     """Create no-SRH data streams with configurable DIPv6 entropy.
 
     High entropy: N individual streams, each with a unique DIPv6 (lower 64 bits).
@@ -380,7 +383,9 @@ def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port
 
     Each stream emits `packets_per_dip` copies of its template — scaled
     inversely with packet_size so smaller packets get more in-flight packets
-    to sustain line rate via the mloop. With ~10 packets per pair, 4096B
+    to sustain line rate via the mloop, and directly with the port speed
+    (`speed_ratio`, port speed relative to the chip's lowest split) because
+    faster ports need more packets in flight. With ~10 packets per pair, 4096B
     saturates but 512B under flows; the scaling compensates.
     """
     if packet_size is not None:
@@ -388,12 +393,14 @@ def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port
     actual_pkt_size = traffic_parameters["packet_size"]
     # Scale packets_per_dip inversely with packet_size (relative to the
     # largest packet size in the sweep, which is the reference that hits line
-    # rate at 10 packets/pair). pow(ratio, 0.55) is empirical, balancing
-    # "too few → underflow" and "too many → buffer/drop".
+    # rate at 10 packets/pair) and with the port speed. Both exponents are
+    # empirical, balancing "too few → underflow" and "too many → buffer/drop".
+    # Round to nearest: truncation systematically under-fills (e.g. 3.75 -> 3).
     reference_size = max(NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST)
-    packets_per_dip = max(1, int(math.pow(
-        reference_size / max(actual_pkt_size, 1),
-        NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT)))
+    size_factor = math.pow(reference_size / max(actual_pkt_size, 1),
+                           NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT)
+    speed_factor = math.pow(speed_ratio, NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT)
+    packets_per_dip = max(1, int(size_factor * speed_factor + 0.5))
     dscp = NoSrhPerfConsts.NO_SRH_DATA_DSCP
     tc = dscp_to_tc(dscp, ecn=PerfConsts.ECN_CAPABLE_TRANSPORT)
 

@@ -132,7 +132,7 @@ class TestCpuRamHddUsage:
         :param request: pytest build-in
         :param expected_ram_usage_dict: expected_ram_usage_dict fixture
         """
-        if is_redmine_issue_active([5152247])[0]:
+        if is_redmine_issue_active([4975253])[0]:
             expected_ram_usage_dict['telemetry'] += 10
         if is_redmine_issue_active([5226570])[0] and re.search('SN5640', platform_params.hwsku):
             expected_ram_usage_dict['lldp_syncd'] = 25

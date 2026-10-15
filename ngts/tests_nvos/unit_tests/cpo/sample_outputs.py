@@ -8,7 +8,17 @@ SIMX test topology (4 CPOs, 4 OEs + 1 ELS each, 64 channels, 16 lasers).
 
 from ngts.nvos_tools.Devices.cpo.CpoTopology import CpoTopology
 
-TOPOLOGY = CpoTopology(cpo_count=4)
+# per-laser `nv show fae platform laser-source` statuses (captured on portia-chipsim-82, dev-vmodule-cpo-nvl7-001)
+_LASER_OPERATION_STATUS = {
+    "fiber-check": "N/A",
+    "laser-tuning": "In progress",
+    "laser-on": "Succeeded",
+    "laser-off": "Failed",
+    "laser-fine-tune": "Failed (fiber check was not done)",
+    "laser-wavelength": "Failed (no power setpoint)",
+}
+
+TOPOLOGY = CpoTopology(cpo_count=4, laser_operation_steps=tuple(_LASER_OPERATION_STATUS))
 
 # 2 ports per CPO in this fixture; the real port count comes from the DUT and is
 # only cross-checked (cpo_to_ports vs port_to_cpo), never asserted as a constant.
@@ -81,7 +91,7 @@ def make_cpo_summary(cpo: str, ports: list[str] | None = None) -> dict:
         "fw-version": "42.40.15",
         "ports": ", ".join(ports if ports is not None else _PORTS_PER_CPO[cpo]),
         "laser-sources": ", ".join(TOPOLOGY.els_for_cpo(cpo)),
-        "optical-engines": _oe_container(cpo),
+        "optical-engine": _oe_container(cpo),
     }
 
 
@@ -98,9 +108,9 @@ def make_cpo_detail(cpo: str, ports: list[str] | None = None) -> dict:
         "fw-version": "42.40.15",
         "ports": ", ".join(ports if ports is not None else _PORTS_PER_CPO[cpo]),
         "laser-sources": ", ".join(TOPOLOGY.els_for_cpo(cpo)),
-        "thresholds": _cpo_thresholds(),
-        "optical-engines": _oe_container(cpo),
-        "channels": {ch: _channel_entry() for ch in TOPOLOGY.channel_names()},
+        "threshold": _cpo_thresholds(),
+        "optical-engine": _oe_container(cpo),
+        "channel": {ch: _channel_entry() for ch in TOPOLOGY.channel_names()},
     }
 
 
@@ -149,11 +159,7 @@ def make_laser_source_detail(els: str) -> dict:
         "vendor-sn": "MT2443FT01035",
         "fw-version": "42.40.15",
         "parent": TOPOLOGY.cpo_for_els(els),
-        "temperature": {
-            "temperature": "28.00 C",
-            "high-alarm-threshold": "80.00 C",
-            "high-warning-threshold": "60.00 C",
-        },
+        "temperature": "28.00 C",
         "power-consumption": "3.52W",
         "icc-current": "122mA",
         "threshold": {
@@ -171,12 +177,12 @@ def make_interface_cpo(cpo: str, oe: str, channels: list[str]) -> dict:
     lists); only the oe/channel blocks are the port's slice.
     """
     parent_detail = make_cpo_detail(cpo)
-    sliced = ("optical-engines", "channels")
+    sliced = ("optical-engine", "channel")
     return {
         "parent": cpo,
         **{field: parent_detail[field] for field in parent_detail if field not in sliced},
-        "optical-engines": {oe: _oe_entry(1)},
-        "channels": {ch: _channel_entry() for ch in channels},
+        "optical-engine": {oe: _oe_entry(1)},
+        "channel": {ch: _channel_entry() for ch in channels},
     }
 
 
@@ -206,36 +212,9 @@ SHOW_INTERFACE_CPO_SW8P1S1 = make_interface_cpo(cpo="cpo2", oe="oe6", channels=[
 # port -> parent cpo, as reported by `nv show interface <port> cpo` per port
 PORT_TO_CPO = {port: cpo for cpo, ports in _PORTS_PER_CPO.items() for port in ports}
 
-# `nv show fae system cpo els-initialization` (Portia: 5 steps)
-SHOW_FAE_ELS_INITIALIZATION = {
-    els: {
-        "fiber-check": "failed",
-        "laser-tuning": "N/A",
-        "laser-up": "N/A",
-        "laser-fine-tune": "failed",
-        "power-setpoint": "failed",
-    }
-    for els in TOPOLOGY.els_names()
-}
-
-# `nv show fae system cpo els-initialization-per-laser` (per-laser breakdown).
-# NOTE: per the HLD sample this output keys lasers as laser1..laser16 (no dash),
-# UNLIKE the laser-source show / activate action which use laser-1..laser-16.
-# Pin the real key format on the first DUT run.
-SHOW_FAE_ELS_INITIALIZATION_PER_LASER = {
-    els: {
-        "els-initialization": {
-            f"laser{i}": {
-                "fiber-check": "failed",
-                "fiber-tuning": "N/A",
-                "laser-up": "not-reached",
-                "laser-fine-tune": "failed",
-                "power-setpoint": "failed",
-                "error": "Operation failed - No specified reason",
-            }
-            for i in range(1, TOPOLOGY.lasers_per_els + 1)
-        }
-    }
+# `nv show fae platform laser-source`
+SHOW_FAE_PLATFORM_LASER_SOURCE = {
+    els: {"laser": {laser: dict(_LASER_OPERATION_STATUS) for laser in TOPOLOGY.laser_names()}}
     for els in TOPOLOGY.els_names()
 }
 

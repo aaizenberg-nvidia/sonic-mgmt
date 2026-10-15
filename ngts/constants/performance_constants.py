@@ -168,6 +168,7 @@ class PerfConsts:
     MED_AR_THRESHOLD_EXTENDED_SPC6 = 383
     HIGH_AR_THRESHOLD_EXTENDED_SPC6 = 567
     AR_EXTENDED_THRESHOLDS_SPC6 = (750, 933, 1117, 1300)
+    ECMP_SIZE_MAX = 4096
     SDK_GENERATION_SECONDS_THRESHOLD = 30
     PERF_COUNTERS_ALLOWED_DEVIATION = 2.5
     DEFAULT_FAIRNESS_THRESHOLD = 0.05
@@ -179,8 +180,11 @@ class PerfConsts:
     # Paths and Directories
 
     DVS_RUN_TEST_PATH = "/root/sys_sdk/sx_sdk_py_tests/tests/run_tests.py"
+    # The runner's per-invocation cable table runs mlxcables on every port (~10-18s) and is never consumed here
+    DVS_RUN_TEST_CMD = f"{DVS_RUN_TEST_PATH} --skip-cable-info"
     PORTS_JSON_FILENAME = "ports.json"
     PORTS_JSON_PATH = f"/{PORTS_JSON_FILENAME}"
+    PERF_SYS_SDK_CHANGE_FILE = "/tmp/perf_sys_sdk_change"
     DEFAULT_PERF_TEMPLATES_DIR = "performance_config_templates"
     CONFIG_FILES_DIR = os.path.join(BugHandlerConst.NGTS_PATH, 'tests/performance/config_files')
     REQUIRMENTS_DIR = os.path.join(BugHandlerConst.NGTS_PATH, 'performance_tests/')
@@ -682,6 +686,7 @@ class Cl_Consts:
         'Spectrum-6': ['swp65s0', 'swp65s1']
     }
     CL_HOME_DIR = "/home/cumulus"
+    CL_SDK_CLEAR_ALL_COUNTERS_FORCE_CMD = "sudo sx_api_port_counter_clear_all.py --force"
     CL_PYTHON_PATH = "/home/cumulus/sdk_env/bin/python3.11"
     CL_GA_IMAGE = "/auto/sw_system_project/NVOS_INFRA/cumulus_images/GA/5.10/cumulus-linux-mlx-amd64.bin.devsigned"
     COMMON_IP_PREFIX_LEFT = "130"
@@ -922,6 +927,23 @@ EGRESS_PORT_GROUP_NAME = "egress_ports"
 INGRESS_PORT_GROUP_NAME = "ingress_ports"
 
 
+@dataclass
+class MinPacketSizeConfig:
+    """Minimum SRv6 bisection data packet params for one ASIC generation.
+
+    The minimum differs per ASIC generation, so it is looked up by chip type
+    rather than hardcoded.
+
+    Attributes:
+        packet_size: MRC data packet size (bytes) at the minimum.
+        mrc_num_packets: MRC data packets per stream at the minimum.
+        retransmit_num_packets: MRC retransmission packets per stream at the minimum.
+    """
+    packet_size: int
+    mrc_num_packets: int
+    retransmit_num_packets: int
+
+
 class MRCConsts:
     # Cumulus SRv6 scheduler configuration:
     # - Select one entry from CUMULUS_DWRR_PROFILES with CUMULUS_DWRR_PROFILE.
@@ -1118,6 +1140,8 @@ class MRCConsts:
     # Many to one SRv6 DUT TX Util threshold was lowered to 0.73 because of bug #4527474
     TRIMMING_SRV6_DUT_TX_UTIL_TH = 0.73
     CL_TRIMMING_DUT_TX_UTIL_TH = 0.5
+    # SPC6 trimming DUT TX Util threshold was lowered to 0.85 because of bug #5239628
+    SPC6_TRIMMING_DUT_TX_UTIL_TH = 0.85
     BUFFER_CELL_SIZE = 192
     BUFFER_CELL_SIZE_SPC6 = 256
     BUFFER_CELL_SIZE_BY_CHIP_TYPE = {
@@ -1280,6 +1304,17 @@ class MRCConsts:
         },
     }
 
+    # Minimum bisection data packet params per chip type and per traffic type.
+    # Only SRv6 traffic has a measured minimum; a chip type or traffic type absent here is skipped by the test.
+    MIN_PACKET_SIZE_BY_CHIP_TYPE = {
+        "SPC5": {
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=462, mrc_num_packets=66, retransmit_num_packets=13),
+        },
+        "SPC6": {
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=1496, mrc_num_packets=23, retransmit_num_packets=4),
+        },
+    }
+
 
 class NoSrhPerfConsts:
     """Constants for SRv6 no-SRH shift-left performance tests (Feature #4894969)."""
@@ -1292,9 +1327,8 @@ class NoSrhPerfConsts:
     PACKET_SIZE_SWEEP_LIST = [370, 512, 1024, 2048, 4096]
 
     # Per-chip minimum packet size for the all-ports bisection scenario.
-    # SPC4/SPC5 (100G/lane) sustain line rate down to 370B; SPC6 (200G/lane)
-    # needs 1024B to sustain line rate on all-ports.
-    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 1024}
+    # SPC6 (200G/lane) needs 1024B to sustain line rate on all-ports.
+    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 512, "SPC5": 512, "SPC6": 1024}
 
     ENTROPY_HIGH = "high_entropy"
     ENTROPY_LOW = "low_entropy"
@@ -1317,8 +1351,14 @@ class NoSrhPerfConsts:
 
     NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT = 0.55
 
+    # Faster ports need more in-flight packets to reach line rate. Packets per DIP are also scaled by
+    # (port speed / port speed of the chip's lowest split) ** this exponent.
+    NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT = 0.6
+
+    # Keys are lanes per port; the largest key is the cage width in lanes.
+    # On Cumulus it sets ports per cage (cage width // lanes per port), so it must match the platform.
     SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT = {
-        "SPC4": {1: "4x100G", 2: "2x200G[100G]", 4: "1x400G"},
+        "SPC4": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x800G[400G]"},
         "SPC5": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x400G"},
         "SPC6": {1: "8x200G[100G]", 2: "4x400G[200G]", 4: "2x800G[400G]", 8: "1x800G"},
     }

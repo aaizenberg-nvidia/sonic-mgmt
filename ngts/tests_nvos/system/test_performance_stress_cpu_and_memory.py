@@ -81,10 +81,11 @@ def test_parallel_cli_commands_bad_flow(engines, devices):
         6. After stress: validate memory, CPU, and disk I/O thresholds
         7. Close all sessions
     """
-    run_parallel_cli_commands(engines, devices, min_sessions=90, stress_duration_seconds=240, should_fail=True, disk_io_threshold=250000)
+    run_parallel_cli_commands(engines, devices, min_sessions=90, stress_duration_seconds=240, should_fail=True,
+                              disk_io_threshold=250000, openapi_sessions=30)
 
 
-def run_parallel_cli_commands(engines, devices, min_sessions: int = 40, stress_duration_seconds: int = 120, should_fail: bool = False, disk_io_threshold: int = 200000):
+def run_parallel_cli_commands(engines, devices, min_sessions: int = 40, stress_duration_seconds: int = 120, should_fail: bool = False, disk_io_threshold: int = 200000, openapi_sessions: int = 0):
     with allure.step(f"Run parallel CLI commands with at least {min_sessions} sessions and stress for {stress_duration_seconds} seconds"):
         system = System()
         sessions = []
@@ -121,6 +122,9 @@ def run_parallel_cli_commands(engines, devices, min_sessions: int = 40, stress_d
 
         command_lists = build_command_lists(devices, engines.dut)
         n_stress_sessions = max_sessions - 1  # one SSH session is reserved for memory/CPU monitor
+        # The first list is the only one with an OpenAPI call. Give it a fixed number of sessions so the
+        # REST load does not depend on how many sessions randomly picked it; the rest still pick at random.
+        n_openapi_sessions = min(openapi_sessions, n_stress_sessions)
 
         with allure.step("Capture disk stats before stress"):
             pre_stress_output = OutputParsingTool.run_iostat_and_parse(engines.dut)
@@ -137,7 +141,8 @@ def run_parallel_cli_commands(engines, devices, min_sessions: int = 40, stress_d
                 )
                 session_futures = [
                     executor.submit(
-                        run_session, sessions[i], command_lists, stop_event, stress_duration_seconds
+                        run_session, sessions[i], command_lists, stop_event, stress_duration_seconds,
+                        0 if i < n_openapi_sessions else None
                     )
                     for i in range(n_stress_sessions)
                 ]
@@ -296,8 +301,10 @@ def run_session(
     commands_list: list,
     stop_event: threading.Event,
     stress_duration_sec: int,
+    list_index: int = None,
 ):
-    """One random list is chosen for this session; that list is run in a loop for *stress_duration_sec*.
+    """One list is chosen for this session (random unless *list_index* is given); that list is run in a loop
+    for *stress_duration_sec*.
 
     Returns:
         (pick_counts, session_failed): *pick_counts* has exactly one 1 (list assignment). *session_failed* is
@@ -305,7 +312,8 @@ def run_session(
     """
     session_failed = False
     pick_counts = [0] * len(commands_list)
-    list_index = random.randint(0, len(commands_list) - 1)
+    if list_index is None:
+        list_index = random.randint(0, len(commands_list) - 1)
     pick_counts[list_index] = 1
     commands = commands_list[list_index]
     label = ', '.join(_command_list_entry_label(c) for c in commands)

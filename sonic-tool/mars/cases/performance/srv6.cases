@@ -24,6 +24,15 @@
     </cmd>
   </case>
   <case>
+    <name> SRv6 leaf min packet size test </name>
+    <info> SRv6 leaf min packet size test </info>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script "/root/mars/workspace/sonic-mgmt/ngts/performance_tests/srv6/leaf/test_srv6_leaf.py::TestSRv6Leaf::test_bisection_srv6[False-SRv6-workload_1]" --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --target_cli_type=[[conf:extra_info.target_cli_type]] --showlocals  --ignore-conditional-mark --disable_loganalyzer --min_packet_size\'"</static_args>
+      </params>
+    </cmd>
+  </case>
+  <case>
     <name> SRv6 spine tests </name>
     <info> SRv6 spine tests </info>
     <cmd>

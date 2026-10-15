@@ -9,6 +9,9 @@ from typing import Optional, Tuple
 
 import pytest
 
+from ngts.nvos_constants.constants_nvos import OutputFormat
+from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
+from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 
 # (test_iface, tx_iface, rx_iface) — tried in order when probing the DUT.
@@ -44,13 +47,39 @@ def _swp_sort_key(name: str) -> Tuple[int, ...]:
     return tuple(nums) if nums else (0,)
 
 
+def _interface_show_text(dut, iface: str = "", *, output_format: str = OutputFormat.json) -> str:
+    """``nv show interface [iface]`` via the interface component (NVUE or OpenAPI)."""
+    node = Interface(None, port_name=iface) if iface else Interface(None)
+    try:
+        result = node.show(
+            dut_engine=dut, output_format=output_format, if_returned_value=False
+        )
+    except Exception:  # noqa: BLE001 - discovery must not fail the caller
+        return ""
+    result.ignore_result()
+    raw = result.returned_value
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw)
+    if raw:
+        return str(raw)
+    return str(result.info or "")
+
+
+def _interface_show_dict(text: str):
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = OutputParsingTool.parse_json_str_to_dictionary(text)
+        parsed.ignore_result()
+        payload = parsed.returned_value if parsed.result else None
+    return payload if isinstance(payload, dict) else None
+
+
 def dut_interface_exists(dut, iface: str) -> bool:
     """True when ``nv show interface <iface>`` returns a real interface object."""
-    out = dut.run_cmd(
-        f"nv show interface {iface} -o json 2>&1",
-        validate=False,
-        print_output=False,
-    )
+    out = _interface_show_text(dut, iface)
     lowered = out.lower()
     if "does not exist" in lowered or "invalid command" in lowered:
         return False
@@ -61,26 +90,15 @@ def dut_interface_exists(dut, iface: str) -> bool:
 
 def discover_swp_interfaces_on_dut(dut) -> Tuple[str, ...]:
     """Return sorted front-panel port names (Cumulus ``swp*`` / NVOS ``sw*p*``)."""
-    out = dut.run_cmd(
-        "nv show interface -o json 2>&1",
-        validate=False,
-        print_output=False,
-    )
+    out = _interface_show_text(dut)
     if "error:" not in out.lower() and "does not exist" not in out.lower():
-        try:
-            payload = json.loads(out)
-            if isinstance(payload, dict):
-                names = [k for k in payload if is_front_panel_port(k)]
-                if names:
-                    return tuple(sorted(names, key=_swp_sort_key))
-        except json.JSONDecodeError:
-            pass
+        payload = _interface_show_dict(out)
+        if isinstance(payload, dict):
+            names = [k for k in payload if is_front_panel_port(k)]
+            if names:
+                return tuple(sorted(names, key=_swp_sort_key))
 
-    table = dut.run_cmd(
-        "nv show interface 2>&1",
-        validate=False,
-        print_output=False,
-    )
+    table = _interface_show_text(dut, output_format=OutputFormat.auto)
     names = sorted(
         {m.group(0) for m in _SWP_NAME_RE.finditer(table)},
         key=_swp_sort_key,

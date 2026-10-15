@@ -11,6 +11,7 @@ all:
       vars:
         topologies:
           - t1-isolated-d28u4
+          - t0-isolated-d32u32s2-mix
 
       children:
         server_23:

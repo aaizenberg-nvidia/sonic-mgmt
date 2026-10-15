@@ -1,2 +1,2 @@
 Hostname,ManagementIp,HwSku,Type,Protocol,Os
-slm-60,10.220.12.60/22,Mellanox-SN6600_LD-P64O128C2,DevSonic,,sonic
+slm-60,10.220.12.60/22,ACS-SN6600_LD,DevSonic,,sonic

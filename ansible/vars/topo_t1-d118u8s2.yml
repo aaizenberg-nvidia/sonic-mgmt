@@ -528,6 +528,8 @@ configuration_properties:
     swrole: spine
   tor:
     swrole: tor
+  pleaf:
+    swrole: pleaf
 
 configuration:
   ARISTA01T0:
@@ -3171,6 +3173,7 @@ configuration:
   ARISTA01PT1:
     properties:
     - common
+    - pleaf
     bgp:
       asn: 65101
       peers:
@@ -3190,6 +3193,7 @@ configuration:
   ARISTA02PT1:
     properties:
     - common
+    - pleaf
     bgp:
       asn: 65102
       peers:

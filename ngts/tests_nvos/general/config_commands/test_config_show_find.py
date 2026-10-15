@@ -10,7 +10,7 @@ from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger()

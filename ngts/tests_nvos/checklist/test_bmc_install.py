@@ -20,6 +20,7 @@ logger = logging.getLogger()
 
 @pytest.mark.timeout(60 * MINUTE, func_only=True)
 @pytest.mark.bmc
+@pytest.mark.cumulus
 @pytest.mark.dut_reboot
 @pytest.mark.parametrize('test_api', random.sample(ApiType.ALL_TYPES, 1))
 @pytest.mark.parametrize("platform_component_with_clear", ["bmc"], indirect=True)
@@ -44,7 +45,10 @@ def test_bmc_install(engines, devices, topology_obj, test_api, platform_componen
     with allure.step('Check whether device has BMC'):
         bmc_older_version_path = getattr(device, 'bmc_older_version_path', None)
         if bmc_older_version_path is None:
-            pytest.fail("Device does not have BMC. Failing the test on this setup.")
+            # Either the platform has no BMC at all, or it has one with no image
+            # pair that is safe to burn. SN6800 is the latter: the SPC6 images in
+            # our catalog do not boot on it. Neither case is a test failure.
+            pytest.skip("No BMC firmware image pair is defined for this platform")
 
     TestToolkit.tested_api = test_api
     component_name = platform_component_with_clear.get_resource_basename().lower()

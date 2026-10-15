@@ -20,7 +20,7 @@ from ngts.tests_nvos.general.security.password_hardening.PwhTools import PwhTool
 from ngts.tests_nvos.general.security.security_test_tools.constants import AaaConsts
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "yleibovichwe"
 
 
 @pytest.mark.cumulus

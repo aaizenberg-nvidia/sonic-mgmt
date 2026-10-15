@@ -71,6 +71,8 @@ class CumulusConsts:
     TECHSUPPORT_ACTION_DELETE_SUCCESS_MESSAGE = "File Delete Succeeded"
     TECHSUPPORT_THRESHOLD = 150
     TECHSUPPORT_FILE_NOT_FOUND_MESSAGE = "File not found: nonexist"
+    TECHSUPPORT_MALFORMED_REMOTE_URL_MESSAGE = "Malformed Remote URL"
+    TECHSUPPORT_UPLOAD_FAILED_MESSAGE = "Failed to upload file"
     NTP_SYNCHRONIZATION_MAX_TIME = 300
     NTP_LOGS_COMPONENT_ID = "nvue"
     LOG_MSG_SET_NTP = ["nv set system ntp server 10.80.74.100 state"]
@@ -535,6 +537,7 @@ class ActionConsts:
     BOOT_NEXT = "boot-next"
     GENERATE = "generate"
     FETCH = "fetch"
+    LIST = 'list'
     ENABLE = 'enable'
     DISABLE = 'disable'
     DELETE = 'delete'
@@ -838,6 +841,7 @@ class SystemConsts:
     STARTUP_FILE_SAVE_CONFIG_TRUE = 'startup_file_config_save.json'
     STARTUP_FILE_INTERACTIVE_COMMANDS = 'startup_file_interactive.json'
     NMX_POSITIVE_JSON = 'ztp_nmx.json'
+    NMX_COMMANDS_ONLY_JSON = 'ztp_nmx_commands_only.json'
     NMX_NOT_EXIST_FILE_JSON = 'ztp_nmx_negative_wrong_file.json'
     NMX_BAD_COMMANDS = 'ztp_nmx_negative_bad_commands.json'
     CONNECTIVITY_IPV4_IPV6 = 'ping_ipv4_ipv6.json'
@@ -2406,10 +2410,9 @@ class Cpov2Consts:
     ELS_STATUS_REMOVED = "Removed"
 
     # sub-trees - these double as the CLI path segments of the drill-down
-    # commands (`... cpo1 optical-engines oe1`, `... cpo1 channels channel-3`)
-    THRESHOLDS = "thresholds"
-    OE = "optical-engines"
-    CHANNEL = "channels"
+    # commands (`... cpo1 optical-engine oe1`, `... cpo1 channel channel-3`)
+    OE = "optical-engine"
+    CHANNEL = "channel"
     LASER = "laser"
 
     # channel fields
@@ -2457,10 +2460,11 @@ class Cpov2Consts:
     DIAGNOSTICS_STATUS = "diagnostics-status"
     TEMPERATURE = "temperature"
     POWER = "power"
+    CURRENT = "current"
     ALARM_STATUS = "alarm-status"
     ALARM_SEVERITY = "alarm-severity"
 
-    # thresholds: `nv show platform cpo <id>` uses THRESHOLDS (plural), keyed by
+    # thresholds: `nv show platform cpo <id>` uses THRESHOLD, keyed by
     # measured value (rx-power / tx-power / laser-source-input-power) with the
     # four bounds below nested under each.
     HIGH_ALARM = "high-alarm"
@@ -2478,25 +2482,18 @@ class Cpov2Consts:
     TX_POWER_LOWER = "tx-power-lower"
     THRESHOLD = "threshold"
 
-    # FAE: `nv action activate fae platform laser-source <els-id>` named params
-    # (NVUE syntax keeps the 'laser'/'step' keywords, e.g. 'laser laser-4 step laser-up')
+    # `nv action activate [fae] platform laser-source <els-id>` named params
+    # (NVUE syntax keeps the 'laser'/'step' keywords, e.g. 'laser laser-4 step laser-on')
     STEP = "step"
     STEP_FIBER_CHECK = "fiber-check"
     STEP_LASER_TUNING = "laser-tuning"
-    STEP_LASER_UP = "laser-up"
+    STEP_LASER_ON = "laser-on"
+    STEP_LASER_OFF = "laser-off"
     STEP_LASER_FINE_TUNE = "laser-fine-tune"
-    STEP_POWER_SETPOINT = "power-setpoint"
-    # steps 1-3 run by default when no step is given; all 5 are valid step names
-    DEFAULT_ACTIVATE_STEPS = [STEP_FIBER_CHECK, STEP_LASER_TUNING, STEP_LASER_UP]
-    ALL_ACTIVATE_STEPS = DEFAULT_ACTIVATE_STEPS + [STEP_LASER_FINE_TUNE, STEP_POWER_SETPOINT]
+    STEP_LASER_WAVELENGTH = "laser-wavelength"
 
-    # FAE: `nv show/set/unset fae system cpo` fields (CLI uses 'z' spelling
-    # els-initialization, unlike the HLD section headers)
+    # FAE: `nv show/set/unset fae system cpo` fields
     CPO_DUMP_STATE = "cpo-dump-state"
-    ELS_INITIALIZATION = "els-initialization"
-    ELS_INITIALIZATION_PER_LASER = "els-initialization-per-laser"
-    INIT_FIBER_TUNING = "fiber-tuning"
-    INIT_ERROR = "error"
 
     # system-health instance-name regexes (component types live in
     # HealthConsts.Component.CPO / Laser_Source). \Z-anchored because they are
@@ -3162,6 +3159,9 @@ class IssuConsts:
     ERROR_OPENSM_REACH_TIMEOUT = 'No permission to perform ISSU from the SM'
     ERROR_DOWNGRADE_NOT_ALLOWED = ('Error: Action failed with the following issue:\n'
                                    '  ISSU does not support downgrade')
+    ERROR_ISSU_WITH_IB_ROUTING = 'ISSU is not supported when IB routing is enabled'
+    # First NVOS build that rejects ISSU while ib-routing is enabled
+    IB_ROUTING_PREVENTION_MIN_VERSION = '25.03.1950-000'
     ERROR_INVALID_PARAM = "Error: Invalid parameter: 'invalid-flag'"
     LOG_MSG_LIST = ['issue: No permission to perform ISSU from the SM',
                     'issue: System must be rebooted during ISSU',

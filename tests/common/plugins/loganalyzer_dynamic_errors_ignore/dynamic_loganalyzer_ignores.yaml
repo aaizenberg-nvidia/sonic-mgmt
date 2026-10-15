@@ -506,6 +506,7 @@
   - '.* ERR syncd#SDK: \[SAI_PORT.ERR\] .*mlnx_sai_port.c\[.*\]- mlnx_port_speeds_merge: Port \[.*\] configuration doesn''t match mask for \d+ lanes.*'
   - '.* ERR syncd#SDK: :- processQuadEvent: attr: SAI_PORT_ATTR_SPEED: \d+.*'
   - '.* ERR swss#orchagent: :- handleSaiSetStatus: Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation.*'
+  - '.* ERR swss#orchagent: :- (?:start|handleSaiFailure): Encountered failure in set operation, SAI API: SAI_API_PORT, status: SAI_STATUS_INVALID_ATTR_VALUE_0.*'
   - '.* ERR swss#orchagent: :- doPortTask: Failed to set port Ethernet\d+ speed from \d+ to \d+.*'
   - '.* ERR syncd#SDK: \[SAI_PORT.ERR\] .*mlnx_sai_port.c\[\d+\]- mlnx_port_update_speed_sp2: Failed to set port .* rate - Parameter Error.'
   - '.* ERR syncd#SDK: \[SAI_PORT.ERR\] .*mlnx_sai_port.c\[\d+\]- mlnx_port_update_speed: Failed to apply speed/intf bitmap \[0x.*\] for port\[0x.*\].'

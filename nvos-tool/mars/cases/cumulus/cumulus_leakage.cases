@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+  <global>
+    <Test>
+      <group> Cumulus </group>
+      <name> SPC-6 Leakage Detection </name>
+      <info> Leak injection and cross-surface validation: NVUE, smonctl, REST, PNE, gNMI, OTEL, BMC </info>
+      <owner> Guy Paz Ben Itzhak </owner>
+    </Test>
+    <Case>
+      <tags> Leakage detection </tags>
+      <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+      <tout> 10800 </tout>
+      <tags>ALL</tags>
+    </Case>
+  </global>
+
+  <case>
+    <name> Leakage Detection SPC6 </name>
+    <info> Requires a Spectrum-6 DUT; the module gate skips cleanly where leak sensors are absent </info>
+    <tout> 10800 </tout>
+    <cmd>
+      <params>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/platform/test_platform_leakage_spc6.py --raw_options "\' --rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m cumulus --log-level=INFO --clean-alluredir --alluredir=/tmp/allure-results --disable_cli_coverage --disable_loganalyzer --showlocals  [[conf:extra_info.additional_options]]  --timeout 10000   \'"</static_args>
+      </params>
+    </cmd>
+  </case>
+</CASEDEF>

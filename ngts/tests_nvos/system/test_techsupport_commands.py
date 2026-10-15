@@ -1,8 +1,9 @@
 import datetime
+import shlex
 
 import pytest
 
-from ngts.nvos_constants.constants_nvos import SystemConsts
+from ngts.nvos_constants.constants_nvos import ApiType, SystemConsts
 from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.constants import MINUTE
@@ -30,6 +31,7 @@ def rotate_logs():
 def test_techsupport_show_and_since(engines, test_name, random_api, devices, serial_log_analyzers):
     """
     Combined test for show format validation, folder name validation, and since functionality.
+    Cumulus uses regular generation because its NVUE action does not support "since".
     Uses single generation since test_techsupport_file_operations validates file accumulation with 4 files.
 
     Test flow:
@@ -47,56 +49,68 @@ def test_techsupport_show_and_since(engines, test_name, random_api, devices, ser
     path = devices.dut.techsupport_files_path
     file1 = None
     folder = None
+    is_cumulus = devices.dut.is_eth()
 
     with allure.step("Cleanup sdk files before running the test"):
         engines.dut.run_cmd("sudo rm -rf /var/log/mellanox/sdk* 2>/dev/null || true")
 
     with allure.step('Test techsupport show and since functionality'):
-        # --- INVALID DATE HANDLING (no generation) ---
-        with allure.independent_step('Invalid date handling'):
-            invalid_date_syntax = '20206610'
-            with allure.step(f'Validate generate fails with invalid date {invalid_date_syntax}'):
-                output, duration = system.techsupport.action_generate(option=SystemConsts.ACTIONS_GENERATE_SINCE,
-                                                                      since_time=invalid_date_syntax)
-                assert any(msg in output for msg in ['Action failed with the following', 'invalid date']), \
-                    f"Expected error message for invalid date, got: {output}"
+        # Keep Cumulus dual-API coverage to generation options supported by both APIs.
+        if not is_cumulus:
+            # --- INVALID DATE HANDLING (no generation) ---
+            with allure.independent_step('Invalid date handling'):
+                invalid_date_syntax = '20206610'
+                with allure.step(f'Validate generate fails with invalid date {invalid_date_syntax}'):
+                    output, duration = system.techsupport.action_generate(option=SystemConsts.ACTIONS_GENERATE_SINCE,
+                                                                          since_time=invalid_date_syntax)
+                    assert any(msg in output for msg in ['Action failed with the following', 'invalid date']), \
+                        f"Expected error message for invalid date, got: {output}"
 
-            invalid_date_syntax = 'aabbccdd'
-            with allure.step(f'Validate generate fails with invalid date {invalid_date_syntax}'):
-                output, duration = system.techsupport.action_generate(option=SystemConsts.ACTIONS_GENERATE_SINCE,
-                                                                      since_time=invalid_date_syntax)
-                assert any(msg in output for msg in ['Action failed with the following', 'invalid date']), \
-                    f"Expected error message for invalid date, got: {output}"
+                invalid_date_syntax = 'aabbccdd'
+                with allure.step(f'Validate generate fails with invalid date {invalid_date_syntax}'):
+                    output, duration = system.techsupport.action_generate(option=SystemConsts.ACTIONS_GENERATE_SINCE,
+                                                                          since_time=invalid_date_syntax)
+                    assert any(msg in output for msg in ['Action failed with the following', 'invalid date']), \
+                        f"Expected error message for invalid date, got: {output}"
 
         # --- GENERATE WITH SINCE PARAMETER ---
-        with allure.independent_step('Generate tech-support with since parameter'):
+        generate_step = 'Generate tech-support' if is_cumulus else 'Generate tech-support with since parameter'
+        with allure.independent_step(generate_step):
             output_dictionary_before = list(Tools.OutputParsingTool.parse_show_files_to_dict(
                 system.techsupport.files.show()).get_returned_value().values())
 
-            yesterday = datetime.datetime.today() - datetime.timedelta(days=1)
-            yesterday_str = yesterday.strftime("%Y%m%d")
-
-            with serial_analyzer.stage("Generate tech-support with since"):
-                folder, duration = system.techsupport.action_generate(
-                    engines.dut, SystemConsts.ACTIONS_GENERATE_SINCE, yesterday_str, test_name=test_name)
+            if is_cumulus:
+                with serial_analyzer.stage("Generate tech-support"):
+                    folder, duration = system.techsupport.action_generate(engines.dut, test_name=test_name)
+            else:
+                yesterday = datetime.datetime.today() - datetime.timedelta(days=1)
+                yesterday_str = yesterday.strftime("%Y%m%d")
+                with serial_analyzer.stage("Generate tech-support with since"):
+                    folder, duration = system.techsupport.action_generate(
+                        engines.dut, SystemConsts.ACTIONS_GENERATE_SINCE, yesterday_str, test_name=test_name)
 
             OperationTime.verify_operation_time(duration, operation, devices).verify_result()
             file1 = system.techsupport.file_name
 
         # --- SINCE FUNCTIONALITY VALIDATION ---
-        with allure.independent_step('Validate since functionality'):
+        validation_step = 'Validate tech-support generation' if is_cumulus else 'Validate since functionality'
+        with allure.independent_step(validation_step):
             output_dictionary_after = list(Tools.OutputParsingTool.parse_show_files_to_dict(
                 system.techsupport.files.show()).get_returned_value().values())
             assert folder in output_dictionary_after, \
-                f"Tech-support folder {folder} not found in show output after generation with since"
+                f"Tech-support folder {folder} not found in show output after generation"
             validate_techsupport_output(output_dictionary_before, output_dictionary_after, 1)
 
         # --- FOLDER NAME VALIDATION ---
         with allure.independent_step('Validate folder name format'):
             system_output = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.show()).get_returned_value()
             hostname = system_output[SystemConsts.HOSTNAME]
-            assert 'nvos_dump_' + hostname in folder, \
-                f'Tech-support name should contain nvos_dump_{hostname}, got: {folder}'
+            if is_cumulus:
+                assert 'cl_support_' + hostname in folder, \
+                    f'Tech-support name should contain cl_support_{hostname}, got: {folder}'
+            else:
+                assert 'nvos_dump_' + hostname in folder, \
+                    f'Tech-support name should contain nvos_dump_{hostname}, got: {folder}'
 
         # --- SHOW FORMAT VALIDATION ---
         with allure.independent_step('Validate show command format'):
@@ -185,7 +199,7 @@ def test_techsupport_file_operations(engines, test_name, random_api, devices, se
                             f"Output of show tech-support contains a file marked 'latest', but that file either doesn't exist or is not"
                             f" really the latest file. File is {latest_file}."
                         )
-                        assert list(files_dict.keys()) == [full_path.replace(SystemConsts.TECHSUPPORT_FILES_PATH, '')
+                        assert list(files_dict.keys()) == [full_path.replace(path, '')
                                                            for full_path in files_dict.values()], \
                             f"Output of show tech-support has mismatch between keys (file names) and full-paths: {files_dict.items()}"
 
@@ -233,13 +247,29 @@ def test_techsupport_file_operations(engines, test_name, random_api, devices, se
                 target_engine.run_cmd(f'rm -f /tmp/{upload_file}')
 
             with allure.step('Invalid URL error handling'):
+                if devices.dut.is_eth():
+                    invalid_url_file = upload_file
+                    malformed_url_error = devices.dut.techsupport_malformed_remote_url_message
+                    # The successful SCP and SFTP uploads above validate the file, credentials, and destination.
+                    # Cumulus 5.19 reports an unsupported ffff:// URL only with this generic action output:
+                    # Action executing ...
+                    # Uploading file cl_support_cumulus_20260922_173721.txz
+                    # Error: Action failed with the following issue:
+                    #   Failed to upload file
+                    unsupported_protocol_error = devices.dut.techsupport_upload_failed_message
+                else:
+                    # Preserve the existing NVOS validation behavior.
+                    invalid_url_file = 'nonexist'
+                    malformed_url_error = devices.dut.techsupport_file_not_found_message
+                    unsupported_protocol_error = devices.dut.techsupport_file_not_found_message
+
                 with allure.step('Upload to invalid url - url not in right format'):
-                    system.techsupport.files.file_name['nonexist'].action_upload(upload_path=invalid_url_1).verify_result(
-                        False, expected_value=devices.dut.techsupport_file_not_found_message)
+                    system.techsupport.files.file_name[invalid_url_file].action_upload(
+                        upload_path=invalid_url_1).verify_result(False, expected_value=malformed_url_error)
 
                 with allure.step('Upload to invalid url - non supported transfer protocol'):
-                    system.techsupport.files.file_name['nonexist'].action_upload(upload_path=invalid_url_2).verify_result(
-                        False, expected_value=devices.dut.techsupport_file_not_found_message)
+                    system.techsupport.files.file_name[invalid_url_file].action_upload(
+                        upload_path=invalid_url_2).verify_result(False, expected_value=unsupported_protocol_error)
 
         # --- DELETE VALIDATION PART ---
         with allure.independent_step('Delete functionality'):
@@ -326,9 +356,17 @@ def _create_upload_urls(engines, devices, protocol):
         target_engine = player
     else:
         # For ETH devices, use engines.dut
-        invalid_url_1 = "\'{}://{}:{}{}:/tmp/\'".format(protocol, engines.dut.username, engines.dut.password, engines.dut.ip)
-        invalid_url_2 = "\'ffff://{}:{}@{}:/tmp/\'".format(engines.dut.username, engines.dut.password, engines.dut.ip)
-        upload_path = "\'{}://{}:{}@{}:/tmp/\'".format(protocol, engines.dut.username, engines.dut.password, engines.dut.ip)
+        invalid_url_1 = '{}://{}:{}{}:/tmp/'.format(
+            protocol, engines.dut.username, engines.dut.password, engines.dut.ip)
+        invalid_url_2 = 'ffff://{}:{}@{}:/tmp/'.format(
+            engines.dut.username, engines.dut.password, engines.dut.ip)
+        upload_path = '{}://{}:{}@{}:/tmp/'.format(
+            protocol, engines.dut.username, engines.dut.password, engines.dut.ip)
+
+        # Shell quoting is required by NVUE, but quote characters corrupt OpenAPI's remote-url value.
+        if TestToolkit.tested_api == ApiType.NVUE:
+            invalid_url_1, invalid_url_2, upload_path = map(
+                shlex.quote, (invalid_url_1, invalid_url_2, upload_path))
         target_engine = engines.dut
 
     return invalid_url_1, invalid_url_2, upload_path, target_engine

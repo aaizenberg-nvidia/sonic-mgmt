@@ -193,6 +193,7 @@ class SonicPerformanceCli(PerformanceCommon):
 
         self.disable_im_on_tg()
         self.load_qos_config_on_dut()
+        self.disable_ipv6_dad_if_forced_unconnected()
 
         with allure.step(f'Reload SKU and Test configuration on {self.dut_alias}'):
             self.cli_obj.general.reload_configuration(force=True)
@@ -750,9 +751,13 @@ class SonicPerformanceCli(PerformanceCommon):
         return dut_interfaces_ipv6_configuration_dict
 
     def start_mst(self):
-        """Start MST on host and syncd container for temperature collection via mget_temp."""
+        """Start MST on host and syncd container, and expose the host MST device nodes in syncd for mget_temp."""
         self.execute_cmd("sudo mst start 2>&1 || true")
         self.execute_cmd(f"docker exec {InfraConst.SYNCD_DOCKER} mst start 2>&1 || true")
+        # syncd can start without /dev/mst, so the SDK finds no MST device; recreate the host's nodes in it.
+        for node in self.execute_cmd("ls /dev/mst/*_pci* 2>/dev/null || true").split():
+            major, minor = (int(num, 16) for num in self.execute_cmd(f"stat -c '%t %T' {node}").split())
+            self.execute_cmd(f"docker exec {InfraConst.SYNCD_DOCKER} sh -c 'test -e {node} || mknod {node} c {major} {minor}'")
 
     def validate_traffic(self, json_path, samples_params_dict, dst_dut_dir="/tmp"):
         logging.info("Running traffic validator on the dut")

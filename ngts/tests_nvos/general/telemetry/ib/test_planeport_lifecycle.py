@@ -19,6 +19,7 @@ from ngts.tests_nvos.interfaces.test_ib_interface_phy_detail import CODE_TO_DESC
 from ngts.tools.test_utils import allure_utils as allure
 
 from ngts.tests_nvos.general.telemetry.ib import helpers as ibh
+from ngts.tests_nvos.general.telemetry.ib import otel_helpers as ibo
 from ngts.tests_nvos.general.telemetry.ib.constants import (
     API_GNMIC,
     API_NVUE_CLI,
@@ -29,6 +30,9 @@ from ngts.tests_nvos.general.telemetry.ib.constants import (
     PHYSICAL_STATE_LEAVES,
     PlanePortState,
 )
+
+# The OTEL physical state is compared against the COUNTERS_DB field it is exported from.
+_PHYSICAL_STATE_DB_FIELDS = ["SAI_PORT_STAT_INFINIBAND_PHYSICAL_STATE"]
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +52,43 @@ def _snapshot_link_state(client, ports: List[Port]) -> Dict[str, Dict[str, str]]
     return {p.name: _gnmi_link_state(client, p.name) for p in ports}
 
 
+def _verify_otel_physical_state(engines, aport: Port, planes: List[Port], label: str) -> None:
+    """The Aport and every plane export the physical state their COUNTERS_DB rows hold."""
+    problems = ibh.otel_port_db_parity_problems(
+        engines, aport.name, planes, _PHYSICAL_STATE_DB_FIELDS, label)
+    assert not problems, (
+        f"OTEL physical state disagrees with COUNTERS_DB ({label}):\n  " + "\n  ".join(problems)
+    )
+
+
+def _verify_otel_link_down_reason(aport: Port, indicators, label: str) -> None:
+    """The Aport's OTEL link-down reason carries one of ``indicators``."""
+    reasons = ibh.otel_link_down_reasons(ibo.active_surface().snapshot(label), aport.name)
+    ibh.attach_dict(f"OTEL link-down reason {aport.name}", {"reasons": reasons})
+    assert any(ind.lower() in reason.lower() for reason in reasons for ind in indicators), (
+        f"OTEL link-down reason for {aport.name}: expected one of {indicators}, got {reasons!r}"
+    )
+
+
+def _otel_plane_ports(label: str) -> List[str]:
+    types = ibh.otel_interface_types(ibo.active_surface().snapshot(label, fresh=True))
+    return sorted(name for name, iface_type in types.items() if iface_type == IfaceType.OTEL_PLANE)
+
+
 # ---------------------------------------------------------------------------
 # 9.1 test_planeport_state_persists_across_reboot
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(15 * MINUTE, func_only=True)
-def test_planeport_state_persists_across_reboot(engines, devices, gnmi_client, setup_topology, topology_obj):
-    """The plane-port enable/disable setting must survive a reboot."""
+@pytest.mark.timeout(18 * MINUTE, func_only=True)
+def test_planeport_state_persists_across_reboot(engines, devices, gnmi_client, setup_topology, topology_obj,
+                                                ib_otel):
+    """The plane-port enable/disable setting must survive a reboot, on NVUE, gNMI and OTEL."""
     system = System()
 
     # This is the only plane-port test that *persists* (saves) an enabled state.
@@ -113,6 +142,14 @@ def test_planeport_state_persists_across_reboot(engines, devices, gnmi_client, s
                     "already confirmed)."
                 )
 
+        with allure.step("After boot: plane-ports exported over OTEL"):
+            # The OTEL export was applied, not saved, so the reboot dropped it.
+            ib_otel.invalidate(reconfigure=True)
+            otel_planes = _otel_plane_ports("after-reboot-enabled")
+            ibh.attach_dict("plane-ports exported after reboot (OTEL)",
+                            {"count": len(otel_planes), "names": otel_planes[:10]})
+            assert otel_planes, "No plane-ports exported over OTEL after reboot with state=enabled"
+
         with allure.step("Disable plane-port, save, reboot, and confirm state stuck disabled"):
             ibh.set_plane_port_state(engines, PlanePortState.DISABLED, apply=True, save=True)
             system.reboot.action_reboot(
@@ -124,6 +161,12 @@ def test_planeport_state_persists_across_reboot(engines, devices, gnmi_client, s
             state = ibh.get_plane_port_state(engines)
             assert state == PlanePortState.DISABLED, (
                 f"plane-port state did not persist; expected 'disabled', got {state!r}"
+            )
+            ib_otel.invalidate(reconfigure=True)
+            otel_planes = _otel_plane_ports("after-reboot-disabled")
+            assert not otel_planes, (
+                f"Plane-ports still exported over OTEL after reboot with state=disabled: "
+                f"{otel_planes[:10]!r}"
             )
     finally:
         with allure.step("Teardown: persist default (disabled) plane-port state"):
@@ -144,11 +187,12 @@ def test_planeport_state_persists_across_reboot(engines, devices, gnmi_client, s
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(10 * MINUTE, func_only=True)
-def test_planeport_state_follows_aport_admin_down(engines, devices, gnmi_client, setup_topology):
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+def test_planeport_state_follows_aport_admin_down(engines, devices, gnmi_client, setup_topology, ib_otel):
     """Admin-downing an Aport propagates the down state to all its plane-ports.
 
     An IB link only goes operationally down when *both* ends are admin-disabled.
@@ -207,6 +251,10 @@ def test_planeport_state_follows_aport_admin_down(engines, devices, gnmi_client,
                 f"expected an admin-disable indicator (one of {admin_disable_indicators}), got {reason!r}"
             )
 
+        with allure.step("OTEL: Aport and every plane export the down physical state and reason"):
+            _verify_otel_physical_state(engines, aport, planes, "admin-down")
+            _verify_otel_link_down_reason(aport, admin_disable_indicators, "admin-down")
+
     with allure.step("Aport and every plane recover to pre-state"):
         recovered, pname, leaf_name, pre_val, post_val = ibh.wait_link_state_recovered(
             gnmi_client, all_ports, pre
@@ -223,11 +271,12 @@ def test_planeport_state_follows_aport_admin_down(engines, devices, gnmi_client,
 
 
 @pytest.mark.gnmi
+@pytest.mark.otel
 @pytest.mark.ib
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
-@pytest.mark.timeout(10 * MINUTE, func_only=True)
-def test_planeport_state_follows_peer_link_loss(engines, devices, gnmi_client, setup_topology):
+@pytest.mark.timeout(12 * MINUTE, func_only=True)
+def test_planeport_state_follows_peer_link_loss(engines, devices, gnmi_client, setup_topology, ib_otel):
     """Peer-side cable removal propagates to all plane-ports of the affected Aport.
 
     `link-down-information/state/reason-status-local` is expected to indicate a
@@ -290,6 +339,7 @@ def test_planeport_state_follows_peer_link_loss(engines, devices, gnmi_client, s
                 "unplug",
                 "cable",
             )
+            accepted_indicators = cable_removal_indicators
             if is_loopback:
                 # PMAOS unplug of a loopback port surfaces as a management
                 # disable; accept that too, but still require a real reason.
@@ -307,6 +357,10 @@ def test_planeport_state_follows_peer_link_loss(engines, devices, gnmi_client, s
                     f"Expected cable/peer-side removal reason (one of {cable_removal_indicators}); "
                     f"got {reason!r}"
                 )
+
+        with allure.step("OTEL: Aport and every plane export the lost physical state and reason"):
+            _verify_otel_physical_state(engines, aport, planes, "peer-unplug")
+            _verify_otel_link_down_reason(aport, accepted_indicators, "peer-unplug")
 
         with allure.step("Plug back and confirm recovery"):
             ibh.simulate_peer_plug_in(engines, devices, aport)

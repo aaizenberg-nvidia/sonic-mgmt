@@ -10,7 +10,7 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger()

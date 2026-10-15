@@ -32,3 +32,4 @@ class AsicComponent(BaseComponent):
         super().__init__(parent=parent_obj, path=f"/{asic_name}")
         self.power = BaseComponent(self, self.api_obj, '/power')
         self.temperature = BaseComponent(self, self.api_obj, '/temperature')
+        self.frequency = BaseComponent(self, self.api_obj, '/frequency')

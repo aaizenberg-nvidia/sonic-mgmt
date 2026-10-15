@@ -13,7 +13,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 
 from ngts.nvos_constants.constants_nvos import Cpov2Consts, EventConsts, HealthConsts
-from ngts.tests_nvos.platform.cpo.action_helpers import CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS, poll_until
+from ngts.nvos_tools.infra.PollingTool import PollingTool
+from ngts.tests_nvos.platform.cpo.action_helpers import CPO_RECOVERY_SAFETY_TIMEOUT_SECONDS
 
 logger = logging.getLogger()
 
@@ -101,7 +102,7 @@ def wait_for_insertion_cycle(  # noqa: PLR0913 - clock/sleep injection keeps pol
     """
     poll_overrides.setdefault("acceptable_exceptions", TRANSIENT_READ_ERRORS)
     wanted = "ejected and inserted events" if require_inserted else "ejected event"
-    ejected, inserted = poll_until(
+    ejected, inserted = PollingTool.poll_until(
         lambda: split_insertion_cycle(read_component_events(), ejected_description, inserted_description),
         lambda cycle: bool(cycle[0]) and (bool(cycle[1]) or not require_inserted),
         timeout_seconds=timeout_seconds,
@@ -164,7 +165,7 @@ def wait_for_ports_up_events(
     expected = set(port_names)
     assert expected, "no ports supplied"
     poll_overrides.setdefault("acceptable_exceptions", TRANSIENT_READ_ERRORS)
-    return poll_until(
+    return PollingTool.poll_until(
         lambda: port_up_event_times(read_port_events()),
         lambda up_times: expected <= set(up_times),
         timeout_seconds=timeout_seconds,
@@ -264,7 +265,7 @@ def wait_for_healthy_instances(
             for component, instance in targets
         }
 
-    poll_until(
+    PollingTool.poll_until(
         lambda: states(read_health()),
         lambda current: all(state == HealthConsts.Component.HEALTHY for state in current.values()),
         timeout_seconds=timeout_seconds,

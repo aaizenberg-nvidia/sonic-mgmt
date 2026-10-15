@@ -245,6 +245,7 @@ def test_lldp_incorrect_values(engines, devices, random_api):
 @pytest.mark.lldp
 @pytest.mark.system
 @pytest.mark.interface
+@pytest.mark.cumulus
 def test_lldp_max_values(engines, devices):
     """
     Check that lldp set commands are working with max values
@@ -395,6 +396,7 @@ def test_lldp_interface_flapping(engines, devices, serial_engine):
 @pytest.mark.lldp
 @pytest.mark.system
 @pytest.mark.interface
+@pytest.mark.cumulus
 def test_lldp_disable_dhcp(engines, devices, serial_engine):
     """
     Check that correct lldp sends mac address if dhcp is disabled.

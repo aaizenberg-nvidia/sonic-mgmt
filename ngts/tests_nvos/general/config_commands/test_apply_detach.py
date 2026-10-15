@@ -14,7 +14,7 @@ from ngts.nvos_constants.constants_nvos import SystemConsts, ConfigConsts
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 
 
-cumulus_owner = "gosaini"
+cumulus_owner = "schepur"
 
 
 logger = logging.getLogger()

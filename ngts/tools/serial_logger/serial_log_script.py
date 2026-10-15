@@ -8,14 +8,12 @@ import argparse
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
-import time
 import traceback
 from datetime import datetime
 from typing import List, Dict
-
-import psutil
 
 from devts.infra.tools.general_constants.constants import NogaConstants
 
@@ -69,28 +67,6 @@ class SerialLogFileReader:
         if not output:  # serial-log shouldn't contain empty lines so this means we've reached the end
             raise EOFError()
         return output
-
-
-def find_descendant_process_by_name(root_pid, name):
-    """
-    @summary:
-        run a DFS of the child processes of the root process and return the pid
-        of the first descendant that have the target name.
-        this is useful when running a pipe command, e.g.
-            'exec | ssh <> | awk ... > file'
-        and want to get the pid of the ssh process
-    @param root_pid:
-        the pid of the root process
-    @param name:
-        the name of the target process (e.g. 'ssh')
-    @return:
-        the pid of the first descendant that have the target name, None if none
-        exists
-    """
-    for child in psutil.Process(root_pid).children():
-        pid = child.pid if child.name() == name else find_descendant_process_by_name(child.pid, name)
-        if pid is not None:
-            return pid
 
 
 def ip_to_ip_path(ip: str) -> str:
@@ -185,7 +161,9 @@ def get_serial_logger_command(target_ip: str, hostname: str) -> str:
 
     formatter_command = ' '.join(['sudo', sys.executable, serial_log_formatter.__file__, "-b", hostname])
     # example: sudo /venv/bin/python serial_log_formatter.py -b 10.7.144.154
-    return " | ".join(["exec", serial_command, formatter_command])
+    # the console server drops sessions idle for ~3h, so reconnect instead of losing the rest of the session log
+    reconnecting_serial_command = f"while :; do {serial_command}; sleep 10; done"
+    return " | ".join(["exec", reconnecting_serial_command, formatter_command])
 
 
 def start_serial_log(target_ip, log_file_path, hostname=''):
@@ -197,7 +175,7 @@ def start_serial_log(target_ip, log_file_path, hostname=''):
     @param hostname: if not None - will add the hostname in the beginning of each line in the serial logs
     @note: if the target file does not exist - it will be created. If some
            directory in the path does not exists - an exception will be raised
-    @return: the pid of the log process if succeeded, None if failed
+    @return: the pid of the log process group leader if succeeded, None if failed
     """
     try:
         logger.info(f"will record serial connection with times to {log_file_path}")
@@ -205,9 +183,9 @@ def start_serial_log(target_ip, log_file_path, hostname=''):
         create_file_and_dir_if_not_exists(log_file_path)
         cmd = get_serial_logger_command(target_ip, hostname)
         logger.info("Running: " + cmd)
-        sh_process = subprocess.Popen(cmd, shell=True, stdout=open(log_file_path, 'a'), stderr=subprocess.STDOUT)
-        time.sleep(0.1)
-        pid = find_descendant_process_by_name(sh_process.pid, 'ssh')
+        sh_process = subprocess.Popen(cmd, shell=True, stdout=open(log_file_path, 'a'), stderr=subprocess.STDOUT,
+                                      start_new_session=True)
+        pid = sh_process.pid
     except Exception as err:
         pid = None
         logger.error(f'Exception of type {type(err)} received during start_serial_logs: {err}')
@@ -218,11 +196,11 @@ def start_serial_log(target_ip, log_file_path, hostname=''):
 
 def stop_serial_log(pid):
     """
-    @summary: this function stops the serial log process
-    @param pid: the pid of the log process we wish to stop
+    @summary: this function stops the serial log process group (reconnect loop, ssh and formatter)
+    @param pid: the pid of the log process group leader we wish to stop
     """
     try:
-        os.kill(int(pid), 9)
+        os.killpg(int(pid), signal.SIGKILL)
     except Exception as err:
         # if the process was already terminated - just report
         if isinstance(err, OSError) and err.errno == 3:

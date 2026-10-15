@@ -7,7 +7,23 @@ import subprocess
 import tempfile
 import time
 import xmlrpc.client
-from typing import Tuple, List
+from typing import Iterable, Tuple, List
+
+REDACTED = '<redacted>'
+
+
+def redact(text: str, secrets: Iterable[str]) -> str:
+    """
+    Replace each given secret with a placeholder, for a command about to be logged.
+
+    Matching is on the exact secret rather than on a flag name, because '-p' means something else
+    in most commands that carry it ('mkdir -p') and masking its argument would make those log
+    lines useless.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, REDACTED)
+    return text
 
 
 class CmdRunner:
@@ -21,6 +37,8 @@ class CmdRunner:
     """
     DEFAULT_TIMEOUT = 30
     MAX_LOGGED_OUTPUT = 100_000
+    # How long a process gets to exit on SIGTERM before it is killed outright.
+    TERMINATE_GRACE_SEC = 10
 
     def __init__(self, runner_name: str = '', default_timeout=DEFAULT_TIMEOUT, print_outputs: bool = True,
                  kill_live_processes_on_delete: bool = True, spool_output: bool = False):
@@ -58,22 +76,27 @@ class CmdRunner:
 
         return out.strip()
 
-    def run_cmd_in_process(self, cmd: str, keep_process_alive: bool = False, wait_till_done: bool = True, cmd_timeout=None) -> Tuple[str, str, subprocess.Popen]:
+    def run_cmd_in_process(self, cmd: str, keep_process_alive: bool = False, wait_till_done: bool = True,
+                           cmd_timeout=None, secrets: Iterable[str] = ()) -> Tuple[str, str, subprocess.Popen]:
         """
         run a given command in a process
         @param cmd: the command to run
         @param keep_process_alive: whether to keep the process alive (and return it) or not
         @param wait_till_done: if not keep_process_alive - whether to wait till the command is finished or not
-        @param cmd_timeout: if not keep_process_alive/wait_till_done - number of seconds to give to the command.
-            after timeout, kill the process of command.
-            if this param is not provided, use the default_timeout initialized with the object.
+        @param cmd_timeout: number of seconds to give to the command, after which its process is
+            killed and whatever it produced so far is returned. Honored whether or not
+            wait_till_done is set: a command given a deadline is bounded by it either way.
+            When it is not provided, wait_till_done waits indefinitely, while a caller that did
+            not want to block gets the default_timeout initialized with the object.
+        @param secrets: credentials embedded in cmd, masked in the logged copy of it.
+            The command itself runs unchanged.
         @return: several options:
             - when keep_process_alive is True - return the running process
                 * the process is added to internal list of the opened processes
                 * eventually when (before) self object is deleted, all saved open processes are killed
             - otherwise - return output, err of the command process
         """
-        self._log(f"run: {cmd}")
+        self._log(f"run: {redact(cmd, secrets)}")
         spools = (tempfile.TemporaryFile(), tempfile.TemporaryFile()) if self.spool_output else None
         stdout, stderr = spools or (subprocess.PIPE, subprocess.PIPE)
         process = subprocess.Popen(cmd, shell=True, stdout=stdout, stderr=stderr, process_group=0)
@@ -84,11 +107,14 @@ class CmdRunner:
             self._live_processes.append(process)
             return '', '', process
 
-        if wait_till_done:
+        if wait_till_done and cmd_timeout is None:
             self._log(f"wait till cmd is done and get output")
             out, err = self.wait_for_cmd_process(process)
             return out, err, None
 
+        # Either the caller does not want to block, or it gave the command a deadline. A deadline
+        # has to be enforced even when waiting for the command to finish, or a hung command (a
+        # stalled transfer, a PDU that never answers) blocks the run with nothing to time it out.
         output, err = self.kill_cmd_process(process, cmd_timeout or self._default_timeout)
         return output, err, None
 
@@ -117,6 +143,13 @@ class CmdRunner:
         except subprocess.TimeoutExpired:
             self._log(f'{delay} seconds passed - kill the process')
             self._terminate(process, signal.SIGTERM)
+            try:
+                process.wait(timeout=self.TERMINATE_GRACE_SEC)
+            except subprocess.TimeoutExpired:
+                # Collecting the output below waits on the process with no timeout of its own, so
+                # one that sits on SIGTERM would make the deadline we just enforced meaningless.
+                self._log('the process is still alive after SIGTERM - sending SIGKILL')
+                self._terminate(process, signal.SIGKILL)
         return self.wait_for_cmd_process(process)
 
     def wait_for_cmd_process(self, process: subprocess.Popen) -> Tuple[str, str]:
@@ -267,9 +300,13 @@ class EngineCmdRunner:
         return out.strip()
 
     def run_cmd_in_process(self, cmd: str, keep_process_alive: bool = False, wait_till_done: bool = True,
-                           cmd_timeout=None) -> Tuple[str, str, EngineProcessHandle]:
-        """Start a command on the remote engine. Run via 'bash -c' so quoting works like a shell."""
-        self._log(f"run on {self._engine.ip}: {cmd}")
+                           cmd_timeout=None, secrets: Iterable[str] = ()) -> Tuple[str, str, EngineProcessHandle]:
+        """
+        Start a command on the remote engine. Run via 'bash -c' so quoting works like a shell.
+
+        secrets are credentials embedded in cmd, masked in the logged copy of it.
+        """
+        self._log(f"run on {self._engine.ip}: {redact(cmd, secrets)}")
         p_uuid = self._proxy.run_process(['bash', '-c', cmd])
         handle = EngineProcessHandle(self._proxy, p_uuid, cmd, player=self._engine)
 

@@ -15,12 +15,16 @@ import pytest
 import ngts.tools.test_utils.allure_utils as allure
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 from ngts.constants.constants import GnmiConsts
+from ngts.nvos_constants.constants_nvos import ApiType
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.general.security.mtls.generic_testing.constants import CA_CERTIFICATE
 from ngts.tests_nvos.system.gnmi.constants import CERTIFICATE
 from ngts.tests_nvos.system.grpc_tunnel.constants import GrpcTunnelConstants
+from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import cli_token_for_api
 from ngts.tests_nvos.system.telemetry.otel.cumulus.tls import (
     TlsCertMaterial,
+    _action_output,
     _assert_nvue_ca_active_on_dut,
     _delete_dut_ca_certificate_if_present,
     _import_ca_certificate_on_dut,
@@ -326,9 +330,8 @@ def _import_dut_entity_certificate(
             'rm -f %s %s' % (shlex.quote(staged_crt), shlex.quote(staged_key)),
             validate=False,
         )
-        dut.run_cmd(
-            'sudo nv action delete system security certificate %s' % (cert_name,),
-            validate=False,
+        _action_output(
+            System().security.certificate.cert_id[cert_name].action_delete(dut_engine=dut)
         )
         _upload_local_file_to_dut(dut, local_key, staged_key)
         dut.run_cmd('chmod 600 %s' % (shlex.quote(staged_key),), validate=False)
@@ -342,15 +345,23 @@ def _import_dut_entity_certificate(
             client_cert=client_cert,
         )
         dut.run_cmd('chmod 644 %s' % (shlex.quote(staged_crt),), validate=False)
-        import_cmd = (
-            'sudo nv action import system security certificate %s '
-            "uri-public-key 'scp://%s:%s@127.0.0.1:%s' "
-            "uri-private-key 'scp://%s:%s@127.0.0.1:%s'"
-            % (cert_name, username, password, staged_crt, username, password, staged_key)
-        )
+        public_uri = 'scp://%s:%s@127.0.0.1:%s' % (username, password, staged_crt)
+        private_uri = 'scp://%s:%s@127.0.0.1:%s' % (username, password, staged_key)
         import_out = ''
         for attempt in range(1, _CERT_IMPORT_RETRIES + 1):
-            import_out = dut.run_cmd(import_cmd, validate=False, print_output=False)
+            result = System().security.certificate.cert_id[cert_name].action_import(
+                uri_public_key=cli_token_for_api(public_uri),
+                uri_private_key=cli_token_for_api(private_uri),
+                dut_engine=dut,
+            )
+            succeeded = bool(result.result)
+            import_out = _action_output(result)
+            if (
+                succeeded and
+                TestToolkit.tested_api != ApiType.NVUE and
+                'Succeeded in importing' not in import_out
+            ):
+                import_out = 'Succeeded in importing %s\n%s' % (cert_name, import_out)
             if 'Succeeded in importing' in import_out:
                 break
             logger.warning('certificate import attempt %d/%d did not succeed yet', attempt, _CERT_IMPORT_RETRIES)
@@ -386,13 +397,21 @@ def _release_stale_gnmi_dialout_security(dut) -> None:
         except Exception as exc:
             logger.debug('gnmi-server mtls unset: %s', exc)
         try:
+            # ``-y`` is an apply flag. Passing it as an unset operand makes NVUE
+            # reject the command, so the staged tunnel unsets never commit and the
+            # following mTLS apply can land on a dirty candidate.
             system.gnmi_server.unset(
-                apply=True, ask_for_confirmation=True, dut_engine=dut
+                apply=True,
+                ask_for_confirmation=True,
+                dut_engine=dut,
             ).verify_result()
         except Exception as exc:
             logger.debug('gnmi-server unset: %s', exc)
-            dut.run_cmd('nv unset system gnmi-server -y', validate=False)
-            dut.run_cmd('nv config apply -y', validate=False)
+            system.gnmi_server.unset(
+                apply=True,
+                ask_for_confirmation=True,
+                dut_engine=dut,
+            ).ignore_result()
         try:
             show = system.gnmi_server.parse_show(dut_engine=dut) or {}
         except Exception as exc:
@@ -410,17 +429,16 @@ def _release_stale_gnmi_dialout_security(dut) -> None:
             )
         time.sleep(_CERT_IMPORT_RETRY_DELAY_SEC)
         for cert_name in (GNMI_DIALOUT_CLIENT_CERT, GNMI_DIALOUT_SERVER_CERT):
-            dut.run_cmd(
-                'sudo nv action delete system security certificate %s' % (cert_name,),
-                validate=False,
+            _action_output(
+                System().security.certificate.cert_id[cert_name].action_delete(dut_engine=dut)
             )
         for attempt in range(1, _CERT_IMPORT_RETRIES + 1):
-            delete_out = dut.run_cmd(
-                'nv action delete system security ca-certificate %s' % (GNMI_DIALOUT_CA_NAME,),
-                validate=False,
-                print_output=False,
-            )
-            if 'Succeeded in deleting' in delete_out:
+            delete_result = System().security.ca_certificate.cert_id[
+                GNMI_DIALOUT_CA_NAME
+            ].action_delete(dut_engine=dut)
+            deleted = bool(delete_result.result)
+            delete_out = _action_output(delete_result)
+            if deleted or 'Succeeded in deleting' in delete_out:
                 break
             if 'does not exist' in delete_out.lower():
                 break

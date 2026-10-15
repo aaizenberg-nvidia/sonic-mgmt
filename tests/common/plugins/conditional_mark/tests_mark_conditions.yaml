@@ -799,9 +799,16 @@ bgp/test_bgp_update_timer.py::test_bgp_update_timer_single_route:
 
 bgp/test_bgp_vnet.py:
   skip:
-    reason: "Test is only enabled for VS, Cisco and Nvidia mellanox platforms"
+    reason: "Test is only enabled for VS, Cisco and Nvidia mellanox platforms."
     conditions:
       - "asic_type not in ['vs', 'cisco-8000', 'mellanox']"
+  xfail:
+    reason: "Testcase expected to fail due to issue https://github.com/sonic-net/sonic-mgmt/issues/25167 on sn5640.
+             Also not supported on topologies without PortChannel uplinks due to GH issue https://github.com/sonic-net/sonic-mgmt/issues/26523."
+    conditions_logical_operator: or
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/25167 and platform in ['x86_64-nvidia_sn5640-r0']"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/26523 and topo_name in ['t0-isolated-d32u32s2-mix', 't0-isolated-d256u256s2', 't0-isolated-v6-d256u256s2']"
 
 bgp/test_bgp_vnet_scale.py:
   skip:
@@ -864,12 +871,6 @@ bgp/test_traffic_shift_sup.py:
     reason: "Not supported on T2 single node topology"
     conditions:
       - "'t2_single_node' in topo_name"
-
-bgp/test_bgp_vnet.py:
-  xfail:
-    reason: "Testcase expected to fail due to issue https://github.com/sonic-net/sonic-mgmt/issues/25167 on sn5640"
-    conditions:
-      - "https://github.com/sonic-net/sonic-mgmt/issues/25167 and platform in ['x86_64-nvidia_sn5640-r0']"
 
 bmp/:
   skip:
@@ -964,7 +965,7 @@ configlet/test_add_rack.py:
 #######################################
 #####            console          #####
 #######################################
-console/(?!test_console_(?:driver|reversessh)\.py):
+^console/(?!test_console_(?:driver|reversessh)\.py):
   regex: true
   skip:
     reason: 'Only console driver and reverse SSH tests are compatible with BMC'
@@ -1224,6 +1225,15 @@ decap/test_subnet_decap.py::test_vlan_subnet_decap:
       - "asic_type in ['vs'] and https://github.com/sonic-net/sonic-buildimage/issues/21090"
       - "release in ['202012', '202205', '202305', '202311']"
       - "topo_name in ['t1-isolated-d128', 't1-isolated-d32']"
+
+#######################################
+#####      device_ops_agent      #####
+#######################################
+device_ops_agent/test_device_ops_agent.py:
+  skip:
+    reason: "device-ops-agent container is not present on BMC, so these tests are not applicable."
+    conditions:
+      - "'bmc' in topo_type"
 
 #######################################
 #####         dhcp_relay        #####
@@ -1582,6 +1592,12 @@ disk/test_disk_exhaustion.py:
 #######################################
 #####             dns             #####
 #######################################
+dns/static_dns/test_static_dns.py::TestStaticMgmtPortIP::test_dynamic_dns_not_working_when_static_ip_configured:
+  xfail:
+    reason: "dhclient eth0 can replace the static mgmt IP on BMC platforms and render the DUT unreachable."
+    conditions:
+      - "'bmc' in topo_type and https://github.com/sonic-net/sonic-mgmt/issues/27308"
+
 dns/static_dns/test_static_dns.py::test_static_dns_basic:
   skip:
     reason: "Found regression issue on multi-asic platform, need to skip for multi-asic platform until the issue is fixed."
@@ -2573,6 +2589,12 @@ everflow/test_everflow_testbed.py::TestEverflowV4IngressAclIngressMirror::test_e
 #######################################
 #####            fdb              #####
 #######################################
+fdb/test_fdb_churn.py::test_fdb_distinct_macs_bulk_learn:
+  xfail:
+    reason: "Xfail due to GitHub issue https://github.com/sonic-net/sonic-mgmt/issues/28049"
+    conditions:
+      - https://github.com/sonic-net/sonic-mgmt/issues/28049
+
 fdb/test_fdb_mac_expire.py:
   skip:
     reason: "Not supported on this DUT topology."
@@ -3915,11 +3937,20 @@ kubesonic/test_k8s_join_disjoin.py:
       - "branch in ['master']"
       - "asic_type in ['vs']"
 
+#######################################
+#####            layer1           #####
+#######################################
 layer1/:
   skip:
     reason: 'Layer 1 tests require physical port interfaces, not available on BMC'
     conditions:
       - "'bmc' in topo_type"
+
+layer1/test_fec_error.py::test_verify_fec_stats_counters:
+  skip:
+    reason: "Broadcom TH does not support FEC_SYMBOL_ERR at 50G"
+    conditions:
+      - "'Arista-7060CX-32S-D48C8'in hwsku"
 
 #######################################
 #####           lldp              #####
@@ -4451,7 +4482,7 @@ platform_tests/api/test_sfp.py::TestSfpApi::test_get_error_description:
   xfail:
     reason: "xfail due to RM issue: https://github.com/sonic-net/sonic-buildimage/issues/29043"
     conditions:
-    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and 'sn6600_ld' in platform"
+    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and ('sn6600_ld' in platform or 'sn5640' in platform)"
 
 platform_tests/api/test_sfp.py::TestSfpApi::test_get_transceiver_info:
   xfail:
@@ -4883,7 +4914,7 @@ qos/test_qos_sai.py::TestQosSai::testQosSaiHeadroomPoolWatermark:
   xfail:
     reason: "Headroom pool size not supported."
     conditions:
-      - "hwsku not in ['Arista-7060CX-32S-C32', 'Celestica-DX010-C32', 'Arista-7260CX3-D108C8', 'Arista-7260CX3-D108C10', 'Force10-S6100', 'Arista-7260CX3-Q64', 'Arista-7050CX3-32S-C32', 'Arista-7050CX3-32C-C32', 'Arista-7050CX3-32S-C28S4', 'Arista-7050CX3-32C-C28S4', 'Arista-7050CX3-32S-D48C8', 'Arista-7060X6-16PE-384C-B-O128S2', 'Arista-7060X6-64PE-B-O128'] and asic_type not in ['marvell-teralynx']"
+      - "hwsku not in ['Arista-7060CX-32S-C32', 'Celestica-DX010-C32', 'Arista-7260CX3-D108C8', 'Arista-7260CX3-D108C10', 'Force10-S6100', 'Arista-7260CX3-Q64', 'Arista-7050CX3-32S-C32', 'Arista-7050CX3-32C-C32', 'Arista-7050CX3-32S-C28S4', 'Arista-7050CX3-32C-C28S4', 'Arista-7050CX3-32S-D48C8', 'Arista-7060X6-16PE-384C-B-O128S2', 'Arista-7060X6-64PE-B-O128', 'Arista-7060X6-64PE-O128'] and asic_type not in ['marvell-teralynx']"
 
 qos/test_qos_sai.py::TestQosSai::testQosSaiLosslessVoq:
   skip:
@@ -5420,9 +5451,9 @@ show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_rate_limit_
     conditions:
       - "'bmc' in topo_type"
 
-show_techsupport/test_sai_sdk_dump.py::TestSaiSdkDump::test_sai_sdk_dump:
+show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_sai_sdk_dump:
   skip:
-    reason: "Test supported only on Nvidia(Mellanox) devices / SAI failure dump on multi asic platforms doesnt work"
+    reason: "Test supported only on Nvidia(Mellanox) devices / auto techsupport on multi asic platforms doesnt work"
     conditions_logical_operator: or
     conditions:
       - "asic_type not in ['mellanox']"
@@ -5835,6 +5866,14 @@ srv6/test_srv6_vlan_forwarding.py::test_srv6_uN_no_vlan_flooding[False]:
     reason: "Test case has issue on the t0-isolated-d256u256s2 topo."
     conditions:
       - "'t0-isolated-d256u256s2' in topo_name and platform in ['x86_64-nvidia_sn5640-r0']"
+
+srv6/test_srv6_warmboot.py:
+  skip:
+    reason: "SRv6 over warm reboot is only expected to work on Mellanox/NVIDIA Spectrum-5 and newer platforms, with a master or 202611+ image."
+    conditions_logical_operator: or
+    conditions:
+      - "asic_type != 'mellanox' or (release != 'master' and release < '202611')"
+      - "asic_gen in ['spc1', 'spc2', 'spc3', 'spc4']"
 
 #######################################
 #####             ssh             #####

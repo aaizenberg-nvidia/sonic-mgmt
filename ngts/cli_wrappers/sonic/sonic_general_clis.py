@@ -28,6 +28,7 @@ from ngts.cli_wrappers.linux.linux_general_clis import LinuxGeneralCli
 from ngts.cli_wrappers.sonic.sonic_chassis_clis import SonicChassisCli
 from ngts.cli_wrappers.sonic.sonic_onie_clis import SonicOnieCli, OnieInstallationError, get_latest_onie_version
 from ngts.constants.constants import CliType, FanoutConfigFile
+from ngts.helpers.shared_fanout_helper import is_shared_fanout
 from ngts.constants.constants import SonicConst, InfraConst, ConfigDbJsonConst, PerformanceSetupConstants, \
     AppExtensionInstallationConstants, DefaultCredentialConstants, BluefieldConstants, \
     PlatformTypesConstants, SonicDeployConstants, SanitizerConst
@@ -328,8 +329,11 @@ class SonicGeneralCliDefault(GeneralCliCommon):
     def is_logs_in_tmpfs(self):
         log_filesystem = self.engine.run_cmd("df --output=fstype -h /var/log")
         logs_in_tmpfs = log_filesystem and "tmpfs" in log_filesystem
-        config_db = self.get_config_db()
-        platform = config_db['DEVICE_METADATA']['localhost']['platform']
+        try:
+            platform = self.get_config_db()['DEVICE_METADATA']['localhost']['platform']
+        except json.JSONDecodeError:
+            # A multi-ASIC first boot leaves no config_db.json, so read the platform from the hardware info
+            platform = self.engine.run_cmd("sonic-cfggen -H -v DEVICE_METADATA.localhost.platform").strip()
         return logs_in_tmpfs or platform in PlatformTypesConstants.LOGS_ON_TMPFS_PLATFORMS
 
     def copy_logs_before_reboot(self, logs_in_tmpfs):
@@ -654,7 +658,7 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         # Validate and reboot if needed for multi-asic Air platforms or when reboot_after_install is True
         if reboot_after_install or (is_air and SonicInstallationSteps.is_multi_asic_platform(platform_params=platform_params)):
             with allure.step("Validate dockers are up, reboot if any docker is not up"):
-                self.validate_dockers_are_up_reboot_if_fail(topology_obj, retries=3)
+                self.validate_dockers_are_up_reboot_if_fail(topology_obj, retries=3, platform_params=platform_params)
 
         if set_timezone:
             with allure.step("Set dut NTP timezone to {} time.".format(set_timezone)):
@@ -1010,9 +1014,12 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         Copy the specific configuration file to fanout switch and load it
         """
 
-        fanout_engine_type, fanout_name, fanout = self.get_fanout_info(topology_obj, dut_alias)
+        fanout_engine_type, fanout_name, fanout, fanout_player = self.get_fanout_info(topology_obj, dut_alias)
 
-        if fanout and 'r-moose-06' not in fanout_name:
+        if fanout:
+            if is_shared_fanout(fanout_player):
+                logger.info(f"Skipping fanout.yml on shared fanout {fanout_name}")
+                return
             if fanout_engine_type == CliType.SONIC:
                 # Convert dut_alias to fanout_alias
                 fanout_alias = 'fanout'
@@ -1032,19 +1039,20 @@ class SonicGeneralCliDefault(GeneralCliCommon):
         fanout_alias = 'fanout'
         if dut_alias == 'dut-b':
             fanout_alias = 'fanout-b'
+        fanout_player = topology_obj.players.get(fanout_alias)
 
-        if topology_obj.players.get(fanout_alias):
-            fanout_engine_type = topology_obj.players[fanout_alias]['attributes'].noga_query_data['attributes'][
+        if fanout_player:
+            fanout_engine_type = fanout_player['attributes'].noga_query_data['attributes'][
                 'Topology Conn.']['CLI_TYPE']
-            fanout_name = topology_obj.players[fanout_alias]['attributes'].noga_query_data['attributes'][
+            fanout_name = fanout_player['attributes'].noga_query_data['attributes'][
                 'Common']['Name']
 
             if fanout_engine_type == CliType.SONIC:
-                fanout = topology_obj.players[fanout_alias]['cli']
+                fanout = fanout_player['cli']
                 fanout = fanout.general
             else:
-                fanout = topology_obj.players[fanout_alias]['engine']
-        return fanout_engine_type, fanout_name, fanout
+                fanout = fanout_player['engine']
+        return fanout_engine_type, fanout_name, fanout, fanout_player
 
     def disable_ipv6_sonic_fanout(self, topology_obj, dut_alias=None):
         """
@@ -2210,6 +2218,14 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             f"install_traffic_generator (SONiC): latest_version={latest_version}, "
             f"perf_sys_sdk_change={perf_sys_sdk_change!r}"
         )
+        if perf_sys_sdk_change is not None:
+            self.engine.run_cmd(f'echo "{perf_sys_sdk_change}" > {PerfConsts.PERF_SYS_SDK_CHANGE_FILE}')
+        else:
+            persisted_perf_sys_sdk_change = self.engine.run_cmd(
+                f'cat {PerfConsts.PERF_SYS_SDK_CHANGE_FILE} 2>/dev/null || true', validate=False).strip()
+            if persisted_perf_sys_sdk_change:
+                perf_sys_sdk_change = persisted_perf_sys_sdk_change
+
         perf_sys_sdk_branch, perf_sys_sdk_gerrit_change = self.resolve_perf_sys_sdk_change(perf_sys_sdk_change)
         with allure.step('Get SDK_VER git'):
             sdk_version, sdk_branch = self.resolve_sdk_version_and_branch_for_traffic_generator(
@@ -2375,7 +2391,8 @@ class SonicGeneralCliDefault(GeneralCliCommon):
             context.platform_params, context.apply_base_config, context.target_version,
             context.is_shutdown_bgp, context.reboot_after_install, context.deploy_only_target,
             context.fw_pkg_path, context.reboot, context.additional_apps, context.setup_info,
-            last_dut['dut_alias'], context.is_performance, context.chip_type, context.deploy_dpu, context.is_air,
+            last_dut['dut_alias'], context.is_performance, context.chip_type, context.deploy_dpu,
+            xml_rpc=True, is_air=context.is_air,
             deploy_chipless=context.deploy_chipless
         )
 

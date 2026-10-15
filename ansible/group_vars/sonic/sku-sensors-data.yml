@@ -5600,7 +5600,8 @@ sensors_checks:
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Volt (out2)/in3_crit_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Pwr (in)/power1_alarm
       - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (in)/curr1_alarm
-      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEMIO Curr (out1)/curr2_alarm
+      - mp2975-i2c-5-6a/DDR PMIC VDD_MEM Curr (out2)/curr5_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_min_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_max_alarm
       - raa228004-i2c-7-60/PDB-2 CONV VinDC Volt (in)/in1_lcrit_alarm

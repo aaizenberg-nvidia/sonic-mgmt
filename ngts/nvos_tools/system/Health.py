@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import allure
 from retry import retry
@@ -14,6 +14,13 @@ from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
 from ngts.nvos_tools.system.Files import Files
 
 logger = logging.getLogger()
+
+
+def _to_naive_utc(dt):
+    """Return naive UTC datetime; leave already-naive values unchanged."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 class Health(BaseComponent):
@@ -58,24 +65,49 @@ class History(BaseComponent):
 
     @staticmethod
     def _parse_log_date(line):
-        """Extract datetime from a health log line. Returns None if not parseable."""
+        """Extract naive datetime from a health log line. Returns None if not parseable.
+
+        Cumulus/NVUE health_history uses ISO-8601 stamps in the DUT clock domain
+        (typically UTC), e.g. ``[2026-08-26T11:03:36.298260]``. Offset-bearing
+        stamps (``Z`` / ``±HH:MM``) are normalized to naive UTC. Older syslog-style
+        lines (``Aug 26 11:03:36``) are still accepted as naive.
+        """
+        iso = re.search(
+            r'\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?'
+            r'(?:Z|[+-]\d{2}:?\d{2})?)\]',
+            line,
+        )
+        if iso:
+            ts = iso.group(1).replace('Z', '+00:00')
+            # fromisoformat needs ±HH:MM; accept compact ±HHMM from some emitters.
+            if re.search(r'[+-]\d{4}$', ts):
+                ts = f"{ts[:-2]}:{ts[-2:]}"
+            return _to_naive_utc(datetime.fromisoformat(ts))
         match = re.search(r'(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})', line)
         if not match:
             return None
         return datetime.strptime(f"{datetime.now().year} {match.group(1)}", "%Y %b %d %H:%M:%S")
 
+    @staticmethod
+    def _normalize_since_date(since_date):
+        """Compare as naive UTC; convert aware callers instead of stripping tzinfo."""
+        return _to_naive_utc(since_date)
+
     def _filter_lines_by_date(self, patterns, since_date, file_output):
         """Return log lines that match any pattern and are on or after since_date."""
+        since = self._normalize_since_date(since_date)
         return [line.strip() for line in file_output.splitlines()
                 if any(re.search(p, line) for p in patterns) and
-                (self._parse_log_date(line) or datetime.min) >= since_date]
+                (self._parse_log_date(line) or datetime.min) >= since]
 
     def search_line_by_date(self, lines_to_search, since_date, expect_found=True, file_output=None):
         """Search for lines in health history filtered by date.
 
         Args:
             lines_to_search: a single regex pattern (str) or a list of regex patterns.
-            since_date: datetime object - only lines on or after this date are considered.
+            since_date: datetime — only lines on or after this stamp are considered.
+                Prefer naive UTC (or DUT-local) to match health_history line stamps;
+                aware datetimes are converted to naive UTC before compare.
             expect_found: if True, assert all patterns found; if False, assert none found.
             file_output: optional pre-fetched output; fetched via show() if None.
         """

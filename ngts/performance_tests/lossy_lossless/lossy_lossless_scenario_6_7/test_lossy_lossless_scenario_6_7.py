@@ -8,7 +8,7 @@ from ngts.constants.performance_constants import PerfConsts, ValidationConsts, B
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 logger = logging.getLogger()
 
-LOSSY_LOSSLESS_SCENARIOS_LIST = ["scenario_6a", "scenario_6b", "scenario_7a", "scenario_7b", "scenario_7c"]
+LOSSY_LOSSLESS_SCENARIOS_LIST = ["scenario_6a", "scenario_6b", "scenario_7b", "scenario_7c"]
 
 
 @pytest.mark.parametrize("basic_setup_configuration", LOSSY_LOSSLESS_SCENARIOS_LIST, indirect=True)
@@ -28,8 +28,6 @@ class TestLossyLosslessScenario6and7:
         self.traffic_jsons = get_lossy_lossless_scenario_6_7_traffic(self.cli_objects, self.conf_args, self.scenario_name)
 
     def test_scenario_6_and_7(self, request):
-        if is_redmine_issue_active([4727100])[0] and self.scenario_name == "scenario_7a":
-            pytest.skip("Skipping scenario 7a due to issue 4727100")
         test_name = get_perf_test_name(request)
         counters_to_ignore = ['tx_ecn_marked_tc_3', 'tx_ecn_marked_tc_4']
         test_custom_counters_to_ignore = self.conf_args.get(ValidationConsts.IGNORE_COUNTER_LIST, [])

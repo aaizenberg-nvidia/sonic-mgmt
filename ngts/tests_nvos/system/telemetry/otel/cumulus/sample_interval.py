@@ -41,12 +41,14 @@ def get_dut_os_info(dut) -> str:
     for cmd in (
         "cat /etc/image-release 2>/dev/null",
         "cat /etc/os-release 2>/dev/null",
-        "nv show system version -o json 2>/dev/null",
     ):
         out = dut.run_cmd(cmd, validate=False, print_output=False)
         if out.strip():
             return out
-    return ""
+    from ngts.nvos_tools.system.System import System
+    from ngts.tests_nvos.system.telemetry.otel.helpers import component_show_text
+
+    return component_show_text(System().version, dut)
 
 
 def _node_netstat_sample_interval_supported(os_info: str) -> bool:

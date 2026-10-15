@@ -15,7 +15,7 @@ from ngts.nvos_tools.system.Profile import CORE_CLOCK_KEY
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
 from ngts.tests_nvos.constants import MINUTE
-from ngts.tests_nvos.interfaces.nvl_port.helpers import validate_ports_state_and_speed
+from ngts.tests_nvos.interfaces.nvl_port.helpers import validate_ports_state_and_speed, wait_for_ports_state_and_speed
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, NvosConsts
 from ngts.tools.test_utils.allure_utils import step as allure_step
 from ngts.tests_nvos.system.factory_reset.helpers import get_current_time
@@ -74,19 +74,20 @@ def test_fae_core_clock_main_flow(engines, devices, has_loopbox, standalone_syst
         sample_port.interface.link.show()).get_returned_value().get(IbInterfaceConsts.LINK_SPEED)
     logger.info(f"Original speed (from {sample_port_name}): {original_speed}")
 
+    speed_changed = False
     try:
         if illegal_speed and original_speed == illegal_speed:
             # Choose a random link speed valid on the target core-clock
             new_speed = _random_nvl_speed_for_core_clock(supported_core_clocks, other_core_clock)
 
             with allure_step(f"Set speed {new_speed} on all access ports: {access_ports_range}"):
+                speed_changed = True
                 all_ports.interface.link.set(
                     op_param_name='speed', op_param_value=new_speed, ask_for_confirmation=True, apply=True).verify_result()
                 TestToolkit.GeneralApi[random_api].save_config(engines.dut)
 
             with allure_step(f"Wait and verify ALL access ports reached speed {new_speed}"):
-                retry_call(validate_ports_state_and_speed, [new_speed, port_names, 'acp'],
-                           exceptions=AssertionError, tries=6, delay=30)
+                wait_for_ports_state_and_speed(devices, new_speed, port_names, 'acp')
                 logger.info(f"✓ All access ports reached speed {new_speed}")
 
         with allure_step(f"Change FAE core-clock to {other_core_clock} MHz"):
@@ -112,13 +113,13 @@ def test_fae_core_clock_main_flow(engines, devices, has_loopbox, standalone_syst
             assert (OutputParsingTool.parse_json_str_to_dictionary(profile.show(dut_engine=engines.dut))
                     .get_returned_value().get(CORE_CLOCK_KEY)) == core_clock
 
-        with allure_step(f"Cleanup: unset speed on {access_ports_range} and verify restoration"):
-            all_ports.interface.link.unset(
-                op_param='speed', apply=True, ask_for_confirmation=True).verify_result()
+        if speed_changed:
+            with allure_step(f"Cleanup: unset speed on {access_ports_range} and verify restoration"):
+                all_ports.interface.link.unset(
+                    op_param='speed', apply=True, ask_for_confirmation=True).verify_result()
 
-            retry_call(validate_ports_state_and_speed, [default_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
-            logger.info(f"✓ All access ports restored to {default_speed}")
+                wait_for_ports_state_and_speed(devices, default_speed, port_names, 'acp')
+                logger.info(f"✓ All access ports restored to {default_speed}")
 
 
 @pytest.mark.dut_reboot
@@ -173,8 +174,7 @@ def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_s
             TestToolkit.GeneralApi[random_api].save_config(engines.dut)
 
         with allure_step(f"Wait and verify ALL access ports reached speed {illegal_speed}"):
-            retry_call(validate_ports_state_and_speed, [illegal_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
+            wait_for_ports_state_and_speed(devices, illegal_speed, port_names, 'acp')
 
         with allure_step(f"Attempt FAE core-clock change to {other_core_clock} MHz while {sample_port_name} is at illegal speed {illegal_speed}."):
             profile.action_change_core_clock(other_core_clock, random_api, engine=engines.dut, send_user_confirmation="y").verify_result(
@@ -187,8 +187,7 @@ def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_s
             TestToolkit.GeneralApi[random_api].save_config(engines.dut)
 
         with allure_step(f"Wait and verify ALL access ports reached speed {new_speed}"):
-            retry_call(validate_ports_state_and_speed, [new_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
+            wait_for_ports_state_and_speed(devices, new_speed, port_names, 'acp')
             logger.info(f"✓ All access ports reached speed {new_speed}")
 
         with allure_step(f"Change FAE core-clock to {other_core_clock} MHz with compatible access ports"):
@@ -216,8 +215,7 @@ def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_s
             logger.info(f"Unset speed on {access_ports_range}")
 
             default_speed = devices.dut.access_port_speed
-            retry_call(validate_ports_state_and_speed, [default_speed, port_names, 'acp'],
-                       exceptions=AssertionError, tries=6, delay=30)
+            wait_for_ports_state_and_speed(devices, default_speed, port_names, 'acp')
             logger.info(f"✓ All access ports restored to {default_speed}")
 
 

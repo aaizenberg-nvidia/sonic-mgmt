@@ -4,6 +4,7 @@ import pytest
 import allure
 
 from ngts.constants.constants import CliType, FanoutVersionConsts
+from ngts.helpers.shared_fanout_helper import is_shared_fanout
 from ngts.scripts.sonic_deploy.deploy_helper_methods import DeployTopologyHelper
 
 logger = logging.getLogger()
@@ -22,9 +23,12 @@ def test_fanout_upgrade(topology_obj, workspace_path, setup_name, fanout_target_
 
     with allure.step('Installing fanout image on fanout'):
         for dut in setup_info['duts']:
-            fanout_engine_type, fanout_name, fanout = dut['cli_obj'].get_fanout_info(topology_obj, dut['dut_alias'])
+            fanout_engine_type, fanout_name, fanout, fanout_player = dut['cli_obj'].get_fanout_info(
+                topology_obj, dut['dut_alias'])
+            if is_shared_fanout(fanout_player):
+                logger.info(f"Skipping fanout upgrade on shared fanout {fanout_name}")
+                continue
             if fanout_engine_type == CliType.SONIC:
-                # Check if current fanout version is already in the expected version list
                 _, current_image = fanout.get_base_and_target_images()
                 current_version = current_image.replace("SONiC-OS-", "")
                 logger.info(f"Current fanout version: {current_version}")

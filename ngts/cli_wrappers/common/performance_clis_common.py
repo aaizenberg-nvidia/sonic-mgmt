@@ -355,6 +355,23 @@ class PerformanceCommon:
             ports_dump,
         )
 
+    def disable_ipv6_dad_if_forced_unconnected(self):
+        """Disable IPv6 DAD on a switch that declares forced-unconnected ports.
+
+        Unlike cable-less MLOOP generator ports, a forced-unconnected port has a cable attached, so
+        its link is up while the test configuration is applied and it briefly bridges the TG VLANs
+        it is cabled between. All TG VLAN interfaces share one MAC-derived IPv6 link-local address,
+        so DAD on one VLAN hears the other's probe and marks its link-local dadfailed; BGP on that
+        VLAN then never establishes and the DUT drops all traffic towards that port. DAD protects
+        nothing here, so it is turned off before the VLAN interfaces are created ("default" covers
+        new interfaces, existing ones are set explicitly). No-op on switches without forced ports.
+        """
+        if not self.forced_unconnected_label_ports:
+            return
+        logging.info(f"[{self.dut_alias}] Disabling IPv6 DAD on {self.hostname}: forced-unconnected label port(s) "
+                     f"{sorted(self.forced_unconnected_label_ports)} are link-up while the configuration is applied")
+        self.execute_cmd("sudo sh -c 'for f in /proc/sys/net/ipv6/conf/*/accept_dad; do echo 0 > \"$f\"; done'")
+
     def execute_cmd(self, cmd, print_output=False):
         """
         All functions on the inheritance classes (DVS, SONiC, Cumulus) will be executed
@@ -623,7 +640,7 @@ class PerformanceCommon:
                 logging.info(f"Burst is enabled on {self.dut_alias}, the SDK mloop configuration will read the burst "
                              f"configuration from {burst_config_path} and turn the bonus ports into burst generators")
                 env_variables.append(burst_env_variable)
-            configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
+            configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
             self.execute_cmd(self.get_cmd_for_sdk(configure_mloops_cmd, env_variables=env_variables))
             if validate_mloops:
                 self.check_mloops_up()
@@ -638,7 +655,7 @@ class PerformanceCommon:
         traffic_json_path = self.copy_traffic_json_to_player(scenario, json_path)
         self.set_tg_json_env_var(traffic_json_path)
         logging.info("Running traffic onto the device")
-        run_traffic_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_NAME}"
+        run_traffic_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_NAME}"
         self.logrotate("rsyslog")
         try:
             self.execute_cmd(self.get_cmd_for_sdk(run_traffic_cmd, env_variables=[f'TG_JSON={traffic_json_path}']))
@@ -714,7 +731,7 @@ class PerformanceCommon:
             set_interval_cmd = f"export {env_var_name}={param_val}"
             env_variables.append(f"{env_var_name}={param_val}")
             self.execute_cmd(set_interval_cmd)
-        run_validator_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_VALIDATOR_NAME}"
+        run_validator_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_VALIDATOR_NAME}"
         self.logrotate("rsyslog")
         try:
             self.execute_cmd(self.get_cmd_for_sdk(run_validator_cmd, env_variables=env_variables))
@@ -737,7 +754,7 @@ class PerformanceCommon:
     @retry(exceptions=TestIssue, tries=2, delay=2)
     def stop_traffic(self, burst_config=None):
         logging.info(f"Remove Mloop configuration from {self.dut_alias}")
-        remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
+        remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
         self.logrotate("rsyslog")
         # The burst configuration must be pointed at on teardown as well, otherwise the SDK leaves the
         # policers and ACLs it bound to the bonus ports behind for every following test on this player.
@@ -883,7 +900,7 @@ class PerformanceCommon:
         """
         logging.info(f"[{self.dut_alias}] Running PG buffer modification from existing conf.json")
 
-        modify_pg_buffer_cmd = (f"{PerfConsts.DVS_RUN_TEST_PATH} --names "
+        modify_pg_buffer_cmd = (f"{PerfConsts.DVS_RUN_TEST_CMD} --names "
                                 f"{PerfConsts.DVS_MODIFY_PG_BUFFER_CONNECTED_PORTS}")
 
         try:

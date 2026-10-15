@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<DBDEF>
+	<global>
+		<default_params_type> extended_setup_step_params </default_params_type>
+		<DB>
+			<info> Spectrum-X RA CL short regression </info>
+			<owner> yfass </owner>
+			<group> PERFORMANCE </group>
+			<dimension> VER </dimension>
+
+            <pre>
+            </pre>
+
+		</DB>
+		<Test>
+			<post> </post>
+		</Test>
+		<Case>
+            <pre>
+                <type> reg_exec_func </type>
+                <name> set_environment_variables </name>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <tout> 60 </tout>
+                <params>
+                    <env> MARS_CASE_NAME=[[run_time:mars_last_case_name]] </env>
+                    <env> MARS_TEST_NAME=[[run_time:test_name]] </env>
+                    <env> MARS_DB_NAME=[[run_time:db_name]] </env>
+                </params>
+</pre>
+			<post>
+			</post>
+		</Case>
+	</global>
+	<test>
+		<cases> sonic-mgmt/sonic-tool/mars/cases/performance/spcx_ra_short_regression_cl.cases </cases>
+	</test>
+</DBDEF>

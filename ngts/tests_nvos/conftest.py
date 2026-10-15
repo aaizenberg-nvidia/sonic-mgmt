@@ -97,6 +97,16 @@ def pytest_configure(config: pytest.Config):
     MARS supplies secrets through the environment, so Vault loading is skipped
     for MARS-managed pytest processes.
     """
+    try:
+        scheme = config.getoption("--bmc-internal-redfish-scheme", default=None)
+        port = config.getoption("--bmc-internal-redfish-port", default=None)
+    except ValueError:
+        scheme = port = None
+    if scheme:
+        os.environ["BMC_INTERNAL_REDFISH_SCHEME"] = scheme
+    if port:
+        os.environ["BMC_INTERNAL_REDFISH_PORT"] = str(port)
+
     # Only run for NVOS tests - check if we're running tests from tests_nvos directory
     args = config.args if hasattr(config, 'args') else config.invocation_params.args
     if not args or not any('tests_nvos' in str(arg) for arg in args):
@@ -133,6 +143,21 @@ def pytest_addoption(parser: pytest.Parser):
                                                            "configurations; False otherwise (only several random "
                                                            "configurations will be picked to testing)")
     parser.addoption("--disable_cli_coverage", action="store_true", default=False, help="Do not run cli coverage")
+    parser.addoption(
+        "--bmc-internal-redfish-scheme",
+        action="store",
+        default=None,
+        help="usb0 Redfish URL scheme for SN11 (http or https). "
+             "Default http (CL 5.19 usb0). Env BMC_INTERNAL_REDFISH_SCHEME. "
+             "HTTPS opt-in: --bmc-internal-redfish-scheme=https. "
+             "Do not dual-probe.",
+    )
+    parser.addoption(
+        "--bmc-internal-redfish-port",
+        action="store",
+        default=None,
+        help="usb0 Redfish TCP port. Default 443. Env BMC_INTERNAL_REDFISH_PORT.",
+    )
     parser.addoption("--security_post_checker", action="store_true", default=False, required=False,
                      help="Whether to run security post checker or not")
     parser.addoption("--check_output", action="store_true", default=False, help="Provide to check ib output")

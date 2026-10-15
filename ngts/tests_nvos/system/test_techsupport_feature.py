@@ -9,7 +9,8 @@ from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
-from ngts.nvos_constants.constants_nvos import IssuConsts, NtpConsts, SystemConsts, OutputFormat
+from ngts.nvos_constants.constants_nvos import ActionConsts, IssuConsts, NtpConsts, SystemConsts, OutputFormat
+from ngts.nvos_tools.cli_coverage.operation_time import OperationTime
 from ngts.tests_nvos.cluster.cluster_consts import ClusterConsts
 from ngts.tests_nvos.cluster.cluster_tools import ClusterTools, disabled_access_ports
 from ngts.nvos_tools.nmx.Cluster import Cluster
@@ -22,6 +23,12 @@ import logging
 import pytest
 
 logger = logging.getLogger()
+
+SSD_DUMP_OUTPUT_PATTERN = (
+    r'SSD dump saved to '
+    r'(?P<path>/var/log/ssd_dump_\d{4}_\d{2}_\d{2}_'
+    r'\d{2}_\d{2}_\d{2}_UTC\.tar\.gz)'
+)
 
 
 @pytest.mark.general
@@ -183,6 +190,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
     NvueGeneralCli.apply_config(engine=engines.dut)
     NvueGeneralCli.save_config(engine=engines.dut)
 
+    generated_ssd_dump_paths = set()
     try:
         if devices.dut.has_nmx:
             cluster = Cluster()
@@ -195,15 +203,36 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
                     cluster.set(op_param_name="state", op_param_value='enabled', apply=True)
                     ClusterTools.wait_for_apps_to_be_in_wanted_state(cluster, cluster_expected_state='enabled', nmx_c_expected_state='up')
 
+        with allure.step('Generate standalone SSD diagnostic dump'):
+            validate_nvme_dump_generation(engines, generated_ssd_dump_paths)
+
         with allure.step('Run nv action generate system tech-support and validate dump files'):
             tech_support_file, duration = system.techsupport.action_generate(test_name=test_name)
             tech_support_dir = tech_support_file.replace('.tar.gz', '')
             with allure.step("Tech-support generation takes: {} seconds".format(duration)):
                 logger.info("Tech-support generation takes: {} seconds".format(duration))
+                OperationTime.verify_operation_time(
+                    duration, devices.dut.generate_tech_support, devices
+                ).verify_result()
             system.techsupport.extract_techsupport_files(engines.dut)
 
             with allure.step('Extract hw-mgmt-dump.tar.gz under hw-mgmt folder'):
                 system.techsupport.extract_techsupport_subfile(engines.dut, 'hw-mgmt', 'hw-mgmt-dump.tar.gz', tech_support_dir)
+
+            with allure.step(
+                'Validate SSD dump status is included in tech-support'
+            ):
+                hw_mgmt_dir = f'{tech_support_dir}/hw-mgmt'
+                ssd_dump_dir = f'{hw_mgmt_dir}/ssd-dump'
+                assert engines.dut.run_cmd(
+                    f'test -d {ssd_dump_dir} && echo exists'
+                ).strip() == 'exists', \
+                    f'{ssd_dump_dir} directory is missing'
+                ssd_dump_status_path = f'{ssd_dump_dir}/ssd-dump-status.log'
+                assert engines.dut.run_cmd(
+                    f'test -f {ssd_dump_status_path} && echo exists'
+                ).strip() == 'exists', \
+                    f'{ssd_dump_dir}/ssd-dump-status.log is missing'
 
             techsupport_files_dict = system.techsupport.get_techsupport_files_names(engines.dut, expected_files_dict)
 
@@ -282,8 +311,10 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
         if devices.dut.has_nmx and not skynet:
             Cluster().unset(apply=True)
             ClusterTools.wait_for_apps_to_be_in_wanted_state(cluster, cluster_expected_state='disabled', nmx_c_expected_state='down')
-        system.techsupport.cleanup(engines.dut)
+        for ssd_dump_path in generated_ssd_dump_paths:
+            engines.dut.run_cmd(f'sudo rm -f {ssd_dump_path}')
         if system.techsupport.file_name:
+            system.techsupport.cleanup(engines.dut)
             system.techsupport.files.file_name[system.techsupport.file_name].action_delete()
 
 
@@ -458,6 +489,50 @@ def extract_auth_log(engine, dump_path: str) -> str:
 
 def verify_file_in_folder(engine, file_name: str, folder_path: str) -> bool:
     return file_name in engine.run_cmd(f'ls {folder_path}')
+
+
+def _get_ssd_dump_paths(engine) -> set:
+    output = engine.run_cmd(
+        "find /var/log -maxdepth 1 -type f "
+        "-name 'ssd_dump_*_UTC.tar.gz' -print"
+    )
+    path_pattern = re.compile(
+        r'^/var/log/ssd_dump_\d{4}_\d{2}_\d{2}_'
+        r'\d{2}_\d{2}_\d{2}_UTC\.tar\.gz$'
+    )
+    return {
+        line.strip() for line in output.splitlines()
+        if path_pattern.match(line.strip())
+    }
+
+
+def validate_nvme_dump_generation(engines, generated_dump_paths: set) -> str:
+    """
+    Validate standalone SSD dump generation before collecting tech-support.
+
+    Every NVOS switch must generate a timestamped archive under /var/log.
+    """
+    dumps_before = _get_ssd_dump_paths(engines.dut)
+    try:
+        result = Fae().system.nvme.dump.action(
+            ActionConsts.GENERATE,
+            timeout=10,
+        )
+    finally:
+        generated_dump_paths.update(
+            _get_ssd_dump_paths(engines.dut) - dumps_before
+        )
+
+    output = result.verify_result()
+    dump_path_match = re.search(SSD_DUMP_OUTPUT_PATTERN, output)
+    assert dump_path_match, \
+        f'SSD dump success message or path missing in output: {output}'
+
+    dump_path = dump_path_match.group('path')
+    assert engines.dut.run_cmd(
+        f'test -f {dump_path} && echo exists'
+    ).strip() == 'exists', f'SSD dump archive {dump_path} does not exist'
+    return dump_path
 
 
 def verify_secret_obscurity(content: str, pattern: str, file_name: str, secret_name: str, expected_obscurity: str = 'XXX',

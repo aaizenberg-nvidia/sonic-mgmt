@@ -1530,6 +1530,17 @@ _PSU_CLI_NVUE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
     "psu_hardware_version": ("hardware-version", "hw-revision"),
     "psu_type": ("type",),
 }
+# gNMI ``state/model-name`` on a PSU is the manufacturer (``DELTA``) on some
+# platforms and the part (``MTEF-PSF-AC-C``) on others. Inventory ``model`` is
+# the part; ``platform environment psu`` carries ``vendor``.
+_PSU_MODEL_NAME_CLI_KEYS: Tuple[str, ...] = (
+    "model-name",
+    "model",
+    "vendor",
+    "mfg-name",
+    "manufacturer",
+    "description",
+)
 
 _CLI_PLACEHOLDER_VALUES = frozenset(
     {
@@ -1574,6 +1585,50 @@ def _dmi_first_processor_fields(raw: str) -> Dict[str, str]:
             continue
         fields.setdefault(key, val)
     return fields
+
+
+_PSU_TYPE_ALIASES = frozenset({"psu", "power_supply"})
+
+
+def _psu_type_token(value: Any) -> str:
+    return str(value).strip().lower().split(":")[-1].replace("-", "_").replace(" ", "")
+
+
+def _psu_match(field: str, left: Any, right: Any, cli: Optional[Dict[str, Any]] = None) -> bool:
+    """Exact match, PSU ``psu``/``POWER_SUPPLY``, or an accepted manufacturer/part pair."""
+    if str(left).strip() == str(right).strip():
+        return True
+    if field in ("type", "psu_type"):
+        left_token, right_token = _psu_type_token(left), _psu_type_token(right)
+        return left_token == right_token or (
+            left_token in _PSU_TYPE_ALIASES and right_token in _PSU_TYPE_ALIASES
+        )
+    accepted = (cli or {}).get("psu_model_name_accepted") or ()
+    return (
+        field in ("model_name", "psu_model_name") and
+        str(left).strip() in accepted and
+        str(right).strip() in accepted
+    )
+
+
+def _accept_psu_model_split(cli: Dict[str, Any], series: Dict[str, Any], psu_name: str, gnmi_value: Any, cli_value: Any) -> bool:
+    """True when gNMI ``model-name`` is the manufacturer and CLI ``model`` is the part."""
+    gnmi_text, cli_text = str(gnmi_value).strip(), str(cli_value).strip()
+    candidates = [str(item).strip() for item in (cli.get("psu_model_name_candidates") or []) if str(item).strip()]
+
+    def _leaf(name: str) -> str:
+        value, _ = latest_gnmi_component_state_leaf(series, component_name=psu_name, leaf=name)
+        return "" if value in (None, "") else str(value).strip()
+
+    corroborated = (
+        gnmi_text.lower() in {item.lower() for item in candidates} or
+        _leaf("mfg-name") == gnmi_text or
+        _leaf("part-no") == cli_text
+    )
+    if not corroborated:
+        return False
+    cli["psu_model_name_accepted"] = list(dict.fromkeys([gnmi_text, cli_text, *candidates]))
+    return True
 
 
 def _platform_hw_info_otel_attrs(
@@ -1633,6 +1688,7 @@ def _validate_platform_hw_info_otel_cli(
     cli_by_otel_field: Dict[str, Any],
     expected_types: Optional[Sequence[str]] = None,
     match_name_normalized: bool = False,
+    values_compatible=None,
 ) -> None:
     """Shared ``nvswitch_platform_info_hw_details`` OTEL-vs-CLI comparison for a component.
 
@@ -1656,7 +1712,10 @@ def _validate_platform_hw_info_otel_cli(
                     "otel=%s cli=%s (skipped)" % (otel_value, cli_value),
                 )
                 continue
-            if str(otel_value) != str(cli_value):
+            if str(otel_value) != str(cli_value) and not (
+                values_compatible is not None and
+                values_compatible(otel_field, otel_value, cli_value)
+            ):
                 failures.append("%s: OTEL=%s CLI=%s" % (otel_field, otel_value, cli_value))
         if failures:
             pytest.fail(
@@ -1667,16 +1726,23 @@ def _validate_platform_hw_info_otel_cli(
 
 def _first_present_value(payload: Dict[str, Any], keys: Sequence[str]) -> Optional[str]:
     """First non-placeholder value in ``payload`` for any of ``keys``."""
+    values = _present_cli_values(payload, keys)
+    return values[0] if values else None
+
+
+def _present_cli_values(payload: Dict[str, Any], keys: Sequence[str]) -> List[str]:
+    """Non-placeholder values in ``payload`` for ``keys``, in key order, de-duplicated."""
     if not isinstance(payload, dict):
-        return None
+        return []
+    values: List[str] = []
     for key in keys:
         value = payload.get(key)
         if value is None:
             continue
         text = str(value).strip()
-        if text and text.lower() not in _CLI_PLACEHOLDER_VALUES:
-            return text
-    return None
+        if text and text.lower() not in _CLI_PLACEHOLDER_VALUES and text not in values:
+            values.append(text)
+    return values
 
 
 def _flatten_cli_leaves(payload: Any, depth: int = 0) -> Dict[str, str]:
@@ -1916,6 +1982,21 @@ def _find_named_component_entry(
     return {}
 
 
+def _environment_psu_leaves(dut, psu_name: str) -> Dict[str, str]:
+    """Leaves from ``nv show platform environment psu`` (vendor / model)."""
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.gnmi_coexistence import _show_json
+
+    node = Platform().environment.psu
+    for op_param in (psu_name, ""):
+        payload = _show_json(node, dut, op_param=op_param)
+        if not isinstance(payload, dict) or not payload:
+            continue
+        entry = _find_named_component_entry(payload, component_name=psu_name)
+        if entry:
+            return _flatten_cli_leaves(entry)
+    return {}
+
+
 def _nvue_psu_component_payload(dut, psu_name: str) -> Tuple[Dict[str, Any], str]:
     """PSU entry from NVUE platform inventory (``Platform().inventory``)."""
     attempts = (
@@ -1948,10 +2029,15 @@ def collect_psu_cli_component_data(dut, psu_name: Optional[str] = None) -> Dict[
             return {"psu_name": None}
         nvue, source_cmd = _nvue_psu_component_payload(dut, name)
         leaves = _flatten_cli_leaves(nvue)
+        for key, value in _environment_psu_leaves(dut, name).items():
+            leaves.setdefault(key, value)
         data: Dict[str, Any] = {
             field_key: _first_present_value(leaves, cli_keys)
             for field_key, cli_keys in _PSU_CLI_NVUE_FIELD_MAP.items()
         }
+        data["psu_model_name_candidates"] = _present_cli_values(
+            leaves, _PSU_MODEL_NAME_CLI_KEYS
+        )
         if not data.get("psu_type"):
             data["psu_type"] = "PSU"
         data["psu_name"] = name
@@ -2015,14 +2101,14 @@ def _validate_psu_platform_hw_info_gnmi_cli(cli: Dict[str, Any]) -> None:
                 )
                 continue
             compared += 1
-            if str(gnmi_value) != str(cli_value):
+            if _psu_match(attr, gnmi_value, cli_value, cli) or (
+                attr == "psu_model_name" and
+                _accept_psu_model_split(cli, series, psu_name, gnmi_value, cli_value)
+            ):
+                allure.attach(attr, "gnmi=%s cli=%s xpath=%s" % (gnmi_value, cli_value, xpath))
+            else:
                 failures.append(
                     "%s: gNMI=%s CLI=%s (xpath=%s)" % (attr, gnmi_value, cli_value, xpath)
-                )
-            else:
-                allure.attach(
-                    attr,
-                    "gnmi=%s cli=%s xpath=%s" % (gnmi_value, cli_value, xpath),
                 )
         if exported == 0:
             pytest.skip(
@@ -2067,7 +2153,7 @@ def _validate_psu_platform_hw_info_gnmi_otel(cli: Dict[str, Any]) -> None:
             if otel_value is None or gnmi_value is None:
                 allure.attach(attr, "gnmi=%s otel=%s (skipped)" % (gnmi_value, otel_value))
                 continue
-            if str(gnmi_value) != str(otel_value):
+            if not _psu_match(attr, gnmi_value, otel_value, cli):
                 failures.append("%s: gNMI=%s OTEL=%s" % (attr, gnmi_value, otel_value))
             else:
                 allure.attach(attr, "gnmi=%s otel=%s" % (gnmi_value, otel_value))
@@ -2092,6 +2178,7 @@ def validate_psu_platform_hw_info() -> None:
         expected_name=str(cli.get("psu_name")),
         expected_types=_PSU_OTEL_TYPE_CANDIDATES,
         match_name_normalized=True,
+        values_compatible=lambda field, left, right: _psu_match(field, left, right, cli),
         cli_by_otel_field={
             "serial_no": cli.get("psu_serial_no"),
             "part_no": cli.get("psu_part_no"),
@@ -2242,41 +2329,49 @@ def _nvue_version_gte(dut, version: str) -> bool:
         return False
 
 
+def _stage_root_telemetry(dut, specs: Sequence[Tuple[str, str, Any]]) -> None:
+    """Stage ``nv set system telemetry …`` leaves, then apply on the API under test."""
+    from ngts.nvos_tools.system.System import System
+    from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
+        apply_staged_candidate,
+        stage_telemetry_value,
+    )
+
+    system = System()
+    for path, name, value in specs:
+        stage_telemetry_value(system, dut, path, name, value)
+    apply_staged_candidate(dut)
+
+
 def _apply_coexistence_split_pipeline_root_config(dut) -> None:
     with allure.step("Apply coexistence split-pipeline root OTLP (SSIM OtelSplitPipelineMgmtVrfNoTLS)"):
-        cmds = [
-            "nv set system telemetry interface-stats export state enabled",
-            "nv set system telemetry interface-stats sample-interval 3",
-            "nv set system telemetry control-plane-stats export state enabled",
-            "nv set system telemetry control-plane-stats sample-interval 2",
-            "nv set system telemetry platform-stats export state enabled",
-            "nv set system telemetry platform-stats export sample-interval 61",
-            "nv set system telemetry platform-stats class cpu state enabled",
-            "nv set system telemetry platform-stats class cpu sample-interval 70",
-            "nv set system telemetry platform-stats class disk state enabled",
-            "nv set system telemetry platform-stats class disk sample-interval 74",
-            "nv set system telemetry platform-stats class environment-sensor state enabled",
-            "nv set system telemetry platform-stats class environment-sensor sample-interval 65",
-            "nv set system telemetry platform-stats class file-system state enabled",
-            "nv set system telemetry platform-stats class file-system sample-interval 72",
-            "nv set system telemetry platform-stats class memory state enabled",
-            "nv set system telemetry platform-stats class memory sample-interval 75",
+        specs: List[Tuple[str, str, Any]] = [
+            ("/interface-stats/export", "state", "enabled"),
+            ("/interface-stats", "sample-interval", 3),
+            ("/control-plane-stats/export", "state", "enabled"),
+            ("/control-plane-stats", "sample-interval", 2),
+            ("/platform-stats/export", "state", "enabled"),
+            ("/platform-stats/export", "sample-interval", 61),
+            ("/platform-stats/class/cpu", "state", "enabled"),
+            ("/platform-stats/class/cpu", "sample-interval", 70),
+            ("/platform-stats/class/disk", "state", "enabled"),
+            ("/platform-stats/class/disk", "sample-interval", 74),
+            ("/platform-stats/class/environment-sensor", "state", "enabled"),
+            ("/platform-stats/class/environment-sensor", "sample-interval", 65),
+            ("/platform-stats/class/file-system", "state", "enabled"),
+            ("/platform-stats/class/file-system", "sample-interval", 72),
+            ("/platform-stats/class/memory", "state", "enabled"),
+            ("/platform-stats/class/memory", "sample-interval", 75),
         ]
         for pg in range(8):
-            cmds.append(
-                "nv set system telemetry interface-stats ingress-buffer priority-group %d" % pg
-            )
+            specs.append(("/interface-stats/ingress-buffer/priority-group", str(pg), ""))
         for tc in range(8):
-            cmds.append(
-                "nv set system telemetry interface-stats egress-buffer traffic-class %d" % tc
-            )
+            specs.append(("/interface-stats/egress-buffer/traffic-class", str(tc), ""))
         for sp in ("0", "1", "2", "3", "7"):
-            cmds.append("nv set system telemetry interface-stats switch-priority %s" % sp)
+            specs.append(("/interface-stats/switch-priority", sp, ""))
         if _nvue_version_gte(dut, "1.13.0"):
-            cmds.append("nv set system telemetry interface-stats class debounce state enabled")
-        for cmd in cmds:
-            dut.run_cmd(cmd, validate=False)
-        dut.run_cmd("nv config apply -y", validate=True)
+            specs.append(("/interface-stats/class/debounce", "state", "enabled"))
+        _stage_root_telemetry(dut, specs)
 
 
 def _enable_nvos_coexistence_phy(dut, *, stats_group_id: str) -> None:
@@ -2343,50 +2438,45 @@ def _apply_coexistence_persistence_root_config(
         "(interface=2s, control=2s, buffer=60s, lldp=20s, platform≈60s)"
     ):
         _restore_otlp_mgmt_insecure_destinations(dut, collector_ips)
-        cmds = [
-            "nv set system telemetry interface-stats export state enabled",
-            "nv set system telemetry interface-stats sample-interval 2",
-            "nv set system telemetry control-plane-stats export state enabled",
-            "nv set system telemetry control-plane-stats sample-interval 2",
-            "nv set system telemetry buffer-stats export state enabled",
-            "nv set system telemetry buffer-stats sample-interval 60",
-            "nv set system telemetry lldp export state enabled",
-            "nv set system telemetry lldp sample-interval 20",
-            "nv set system telemetry platform-stats export state enabled",
-            "nv set system telemetry platform-stats export sample-interval 60",
-            "nv set system telemetry platform-stats class cpu state enabled",
-            "nv set system telemetry platform-stats class cpu sample-interval 60",
-            "nv set system telemetry platform-stats class disk state enabled",
-            "nv set system telemetry platform-stats class disk sample-interval 60",
-            "nv set system telemetry platform-stats class environment-sensor state enabled",
-            "nv set system telemetry platform-stats class environment-sensor sample-interval 60",
-            "nv set system telemetry platform-stats class file-system state enabled",
-            "nv set system telemetry platform-stats class file-system sample-interval 60",
-            "nv set system telemetry platform-stats class memory state enabled",
-            "nv set system telemetry platform-stats class memory sample-interval 60",
-            "nv set system telemetry interface-stats class phy state enabled",
-            "nv set system telemetry interface-stats class phy sample-interval 2",
-            "nv set system telemetry software-stats systemd export state enabled",
-            "nv set system telemetry software-stats systemd sample-interval 60",
-            "nv set system telemetry router export state enabled",
-            "nv set system telemetry router bgp export state enabled",
-            "nv set system telemetry router rib export state enabled",
+        specs: List[Tuple[str, str, Any]] = [
+            ("/interface-stats/export", "state", "enabled"),
+            ("/interface-stats", "sample-interval", 2),
+            ("/control-plane-stats/export", "state", "enabled"),
+            ("/control-plane-stats", "sample-interval", 2),
+            ("/buffer-stats/export", "state", "enabled"),
+            ("/buffer-stats", "sample-interval", 60),
+            ("/lldp/export", "state", "enabled"),
+            ("/lldp", "sample-interval", 20),
+            ("/platform-stats/export", "state", "enabled"),
+            ("/platform-stats/export", "sample-interval", 60),
+            ("/platform-stats/class/cpu", "state", "enabled"),
+            ("/platform-stats/class/cpu", "sample-interval", 60),
+            ("/platform-stats/class/disk", "state", "enabled"),
+            ("/platform-stats/class/disk", "sample-interval", 60),
+            ("/platform-stats/class/environment-sensor", "state", "enabled"),
+            ("/platform-stats/class/environment-sensor", "sample-interval", 60),
+            ("/platform-stats/class/file-system", "state", "enabled"),
+            ("/platform-stats/class/file-system", "sample-interval", 60),
+            ("/platform-stats/class/memory", "state", "enabled"),
+            ("/platform-stats/class/memory", "sample-interval", 60),
+            # ``class phy`` only accepts ``state``. Phy counters follow the
+            # interface-stats sample-interval set above (2s, ``phy_gap``).
+            ("/interface-stats/class/phy", "state", "enabled"),
+            ("/software-stats/systemd/export", "state", "enabled"),
+            ("/software-stats/systemd", "sample-interval", 60),
+            ("/router/export", "state", "enabled"),
+            ("/router/bgp/export", "state", "enabled"),
+            ("/router/rib/export", "state", "enabled"),
         ]
         for pg in range(8):
-            cmds.append(
-                "nv set system telemetry interface-stats ingress-buffer priority-group %d" % pg
-            )
+            specs.append(("/interface-stats/ingress-buffer/priority-group", str(pg), ""))
         for tc in range(8):
-            cmds.append(
-                "nv set system telemetry interface-stats egress-buffer traffic-class %d" % tc
-            )
+            specs.append(("/interface-stats/egress-buffer/traffic-class", str(tc), ""))
         for sp in ("0", "1", "2", "3", "7"):
-            cmds.append("nv set system telemetry interface-stats switch-priority %s" % sp)
+            specs.append(("/interface-stats/switch-priority", sp, ""))
         if _nvue_version_gte(dut, "1.13.0"):
-            cmds.append("nv set system telemetry interface-stats class debounce state enabled")
-        for cmd in cmds:
-            dut.run_cmd(cmd, validate=False)
-        dut.run_cmd("nv config apply -y", validate=True)
+            specs.append(("/interface-stats/class/debounce", "state", "enabled"))
+        _stage_root_telemetry(dut, specs)
 
 
 def _prepare_coexistence_gnmi_dialout(dut) -> None:
@@ -2432,24 +2522,22 @@ def _ensure_insecure_otlp_session_after_config(
 
 def _enable_interface_qos_coexistence_exports(dut) -> None:
     """NVUE exports enabled in SSIM ``build_interface_telemetry_cache`` (no BGP peers on mlx)."""
-    cmds = [
-        "nv set system telemetry router export state enabled",
-        "nv set system telemetry acl-stats export state enabled",
-        "nv set system telemetry acl-stats class acl-set state enabled",
-        "nv set system telemetry lldp export state enabled",
-        "nv set system telemetry ai-ethernet-stats export state enabled",
-        "nv set system telemetry interface-stats class phy state enabled",
-        "nv set system telemetry software-stats systemd export state enabled",
-        "nv set system telemetry software-stats systemd process-level enabled",
-        "nv set system telemetry router bgp export state enabled",
-        "nv set system telemetry router rib export state enabled",
-        "nv set system telemetry buffer-stats export state enabled",
-        "nv set system telemetry platform-stats export state enabled",
+    specs: List[Tuple[str, str, Any]] = [
+        ("/router/export", "state", "enabled"),
+        ("/acl-stats/export", "state", "enabled"),
+        ("/acl-stats/class/acl-set", "state", "enabled"),
+        ("/lldp/export", "state", "enabled"),
+        ("/ai-ethernet-stats/export", "state", "enabled"),
+        ("/interface-stats/class/phy", "state", "enabled"),
+        ("/software-stats/systemd/export", "state", "enabled"),
+        ("/software-stats/systemd", "process-level", "enabled"),
+        ("/router/bgp/export", "state", "enabled"),
+        ("/router/rib/export", "state", "enabled"),
+        ("/buffer-stats/export", "state", "enabled"),
+        ("/platform-stats/export", "state", "enabled"),
     ]
     with allure.step("Enable coexistence telemetry exports (Interface/QoS)"):
-        for cmd in cmds:
-            dut.run_cmd(cmd, validate=False)
-        dut.run_cmd("nv config apply -y", validate=True)
+        _stage_root_telemetry(dut, specs)
 
 
 def _prepare_coexistence_insecure_otel(

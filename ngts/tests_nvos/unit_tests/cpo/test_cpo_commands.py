@@ -131,13 +131,13 @@ class TestNvueShowCommands:
         cpo1 = _platform().cpo.cpo_id["cpo1"]
 
         cpo1.oe.show(dut_engine=engine)
-        assert engine.commands[-1] == "nv show platform cpo cpo1 optical-engines" + self.SUFFIX
+        assert engine.commands[-1] == "nv show platform cpo cpo1 optical-engine" + self.SUFFIX
 
         cpo1.oe.oe_id["oe1"].show(dut_engine=engine)
-        assert engine.commands[-1] == "nv show platform cpo cpo1 optical-engines oe1" + self.SUFFIX
+        assert engine.commands[-1] == "nv show platform cpo cpo1 optical-engine oe1" + self.SUFFIX
 
         cpo1.channel.channel_id["channel-3"].show(dut_engine=engine)
-        assert engine.commands[-1] == "nv show platform cpo cpo1 channels channel-3" + self.SUFFIX
+        assert engine.commands[-1] == "nv show platform cpo cpo1 channel channel-3" + self.SUFFIX
 
     def test_show_platform_laser_source(self, nvue, engine):
         platform = _platform()
@@ -156,18 +156,23 @@ class TestNvueShowCommands:
         assert engine.commands[-1] == "nv show interface sw1p1s1 cpo" + self.SUFFIX
 
         interface_cpo.oe.oe_id["oe2"].show(dut_engine=engine)
-        assert engine.commands[-1] == "nv show interface sw1p1s1 cpo optical-engines oe2" + self.SUFFIX
+        assert engine.commands[-1] == "nv show interface sw1p1s1 cpo optical-engine oe2" + self.SUFFIX
 
     def test_show_fae_system_cpo(self, nvue, engine):
         fae = _fae()
         fae.system.cpo.show(dut_engine=engine)
         assert engine.commands[-1] == "nv show fae system cpo" + self.SUFFIX
 
-        fae.system.cpo.show(Cpov2Consts.ELS_INITIALIZATION, dut_engine=engine)
-        assert engine.commands[-1] == "nv show fae system cpo els-initialization" + self.SUFFIX
+    def test_show_fae_platform_laser_source(self, nvue, engine):
+        laser_source = _fae().platform.laser_source
+        laser_source.show(dut_engine=engine)
+        assert engine.commands[-1] == "nv show fae platform laser-source" + self.SUFFIX
 
-        fae.system.cpo.show(Cpov2Consts.ELS_INITIALIZATION_PER_LASER, dut_engine=engine)
-        assert engine.commands[-1] == "nv show fae system cpo els-initialization-per-laser" + self.SUFFIX
+        laser_source.els_id["els1"].show(dut_engine=engine)
+        assert engine.commands[-1] == "nv show fae platform laser-source els1" + self.SUFFIX
+
+        laser_source.els_id["els1"].laser.laser_id["laser-1"].show(dut_engine=engine)
+        assert engine.commands[-1] == "nv show fae platform laser-source els1 laser laser-1" + self.SUFFIX
 
 
 class TestNvueActionCommands:
@@ -181,12 +186,6 @@ class TestNvueActionCommands:
         platform.laser_source.els_id["els1"].action_reset(engine=engine)
         assert engine.commands[-1] == "nv action reset platform laser-source els1"
 
-    def test_reset_laser_source_single_laser(self, nvue, engine):
-        # per HLD sample the laser is positional: '... els1 laser-2' (no keyword)
-        platform = _platform()
-        platform.laser_source.els_id["els1"].action_reset("laser-2", engine=engine)
-        assert engine.commands[-1] == "nv action reset platform laser-source els1 laser-2"
-
     def test_fae_activate_laser_source(self, nvue, engine):
         fae = _fae()
         els1 = fae.platform.laser_source.els_id["els1"]
@@ -197,8 +196,8 @@ class TestNvueActionCommands:
         els1.action_activate(laser_id="laser-4", engine=engine)
         assert engine.commands[-1] == "nv action activate fae platform laser-source els1 laser laser-4"
 
-        els1.action_activate(laser_id="laser-4", step=Cpov2Consts.STEP_LASER_UP, engine=engine)
-        assert engine.commands[-1] == ("nv action activate fae platform laser-source els1 laser laser-4 step laser-up")
+        els1.action_activate(laser_id="laser-4", step=Cpov2Consts.STEP_LASER_ON, engine=engine)
+        assert engine.commands[-1] == ("nv action activate fae platform laser-source els1 laser laser-4 step laser-on")
 
         els1.action_activate(step=Cpov2Consts.STEP_LASER_FINE_TUNE, engine=engine)
         assert engine.commands[-1] == ("nv action activate fae platform laser-source els1 step laser-fine-tune")
@@ -222,13 +221,9 @@ class TestNvueSetUnsetCommands:
         with pytest.raises(Exception, match="not implemented"):
             platform.laser_source.unset("param")
 
-    def test_activate_rejected_on_non_fae_mount(self, nvue, engine):
-        """The same component class is mounted under /platform and
-        /fae/platform, but `nv action activate ... laser-source` only exists
-        on the fae mount - the non-FAE instance must refuse to build it."""
-        platform = _platform()
-        with pytest.raises(Exception, match="FAE-only"):
-            platform.laser_source.els_id["els1"].action_activate(engine=engine)
+    def test_platform_activate_laser_source(self, nvue, engine):
+        _platform().laser_source.els_id["els1"].action_activate(step=Cpov2Consts.STEP_LASER_ON, engine=engine)
+        assert engine.commands[-1] == "nv action activate platform laser-source els1 step laser-on"
 
 
 class TestOpenApiCommands:
@@ -250,10 +245,10 @@ class TestOpenApiCommands:
     def test_show_drill_down_paths(self, openapi, engine, rest_calls):
         platform = _platform()
         platform.cpo.cpo_id["cpo1"].oe.oe_id["oe1"].show(dut_engine=engine)
-        assert rest_calls[-1]["path"] == "/platform/cpo/cpo1/optical-engines/oe1"
+        assert rest_calls[-1]["path"] == "/platform/cpo/cpo1/optical-engine/oe1"
 
         platform.cpo.cpo_id["cpo1"].channel.channel_id["channel-3"].show(dut_engine=engine)
-        assert rest_calls[-1]["path"] == "/platform/cpo/cpo1/channels/channel-3"
+        assert rest_calls[-1]["path"] == "/platform/cpo/cpo1/channel/channel-3"
 
         platform.laser_source.els_id["els1"].laser.laser_id["laser-2"].show(dut_engine=engine)
         assert rest_calls[-1]["path"] == "/platform/laser-source/els1/laser/laser-2"
@@ -267,24 +262,24 @@ class TestOpenApiCommands:
             "data": {"state": "start", "parameters": {}},
         }
 
-        platform.laser_source.els_id["els1"].action_reset("laser-2", engine=engine)
+        platform.laser_source.els_id["els1"].action_reset(engine=engine)
         assert rest_calls[-1] == {
             "action": "@reset",
             "path": "/platform/laser-source/els1",
-            "data": {"state": "start", "parameters": {"laser": "laser-2"}},
+            "data": {"state": "start", "parameters": {}},
         }
 
     def test_fae_actions(self, openapi, engine, rest_calls):
         fae = _fae()
         fae.platform.laser_source.els_id["els1"].action_activate(
-            laser_id="laser-4", step=Cpov2Consts.STEP_LASER_UP, engine=engine
+            laser_id="laser-4", step=Cpov2Consts.STEP_LASER_ON, engine=engine
         )
         assert rest_calls[-1] == {
             "action": "@activate",
             "path": "/fae/platform/laser-source/els1",
             "data": {
                 "state": "start",
-                "parameters": {"laser": "laser-4", "step": "laser-up"},
+                "parameters": {"laser": "laser-4", "step": "laser-on"},
             },
         }
 

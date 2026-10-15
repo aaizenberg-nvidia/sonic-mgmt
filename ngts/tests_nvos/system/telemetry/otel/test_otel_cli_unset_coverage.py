@@ -2,6 +2,10 @@
 
 Runs on NVOS and Cumulus. Histogram / interface-stats-buffer unsets are Cumulus-only
 (no NVOS equivalent) and stay marked ``cumulus_only``.
+
+The module fixture applies the interface histogram, labels, and system telemetry
+tree once and records that NVUE revision. System tests roll back to it with one
+``nv config apply``. Interface tests do not rebuild that tree.
 """
 
 import pytest
@@ -10,12 +14,10 @@ import ngts.tools.test_utils.allure_utils as allure
 from ngts.nvos_constants.constants_nvos import ApiType, TelemetryConsts
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
-from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import apply_otel_cli_coverage_baseline
-from ngts.nvos_constants.constants_nvos import TelemetryConsts
-from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
     applied_ids,
     apply_unset_changes,
+    discard_pending_nvue_revision,
     expected_interface_labels_after_unset,
     expected_stats_group_platform_stats_classes_after_unset_pre114,
     expected_stats_group_platform_stats_classes_after_unset_test15b,
@@ -73,7 +75,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_unset_coverage import (
     require_cumulus_at_least,
     require_cumulus_at_most,
     require_cumulus_equal,
-    restore_otlp_destination_stats_group_binding,
+    restore_otel_cli_coverage_golden,
     set_system_telemetry_histogram,
     swp_interfaces_for_unset,
     unset_interface_histogram_counter,
@@ -140,30 +142,44 @@ def _require_cli_coverage_baseline(otel_cli_coverage_baseline):
     return otel_cli_coverage_baseline
 
 
-@ pytest.fixture(autouse=True)
-def _restore_cli_baseline_after_unset_tests(request, engines, otel_cli_coverage_baseline):
-    """Re-apply the golden CLI baseline after each test (even on failure).
+def _unset_test_skipped(item) -> bool:
+    """True when setup or the test body skipped (version gate or marker).
 
-    Setup does not mutate the DUT, so version-gated skips in the test body do not
-    pay a baseline apply. ``skip_clear_config`` means this teardown is what keeps
-    the last test from leaving the DUT dirty for the next module.
+    ``ngts/conftest.py`` stores ``rep_setup`` / ``rep_call`` before fixture teardown.
+    """
+    for phase in ("setup", "call"):
+        report = getattr(item, f"rep_{phase}", None)
+        if report is not None and report.skipped:
+            return True
+    return False
 
-    Only tests marked ``otel_unset_interface_baseline`` get the per-interface
-    histogram/label tree rebuilt; it is 36 ``nv set`` calls per front-panel port and
-    no system-level unset test reads it back.
+
+@pytest.fixture(autouse=True)
+def _restore_cli_baseline_after_unset_tests(request, engines):
+    """Roll a system unset back to the module golden revision.
+
+    The baseline is applied once. Replaying it after every test (interface
+    histogram, labels, OTLP, and the telemetry tree) is what added about an hour.
+
+    Interface tests (``otel_unset_interface_baseline``) only drop a pending
+    candidate. test01a, test01b, and test01c/test02 unset disjoint interface
+    nodes, and no system test reads that tree back.
+
+    A skipped test has not unset anything, so it does not pay ``nv config apply``.
+    ``skip_clear_config`` means the last system-test rollback is what leaves a
+    known telemetry tree; module teardown then removes the coverage labels.
     """
     yield
-    apply_otel_cli_coverage_baseline(
-        engines.dut,
-        otel_cli_coverage_baseline.collector_ips,
-        suite=otel_cli_coverage_baseline,
-        include_interface_baseline=bool(
-            request.node.get_closest_marker("otel_unset_interface_baseline")
-        ),
-    )
+    if _unset_test_skipped(request.node) or request.node.get_closest_marker(
+        "otel_unset_interface_baseline"
+    ):
+        discard_pending_nvue_revision(engines.dut)
+        return
+    restore_otel_cli_coverage_golden(engines.dut)
 
 
 @pytest.mark.cumulus_only
+@pytest.mark.otel_unset_interface_baseline
 def test01a_otlp_interface_unset_cli_validations(engines, random_api):
     """SSIM test01a: unset interface histogram ingress PG and egress TC."""
     require_cumulus_at_least(engines.dut, "5.10.0")
@@ -190,6 +206,7 @@ def test01a_otlp_interface_unset_cli_validations(engines, random_api):
 
 
 @pytest.mark.cumulus_only
+@pytest.mark.otel_unset_interface_baseline
 def test01b_otlp_interface_unset_cli_validations(engines, random_api):
     """SSIM test01b: unset interface histogram latency TC and counter."""
     require_cumulus_at_least(engines.dut, "5.11.0")
@@ -214,6 +231,7 @@ def test01b_otlp_interface_unset_cli_validations(engines, random_api):
         )
 
 
+@pytest.mark.otel_unset_interface_baseline
 def test01c_otlp_interface_unset_cli_validations(engines, random_api):
     """SSIM test01c: unset interface telemetry labels l1–l4."""
     require_cumulus_at_least(engines.dut, "5.12.0")
@@ -232,6 +250,7 @@ def test01c_otlp_interface_unset_cli_validations(engines, random_api):
         )
 
 
+@pytest.mark.otel_unset_interface_baseline
 def test02_otlp_interface_unset_cli_validations(engines, random_api):
     """SSIM test02: unset label description then label; verify l5–l10 remain."""
     require_cumulus_at_least(engines.dut, "5.12.0")
@@ -902,11 +921,12 @@ def test15d_otlp_system_unset_stats_group_cli_validations(engines, test_api):
     """SSIM test15a stats-group delete: unbind OTLP destination stats-group, then unset sg_01.
 
     Distinct from ``test15a_otlp_system_unset_cli_validations``, which only unbinds the
-    destination after restoring OTLP (needed because test13a already cleared gRPC).
+    destination. test13a clears gRPC, and the golden-revision rollback puts it back
+    before the next test.
     nv unset system telemetry export otlp grpc destination <destination-id> stats-group
     nv unset system telemetry stats-group <stats-group-id>
-    This destructive test runs after test15b/test15c because the module-scoped
-    baseline is shared and removing ``sg_01`` would break those tests.
+    Each system test rolls back to the module golden revision, so removing ``sg_01``
+    does not leak. This test still runs after test15b/test15c to match SSIM order.
     """
     TestToolkit.tested_api = test_api
     require_cumulus_at_least(engines.dut, "5.12.0")
@@ -1242,22 +1262,17 @@ def test21b_otlp_system_unset_cli_validations(engines, random_api):
 
 
 def test15a_otlp_system_unset_cli_validations(engines, otel_cli_coverage_baseline, random_api):
-    """SSIM test15a: unset OTLP destination stats-group binding and stats-group sg_01.
+    """SSIM test15a destination unbind: unset the OTLP destination stats-group binding.
+
+    Distinct from ``test15d_otlp_system_unset_stats_group_cli_validations``, which also
+    deletes stats-group ``sg_01``.
     nv unset system telemetry export otlp grpc destination <destination-id> stats-group
-    test13a already unset the whole OTLP gRPC subtree, so the destinations are
-    re-established here before unbinding them.
+
+    test13a unsets the whole OTLP gRPC subtree. The module golden revision is applied
+    again before this test, so the destinations are already back.
     """
     require_cumulus_at_least(engines.dut, "5.12.0")
     baseline = otel_cli_coverage_baseline
-    stats_group_id = CumulusOtelConst.TEST01_STATS_GROUP_ID
-    with allure.step("Restore OTLP destination stats-group binding"):
-        restore_otlp_destination_stats_group_binding(
-            engines.dut,
-            baseline.collector_ips,
-            stats_group_id,
-            export_vrf=baseline.export_vrf,
-            is_nvos=baseline.is_nvos,
-        )
     with allure.step("Unset OTLP destination stats-group"):
         for destination_id in baseline.collector_ips:
             unset_system_otlp_destination_stats_group(engines.dut, destination_id)

@@ -340,14 +340,14 @@ r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\] mlnx_sai_utils.c\[\d+\]- sai_get_attribu
 r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\] mlnx_sai_utils.c\[\d+\]- sai_get_attributes: Failed to get attribute"
 r, ".* ERR syncd#SDK: \[SAI_BRIDGE.ERR\].*mlnx_sai_bridge.c\[\d+\]- mlnx_bridge_port_isolation_group_get: Isolation group is only supported for bridge port type port"
 r, ".* ERR syncd#SDK: \[SAI_BRIDGE.ERR\].*mlnx_sai_bridge.c\[\d+\]- mlnx_bridge_1d_oid_to_data: Unexpected bridge type 0 is not 1D"
-r, ".* ERR syncd#SDK: \[SAI_BRIDGE.ERR\].*mlnx_sai_bridge.c\[\d+\]- mlnx_bridge_port_lag_or_port_get: Invalid port type - 2"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- sai_get_attributes: Failed to get attribute*."
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, PORT_ID, key:BRIDGE_PORT \[OID:.*\] \[bridge_ports_db.*"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, ISOLATION_GROUP, key:BRIDGE_PORT \[OID:.*\] \[bridge_ports_db.*"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, UNKNOWN_UNICAST_FLOOD_GROUP, key:BRIDGE \[OID:.*\] \[Type:.* sx_bridge_id.*"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, UNKNOWN_MULTICAST_FLOOD_GROUP, key:BRIDGE \[OID:.*Type:.*sx_bridge_id.*"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, BROADCAST_FLOOD_GROUP, key:BRIDGE \[OID:.*Type:.*sx_bridge_id.*"
-r, ".* ERR syncd#SDK: \[SAI_UTILS.ERR\].*get_dispatch_attribs_handler:.*(INGRESS_SAMPLE_MIRROR_SESSION|EGRESS_SAMPLE_MIRROR_SESSION).*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_BRIDGE.ERR\].*mlnx_sai_bridge.c\[\d+\]- mlnx_bridge_port_lag_or_port_get: Invalid port type - 2"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- sai_get_attributes: Failed to get attribute*."
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, PORT_ID, key:BRIDGE_PORT \[OID:.*\] \[bridge_ports_db.*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, ISOLATION_GROUP, key:BRIDGE_PORT \[OID:.*\] \[bridge_ports_db.*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, UNKNOWN_UNICAST_FLOOD_GROUP, key:BRIDGE \[OID:.*\] \[Type:.* sx_bridge_id.*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, UNKNOWN_MULTICAST_FLOOD_GROUP, key:BRIDGE \[OID:.*Type:.*sx_bridge_id.*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*.\/src\/mlnx_sai_utils.c.*- get_dispatch_attribs_handler: Failed Get #\d+, BROADCAST_FLOOD_GROUP, key:BRIDGE \[OID:.*Type:.*sx_bridge_id.*"
+r, ".* ERR syncd#SDK: \[[^\]]*SAI_UTILS.ERR\].*get_dispatch_attribs_handler:.*(INGRESS_SAMPLE_MIRROR_SESSION|EGRESS_SAMPLE_MIRROR_SESSION).*"
 
 # https://github.com/sonic-net/sonic-buildimage/issues/27327
 # Mellanox SDK new log format (with client_pid prefix) - FEC_ALIGNMENT_LOCK polling on ports without FEC support
@@ -481,6 +481,8 @@ r, ".* ERR kernel:.*sxd_kernel: \[error\] Health-Check: device=1, cause=10 \['SD
 # cause=10 (SDK thread issue) or cause=12 (SDK watchdog).
 r, ".* ERR kernel:.*sxd_kernel: \[error\] dev_id=\d+: Health check: dev_id \[\d+\], SDK thread \[.*\] TID \[.*\] does not respond.*"
 r, ".* ERR kernel:.*sxd_kernel: \[error\] dev_id=\d+: Health-Check: dev_id \[\d+\], cause=\d+ \['(?:SDK thread issue|SDK watchdog)'\] - stopping further device monitoring.*"
+# killall -w sx_sdk fails due to a missing package. The SDK process goes down anyway as part of syncd shutdown.
+r, ".* ERR syncd#SDK: \[SAI_SWITCH\.ERR\].*mlnx_sai_close_sdk: killall -w sx_sdk failed\..*"
 
 # Ignore gbsynd error for 720DT
 r, ".*ERR gbsyncd#syncd: :- collectData: Failed to get stats of Port Counter.*"

@@ -31,7 +31,6 @@ from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.PortFastRecovery import PortFastRecovery
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.SendCommandTool import SendCommandTool
-from ngts.nvos_tools.platform.Cpo import Cpo
 from ngts.nvos_tools.platform.LaserSource import LaserSource
 from ngts.nvos_tools.system.Files import Files
 from ngts.nvos_tools.system.Health import Health
@@ -131,9 +130,7 @@ class FaePlatform(BaseComponent):
         self.secure_state = SecureState(self)
         self.voltage_dpc = VoltageDpc(self)
         self.bkv = BaseComponent(self, path="/bkv")
-        # Gen2 CPO (Portia): same component classes as platform.cpo/laser_source;
-        # mounted here they compose FAE paths (nv action ... fae platform cpo ...)
-        self.cpo = Cpo(self)
+        # Gen2 CPO (Portia): same component class as platform.laser_source, composing FAE paths
         self.laser_source = LaserSource(self)
 
 
@@ -227,6 +224,12 @@ class FaeCpldComponent(FaePlatformComponent):
                 raise
 
 
+class FaeNvme(BaseComponent):
+    def __init__(self, parent_obj=None):
+        super().__init__(parent=parent_obj, path='/nvme')
+        self.dump = BaseComponent(self, path='/dump')
+
+
 class FaeSystem(BaseComponent):
     def __init__(self, parent_obj=None):
         super().__init__(parent=parent_obj, path='/system')
@@ -246,6 +249,7 @@ class FaeSystem(BaseComponent):
         self.peer_port = FaePeerPort(self)
         self.sto_event = StoEvent(self)
         self.mlid_event_snapshot = MlidEventSnapshot(self)
+        self.nvme = FaeNvme(self)
 
     def ssd_cleanup(self, expected_str="", dut_engine=None):
         """nv action run fae system ssd-cleanup """

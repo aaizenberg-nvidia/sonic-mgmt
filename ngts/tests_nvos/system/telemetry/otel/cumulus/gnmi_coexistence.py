@@ -509,12 +509,12 @@ def latest_gnmi_component_state_leaf(
             name = _xpath_component_name(candidate)
             if normalize_component_name(name) != target_name:
                 continue
-            leaves = _entry_leaf_values(entry)
-            if not leaves:
+            leaf_value = _scalar_for_leaf(entry, leaf)
+            if leaf_value is None:
                 continue
             if latest_ts is None or ts >= latest_ts:
                 latest_ts = ts
-                latest_value = leaves[0]
+                latest_value = leaf_value
                 latest_xpath = candidate
     return latest_value, latest_xpath
 
@@ -2125,17 +2125,11 @@ def list_psu_component_names(dut) -> List[str]:
     """Present PSU inventory keys (``PSU1``, ``PSU2``, …) from NVUE platform data."""
     names: List[str] = []
     seen = set()
-    for cmd in (
-        'nv show platform inventory -o json 2>&1',
-        'nv show system platform component -o json 2>&1',
+    for node in (
+        Platform().inventory,
+        BaseComponent(System(), path='/platform/component'),
     ):
-        out = dut.run_cmd(cmd, validate=False, print_output=False)
-        if not out or 'error' in out[:200].lower():
-            continue
-        try:
-            payload = json.loads(out)
-        except (json.JSONDecodeError, TypeError):
-            continue
+        payload = _show_json(node, dut)
         if not isinstance(payload, dict):
             continue
         for key, entry in payload.items():
@@ -3375,6 +3369,44 @@ def _clear_interface_description(dut, interface: str) -> None:
         ).verify_result()
 
 
+def _scalar_for_leaf(entry: Any, leaf: str) -> Optional[Any]:
+    """Scalar for ``leaf`` inside a gNMI update.
+
+    json_ietf sometimes stores the whole component ``state`` object on an update
+    whose path ends in one leaf. The first scalar in that object is often
+    ``mfg-name`` (``DELTA``) while ``model-name`` is the part string. Prefer the
+    value whose key is ``leaf``; fall back to the only scalar.
+    """
+    target = leaf.strip().lower()
+    keyed: List[Any] = []
+    scalars: List[Any] = []
+
+    def _walk(node: Any, key: Optional[str] = None) -> None:
+        if isinstance(node, dict):
+            for child_key, child in node.items():
+                if child_key == 'xpath':
+                    continue
+                _walk(child, str(child_key))
+            return
+        if isinstance(node, (list, tuple, set)):
+            for item in node:
+                _walk(item, key)
+            return
+        if node is None:
+            return
+        scalars.append(node)
+        if not key:
+            return
+        norm = key.split(':')[-1].strip('/').split('/')[-1].lower()
+        if norm == target:
+            keyed.append(node)
+
+    _walk(entry)
+    if keyed:
+        return keyed[-1]
+    return scalars[0] if len(scalars) == 1 else None
+
+
 def _entry_leaf_values(entry: Any) -> List[Any]:
     """Flatten leaf values of a parsed gNMI entry.
 
@@ -3527,7 +3559,8 @@ def build_component_system_gnmi_jobs(dut, *, duration_sec: int = 120) -> List[Gn
     psu_name = discover_psu_component_name(dut)
     psu_kwargs = {'component_name': psu_name} if psu_name else {}
     psu_paths = (
-        ['/components/component/state/%s' % (leaf,) for leaf in PSU_STATE_LEAF_BY_ATTR.values()]
+        ['/components/component/state/%s' % (leaf,) for leaf in PSU_STATE_LEAF_BY_ATTR.values()] +
+        ['/components/component/state/mfg-name']
         if psu_name
         else []
     )

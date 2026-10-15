@@ -198,8 +198,16 @@ class RunPytest(TermHandlerMixin, StandaloneWrapper):
 
         self.report_file = "junit_%s_%s.xml" % (self.session_id, self.mars_key_id)
         old_allure_server = "10.215.11.120"
-        if self.dut_name in ["arc-switch1004", "arc-switch1025", "r-panther-23", "r-panther-45"] and \
-                "test_advanced_reboot.py" in self.test_scripts:
+        panther_a0_dut_list = ["arc-switch1004",
+                               "arc-switch1025",
+                               "r-panther-23",
+                               "r-panther-45",
+                               "mtvr-panther-02",
+                               "mtvr-panther-03",
+                               "mtvr-panther-05",
+                               "mtvr-panther-07"]
+        if self.dut_name in panther_a0_dut_list and \
+                ("test_advanced_reboot.py" in self.test_scripts or "test_upgrade_path.py" in self.test_scripts):
             self.raw_options += ' --ceos_neighbor_lacp_multiplier=5'
         if old_allure_server in self.raw_options:
             self.raw_options = self.raw_options.replace(old_allure_server, "allure.nvidia.com")

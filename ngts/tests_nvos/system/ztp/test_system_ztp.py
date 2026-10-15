@@ -1,8 +1,10 @@
 import contextlib
 import logging
 import shlex
+import threading
 from functools import partial
 
+import pexpect
 import pytest
 import retry
 from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
@@ -45,11 +47,11 @@ def _ztp_cleanup(engines: EnginesT) -> None:
 
 @pytest.mark.ztp
 @pytest.mark.system
-def test_show_ztp_command(engines: EnginesT, serial_engine: PexpectSerialEngine):
+def test_show_ztp_command(engines: EnginesT):
     """
     Test flow:
         1. Check default ztp values
-        2. Validate ztp logs with nv show system log command and with serial connection
+        2. Validate ztp logs with nv show system log command
         3. Check ztp log file exist, ztp logs inside
         4. Config save and check ztp go to inactive
         5. Config save enabled, verify changes
@@ -64,9 +66,6 @@ def test_show_ztp_command(engines: EnginesT, serial_engine: PexpectSerialEngine)
     with allure.step("Run nv show system log command and check ztp logs inside"):
         show_output = system.log.file.show_log(param="| grep ztp")
         ValidationTool.verify_expected_output(show_output, 'ztp').verify_result()
-
-    with allure.step("Run nv show system log command and check ztp logs inside"):
-        serial_engine.serial_engine.expect("ztp", timeout=30)
 
     with allure.step("Check ztp log file exist"):
         wc_output = engines.dut.run_cmd(f'wc -c {SystemConsts.ZTP_DEFAULT_LOG_FILE}')
@@ -179,19 +178,63 @@ def test_ztp_json(engines: EnginesT):
         engines.dut.run_cmd('sudo rm -f /host/ztp/ztp_data_local.json')
 
 
+@contextlib.contextmanager
+def _capture_serial_console(serial_engine: PexpectSerialEngine):
+    """Read the serial console until the caller finishes and return the captured text chunks."""
+    stop_serial_watch = threading.Event()
+    serial_capture = []
+
+    def _watch_serial() -> None:
+        while not stop_serial_watch.is_set():
+            try:
+                serial_engine.serial_engine.expect([pexpect.TIMEOUT], timeout=1)
+            except Exception as exc:
+                serial_capture.append(repr(exc))
+                return
+            child = serial_engine.serial_engine
+            before = child.before
+            # A TIMEOUT match leaves the pexpect buffer in place, so the next
+            # poll would repeat everything already seen. Drop it after copying.
+            child._before = child.buffer_type()
+            if isinstance(before, bytes):
+                before = before.decode("utf-8", errors="ignore")
+            if before:
+                serial_capture.append(before)
+
+    serial_watch = threading.Thread(target=_watch_serial, name="serial-ztp-watch", daemon=True)
+    serial_watch.start()
+    try:
+        yield serial_capture
+    finally:
+        stop_serial_watch.set()
+        serial_watch.join(timeout=5)
+        serial_text = "".join(serial_capture)
+        logger.info("serial-console capture (%s chars):\n%s", len(serial_text), serial_text)
+        allure.attach("serial-console", serial_text or "(empty)")
+
+
 @pytest.mark.ztp
 @pytest.mark.system
 @pytest.mark.dut_reboot
-def test_ztp_image(engines: EnginesT, devices: DevicesT):
+def test_ztp_image(engines: EnginesT, devices: DevicesT, serial_engine: PexpectSerialEngine):
     """
     Test flow:
         1. Check default ztp values
         2. Apply image json file
         3. Verify image installed
         4. Verify image uninstalled
+        5. Collect ZTP logs from the serial console
     """
     system = System(None)
+    with _capture_serial_console(serial_engine) as serial_capture:
+        _run_ztp_image(engines, devices, system)
 
+    with allure.step("Collect ZTP logs from the serial console"):
+        serial_text = "".join(serial_capture)
+        assert "INFO ztp:" in serial_text, "ZTP logs were not seen on the serial console"
+
+
+def _run_ztp_image(engines: EnginesT, devices: DevicesT, system: System) -> None:
     _run_system_ztp_with_empty_config(engines, system)
     _wait_until_ztp_values_fields_changed(system, SystemConsts.ZTP_OUTPUT_FIELDS, SystemConsts.ZTP_DEFAULT_VALUES, tries=5, delay=2)
 
@@ -417,14 +460,14 @@ def test_ztp_nmx_negative(
     """
     Test flow:
         1. Check default values for ztp
-        2. Download and run ztp positive json, when cluster is disabled
+        2. Download and run ztp nmx commands-list json, when cluster is disabled
         3. Download and run ztp json with no exist file, when cluster is disabled
         4. Start cluster
         5. Download and run ztp json with incorrect commands
         6. Stop nmx-controller
-        7. Download and run ztp positive json
+        7. Download and run ztp nmx commands-list json
         8. Stop nmx-telemetry
-        9. Download and run positive ztp json
+        9. Download and run ztp nmx commands-list json
         10. Cleanup
     """
     system = System(None)
@@ -442,8 +485,8 @@ def test_ztp_nmx_negative(
         "ztp_status_code": SystemConsts.ZTP_STATUS_SUCCESS,
     }
 
-    with allure.step("Download ztp nmx positive command list, cluster disabled"):
-        _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs)
+    with allure.step("Download ztp nmx commands list, cluster disabled"):
+        _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs)
 
     with allure.step("Download ztp nmx not exist file"):
         _run_system_ztp_with_empty_config(engines, system)
@@ -461,8 +504,8 @@ def test_ztp_nmx_negative(
     with allure.step("Disable nmx controller and run positive ztp"):
         ClusterTools.stop_app(cluster, ClusterConsts.NMX_CONTROLLER)
 
-        with allure.step("Download ztp nmx positive, when nmx controller disabled"):
-            _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs, run_ztp=False)
+        with allure.step("Download ztp nmx commands list, when nmx controller disabled"):
+            _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs, run_ztp=False)
 
         with allure.step("Enable nmx controller"):
             ClusterTools.start_app(cluster, ClusterConsts.NMX_CONTROLLER, has_loopbox, standalone_system)
@@ -470,9 +513,9 @@ def test_ztp_nmx_negative(
     with allure.step("Disable nmx telemetry and run positive ztp"):
         ClusterTools.stop_app(cluster, ClusterConsts.NMX_TELEMETRY)
 
-        with allure.step("Download ztp nmx positive, when nmx controller disabled"):
+        with allure.step("Download ztp nmx commands list, when nmx telemetry disabled"):
             _run_system_ztp_with_empty_config(engines, system)
-            _download_file_and_run_ztp(file=SystemConsts.NMX_POSITIVE_JSON, **shared_kwargs)
+            _download_file_and_run_ztp(file=SystemConsts.NMX_COMMANDS_ONLY_JSON, **shared_kwargs)
 
 
 @pytest.mark.ztp
