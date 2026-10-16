@@ -145,7 +145,8 @@ class CliTest(unittest.TestCase):
             "archiveArtifacts artifacts: artifact_name",
             groovy,
         )
-        self.assertNotIn("table_content", groovy)
+        self.assertIn("readFile(file: file_path)", groovy)
+        self.assertIn("table_content + artifact_banner", groovy)
         self.assertNotIn("Tables Details:", groovy)
 
         secret_template = (

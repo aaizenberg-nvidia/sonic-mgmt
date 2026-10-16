@@ -1,10 +1,12 @@
 def email_message(file_path, artifact_name) {
     echo "Archive email table from ${file_path}"
     archiveArtifacts artifacts: artifact_name, allowEmptyArchive: false
+    def table_content = readFile(file: file_path)
     def artifact_page = env.BUILD_URL ? "${env.BUILD_URL}artifact/" : ""
-    env.on_the_fly_head_banners = artifact_page ?
+    def artifact_banner = artifact_page ?
         "<p>Full upload tables are available in the <a href=\"${artifact_page}\">Jenkins build artifacts</a>.</p>" :
         "<p>Full upload tables are available as the ${artifact_name} build artifact.</p>"
+    env.on_the_fly_head_banners = table_content + artifact_banner
 }
 
 def build_container_name(base_name) {
