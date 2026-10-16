@@ -1,0 +1,6 @@
+# Host variables for fit-sonic-vrt-mec-840
+
+mgmt_bridge: br0
+mgmt_prefixlen: 22
+mgmt_gw: 10.220.9.64
+external_port: p1p0

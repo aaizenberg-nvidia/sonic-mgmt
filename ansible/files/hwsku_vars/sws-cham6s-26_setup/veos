@@ -1,0 +1,289 @@
+all:
+  children:
+    vm_host:
+      children:
+        vm_host_30:
+    eos:
+      children:
+        vms_30:
+
+    servers:
+      vars:
+        topologies:
+          - t0-d96-u30s2
+          - t1-d118u8s2
+          - ptp-126
+
+      children:
+        server_30:
+
+vm_host_30:
+  hosts:
+    FIT-SONIC-VRT-MEC-840:
+      ansible_host: fit-sonic-vrt-mec-840
+
+vms_30:
+  hosts:
+    VM3000:
+      ansible_host: 10.220.9.75
+    VM3001:
+      ansible_host: 10.220.9.77
+    VM3002:
+      ansible_host: 10.220.9.79
+    VM3003:
+      ansible_host: 10.220.9.80
+    VM3004:
+      ansible_host: 10.220.9.82
+    VM3005:
+      ansible_host: 10.220.9.83
+    VM3006:
+      ansible_host: 10.220.9.84
+    VM3007:
+      ansible_host: 10.220.9.85
+    VM3008:
+      ansible_host: 10.220.9.86
+    VM3009:
+      ansible_host: 10.220.9.87
+    VM3010:
+      ansible_host: 10.220.9.90
+    VM3011:
+      ansible_host: 10.220.9.91
+    VM3012:
+      ansible_host: 10.220.9.92
+    VM3013:
+      ansible_host: 10.220.9.93
+    VM3014:
+      ansible_host: 10.220.9.94
+    VM3015:
+      ansible_host: 10.220.9.95
+    VM3016:
+      ansible_host: 10.220.9.96
+    VM3017:
+      ansible_host: 10.220.9.97
+    VM3018:
+      ansible_host: 10.220.9.98
+    VM3019:
+      ansible_host: 10.220.9.99
+    VM3020:
+      ansible_host: 10.220.9.114
+    VM3021:
+      ansible_host: 10.220.9.115
+    VM3022:
+      ansible_host: 10.220.9.116
+    VM3023:
+      ansible_host: 10.220.9.117
+    VM3024:
+      ansible_host: 10.220.9.120
+    VM3025:
+      ansible_host: 10.220.9.123
+    VM3026:
+      ansible_host: 10.220.9.124
+    VM3027:
+      ansible_host: 10.220.9.125
+    VM3028:
+      ansible_host: 10.220.9.126
+    VM3029:
+      ansible_host: 10.220.9.127
+    VM3030:
+      ansible_host: 10.220.9.128
+    VM3031:
+      ansible_host: 10.220.9.130
+    VM3032:
+      ansible_host: 10.220.9.131
+    VM3033:
+      ansible_host: 10.220.9.133
+    VM3034:
+      ansible_host: 10.220.9.134
+    VM3035:
+      ansible_host: 10.220.9.136
+    VM3036:
+      ansible_host: 10.220.9.137
+    VM3037:
+      ansible_host: 10.220.9.138
+    VM3038:
+      ansible_host: 10.220.9.139
+    VM3039:
+      ansible_host: 10.220.9.140
+    VM3040:
+      ansible_host: 10.220.9.141
+    VM3041:
+      ansible_host: 10.220.9.142
+    VM3042:
+      ansible_host: 10.220.9.144
+    VM3043:
+      ansible_host: 10.220.9.145
+    VM3044:
+      ansible_host: 10.220.9.146
+    VM3045:
+      ansible_host: 10.220.9.147
+    VM3046:
+      ansible_host: 10.220.9.149
+    VM3047:
+      ansible_host: 10.220.9.150
+    VM3048:
+      ansible_host: 10.220.9.151
+    VM3049:
+      ansible_host: 10.220.9.152
+    VM3050:
+      ansible_host: 10.220.9.153
+    VM3051:
+      ansible_host: 10.220.9.154
+    VM3052:
+      ansible_host: 10.220.9.156
+    VM3053:
+      ansible_host: 10.220.9.157
+    VM3054:
+      ansible_host: 10.220.9.158
+    VM3055:
+      ansible_host: 10.220.9.159
+    VM3056:
+      ansible_host: 10.220.9.160
+    VM3057:
+      ansible_host: 10.220.9.161
+    VM3058:
+      ansible_host: 10.220.9.162
+    VM3059:
+      ansible_host: 10.220.9.163
+    VM3060:
+      ansible_host: 10.220.9.164
+    VM3061:
+      ansible_host: 10.220.9.165
+    VM3062:
+      ansible_host: 10.220.9.166
+    VM3063:
+      ansible_host: 10.220.9.169
+    VM3064:
+      ansible_host: 10.220.9.170
+    VM3065:
+      ansible_host: 10.220.9.171
+    VM3066:
+      ansible_host: 10.220.9.172
+    VM3067:
+      ansible_host: 10.220.9.173
+    VM3068:
+      ansible_host: 10.220.9.174
+    VM3069:
+      ansible_host: 10.220.9.175
+    VM3070:
+      ansible_host: 10.220.9.176
+    VM3071:
+      ansible_host: 10.220.9.177
+    VM3072:
+      ansible_host: 10.220.9.179
+    VM3073:
+      ansible_host: 10.220.9.180
+    VM3074:
+      ansible_host: 10.220.9.181
+    VM3075:
+      ansible_host: 10.220.9.182
+    VM3076:
+      ansible_host: 10.220.9.183
+    VM3077:
+      ansible_host: 10.220.9.184
+    VM3078:
+      ansible_host: 10.220.9.186
+    VM3079:
+      ansible_host: 10.220.9.187
+    VM3080:
+      ansible_host: 10.220.9.190
+    VM3081:
+      ansible_host: 10.220.9.191
+    VM3082:
+      ansible_host: 10.220.9.192
+    VM3083:
+      ansible_host: 10.220.9.193
+    VM3084:
+      ansible_host: 10.220.9.194
+    VM3085:
+      ansible_host: 10.220.9.196
+    VM3086:
+      ansible_host: 10.220.9.197
+    VM3087:
+      ansible_host: 10.220.9.198
+    VM3088:
+      ansible_host: 10.220.9.199
+    VM3089:
+      ansible_host: 10.220.9.200
+    VM3090:
+      ansible_host: 10.220.9.201
+    VM3091:
+      ansible_host: 10.220.9.202
+    VM3092:
+      ansible_host: 10.220.9.203
+    VM3093:
+      ansible_host: 10.220.9.204
+    VM3094:
+      ansible_host: 10.220.9.205
+    VM3095:
+      ansible_host: 10.220.9.206
+    VM3096:
+      ansible_host: 10.220.9.207
+    VM3097:
+      ansible_host: 10.220.9.208
+    VM3098:
+      ansible_host: 10.220.9.209
+    VM3099:
+      ansible_host: 10.220.9.210
+    VM3100:
+      ansible_host: 10.220.9.211
+    VM3101:
+      ansible_host: 10.220.9.212
+    VM3102:
+      ansible_host: 10.220.9.213
+    VM3103:
+      ansible_host: 10.220.9.214
+    VM3104:
+      ansible_host: 10.220.9.215
+    VM3105:
+      ansible_host: 10.220.9.216
+    VM3106:
+      ansible_host: 10.220.9.217
+    VM3107:
+      ansible_host: 10.220.9.218
+    VM3108:
+      ansible_host: 10.220.9.219
+    VM3109:
+      ansible_host: 10.220.9.220
+    VM3110:
+      ansible_host: 10.220.9.221
+    VM3111:
+      ansible_host: 10.220.9.222
+    VM3112:
+      ansible_host: 10.220.9.223
+    VM3113:
+      ansible_host: 10.220.9.224
+    VM3114:
+      ansible_host: 10.220.9.225
+    VM3115:
+      ansible_host: 10.220.9.226
+    VM3116:
+      ansible_host: 10.220.9.227
+    VM3117:
+      ansible_host: 10.220.9.228
+    VM3118:
+      ansible_host: 10.220.9.229
+    VM3119:
+      ansible_host: 10.220.9.230
+    VM3120:
+      ansible_host: 10.220.9.231
+    VM3121:
+      ansible_host: 10.220.9.232
+    VM3122:
+      ansible_host: 10.220.9.233
+    VM3123:
+      ansible_host: 10.220.9.234
+    VM3124:
+      ansible_host: 10.220.9.235
+    VM3125:
+      ansible_host: 10.220.9.236
+    VM3126:
+      ansible_host: 10.220.9.238
+    VM3127:
+      ansible_host: 10.220.9.240
+
+server_30:
+  children:
+    vm_host_30:
+    vms_30:
+  vars:
+    host_var_file: host_vars/FIT-SONIC-VRT-MEC-840.yml
