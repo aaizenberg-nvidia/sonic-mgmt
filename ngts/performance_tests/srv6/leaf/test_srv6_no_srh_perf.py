@@ -707,12 +707,17 @@ class TestSRv6NoSrhPerf:
         teardown.
         """
         label = "high" if entropy_type == NoSrhPerfConsts.ENTROPY_HIGH else "low"
+        packets_per_dip = None
+        if packet_size == NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE.get(self.chip_type):
+            packets_per_dip = NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_BY_CHIP_AND_SPLIT.get(
+                self.chip_type, {}).get(self.port_split[0])
 
         with allure.step(f"Generate {label}-entropy no-SRH traffic "
                          f"(packet_size={packet_size}B)"):
             no_srh_stream = partial(create_no_srh_stream,
                                     entropy_type=entropy_type, packet_size=packet_size,
-                                    speed_ratio=self.conf_args["port_speed_ratio"])
+                                    speed_ratio=self.conf_args["port_speed_ratio"],
+                                    packets_per_dip=packets_per_dip)
             traffic_jsons = get_bisection_traffic(
                 self.players, self.conf_args,
                 traffic_type=NoSrhPerfConsts.TRAFFIC_TYPE_SRV6_NO_SRH,

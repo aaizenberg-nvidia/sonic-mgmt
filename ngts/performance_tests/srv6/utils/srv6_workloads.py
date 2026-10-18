@@ -344,7 +344,8 @@ def get_gfp_streams(player_alias, traffic_parameters, src_ports, dst_port, both=
 def create_no_srh_stream(player_alias, cli_obj, src_ports, dst_port, traffic_parameters, traffic_type,
                          mloops_dict, dut_interfaces_ipv6_configuration_dict, stream_list,
                          entropy_type=NoSrhPerfConsts.ENTROPY_LOW, packet_size=None,
-                         num_packets=NoSrhPerfConsts.NO_SRH_NUM_DATA_PACKETS, speed_ratio=1.0, **kwargs):
+                         num_packets=NoSrhPerfConsts.NO_SRH_NUM_DATA_PACKETS, speed_ratio=1.0,
+                         packets_per_dip=None, **kwargs):
     """Create regular IPv6/UDP traffic stream for no-SRH SRv6 testing (no BTH/MRC headers).
 
     For high entropy: each packet gets a different DIPv6 lower 64 bits (many flows).
@@ -364,17 +365,19 @@ def create_no_srh_stream(player_alias, cli_obj, src_ports, dst_port, traffic_par
         packet_size: Override packet size (if None, uses traffic_parameters default)
         num_packets: Number of data packets per stream
         speed_ratio: Port speed relative to the chip's lowest split; see get_no_srh_data_stream
+        packets_per_dip: Explicit packets per DIP; overrides the size / speed scaling when set
     """
     set_workload_traffic_parameters(cli_obj, traffic_parameters, mloops_dict, src_ports, dst_port,
                                     dut_interfaces_ipv6_configuration_dict, traffic_type)
     get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
                            num_packets=num_packets, stream_list=stream_list,
                            entropy_type=entropy_type, packet_size=packet_size,
-                           speed_ratio=speed_ratio)
+                           speed_ratio=speed_ratio, packets_per_dip=packets_per_dip)
 
 
 def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port,
-                           num_packets, stream_list, entropy_type, packet_size=None, speed_ratio=1.0):
+                           num_packets, stream_list, entropy_type, packet_size=None, speed_ratio=1.0,
+                           packets_per_dip=None):
     """Create no-SRH data streams with configurable DIPv6 entropy.
 
     High entropy: N individual streams, each with a unique DIPv6 (lower 64 bits).
@@ -400,7 +403,8 @@ def get_no_srh_data_stream(player_alias, traffic_parameters, src_ports, dst_port
     size_factor = math.pow(reference_size / max(actual_pkt_size, 1),
                            NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT)
     speed_factor = math.pow(speed_ratio, NoSrhPerfConsts.NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT)
-    packets_per_dip = max(1, int(size_factor * speed_factor + 0.5))
+    if packets_per_dip is None:
+        packets_per_dip = max(1, int(size_factor * speed_factor + 0.5))
     dscp = NoSrhPerfConsts.NO_SRH_DATA_DSCP
     tc = dscp_to_tc(dscp, ecn=PerfConsts.ECN_CAPABLE_TRANSPORT)
 

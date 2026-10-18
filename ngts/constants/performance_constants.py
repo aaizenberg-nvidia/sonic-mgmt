@@ -1339,6 +1339,10 @@ class NoSrhPerfConsts:
     # (port speed / port speed of the chip's lowest split) ** this exponent.
     NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT = 0.6
 
+    # Packets per DIP at the chip's all-ports minimum packet size, by lanes per port. Overrides the formula
+    # above where it under-fills: SPC6's lowest split is already 200G, so the speed scaling gives 1x no boost.
+    NO_SRH_PACKETS_PER_DIP_BY_CHIP_AND_SPLIT = {"SPC6": {1: 3, 4: 10}}
+
     # Keys are lanes per port; the largest key is the cage width in lanes.
     # On Cumulus it sets ports per cage (cage width // lanes per port), so it must match the platform.
     SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT = {
