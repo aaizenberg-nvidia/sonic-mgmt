@@ -77,7 +77,7 @@ MTL_NVOS_MOUNTPOINTS = {'/auto/sw/tools/comet/nvos': '/auto/sw/tools/comet/nvos'
 VER_SDK_PATH = "/opt/ver_sdk"
 EXTRA_PACKAGE_PATH_LIST = ["/usr/lib64/python2.7/site-packages"]
 
-TOPO_ARRAY = ("t0", "t1-lag", "ptf32", "t0-64", "t0-64-256", "t0-c256", "t0-isolated-d2u254s1", "t1-lag-c224o8", "t1-32-lag", "t1-48-lag", "t1-64-lag", "t1-isolated-d254u2s1", "t0-56", "t0-56-po2vlan", "t0-56-o8v48", "t1-isolated-d28u1", 't1-isolated-d28u4', "t1-isolated-d224u8", "t1-isolated-d448u15-lag", "t0-isolated-d128u128s1", "t0-isolated-d16u16s1", "t0-isolated-d16u16s2", "t0-isolated-d32u32s2", "t0-isolated-v6-d32u32s2", "t0-isolated-d32u32s2-mix", "t1-isolated-v6-d56u1-lag", "t1-isolated-d56u1-lag")
+TOPO_ARRAY = ("t0", "t1-lag", "ptf32", "t0-64", "t0-64-256", "t0-c256", "t0-isolated-d2u254s1", "t1-lag-c224o8", "t1-32-lag", "t1-48-lag", "t1-64-lag", "t1-isolated-d254u2s1", "t0-56", "t0-56-po2vlan", "t0-56-o8v48", "t1-isolated-d28u1", 't1-isolated-d28u4', "t1-isolated-d224u8", "t1-isolated-d448u15-lag", "t0-isolated-d128u128s1", "t0-isolated-d16u16s1", "t0-isolated-d16u16s2", "t0-isolated-d32u32s2", "t0-isolated-v6-d32u32s2", "t0-isolated-d32u32s2-mix", "t0-d96-u30s2", "t1-isolated-v6-d56u1-lag", "t1-isolated-d56u1-lag")
 REBOOT_TYPES = {
     "reboot": "reboot",
     "fast-reboot": "fast-reboot",
