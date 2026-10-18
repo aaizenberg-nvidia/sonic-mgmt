@@ -376,6 +376,12 @@ tests/push_build_tests/L3/sflow/test_sflow.py:
     - "https://redmine.mellanox.com/issues/2271111 and 'simx' in platform"
     - "https://redmine.mellanox.com/issues/5041113 and 'sn6600_ld' in platform"
 
+tests/push_build_tests/system/test_reboot_reload.py::test_push_gate_reboot_policer:
+  xfail:
+    reason: "Testcase expected to fail due to RM issue: https://redmine.mellanox.com/issues/5343146 on sn5600 platforms"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5343146 and 'sn5600' in platform"
+
 tests/push_build_tests/L2/lldp/test_lldp.py:
   skip:
     reason: "Testcase ignored due to RM issue https://redmine.mellanox.com/issues/3859194 on SIMX Platform"
