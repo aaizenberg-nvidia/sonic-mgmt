@@ -1400,7 +1400,7 @@ class PlayersAliases:
     # Multi-DUT setups name their extra switches dut2..dut9 in Noga (an NVLink full rack holds 9 switches)
     multi_duts_list = [f'dut{index}' for index in range(2, 10)]
     duts_list = ['dut', 'dut-b'] + multi_duts_list + ['left-tg', 'right-tg', 'dpu0', 'dpu1', 'dpu2', 'dpu3']
-    fanouts_list = ['fanout']
+    fanouts_list = ['fanout', 'fanout-b', 'additional-fanout']
 
 
 class NvosCliTypes:

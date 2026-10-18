@@ -14,7 +14,7 @@ from ngts.helpers import json_file_helper
 from ngts.helpers.system_helpers import set_timezone as system_set_timezone
 from ngts.scripts.sonic_deploy.image_preparetion_methods import is_url, get_sonic_branch
 from ngts.constants.constants import (
-    InfraConst, MarsConstants, SimxCommunityConsts, SonicConst, SonicDeployConstants,
+    InfraConst, MarsConstants, PlayersAliases, SimxCommunityConsts, SonicConst, SonicDeployConstants,
 )
 from ngts.helpers.shared_fanout_helper import (
     is_shared_fanout, software_control_enabled, software_control_warning,
@@ -565,7 +565,7 @@ class SonicInstallationSteps:
     @staticmethod
     def warn_if_shared_fanout_has_im_enabled(topology_obj):
         hostnames = []
-        for alias in ("fanout", "fanout-b"):
+        for alias in PlayersAliases.fanouts_list:
             player = topology_obj.players.get(alias)
             if not is_shared_fanout(player):
                 continue

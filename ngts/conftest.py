@@ -692,7 +692,7 @@ def update_topology_with_cli_class(topology, request=None, is_performance=False)
             elif cli_type == CliType.DVS:
                 player_info['cli'] = DvsCli(topology=topology, dut_alias=player_key)
 
-        elif player_key == 'fanout' or player_key == 'fanout-b':
+        elif player_key in PlayersAliases.fanouts_list:
             if cli_type == CliType.SONIC:
                 player_info['cli'] = SonicCli(topology, dut_alias=player_key)
             else:

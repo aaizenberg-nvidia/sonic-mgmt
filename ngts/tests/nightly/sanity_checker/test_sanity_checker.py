@@ -11,7 +11,7 @@ import subprocess
 from retry.api import retry, retry_call
 from ngts.cli_util.cli_parsers import generic_sonic_output_parser
 from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
-from ngts.constants.constants import MarsConstants
+from ngts.constants.constants import MarsConstants, PlayersAliases
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers.secure_boot_helper import SonicSecureBootHelper
 from ngts.helpers.shared_fanout_helper import (
@@ -388,7 +388,7 @@ def test_device_asic_check(engines, platform_params):
 @pytest.mark.sanity_checker_community
 def test_shared_fanout_software_control_check(topology_obj):
     hostnames = []
-    for alias in ("fanout", "fanout-b"):
+    for alias in PlayersAliases.fanouts_list:
         player = topology_obj.players.get(alias)
         if is_shared_fanout(player) and software_control_enabled(player):
             hostnames.append(player["attributes"].noga_query_data["attributes"]["Common"]["Name"])
@@ -623,9 +623,12 @@ def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine, topology_ob
     interface_status_dict = cli_object.interface.parse_interfaces_status()
     logger.info(f"interface_status_dict:\n {interface_status_dict}")
 
-    shared_fanouts = [player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
-                      for player in (topology_obj.players.get("fanout"), topology_obj.players.get("fanout-b"))
-                      if is_shared_fanout(player)]
+    shared_fanout_ips = {player["engine"].ip
+                         for player in (topology_obj.players.get(alias) for alias in PlayersAliases.fanouts_list)
+                         if is_shared_fanout(player)}
+    devices_file = os.path.join(os.path.dirname(dut_fanout_link_file), "sonic_nvidia_devices.csv")
+    shared_fanouts = {device["Hostname"] for device in read_csv_file(devices_file)
+                      if device["ManagementIp"].split("/")[0] in shared_fanout_ips}
 
     map_dut_oper_up_interface_and_fanout_interface = {}
     for one_dut_fanout_link in dut_fanout_link_data:
