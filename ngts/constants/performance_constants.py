@@ -1313,6 +1313,7 @@ class NoSrhPerfConsts:
     # Per-chip minimum packet size for the all-ports bisection scenario.
     # SPC6 (200G/lane) needs 1024B to sustain line rate on all-ports.
     ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 512, "SPC5": 512, "SPC6": 1024}
+    SINGLE_CAGE_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 512}
 
     ENTROPY_HIGH = "high_entropy"
     ENTROPY_LOW = "low_entropy"
@@ -1350,6 +1351,19 @@ class NoSrhPerfConsts:
         "SPC5": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x400G"},
         "SPC6": {1: "8x200G[100G]", 2: "4x400G[200G]", 4: "2x800G[400G]", 8: "1x800G"},
     }
+
+    SPLIT_SHARING_SUPPORTED_CHIP_TYPES = ["SPC6"]
+    SPLIT_SHARING_SUPPORTED_PORT_SPLITS = [(1, 1)]
+    SINGLE_CAGE_PORTS_PER_SIDE = 2
+    SPLIT_SHARING_NUM_DUMMY_ACLS = 1
+    SPLIT_SHARING_SCRIPT_DIR = ("/root/sys_sdk/sx_sdk_py_tests/tests/"
+                                "multi_os_tests/srv6/split_sharing")
+    SPLIT_SHARING_ENABLE_SCRIPT = (f"{SPLIT_SHARING_SCRIPT_DIR}/"
+                                   "maglan_dcl_split_share_dump_1.sh")  # SpellCheck-ignoreLine
+    SPLIT_SHARING_DISABLE_SCRIPT = (f"{SPLIT_SHARING_SCRIPT_DIR}/"
+                                    "maglan_dcl_split_share_dump_0.sh")  # SpellCheck-ignoreLine
+    SPLIT_SHARING_ENABLED_MARKER = 1
+    SPLIT_SHARING_DISABLED_MARKER = 0
 
 
 class PowerConsts:

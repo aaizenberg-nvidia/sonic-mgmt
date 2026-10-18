@@ -8,7 +8,8 @@ import pandas as pd
 from typing import Optional
 from retry import retry
 from ngts.constants.constants import BugHandlerConst
-from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
+from ngts.constants.performance_constants import (PerfConsts, MongoDbConsts, ValidationConsts,
+                                                  MultiNosSharedData, NoSrhPerfConsts)
 from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
 from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
                                                      get_cli_port_selection_options,
@@ -1109,3 +1110,109 @@ class PerformanceCommon:
         This method is used to create the incremental dips on the traffic generator
         """
         raise NotImplementedError
+
+    @staticmethod
+    def _parse_split_share_read_back(out):
+        """Hex-parse the last non-empty line of an ``mcra`` read-back.
+
+        The split-share enable/disable scripts print register writes plus a
+        trailing read-back line like ``"0x00000001"`` / ``"0x00000000"``.
+        Any leading echo / warning line is skipped so downstream comparisons
+        against the enabled / disabled markers are robust.
+
+        Args:
+            out: Raw stdout from the enable / disable script invocation.
+
+        Returns:
+            int | None: The parsed integer value of the last hex line, or
+            ``None`` if the tail is empty or not a hex literal.
+        """
+        stripped = out.strip()
+        if not stripped:
+            return None
+        last = stripped.splitlines()[-1].strip()
+        try:
+            return int(last, 16)
+        except ValueError:
+            return None
+
+    def enable_split_sharing(self, chip_type):
+        """SPC6 WA: enable SRv6 no-SRH DCL split resource sharing on the DUT.
+
+        The perf_sys_sdk-deployed enable script lives inside the syncd
+        container (``mcra`` needs the ``/dev/mst/mt53124_pciconf0`` device
+        node which only exists there), so it's invoked via
+        ``get_cmd_for_sdk`` — same docker-exec pattern as ``run_traffic``.
+        The script writes 132 mcra registers then reads back ``0x9b0408.7``;
+        stdout tails with the mcra read-back in hex. Asserts the parsed
+        value equals ``NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER`` as
+        confirmation that the DCL bit flip took effect.
+
+        Gated on ``chip_type`` — the ``mcra`` register set and the script
+        contents are SPC6-specific. Callers on other generations should
+        never reach this method; if they do, an informative ``TestIssue``
+        is raised rather than executing a chip-inappropriate script.
+
+        Args:
+            chip_type: Chip family key (e.g. ``"SPC6"``); must be in
+                ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES``.
+
+        Raises:
+            TestIssue: If ``chip_type`` is unsupported, or if the read-back
+                value differs from ``SPLIT_SHARING_ENABLED_MARKER`` after
+                the script ran.
+        """
+        if chip_type not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES:
+            raise TestIssue(
+                f"enable_split_sharing: chip_type={chip_type!r} not in "
+                f"NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES!r}; "
+                f"mcra register + scripts are SPC6-specific")
+        cmd = f"sh {NoSrhPerfConsts.SPLIT_SHARING_ENABLE_SCRIPT}"
+        out = self.execute_cmd(self.get_cmd_for_sdk(cmd))
+        value = self._parse_split_share_read_back(out)
+        if value != NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER:
+            raise TestIssue(
+                f"enable_split_sharing: expected split-share read-back=="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER}, "
+                f"parsed={value!r}, raw stdout={out.strip()!r}")
+
+    def disable_split_sharing(self, chip_type):
+        """SPC6 WA: disable SRv6 no-SRH DCL split resource sharing on the DUT.
+
+        Runs the disable script inside the syncd container (see
+        ``enable_split_sharing`` for why). Idempotent — safe to call from a
+        teardown ``finally`` block even if ``enable_split_sharing`` never
+        ran successfully. Failures are logged and swallowed so they don't
+        mask the primary teardown reason.
+
+        Gated on ``chip_type``: callers on non-SPC6 generations are
+        rejected with a clear ``TestIssue`` rather than executing a
+        chip-inappropriate script.
+
+        Args:
+            chip_type: Chip family key (e.g. ``"SPC6"``); must be in
+                ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES``.
+
+        Raises:
+            TestIssue: If ``chip_type`` is unsupported. Post-script
+                read-back mismatches are logged (not raised) so teardown
+                completes.
+        """
+        if chip_type not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES:
+            raise TestIssue(
+                f"disable_split_sharing: chip_type={chip_type!r} not in "
+                f"NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES!r}; "
+                f"mcra register + scripts are SPC6-specific")
+        cmd = f"sh {NoSrhPerfConsts.SPLIT_SHARING_DISABLE_SCRIPT}"
+        try:
+            out = self.execute_cmd(self.get_cmd_for_sdk(cmd))
+            value = self._parse_split_share_read_back(out)
+            if value != NoSrhPerfConsts.SPLIT_SHARING_DISABLED_MARKER:
+                logging.warning(
+                    f"disable_split_sharing: expected split-share read-back=="
+                    f"{NoSrhPerfConsts.SPLIT_SHARING_DISABLED_MARKER}, "
+                    f"parsed={value!r}, raw stdout={out.strip()!r}")
+        except Exception:
+            logging.exception("disable_split_sharing failed (ignored in teardown)")

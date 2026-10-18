@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import allure
 import logging
 import pytest
@@ -42,13 +43,17 @@ ALL_PORT_SPLITS = [(1, 1), (2, 2), (4, 4)]
 # --- Per-test packet-size selection ---
 # Each list controls the parametrize values for one test. Default is
 # ``[PACKET_SIZE_MIN_SENTINEL]`` -- a single case whose size is resolved at
-# test time to the per-chip all-ports minimum (via
-# NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE). To sweep every
+# test time to the per-chip minimum of the test's scenario (via
+# NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE or
+# NoSrhPerfConsts.SINGLE_CAGE_MIN_PACKET_SIZE_BY_CHIP_TYPE). To sweep every
 # supported size, replace with ``NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST``.
 # Custom subsets are fine too (e.g. ``[512, 1024, 2048]``).
 PACKET_SIZE_MIN_SENTINEL = "MIN"
 
 CHOSEN_PACKET_SIZES_ENTROPY_COMPARISON = [PACKET_SIZE_MIN_SENTINEL]
+CHOSEN_PACKET_SIZES_SINGLE_CAGE_BASELINE = [PACKET_SIZE_MIN_SENTINEL]
+CHOSEN_PACKET_SIZES_SPLIT_SHARING_WITH_ACL = [PACKET_SIZE_MIN_SENTINEL]
+CHOSEN_PACKET_SIZES_SPLIT_SHARING_NO_ACL = [PACKET_SIZE_MIN_SENTINEL]
 
 
 # ---------------------------------------------------------------------------
@@ -84,31 +89,38 @@ def shaper_value(basic_setup_configuration, shaper_value):
     return shaper_value
 
 
-def _resolve_packet_size(chip_type, packet_size):
+def _resolve_packet_size(chip_type, packet_size, scenario):
     """Resolve the ``PACKET_SIZE_MIN_SENTINEL`` sentinel to the per-chip minimum.
 
-    The entropy-comparison test is parametrized over
-    ``CHOSEN_PACKET_SIZES_ENTROPY_COMPARISON``. When the list contains the
-    sentinel (the default), the parametrized value must be resolved at test
-    time to the per-chip all-ports minimum. Concrete int values pass through
-    unchanged.
+    Each test is parametrized over a ``CHOSEN_PACKET_SIZES_*`` list. When the
+    list contains only ``PACKET_SIZE_MIN_SENTINEL`` (the default), the
+    parametrized value must be resolved at test time to the per-chip minimum
+    for the test's scenario. Concrete int values pass through unchanged.
 
     Args:
         chip_type: Chip family key (e.g. ``"SPC4"``, ``"SPC5"``, ``"SPC6"``).
         packet_size: The current parametrized value -- either
             ``PACKET_SIZE_MIN_SENTINEL`` or a concrete int (bytes).
+        scenario: ``"all_ports"`` for the bisection entropy test or
+            ``"single_cage"`` for the single-cage baseline / split-sharing
+            sub-tests.
 
     Returns:
         int: Packet size in bytes.
 
     Raises:
-        KeyError: If ``chip_type`` is missing from
-            ``NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE`` (caller
-            should guard upstream via ``NoSrhPerfConsts.SUPPORTED_CHIP_TYPES``).
+        ValueError: If ``scenario`` is not ``"all_ports"`` or ``"single_cage"``.
+        KeyError: If ``chip_type`` is missing from the relevant
+            ``*_BY_CHIP_TYPE`` map (caller should guard upstream via
+            ``NoSrhPerfConsts.SUPPORTED_CHIP_TYPES``).
     """
     if packet_size != PACKET_SIZE_MIN_SENTINEL:
         return packet_size
-    return NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE[chip_type]
+    if scenario == "all_ports":
+        return NoSrhPerfConsts.ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE[chip_type]
+    if scenario == "single_cage":
+        return NoSrhPerfConsts.SINGLE_CAGE_MIN_PACKET_SIZE_BY_CHIP_TYPE[chip_type]
+    raise ValueError(f"Unknown scenario: {scenario!r}")
 
 
 def _speed_from_breakout_mode(mode_str):
@@ -234,8 +246,12 @@ def _apply_sonic_breakout_via_config_db(player, chip_type, split_left):
     # files (~1.3MB) by appending '; echo' and disabling print_output.
     config_db = cli.general.get_config_db()
     breakout_cfg = config_db.get("BREAKOUT_CFG", {})
-    if breakout_cfg and all(b.get("brkout_mode") == target_mode
-                            for b in breakout_cfg.values()):
+    # Only cages running one of this chip's breakout modes decide the short-circuit: aux / mgmt / leftover
+    # cages keep other modes and are left untouched by _rewrite_breakout_in_config_db anyway.
+    cage_target_modes = set(
+        NoSrhPerfConsts.SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT.get(chip_type, {}).values())
+    cage_modes_present = {b.get("brkout_mode") for b in breakout_cfg.values()} & cage_target_modes
+    if cage_modes_present == {target_mode}:
         logger.info(f"All cages already at {target_mode}; skipping config_db breakout")
         return
 
@@ -264,6 +280,65 @@ def _apply_sonic_breakout_via_config_db(player, chip_type, split_left):
             os.remove(local_path)
     cli.general.reload_configuration(force=True)
     cli.general.verify_dockers_are_up()
+
+
+def _pick_single_cage_ports(engine, candidate_ports, n_ports, exclude_cages=None):
+    """Pick n_ports adjacent 1x sub-ports from a single physical cage.
+
+    Groups `candidate_ports` by their owning cage parent (per platform.json
+    lane layout) and returns the first cage with at least n_ports members,
+    sliced to its first n_ports by Ethernet index. Used by the split-sharing
+    sub-tests to guarantee that ingress and egress traffic lands on distinct
+    physical cages while all remaining sub-ports of each cage stay idle.
+
+    Args:
+        engine: DUT engine with `run_cmd`.
+        candidate_ports: List of "EthernetN" sub-port names to choose from
+            (typically one side of get_right_left_ports_dict()).
+        n_ports: Number of adjacent sub-ports to return from the chosen cage.
+        exclude_cages: Optional set of cage-parent Ethernet indices to skip
+            (used to force ingress-cage != egress-cage).
+
+    Returns:
+        (cage_parent_idx, [EthernetN, ...]) — the chosen cage parent's index
+        and the n_ports sub-port names on that cage, sorted by Ethernet index.
+
+    Raises:
+        TestIssue: if no cage in candidate_ports has n_ports members.
+    """
+    exclude_cages = exclude_cages or set()
+    platform = engine.run_cmd(
+        "sonic-cfggen -H -v DEVICE_METADATA.localhost.platform").strip()
+    hwsku = engine.run_cmd(
+        "sonic-cfggen -H -v DEVICE_METADATA.localhost.hwsku").strip()
+    platform_json = json.loads(engine.run_cmd(
+        f"cat /usr/share/sonic/device/{platform}/{hwsku}/platform.json ; echo",
+        print_output=False))
+
+    port_to_cage = {}
+    for cage_parent, info in platform_json.get("interfaces", {}).items():
+        cage_idx = int(cage_parent.replace("Ethernet", ""))
+        lanes_per_cage = len(info["lanes"].split(","))
+        for offset in range(lanes_per_cage):
+            port_to_cage[cage_idx + offset] = cage_idx
+
+    by_cage = {}
+    for p in candidate_ports:
+        idx = int(p.replace("Ethernet", ""))
+        cage = port_to_cage.get(idx)
+        if cage is None or cage in exclude_cages:
+            continue
+        by_cage.setdefault(cage, []).append(p)
+
+    for cage in sorted(by_cage):
+        members = sorted(by_cage[cage],
+                         key=lambda x: int(x.replace("Ethernet", "")))
+        if len(members) >= n_ports:
+            return cage, members[:n_ports]
+
+    raise TestIssue(
+        f"No single cage has {n_ports} adjacent sub-ports in "
+        f"{candidate_ports} (excluded cages: {exclude_cages})")
 
 
 def _parallel_per_player(players, aliases, fn, label):
@@ -373,6 +448,20 @@ def _apply_test_config_with_sonic_breakout(players, conf_args, chip_type, split_
             player['cli'].general.reload_configuration(force=True)
             player['cli'].general.verify_dockers_are_up()
         _parallel_per_player(players, aliases, _reload, label="reload")
+
+    if chip_type == "SPC6":
+        with allure.step("Bounce admin state on DUT ports "
+                         "(WA: CMIS DEINIT after config qos reload on SN6600_LD OSFP 8X)"):
+            dut_player = players['dut']
+            dut_perf = dut_player['cli'].performance
+            dut_engine = dut_player['engine']
+            dut_ports = list(dut_perf.connected_ports) + list(dut_perf.unconnected_ports)
+            for port in dut_ports:
+                dut_engine.run_cmd(f"sudo config interface shutdown {port}")
+            time.sleep(2)
+            for port in dut_ports:
+                dut_engine.run_cmd(f"sudo config interface startup {port}")
+            time.sleep(30)
 
     for alias in aliases:
         players[alias]['cli'].general.install_traffic_generator()
@@ -636,7 +725,7 @@ class TestSRv6NoSrhPerf:
         scenario; replace the constant with NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST
         (or any custom subset) to run more sizes.
         """
-        packet_size = _resolve_packet_size(self.chip_type, packet_size)
+        packet_size = _resolve_packet_size(self.chip_type, packet_size, "all_ports")
         split_left, split_right = self.port_split
 
         test_name = get_perf_test_name(request)
@@ -772,6 +861,376 @@ class TestSRv6NoSrhPerf:
             "validation_jsons": traffic_validation_jsons_list,
             "violations": violations_list,
         }
+
+    def _skip_if_cumulus(self):
+        """Skip the single-cage tests on Cumulus.
+
+        Single-cage port selection reads the SONiC ``platform.json`` via
+        ``sonic-cfggen`` and the teardown cold-reloads the SONiC config, so
+        these tests are SONiC-only for now.
+        """
+        skip_performance_test_conditionally(
+            self.players['dut'].get("is_cumulus", False),
+            "single-cage / split-sharing tests are not supported on Cumulus yet")
+
+    def _skip_if_split_sharing_not_supported(self):
+        """Skip the current test when split-sharing is not supported.
+
+        Split-sharing is a SPC6-only, 1x-only feature. Skips via
+        ``skip_performance_test_conditionally`` (rather than ``pytest.skip``)
+        so the skip is attributed to the perf-run and reported to MongoDB
+        with a reason string.
+
+        Skip conditions:
+          * ``self.chip_type`` not in
+            ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES`` — skip
+            with reason ``"split-sharing test not supported on {chip}"``.
+          * ``self.port_split`` not in
+            ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_PORT_SPLITS`` — skip
+            with reason ``"split-sharing test only runs at 1x split; ..."``.
+
+        Raises:
+            pytest.skip.Exception: Propagated by
+                ``skip_performance_test_conditionally`` when either
+                condition is met.
+        """
+        skip_performance_test_conditionally(
+            self.chip_type not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES,
+            f"split-sharing test not supported on {self.chip_type}")
+        skip_performance_test_conditionally(
+            self.port_split not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_PORT_SPLITS,
+            f"split-sharing test only runs at 1x split; current={self.port_split}")
+
+    def _prepare_single_cage_ports(self, test_name, packet_size):
+        """Select one ingress cage + one egress cage on the DUT, publish
+        port_group_df, and register mongo metadata.
+
+        All three single-cage test methods (the two split-sharing tests
+        and the baseline) share this setup: exactly SINGLE_CAGE_PORTS_PER_SIDE
+        adjacent 1x sub-ports on one physical cage act as ingress, the same
+        count on a distinct physical cage act as egress, and all remaining
+        sub-ports of both cages stay idle so the two active sub-ports can
+        borrow their DCL headroom when split-sharing is enabled.
+
+        Returns:
+            (upstream, downstream) — Ethernet name lists for each side.
+        """
+        ports_per_side = NoSrhPerfConsts.SINGLE_CAGE_PORTS_PER_SIDE
+        ports = self.cli_object.performance.get_right_left_ports_dict()
+        ingress_cage, upstream = _pick_single_cage_ports(
+            self.engine, ports["left_ports"], n_ports=ports_per_side)
+        _, downstream = _pick_single_cage_ports(
+            self.engine, ports["right_ports"], n_ports=ports_per_side,
+            exclude_cages={ingress_cage})
+        logger.info("split-sharing ports — upstream=%s downstream=%s",
+                    upstream, downstream)
+
+        sdk_upstream = self.cli_object.performance.get_sdk_ports(upstream)
+        sdk_downstream = self.cli_object.performance.get_sdk_ports(downstream)
+        port_group_df = []
+        for sdk_port in sdk_upstream:
+            port_group_df.append({
+                ValidationConsts.PORT: sdk_port,
+                MongoDbConsts.PORT_GROUP_NAME:
+                    MRCConsts.BISECTION_UPSTREAM_PORT_GROUP_NAME})
+        for sdk_port in sdk_downstream:
+            port_group_df.append({
+                ValidationConsts.PORT: sdk_port,
+                MongoDbConsts.PORT_GROUP_NAME:
+                    MRCConsts.BISECTION_DOWNSTREAM_PORT_GROUP_NAME})
+        self.cli_object.performance.update_port_group_df_on_dut(port_group_df)
+
+        add_test_mongo_metadata(test_name, {
+            MongoDbConsts.CONF_NAME: "no_srh_split_sharing",
+            MongoDbConsts.PORT_GROUP_DF: port_group_df,
+            "packet_size": packet_size,
+            "ports_per_side": ports_per_side
+        })
+        return upstream, downstream
+
+    def _split_sharing_teardown(self):
+        """Disable split sharing, remove any dummy ACLs, then cold-reload.
+
+        Runs from every split-sharing test's finally block so a mid-run
+        failure never leaves DCL bits flipped or dummy ACLs bound. The
+        `reload_configuration` at the end restores a known-good config
+        for the next parametrization.
+        """
+        with allure.step("Teardown: disable split sharing"):
+            self.cli_object.performance.disable_split_sharing(self.chip_type)
+        with allure.step("Teardown: remove dummy ACLs + reload DUT"):
+            try:
+                self.cli_object.performance.remove_dummy_acls()
+            finally:
+                stop_traffic(self.players)
+                self.cli_object.general.reload_configuration(force=True)
+                self.cli_object.general.verify_dockers_are_up()
+
+    @pytest.mark.skip(reason="This test is not yet supported on SW side")
+    @pytest.mark.parametrize("packet_size", CHOSEN_PACKET_SIZES_SPLIT_SHARING_WITH_ACL)
+    def test_split_sharing_with_acl(self, request, packet_size):
+        """SPC6 SRv6 no-SRH DCL split-sharing validation, with ACL stress.
+
+        Scripted 3-step sequence on SINGLE_CAGE_PORTS_PER_SIDE ingress +
+        SINGLE_CAGE_PORTS_PER_SIDE egress 1x sub-ports of a single SPC6
+        cage, at the per-chip minimum single-cage packet size:
+          1. Baseline (no ACL, no split-sharing) — expect PASS.
+          2. Install one dummy ACL on the ingress ports so the pipeline
+             runs 3 lookups instead of 2 → expect FAIL.
+          3. Enable DCL split resource sharing via the toggle script; the
+             active sub-ports now consume the performance budget of the
+             cage's idle sub-ports → same ACL, same traffic passes.
+
+        Teardown always disables split sharing and removes the dummy ACL.
+        SONiC-only: skipped on Cumulus.
+
+        Packet-size selection: parametrized over CHOSEN_PACKET_SIZES_SPLIT_SHARING_WITH_ACL.
+        Default runs a single case at the per-chip minimum for the single-cage
+        scenario; replace the constant with NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST
+        (or any custom subset) to run more sizes.
+        """
+        self._skip_if_cumulus()
+        packet_size = _resolve_packet_size(self.chip_type, packet_size, "single_cage")
+        self._skip_if_split_sharing_not_supported()
+
+        test_name = get_perf_test_name(request)
+        ports_per_side = NoSrhPerfConsts.SINGLE_CAGE_PORTS_PER_SIDE
+
+        allure.dynamic.title(
+            f"{TESTS_SCENARIO} - split-sharing-with-acl on "
+            f"{self.chip_type} split=1x")
+        allure.dynamic.description(
+            f"Validate DCL split resource sharing on {self.chip_type}: "
+            f"baseline vs. ACL vs. ACL+split-sharing at {packet_size}B on "
+            f"{ports_per_side} ingress + {ports_per_side} egress sub-ports "
+            f"of a single cage.")
+
+        upstream, downstream = self._prepare_single_cage_ports(
+            test_name, packet_size)
+        dut_ports_for_acl = upstream + downstream
+
+        try:
+            # --- Step 1: baseline (no ACL, no split-sharing) → expect PASS ---
+            self._run_split_sharing_sub_scenario(
+                test_name, sub_scenario="baseline",
+                packet_size=packet_size,
+                upstream=upstream, downstream=downstream,
+                expect_pass=True)
+
+            # --- Step 2: install ACL → expect FAIL (3rd pipeline lookup) ---
+            with allure.step(
+                    f"Install {NoSrhPerfConsts.SPLIT_SHARING_NUM_DUMMY_ACLS} "
+                    f"dummy ACL(s) on {len(dut_ports_for_acl)} ingress port(s)"):
+                self.cli_object.performance.configure_dummy_acls(
+                    self.conf_args["template_path"],
+                    dut_ports_for_acl,
+                    NoSrhPerfConsts.SPLIT_SHARING_NUM_DUMMY_ACLS)
+            self._run_split_sharing_sub_scenario(
+                test_name, sub_scenario="acl_stress",
+                packet_size=packet_size,
+                upstream=upstream, downstream=downstream,
+                expect_pass=False)
+
+            # --- Step 3: enable split sharing, re-run → expect PASS ---
+            with allure.step("Enable DCL split resource sharing"):
+                self.cli_object.performance.enable_split_sharing(self.chip_type)
+            self._run_split_sharing_sub_scenario(
+                test_name, sub_scenario="acl_stress_with_split_sharing",
+                packet_size=packet_size,
+                upstream=upstream, downstream=downstream,
+                expect_pass=True)
+
+        finally:
+            self._split_sharing_teardown()
+
+    @pytest.mark.skip(reason="This test is not yet supported on SW side")
+    @pytest.mark.parametrize("packet_size", CHOSEN_PACKET_SIZES_SPLIT_SHARING_NO_ACL)
+    def test_split_sharing_no_acl(self, request, packet_size):
+        """SPC6 SRv6 no-SRH DCL split-sharing validation, no ACL.
+
+        Enable DCL split resource sharing via the toggle script up front,
+        then run FWS traffic at the per-chip minimum single-cage packet size
+        on SINGLE_CAGE_PORTS_PER_SIDE ingress + SINGLE_CAGE_PORTS_PER_SIDE
+        egress 1x sub-ports of a single SPC6 cage. Expect PASS: the two
+        active sub-ports consume the performance budget of the cage's idle
+        sub-ports so the minimum packet size fits without an ACL in the
+        picture.
+
+        Teardown always disables split sharing. SONiC-only: skipped on Cumulus.
+
+        Packet-size selection: parametrized over CHOSEN_PACKET_SIZES_SPLIT_SHARING_NO_ACL.
+        Default runs a single case at the per-chip minimum for the single-cage
+        scenario; replace the constant with NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST
+        (or any custom subset) to run more sizes.
+        """
+        self._skip_if_cumulus()
+        packet_size = _resolve_packet_size(self.chip_type, packet_size, "single_cage")
+        self._skip_if_split_sharing_not_supported()
+
+        test_name = get_perf_test_name(request)
+        ports_per_side = NoSrhPerfConsts.SINGLE_CAGE_PORTS_PER_SIDE
+
+        allure.dynamic.title(
+            f"{TESTS_SCENARIO} - split-sharing-no-acl on "
+            f"{self.chip_type} split=1x")
+        allure.dynamic.description(
+            f"Validate DCL split resource sharing on {self.chip_type}: "
+            f"split-sharing enabled + {packet_size}B FWS on "
+            f"{ports_per_side} ingress + {ports_per_side} egress sub-ports "
+            f"of a single cage, no ACL installed.")
+
+        upstream, downstream = self._prepare_single_cage_ports(
+            test_name, packet_size)
+
+        try:
+            with allure.step("Enable DCL split resource sharing"):
+                self.cli_object.performance.enable_split_sharing(self.chip_type)
+            self._run_split_sharing_sub_scenario(
+                test_name, sub_scenario="split_sharing_no_acl",
+                packet_size=packet_size,
+                upstream=upstream, downstream=downstream,
+                expect_pass=True)
+
+        finally:
+            self._split_sharing_teardown()
+
+    @pytest.mark.parametrize("packet_size", CHOSEN_PACKET_SIZES_SINGLE_CAGE_BASELINE)
+    def test_no_srh_single_cage_baseline(self, request, packet_size):
+        """SRv6 no-SRH baseline on a single-cage subset, no DCL WA.
+
+        Runs FWS traffic on SINGLE_CAGE_PORTS_PER_SIDE ingress +
+        SINGLE_CAGE_PORTS_PER_SIDE egress sub-ports of a single cage. No ACL
+        is installed and DCL split resource sharing is NEVER toggled — this
+        is the pure baseline that shows the standard no-SRH pipeline handles
+        this subset natively. Fails on any validation violation.
+
+        Teardown is minimal: no split-sharing to disable, no dummy ACLs
+        to remove — just stop traffic and cold-reload so the next
+        parametrization starts clean. SONiC-only: skipped on Cumulus.
+
+        Packet-size selection: parametrized over CHOSEN_PACKET_SIZES_SINGLE_CAGE_BASELINE.
+        Default runs a single case at the per-chip minimum for the single-cage
+        scenario; replace the constant with NoSrhPerfConsts.PACKET_SIZE_SWEEP_LIST
+        (or any custom subset) to run more sizes.
+        """
+        self._skip_if_cumulus()
+        packet_size = _resolve_packet_size(self.chip_type, packet_size, "single_cage")
+
+        test_name = get_perf_test_name(request)
+        ports_per_side = NoSrhPerfConsts.SINGLE_CAGE_PORTS_PER_SIDE
+        split_left, _ = self.port_split
+
+        allure.dynamic.title(
+            f"{TESTS_SCENARIO} - no-SRH single-cage baseline on "
+            f"{self.chip_type} split={split_left}x")
+        allure.dynamic.description(
+            f"Validate baseline no-SRH pipeline on {self.chip_type} at "
+            f"{packet_size}B on {ports_per_side} ingress + {ports_per_side} "
+            f"egress sub-ports of a single cage, without any DCL WA.")
+
+        upstream, downstream = self._prepare_single_cage_ports(
+            test_name, packet_size)
+
+        try:
+            results = self._run_entropy_scenario(
+                test_name, NoSrhPerfConsts.ENTROPY_LOW, packet_size,
+                upstream, downstream)
+        finally:
+            with allure.step("Reload DUT"):
+                stop_traffic(self.players)
+                self.cli_object.general.reload_configuration(force=True)
+                self.cli_object.general.verify_dockers_are_up()
+
+        if results["violations"]:
+            raise TestIssue("Single-cage baseline run had violations: " + "; ".join(results["violations"]))
+
+    def _run_split_sharing_sub_scenario(self, test_name, sub_scenario, packet_size,
+                                        upstream, downstream, expect_pass):
+        """Run one split-sharing sub-scenario (build traffic → run → validate →
+        cleanup between runs). Asserts pass/fail per expect_pass, mirroring the
+        baseline/ACL/split-sharing steps of test_split_sharing_with_acl.
+
+        Uses ENTROPY_LOW (single stream per pair) so the validation signal
+        isn't muddied by per-DIP variance — this is a scripted correctness
+        check, not an entropy sweep.
+        """
+        with allure.step(f"[{sub_scenario}] Build no-SRH traffic "
+                         f"(packet_size={packet_size}B, entropy=LOW)"):
+            no_srh_stream = partial(create_no_srh_stream,
+                                    entropy_type=NoSrhPerfConsts.ENTROPY_LOW, packet_size=packet_size,
+                                    speed_ratio=self.conf_args["port_speed_ratio"])
+            traffic_jsons = get_bisection_traffic(
+                self.players, self.conf_args,
+                traffic_type=NoSrhPerfConsts.TRAFFIC_TYPE_SRV6_NO_SRH,
+                dut_interfaces_ipv6_configuration_dict=self.dut_interfaces_ipv6_configuration_dict,
+                create_workload_stream=no_srh_stream,
+                upstream_ports=upstream, downstream_ports=downstream)
+
+        self._clear_counters(sub_scenario)
+
+        with allure.step(f"[{sub_scenario}] Set shaper and run traffic"):
+            set_shaper_on_traffic_gen(self.players,
+                                      speed=self.conf_args["speed"],
+                                      shaper_value=self.shaper_value)
+            run_traffic(self.players, self.scenario, traffic_jsons,
+                        attach_traffic_json=False)
+
+        with allure.step(f"[{sub_scenario}] Validate traffic "
+                         f"(expect_pass={expect_pass})"):
+            bw_threshold = {
+                MRCConsts.BISECTION_DOWNSTREAM_PORT_GROUP_NAME: {
+                    ValidationConsts.TX: min(self.shaper_value,
+                                             MRCConsts.DUT_TX_UTIL_TH),
+                    ValidationConsts.RX: min(self.shaper_value,
+                                             MRCConsts.DUT_TX_UTIL_TH)},
+                MRCConsts.BISECTION_UPSTREAM_PORT_GROUP_NAME: {
+                    ValidationConsts.TX: min(self.shaper_value,
+                                             MRCConsts.DUT_TX_UTIL_TH),
+                    ValidationConsts.RX: min(self.shaper_value,
+                                             MRCConsts.DUT_TX_UTIL_TH)},
+            }
+            samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
+            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
+            config = ValidationConfig(
+                players=self.players, test_name=test_name,
+                scenario=self.scenario, chip_type=self.chip_type,
+                bw_threshold=bw_threshold,
+                tc_occ_threshold=None,
+                power_threshold=self.power_thresholds_by_chip_type,
+                samples_params_dict=samples_params_dict)
+            _, violations_list = run_validation(config, ignore_violations=True)
+
+        # Reset shaper + reconfigure mloops between sub-scenarios (same
+        # pattern test_no_srh_entropy_comparison uses between HE and LE runs).
+        with allure.step(f"[{sub_scenario}] Reset shaper for next sub-scenario"):
+            set_shaper_on_traffic_gen(self.players,
+                                      speed=self.conf_args["speed"],
+                                      shaper_value=MRCConsts.SHAPER_VALUE_AFTER_TEST)
+            stop_traffic(self.players)
+            configure_mloops(self.players)
+
+        add_test_mongo_metadata(test_name, {
+            f"{sub_scenario}_packet_size": packet_size,
+            f"{sub_scenario}_expected_pass": expect_pass,
+            f"{sub_scenario}_violations": violations_list,
+        })
+
+        if violations_list:
+            allure.attach("\n".join(violations_list),
+                          f"{sub_scenario} violations",
+                          allure.attachment_type.TEXT)
+
+        # Enforce expectation
+        if expect_pass and violations_list:
+            raise TestIssue(
+                f"[{sub_scenario}] expected PASS but validator reported "
+                f"violations:\n" + "\n".join(violations_list))
+        if not expect_pass and not violations_list:
+            raise TestIssue(
+                f"[{sub_scenario}] expected FAIL (BW-below-threshold or "
+                f"TG-side drops from ACL 3rd-lookup path) but validator "
+                f"reported a clean run — split-sharing may already be "
+                f"enabled, ACL install failed, or packet size is too big.")
 
 
 def _validate_entropy_equivalence(high_results, low_results):
