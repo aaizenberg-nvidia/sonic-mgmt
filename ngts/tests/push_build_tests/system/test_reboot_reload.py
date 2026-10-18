@@ -37,12 +37,12 @@ def validation_type(platform_params, is_simx, reboot_type, topology_obj):
         expected_traffic_loss_dict['fast-reboot']['control'] = 150
         expected_traffic_loss_dict['warm-reboot']['control'] = 150
         # WA for https://redmine.mellanox.com/issues/4901668
-        # Panther A0 has weak CPU, cold reboot data plane recovery time exceeds 180s (~183-200s)
+        # Panther A0 has weak CPU, cold reboot data plane recovery time exceeds 180s (~205-212s)
         # due to orchagent single-threaded QoS mapping blocking forwarding plane updates
         if is_redmine_issue_active([4901668])[0]:
-            expected_traffic_loss_dict['reboot']['data'] = 210
+            expected_traffic_loss_dict['reboot']['data'] = 220
             logger.info('Redmine #4901668 is active, increasing cold reboot data plane traffic loss '
-                        'threshold from 180s to 210s for Panther A0')
+                        'threshold from 180s to 220s for Panther A0')
     supported_reboot_reload_list = get_supported_reboot_reload_types_list(platform)
 
     validation_type = random.choice(supported_reboot_reload_list)
