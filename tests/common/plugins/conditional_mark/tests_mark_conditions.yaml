@@ -1444,7 +1444,7 @@ dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_restart_with_stress:
   xfail:
     reason: "Testcase ignored due to github issue"
     conditions:
-    - "https://github.com/sonic-net/sonic-mgmt/issues/23601"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27983"
 
 dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_stress:
   skip:
