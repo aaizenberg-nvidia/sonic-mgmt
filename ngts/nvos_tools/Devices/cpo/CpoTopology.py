@@ -1,7 +1,9 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar, Protocol, TypeGuard, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
+
+from typing_extensions import TypeIs
 
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 
@@ -281,11 +283,11 @@ class CpoCapable(Protocol):
     oe_list: list[str]
 
 
-def is_cpo_capable(device: object) -> TypeGuard[CpoCapable]:
+def is_cpo_capable(device: object) -> TypeIs[CpoCapable]:
     """Return True if ``device`` exposes a Gen2 CPO topology (``device.cpo``).
 
-    Declared as a TypeGuard, so inside an ``if is_cpo_capable(device):`` branch
-    static type checkers treat ``device`` as CpoCapable (``device.cpo`` etc.
-    resolve without casts).
+    Declared as a TypeIs, so inside an ``if is_cpo_capable(device):`` branch
+    static type checkers treat ``device`` as its own type and CpoCapable
+    (``device.cpo`` and the device's other attributes resolve without casts).
     """
     return isinstance(device, CpoCapable)

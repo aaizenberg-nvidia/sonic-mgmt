@@ -7,9 +7,13 @@ from retry.api import retry_call
 import time
 import re
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.cli_wrappers.openapi.openapi_command_builder import OpenApiRequest
+from ngts.cli_wrappers.openapi.openapi_general_clis import OpenApiGeneralCli
 from ngts.constants.constants import GnmiConsts
-from ngts.nvos_constants.constants_nvos import ApiType, NvosConst
+from ngts.nvos_constants.constants_nvos import ApiType, ConfState, HealthConsts, NvosConst, SystemConsts
 from ngts.nvos_tools.Devices.cpo.CpoTopology import is_cpo_capable
+from ngts.nvos_tools.infra.DeviceLogTool import count_log_lines_after_marker, mark_syslog
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -17,6 +21,7 @@ from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.interfaces.nvl_port.helpers import (
     reset_gpus_if_needed,
     restore_nvl_speed,
@@ -36,6 +41,7 @@ from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
     NVL7_TRUNK_LINK_UP_DELAY,
     NVL7_TRUNK_LINK_UP_TRIES,
     is_nvl7,
+    nvl7_access_operational,
     nvl7_clear_debug_counters,
     nvl7_enable_recovery,
     nvl7_missing_debug_counters,
@@ -48,11 +54,14 @@ from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
     nvl7_trunk_port_names,
     nvl7_verify_new_leaves,
     nvl7_wait_trunk_up,
+    nvl_port_flaps_since,
+    nvl_port_sonic_name,
     phy_recovery_apply_mode,
     phy_recovery_apply_neg_type,
     phy_recovery_apply_timeout,
     phy_recovery_test_profile,
     select_nvl7_trunk_fae_port,
+    set_phy_recovery_attribute,
     setup_nvl_speed_for_phy_recovery,
     validate_default_config,
     verify_phy_recovery_config,
@@ -76,6 +85,8 @@ ERR_MSG_BAD_MODE = "'bad-mode' is not one of"
 
 # Command prefix for phy-recovery set command
 NV_SET_FAE_INTERFACE_PHY_RECOVERY = "nv set fae interface {port} link phy-recovery"
+
+SAI_SDK_DUMP_DIRS = "/var/log/sai_failure_dump /var/log/mellanox/sdk-dumps_dev* /var/log/mellanox/sdk-wrn-dumps_dev*"
 
 # NVL7 CPO new-leaf bad-flow / pruning expected-error fragments live in PhyRecoveryConsts.NVL7_ERR_*
 # (schema-shaped only). The trunk link-up wait budget lives in phy_recovery_helpers (nvl7_wait_trunk_up).
@@ -186,7 +197,7 @@ def test_phy_recovery_attributes(devices, random_api):
 
         with allure.step("Set step-2 preset-mode to full-duplex"):
             preset_mode_path = [PhyRecoveryConsts.STEP_2, PhyRecoveryConsts.PRESENT_MODE]
-            _set_phy_recovery_attribute(
+            set_phy_recovery_attribute(
                 fae_port_names.port.interface.link.phy_recovery,
                 preset_mode_path,
                 PhyRecoveryConsts.PRESENT_MODE,
@@ -211,7 +222,7 @@ def test_phy_recovery_attributes(devices, random_api):
                                                                                                                                    PhyRecoveryConsts.phy_recovery_attributes_options)
 
         with allure.step(f"Set {random_attribute} to {new_lower_value} on {selected_port.port.name} and verify value did not change"):
-            _set_phy_recovery_attribute(
+            set_phy_recovery_attribute(
                 selected_port.port.interface.link.phy_recovery,
                 random_path_list, random_attribute, new_lower_value,
                 apply=True, ask_for_confirmation=True,
@@ -226,7 +237,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 )
 
         with allure.step(f"Set {random_attribute} to {new_higher_value} on all ports and verify"):
-            _set_phy_recovery_attribute(
+            set_phy_recovery_attribute(
                 fae_port_names.port.interface.link.phy_recovery,
                 random_path_list, random_attribute, new_higher_value,
                 apply=True, ask_for_confirmation=True,
@@ -248,7 +259,7 @@ def test_phy_recovery_attributes(devices, random_api):
                 previous_value = port_output[random_path_list[0]][random_attribute]
 
             with allure.step(f"Set {random_attribute} to {previous_value}"):
-                _set_phy_recovery_attribute(
+                set_phy_recovery_attribute(
                     fae_port_names.port.interface.link.phy_recovery,
                     random_path_list, random_attribute, previous_value,
                     apply=True, ask_for_confirmation=True,
@@ -256,7 +267,7 @@ def test_phy_recovery_attributes(devices, random_api):
 
         if preset_mode_changed:
             with allure.step(f"Restore step-2 {PhyRecoveryConsts.PRESENT_MODE} to default"):
-                _set_phy_recovery_attribute(
+                set_phy_recovery_attribute(
                     fae_port_names.port.interface.link.phy_recovery,
                     preset_mode_path,
                     PhyRecoveryConsts.PRESENT_MODE,
@@ -551,17 +562,6 @@ def _verify_link_state(selected_port, expected_link_state):
     assert port_state.get(expected_link_state) is not None, f"Link state is {port_state} but expected {expected_link_state}"
 
 
-def _set_phy_recovery_attribute(phy_recovery, path_list, attribute, value, **kwargs):
-    """Set a phy-recovery leaf via NVUE (``nv set ... step-N <attr> <value>``)."""
-    if TestToolkit.tested_api == ApiType.OPENAPI and isinstance(value, str) and value.isdigit():
-        value = int(value)
-    if len(path_list) == 1 and path_list[0] == attribute:
-        return phy_recovery.set(attribute, value, **kwargs)
-    if TestToolkit.tested_api == ApiType.OPENAPI:
-        return phy_recovery.set(path_list[0], {attribute: value}, **kwargs)
-    return phy_recovery.set(path_list[0], [attribute, str(value)], **kwargs)
-
-
 def _verify_attribute(selected_port, path, attribute, expected_value):
     port_output = OutputParsingTool.parse_json_str_to_dictionary(
         selected_port.port.interface.link.phy_recovery.show()).get_returned_value()
@@ -768,49 +768,451 @@ def test_nvl7_phy_recovery_counters_debug(engines, devices, random_api):
 @pytest.mark.simx
 @pytest.mark.multiplanar
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
-def test_nvl7_phy_recovery_pruning(devices, random_api):
+def test_nvl7_phy_recovery_pruning(devices):
     """
-    @summary (NVL7):
-        Validate PRUNING of the 5 new leaves + "counters debug" node. The feature is supported only
-        on CPO NVL7 and is pruned on NPO (test plan 4.x):
-        - CPO (supported): PRESENT on trunk ports (sw*); ABSENT + set-rejected on acp*/eth0/lo.
-        - NPO (pruned):    ABSENT + set-rejected everywhere, including sw* trunk ports.
-
-    NVL5/NVL6 pruning is enforced via devices.dut.unsupported_commands_list and covered
-    by the shared bad-flow/attributes suites on those platforms.
+    @summary: Validate per-port-type pruning of the NVL7 phy-recovery leaves and the counters debug node.
+        1. Trunk (sw*) port, when the device has any: the 5 new leaves and counters debug are present;
+           the 6 step-1 access leaves are absent and a set of one is rejected.
+        2. Access port: the 6 access leaves are present under step-1 (applied view), counters debug and
+           recovery-policy-config are present; the 4 trunk-only leaves are absent (operational view).
+        3. Access port: the 6 access leaves are absent outside the FAE namespace (link phy-recovery and link).
+        4. Access port: all six debug counters are at their defaults (no recovery since boot).
+        5. Access port: a set of a trunk-only leaf is rejected.
+        6. eth0, lo and an fnm port: all phy-recovery leaves and counters debug are absent and a set is rejected.
     """
     if not is_nvl7(devices):
         pytest.skip("NVL7 only test")
+    consts = PhyRecoveryConsts
 
-    if is_cpo_capable(devices.dut):
-        with allure.step("CPO: new leaves + counters debug are PRESENT on a trunk (sw*) port"):
-            trunk = _require_nvl7_trunk_fae_port(NvosConsts.LINK_STATE_ALL_TYPES)
+    trunk_names = nvl7_trunk_port_names(NvosConsts.LINK_STATE_ALL_TYPES)
+    if trunk_names:
+        trunk = Fae(port_name=random.choice(trunk_names))
+        with allure.step(f"Trunk port {trunk.port.name}: new leaves + counters debug present, access leaves pruned"):
             all_present, missing = nvl7_new_leaves_present(trunk)
             assert all_present, f"NVL7 new leaves missing on trunk {trunk.port.name}: {missing}"
             counters_missing = nvl7_missing_debug_counters(trunk)
-            assert not counters_missing, (
-                f"debug counters missing on trunk {trunk.port.name}: {counters_missing}"
-            )
+            assert not counters_missing, f"debug counters missing on trunk {trunk.port.name}: {counters_missing}"
+            _assert_nvl7_access_leaves_pruned(trunk)
     else:
-        with allure.step("NPO: feature is pruned - new leaves + counters debug ABSENT on trunk (sw*) too"):
-            npo_trunk_names = nvl7_trunk_port_names(NvosConsts.LINK_STATE_ALL_TYPES)
-            if not npo_trunk_names:
-                logger.info("No sw* ports on this NPO flavor - trunk pruning vacuously skipped; "
-                            "off-trunk checks still run")
-                allure.attach("npo-no-trunk", "No sw* trunk ports on this NPO flavor - trunk "
-                              "pruning vacuously skipped; off-trunk checks still run")
-            for trunk_name in npo_trunk_names:
-                with allure.independent_step(f"pruned on trunk {trunk_name}"):
-                    _assert_nvl7_leaves_pruned(Fae(port_name=trunk_name), trunk_name)
+        logger.info("No trunk (sw*) ports on this device, trunk checks skipped")
 
-    with allure.step("New leaves + counters debug are PRUNED off-trunk (acp*/eth0/lo)"):
-        for off_port in _nvl7_off_trunk_ports(devices):
-            with allure.independent_step(f"pruned on off-trunk port {off_port}"):
-                _assert_nvl7_leaves_pruned(Fae(port_name=off_port), off_port)
+    acp = Fae(port_name=random.choice(devices.dut.nvl_access_ports_list))
+    with allure.step(f"Access port {acp.port.name}: access leaves, counters debug and policy present, "
+                     f"trunk-only leaves pruned"):
+        applied_step_1 = nvl7_parse_phy_recovery(acp, ConfState.APPLIED)[consts.STEP_1]
+        missing = [leaf for leaf in consts.NVL7_ACCESS_LEAVES if leaf not in applied_step_1]
+        assert not missing, f"Access leaves missing from applied step-1 on {acp.port.name}: {missing}"
+        counters_missing = nvl7_missing_debug_counters(acp)
+        assert not counters_missing, f"debug counters missing on {acp.port.name}: {counters_missing}"
+        _, missing = nvl7_new_leaves_present(acp)
+        assert set(missing) == set(consts.NVL7_TRUNK_ONLY_LEAVES), (
+            f"Expected exactly the trunk-only leaves pruned on {acp.port.name}, missing: {missing}"
+        )
+
+    with allure.step(f"Access port {acp.port.name}: access leaves absent outside the FAE namespace"):
+        port = Port(acp.port.name)
+        _, missing = nvl7_new_leaves_present(port, PhyRecoveryConsts.NVL7_ACCESS_LEAVES,
+                                             subtree=PhyRecoveryConsts.STEP_1)
+        shown = set(PhyRecoveryConsts.NVL7_ACCESS_LEAVES) - set(missing)
+        assert not shown, f"Access leaves shown by non-FAE link phy-recovery on {acp.port.name}: {shown}"
+        link = port.interface.link.show()
+        shown = [leaf for leaf in PhyRecoveryConsts.NVL7_ACCESS_LEAVES if leaf in link]
+        assert not shown, f"Access leaves shown by non-FAE link on {acp.port.name}: {shown}"
+
+    with allure.step(f"Access port {acp.port.name}: debug counters at defaults"):
+        _verify_nvl7_debug_counters_default(acp, devices)
+
+    _assert_nvl7_pruned_set_rejected(acp, consts.RECOVERY_TX_TOGGLE_DELAY, 1)
+
+    with allure.step("All phy-recovery leaves + counters debug are PRUNED on eth0/lo/fnm"):
+        for port_name in _nvl7_non_nvl_link_ports(devices):
+            with allure.independent_step(f"phy-recovery pruned on {port_name}"):
+                fae_port = Fae(port_name=port_name)
+                _assert_nvl7_leaves_pruned(fae_port, port_name)
+                _assert_nvl7_access_leaves_pruned(fae_port)
+
+
+@pytest.mark.interface
+@pytest.mark.simx
+@pytest.mark.multiplanar
+@pytest.mark.timeout(30 * MINUTE, func_only=True)
+@pytest.mark.usefixtures('random_api')
+def test_nvl7_access_phy_recovery_config(devices, is_simx, has_loopbox, standalone_system, setup_name):
+    """
+    @summary: Validate configuration of the NVL7 access-port step-1 recovery leaves.
+        1. Applied defaults are 0; with the link up the operational leaves are within schema range and are
+           recorded as the firmware defaults.
+        2. Set iterations-preset3 and verify the applied value, that admin state is restored and that
+           orchagent logged one notice for the value and no rejection.
+        3. Set iterations-preset3 and consecutive-recovery-window-preset3 to the device caps, when known.
+        4. Set an existing step-1 leaf and step-2 preset-mode and verify both are applied.
+        5. Set all six leaves to their range maximum in one apply, then to 0 in one apply:
+           applied shows the values and the port flaps once per apply.
+        6. Set all six leaves to 1, unset each leaf in one apply: applied is back to 0 on all six.
+        7. Set of each of the six leaves under step-2 is rejected and nothing is staged.
+        8. Set iterations-preset3 on all access ports in one apply: applied on sampled ports,
+           exactly one flap on a changed up port and none on an unchanged one.
+        9. Generate tech-support and verify it holds the configured value from step 8, the operational
+           step-1 leaves and the debug counters of the tested port.
+        10. Unset on all access ports: sampled ports are back to applied 0 and the firmware-default operational.
+    """
+    if not is_nvl7(devices):
+        pytest.skip("NVL7 only test")
+    skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
+
+    consts = PhyRecoveryConsts
+    acp_names = devices.dut.nvl_access_ports_list
+    sampled = random.sample(acp_names, 3)
+    changed_name = sampled[0]
+    port = Fae(port_name=changed_name)
+    all_ports = Fae(port_name=summarize_switch_ports(acp_names))
+    ranged_value = 4
+    cleaned = False
+    try:
+        with allure.step("Applied defaults are 0; operational leaves are within schema range (firmware defaults)"):
+            nvl7_verify_new_leaves(port, consts.NVL7_ACCESS_LEAF_DEFAULTS, subtree=consts.STEP_1, applied=True)
+            fw_defaults = {name: nvl7_access_operational(Fae(port_name=name)) for name in sampled}
+            for name in sampled:
+                _assert_access_leaves_in_range(name, fw_defaults[name])
+
+        _apply_accepted_value(devices, port, consts.ITERATIONS_PRESET3, 5)
+
+        caps = devices.dut.phy_recovery_step1_caps
+        if caps:
+            with allure.step(f"Set the device caps {caps}"):
+                nvl7_stage_and_apply_leaves(port, caps.items(), subtree=consts.STEP_1)
+                nvl7_verify_new_leaves(port, caps, subtree=consts.STEP_1, applied=True)
+
+        with allure.step("Set an existing step-1 leaf and step-2 preset-mode"):
+            nvl7_stage_and_apply_leaves(port, [(consts.PEQ_NUMBER_OF_RETRY_PRESET3, 3)], subtree=consts.STEP_1)
+            nvl7_stage_and_apply_leaves(port, [(consts.PRESENT_MODE, consts.FULL_DUPLEX)], subtree=consts.STEP_2)
+            nvl7_verify_new_leaves(port, {consts.PEQ_NUMBER_OF_RETRY_PRESET3: 3}, subtree=consts.STEP_1, applied=True)
+            nvl7_verify_new_leaves(port, {consts.PRESENT_MODE: consts.FULL_DUPLEX}, subtree=consts.STEP_2,
+                                   applied=True)
+
+        _apply_range_ends_with_one_flap(devices, port)
+        _verify_per_leaf_unset(port)
+        _assert_step_2_access_sets_rejected(port)
+
+        _apply_ranged_value(devices, setup_name, all_ports, sampled, ranged_value)
+
+        _verify_techsupport_holds_step_1_config(changed_name, {consts.ITERATIONS_PRESET3: ranged_value})
+
+        with allure.step(f"Ranged unset on {all_ports.port.name}: sampled ports back to defaults"):
+            all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+            cleaned = True
+            reset_gpus_if_needed(setup_name)
+            _verify_applied_step_1(sampled, consts.NVL7_ACCESS_LEAF_DEFAULTS)
+            wait_for_ports_state(devices, acp_names, 'acp')
+            for name in sampled:
+                nvl7_verify_new_leaves(Fae(port_name=name), fw_defaults[name], subtree=consts.STEP_1)
+    finally:
+        if not cleaned:
+            with allure.step(f"Cleanup - unset phy-recovery on {all_ports.port.name}"):
+                all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+                reset_gpus_if_needed(setup_name)
+                wait_for_ports_state(devices, acp_names, 'acp')
+
+
+def _apply_ranged_value(devices, setup_name, all_ports, sampled, value):
+    """Ranged set on all acp ports; the second sampled port already holds ``value`` and must not flap."""
+    leaf = PhyRecoveryConsts.ITERATIONS_PRESET3
+    changed_name, unchanged_name = sampled[:2]
+    with allure.step(f"Ranged set {leaf} {value} on {all_ports.port.name}"):
+        nvl7_stage_and_apply_leaves(Fae(port_name=unchanged_name), [(leaf, value)], subtree=PhyRecoveryConsts.STEP_1)
+        # Assumes the sampled acp ports are up (all are on simx via nvl_simx_setup)
+        wait_for_ports_state(devices, [changed_name, unchanged_name], 'acp')
+        marker = mark_syslog(TestToolkit.get_engine())
+        nvl7_stage_and_apply_leaves(all_ports, [(leaf, value)], subtree=PhyRecoveryConsts.STEP_1)
+        reset_gpus_if_needed(setup_name)
+        _verify_applied_step_1(sampled, {leaf: value})
+        _assert_flap_only_on_changed_port(marker, changed_name, unchanged_name)
+
+
+def _assert_access_leaves_in_range(port_name, operational):
+    out_of_range = {leaf: operational.get(leaf) for leaf, maximum in PhyRecoveryConsts.NVL7_ACCESS_LEAF_MAX.items()
+                    if not 0 <= int(operational.get(leaf, -1)) <= maximum}
+    assert not out_of_range, f"Operational step-1 leaves out of schema range on {port_name}: {out_of_range}"
+
+
+def _verify_applied_step_1(port_names, expected):
+    for name in port_names:
+        nvl7_verify_new_leaves(Fae(port_name=name), expected, subtree=PhyRecoveryConsts.STEP_1, applied=True)
+
+
+def _apply_accepted_value(devices, fae_port, leaf, value):
+    port_name = fae_port.port.name
+    sonic_name = nvl_port_sonic_name(port_name)
+    notice = PhyRecoveryConsts.NVL7_SAI_ACCEPT_LOG.format(port=sonic_name, value=value)
+    with allure.step(f"Set {leaf} {value}: applied, admin state restored, one notice and no rejection"):
+        admin_state = _link_admin_state(fae_port)
+        marker = mark_syslog(TestToolkit.get_engine())
+        nvl7_stage_and_apply_leaves(fae_port, [(leaf, value)], subtree=PhyRecoveryConsts.STEP_1)
+        nvl7_verify_new_leaves(fae_port, {leaf: value}, subtree=PhyRecoveryConsts.STEP_1, applied=True)
+        wait_for_ports_state(devices, [port_name], 'acp')
+        assert _link_admin_state(fae_port) == admin_state, f"{port_name} admin state not restored after apply"
+        _assert_one_log_since(marker, notice, f"notice of {leaf} {value} on {sonic_name}")
+        rejects = _sai_rejects_since(marker, sonic_name, [leaf])
+        assert rejects == 0, f"{rejects} rejection(s) of {leaf} logged on {sonic_name}"
+
+
+def _apply_range_ends_with_one_flap(devices, fae_port):
+    port_name = fae_port.port.name
+    for values in (PhyRecoveryConsts.NVL7_ACCESS_LEAF_MAX, PhyRecoveryConsts.NVL7_ACCESS_LEAF_DEFAULTS):
+        with allure.step(f"Set all six leaves in one apply {values}: applied, one flap"):
+            wait_for_ports_state(devices, [port_name], 'acp')
+            marker = mark_syslog(TestToolkit.get_engine())
+            nvl7_stage_and_apply_leaves(fae_port, values.items(), subtree=PhyRecoveryConsts.STEP_1)
+            nvl7_verify_new_leaves(fae_port, values, subtree=PhyRecoveryConsts.STEP_1, applied=True)
+            retry_call(_assert_flaps, fargs=[marker, port_name, 1], exceptions=AssertionError, tries=12, delay=10)
+
+
+def _verify_per_leaf_unset(fae_port):
+    leaves = PhyRecoveryConsts.NVL7_ACCESS_LEAVES
+    with allure.step("Set all six leaves to 1, unset each leaf in one apply: applied back to 0"):
+        nvl7_stage_and_apply_leaves(fae_port, [(leaf, 1) for leaf in leaves], subtree=PhyRecoveryConsts.STEP_1)
+        nvl7_verify_new_leaves(fae_port, dict.fromkeys(leaves, 1), subtree=PhyRecoveryConsts.STEP_1, applied=True)
+        step_1 = fae_port.port.interface.link.phy_recovery.step_1
+        for leaf in leaves:
+            is_last = leaf == leaves[-1]
+            step_1.unset(leaf, apply=is_last, ask_for_confirmation=is_last).verify_result()
+        nvl7_verify_new_leaves(fae_port, PhyRecoveryConsts.NVL7_ACCESS_LEAF_DEFAULTS, subtree=PhyRecoveryConsts.STEP_1,
+                               applied=True)
+
+
+def _verify_techsupport_holds_step_1_config(port_name, applied):
+    """Tech-support holds ``applied`` (other leaves at default), the shown operational leaves and the debug counters."""
+    consts = PhyRecoveryConsts
+    engine = TestToolkit.get_engine()
+    techsupport = System().techsupport
+    sonic_name = nvl_port_sonic_name(port_name)
+    with allure.step(f"Generate tech-support and verify it holds the step-1 leaves and debug counters of {port_name}"):
+        try:
+            shown = nvl7_access_operational(Fae(port_name=port_name))
+            techsupport.action_generate()
+            techsupport.extract_techsupport_files(engine)
+            dump_dir = SystemConsts.TECHSUPPORT_FILES_PATH + techsupport.file_name.replace(".tar.gz", "") + "/dump"
+            fields = {leaf: 'phy_recovery_step_1_' + leaf.replace('-', '_') for leaf in consts.NVL7_ACCESS_LEAVES}
+            configured = _dump_hash(engine, f"{dump_dir}/CONFIG_DB.json*", f'.["IB_PORT|{sonic_name}"]')
+            mismatched = {field: configured.get(field) for leaf, field in fields.items()
+                          if configured.get(field, str(consts.NVL7_ACCESS_LEAF_DEFAULT)) !=
+                          str(applied.get(leaf, consts.NVL7_ACCESS_LEAF_DEFAULT))}
+            assert not mismatched, f"Configured step-1 leaves of {sonic_name} wrong in tech-support: {mismatched}"
+            operational = _dump_hash(engine, f"{dump_dir}/STATE_DB.json*", f'.["IB_PORT_TABLE|{sonic_name}"]')
+            mismatched = {field: operational.get(field) for leaf, field in fields.items()
+                          if field not in operational or (leaf in shown and operational[field] != str(shown[leaf]))}
+            assert not mismatched, (
+                f"Operational step-1 leaves of {sonic_name} missing or wrong in tech-support: {mismatched}, "
+                f"shown {shown}"
+            )
+            counters = _dump_hash(engine, f"{dump_dir}/COUNTERS_DB.json*",
+                                  f'.["COUNTERS:" + .COUNTERS_PORT_NAME_MAP.value["{sonic_name}"]]')
+            missing = [counter for counter in consts.NVL7_DEBUG_COUNTER_SAI_STATS if counter not in counters]
+            assert not missing, f"Debug counters of {sonic_name} missing from tech-support: {missing}"
+        finally:
+            if techsupport.file_name:
+                techsupport.cleanup(engine)
+                techsupport.files.file_name[techsupport.file_name].action_delete()
+
+
+def _dump_hash(engine, dump_files, key):
+    """Return the first redis hash at jq path ``key`` found in the tech-support DB dump files."""
+    output = engine.run_cmd(f"sudo jq -Mcs 'map({key}.value // empty) | first // {{}}' {dump_files}")
+    return OutputParsingTool.parse_json_str_to_dictionary(output).get_returned_value()
+
+
+def _assert_step_2_access_sets_rejected(fae_port):
+    consts = PhyRecoveryConsts
+    rest = TestToolkit.tested_api == ApiType.OPENAPI
+    error = consts.NVL7_ERR_REST_STEP_2_LEAF if rest else consts.NVL7_ERR_STEP_2_LEAF
+    phy_recovery = fae_port.port.interface.link.phy_recovery
+    with allure.step(f"Set of each step-1 access leaf under {consts.STEP_2} is rejected, nothing staged"):
+        for leaf in consts.NVL7_ACCESS_LEAVES:
+            set_phy_recovery_attribute(phy_recovery, [consts.STEP_2], leaf, 1,
+                                       expected_str=error.format(leaf=leaf)).verify_result()
+        staged = _staged_config()
+        assert staged in ('', '{}'), f"Rejected {consts.STEP_2} sets left staged config: {staged}"
+
+
+def _staged_config():
+    engine = TestToolkit.get_engine()
+    if TestToolkit.tested_api != ApiType.OPENAPI:
+        return NvueGeneralCli.diff_config(engine).strip()
+    if OpenApiRequest.changeset is None:
+        return ''
+    return OpenApiGeneralCli.diff_config(engine, ConfState.APPLIED, OpenApiRequest.changeset, output_type='str').strip()
+
+
+def _link_admin_state(fae_port):
+    return next(iter(OutputParsingTool.parse_json_str_to_dictionary(
+        fae_port.port.interface.link.state.show()).get_returned_value()))
+
+
+def _assert_flaps(marker, port_name, expected):
+    flaps = nvl_port_flaps_since(marker, port_name)
+    assert flaps == expected, f"Expected {expected} oper up->down flap(s) on {port_name}, got {flaps}"
+
+
+def _assert_flap_only_on_changed_port(marker, changed_name, unchanged_name):
+    with allure.step(f"Exactly one flap on changed {changed_name}, none on unchanged {unchanged_name}"):
+        retry_call(_assert_flaps, fargs=[marker, changed_name, 1], exceptions=AssertionError, tries=12, delay=10)
+        _assert_flaps(marker, unchanged_name, 0)
+
+
+@pytest.mark.interface
+@pytest.mark.simx
+@pytest.mark.multiplanar
+@pytest.mark.timeout(20 * MINUTE, func_only=True)
+def test_nvl7_access_phy_recovery_bad_flow(devices, random_api, is_simx, has_loopbox, standalone_system):
+    """
+    @summary: Validate rejection of bad NVL7 access-port step-1 recovery values.
+        1. Over-max, -1 and non-integer values are rejected at set time on each of the six leaves;
+           nothing is staged.
+        2. Record the baseline: health status, SAI/SDK dump files, swss/syncd start times and orchagent PIDs,
+           and operational step-1 leaves.
+        3. Apply each value the device rejects (over its cap or on an unsupported preset), one per apply:
+           exactly one rejection warning, applied equals requested, admin state restored.
+        4. The rejected values are not retried while idle for 60 seconds.
+        5. Health status and dump files are unchanged; dockers are up and swss/syncd/orchagent did not restart.
+        6. Operational step-1 leaves still equal the baseline.
+        7. Unset phy-recovery: applied leaves are back to defaults and no rejection is logged.
+    """
+    if not is_nvl7(devices):
+        pytest.skip("NVL7 only test")
+    skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
+
+    consts = PhyRecoveryConsts
+    port_name = random.choice(devices.dut.nvl_access_ports_list)
+    port = Fae(port_name=port_name)
+    caps = devices.dut.phy_recovery_step1_caps
+    rejected = [(leaf, cap + 1) for leaf, cap in caps.items()]
+    rejected += [(leaf, 3) for leaf in consts.NVL7_ACCESS_LEAVES if leaf not in caps][:1]
+
+    _assert_access_set_errors(port, random_api)
+    _skip_if_apply_time_rejection_untestable(caps)
+    cleaned = False
+    try:
+        with allure.step("Record the baseline"):
+            wait_for_ports_state(devices, [port_name], 'acp')
+            operational = nvl7_access_operational(port)
+            _assert_access_leaves_in_range(port_name, operational)
+            health = _health_status()
+            dumps = _sai_dump_files()
+            starts = _swss_syncd_starts()
+            sonic_name = nvl_port_sonic_name(port_name)
+
+        for leaf, value in rejected:
+            with allure.step(f"Apply rejected {leaf} {value}: one warning, applied, admin state restored"):
+                admin_state = _link_admin_state(port)
+                marker = mark_syslog(TestToolkit.get_engine())
+                nvl7_stage_and_apply_leaves(port, [(leaf, value)], subtree=consts.STEP_1)
+                _assert_one_log_since(marker, consts.NVL7_SAI_REJECT_LOG.format(
+                    port=sonic_name, attr=consts.NVL7_ACCESS_LEAF_SAI_ATTR[leaf], value=value),
+                    f"rejection of {leaf} {value} on {sonic_name}")
+                nvl7_verify_new_leaves(port, {leaf: value}, subtree=consts.STEP_1, applied=True)
+                wait_for_ports_state(devices, [port_name], 'acp')
+                assert _link_admin_state(port) == admin_state, f"{port_name} admin state not restored after apply"
+
+        _assert_no_sai_reject_while_idle(sonic_name, [leaf for leaf, _ in rejected])
+
+        _assert_no_side_effects(devices, health, dumps, starts)
+
+        with allure.step("Operational step-1 leaves still equal the baseline"):
+            wait_for_ports_state(devices, [port_name], 'acp')
+            nvl7_verify_new_leaves(port, operational, subtree=consts.STEP_1)
+
+        with allure.step("Unset phy-recovery: applied leaves back to defaults, no new rejection"):
+            marker = mark_syslog(TestToolkit.get_engine())
+            port.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+            cleaned = True
+            nvl7_verify_new_leaves(port, consts.NVL7_ACCESS_LEAF_DEFAULTS, subtree=consts.STEP_1, applied=True)
+            wait_for_ports_state(devices, [port_name], 'acp')
+            rejects = _sai_rejects_since(marker, sonic_name, consts.NVL7_ACCESS_LEAVES)
+            assert rejects == 0, f"{rejects} rejection(s) logged on {sonic_name} by the unset"
+    finally:
+        if not cleaned:
+            with allure.step(f"Cleanup - unset phy-recovery on {port_name}"):
+                port.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+
+
+def _skip_if_apply_time_rejection_untestable(caps):
+    if not caps:
+        pytest.skip("Device step-1 caps unknown (O-5): apply-time rejection not tested")
+    if is_bug_active(5350786):
+        pytest.skip("Bug 5350786: a rejected step-1 value takes the SAI-failure path, apply-time rejection not tested")
+
+
+def _assert_access_set_errors(fae_port, random_api):
+    consts = PhyRecoveryConsts
+    rest = random_api == ApiType.OPENAPI
+    cases = []
+    for leaf, maximum in consts.NVL7_ACCESS_LEAF_MAX.items():
+        range_error = consts.NVL7_ERR_ACCESS_RANGE.format(leaf=leaf, max=maximum)
+        cases += [
+            (leaf, maximum + 1, consts.NVL7_ERR_REST_OVER_MAX.format(max=maximum) if rest else range_error),
+            (leaf, -1, consts.NVL7_ERR_REST_UNDER_MIN if rest else range_error),
+            (leaf, 'abc', consts.NVL7_ERR_REST_NOT_INTEGER if rest else consts.NVL7_ERR_NOT_INTEGER),
+        ]
+    phy_recovery = fae_port.port.interface.link.phy_recovery
+    with allure.step(f"Out-of-range and non-integer sets are rejected on {fae_port.port.name}, nothing staged"):
+        for leaf, value, expected_str in cases:
+            with allure.independent_step(f"Set {leaf} {value} is rejected"):
+                set_phy_recovery_attribute(phy_recovery, [consts.STEP_1], leaf, value,
+                                           expected_str=expected_str).verify_result()
+        staged = _staged_config()
+        assert staged in ('', '{}'), f"Rejected sets left staged config: {staged}"
+
+
+def _assert_one_log_since(marker, pattern, what):
+    def _check():
+        count = count_log_lines_after_marker(TestToolkit.get_engine(), marker, pattern)
+        assert count == 1, f"Expected 1 {what} in this apply, got {count}"
+
+    retry_call(_check, exceptions=AssertionError, tries=6, delay=10)
+
+
+def _assert_no_sai_reject_while_idle(sonic_name, leaves):
+    with allure.step("Rejected values are not retried while idle for 60 seconds"):
+        marker = mark_syslog(TestToolkit.get_engine())
+        time.sleep(60)
+        retried = _sai_rejects_since(marker, sonic_name, leaves)
+        assert retried == 0, f"{retried} rejection(s) re-logged on {sonic_name} while idle"
+
+
+def _sai_rejects_since(marker, sonic_name, leaves):
+    attrs = '|'.join(PhyRecoveryConsts.NVL7_ACCESS_LEAF_SAI_ATTR[leaf] for leaf in leaves)
+    patterns = (PhyRecoveryConsts.NVL7_SAI_REJECT_LOG, PhyRecoveryConsts.NVL7_SAI_REJECT_ERR_LOG)
+    pattern = '|'.join(f"({p.format(port=sonic_name, attr=f'({attrs})', value='[0-9]+')})" for p in patterns)
+    return count_log_lines_after_marker(TestToolkit.get_engine(), marker, pattern)
+
+
+def _assert_no_side_effects(devices, health, dumps, starts):
+    with allure.step("Health status and dump files unchanged; swss, syncd and orchagent not restarted"):
+        assert _health_status() == health, f"Health status changed from {health}"
+        devices.dut.verify_dockers(TestToolkit.get_engine()).verify_result()
+        assert _swss_syncd_starts() == starts, f"swss/syncd/orchagent restarted, baseline:\n{starts}"
+        assert _sai_dump_files() == dumps, "New SAI/SDK dump files after the rejections"
+
+
+def _health_status():
+    return OutputParsingTool.parse_json_str_to_dictionary(
+        System().health.show()).get_returned_value()[HealthConsts.STATUS]
+
+
+def _sai_dump_files():
+    return TestToolkit.get_engine().run_cmd(f"sudo ls -A {SAI_SDK_DUMP_DIRS}")
+
+
+def _swss_syncd_starts():
+    starts = TestToolkit.get_engine().run_cmd(
+        "docker inspect -f '{{.Name}} {{.State.StartedAt}}' $(docker ps -q -f name=swss -f name=syncd);"
+        " pgrep -ax orchagent")
+    assert all(name in starts for name in ('swss', 'syncd', 'orchagent')), f"Unexpected docker/pgrep output: {starts}"
+    return starts
 
 
 def _assert_nvl7_leaves_pruned(fae_port, port_name):
-    """Assert the 5 new leaves + counters debug are absent and a new-leaf set is rejected on a port."""
+    """Assert the 5 CPO leaves + counters debug are absent and a CPO-leaf set is rejected on a port."""
     _, missing = nvl7_new_leaves_present(fae_port)
     assert set(missing) == set(PhyRecoveryConsts.NVL7_NEW_LEAVES), (
         f"Expected all new leaves pruned on {port_name}, but missing only: {missing}"
@@ -820,12 +1222,24 @@ def _assert_nvl7_leaves_pruned(fae_port, port_name):
         f"counters debug node (partially) present on {port_name}: "
         f"present={sorted(set(PhyRecoveryConsts.NVL7_DEBUG_COUNTERS) - set(counters_missing))}"
     )
-    with allure.step(f"Set of a new leaf is rejected (pruned) on {port_name}"):
-        fae_port.port.interface.link.phy_recovery.set(
-            PhyRecoveryConsts.RECOVERY_POLICY_CONFIG,
-            PhyRecoveryConsts.RecoveryPolicyConfig.ROBUST_OPTIMIZED,
-            expected_str=PhyRecoveryConsts.NVL7_ERR_PRUNED_SET,
-        ).verify_result()
+    _assert_nvl7_pruned_set_rejected(fae_port)
+
+
+def _assert_nvl7_access_leaves_pruned(fae_port):
+    """Assert the 6 step-1 access leaves are absent and a set of one is rejected on a non-acp port."""
+    consts = PhyRecoveryConsts
+    _, missing = nvl7_new_leaves_present(fae_port, consts.NVL7_ACCESS_LEAVES, subtree=consts.STEP_1)
+    assert set(missing) == set(consts.NVL7_ACCESS_LEAVES), (
+        f"Expected all access leaves pruned on {fae_port.port.name}, but missing only: {missing}"
+    )
+    _assert_nvl7_pruned_set_rejected(fae_port, consts.ITERATIONS_PRESET3, 1, subtree=consts.STEP_1)
+
+
+def _assert_nvl7_pruned_set_rejected(fae_port, leaf=PhyRecoveryConsts.RECOVERY_POLICY_CONFIG,
+                                     value=PhyRecoveryConsts.RecoveryPolicyConfig.ROBUST_OPTIMIZED, subtree=None):
+    with allure.step(f"Set of {leaf} is rejected (pruned) on {fae_port.port.name}"):
+        set_phy_recovery_attribute(fae_port.port.interface.link.phy_recovery, [subtree or leaf], leaf, value,
+                                   expected_str=PhyRecoveryConsts.NVL7_ERR_PRUNED_SET).verify_result()
 
 
 # -------------------------- NVL7 orchestration helpers --------------------------
@@ -980,17 +1394,12 @@ def _run_nvl7_new_leaves_bad_flow(devices):
             phy_recovery.set(leaf, "abc", expected_str=consts.NVL7_ERR_NUMERIC_NON_NUMERIC).verify_result()
 
 
-def _nvl7_off_trunk_ports(devices):
-    """A representative set of non-trunk ports where the new leaves must be pruned."""
-    off_ports = []
-    acp_list = getattr(devices.dut, 'nvl_access_ports_list', [])
-    if acp_list:
-        off_ports.append(random.choice(acp_list))
-    network_ports = getattr(devices.dut, 'network_ports', [])
-    for candidate in ('eth0', 'lo'):
-        if candidate in network_ports:
-            off_ports.append(candidate)
-    return off_ports
+def _nvl7_non_nvl_link_ports(devices):
+    """eth0, lo and one internal fnm port: no phy-recovery node at all."""
+    ports = [name for name in ('eth0', 'lo') if name in devices.dut.network_ports]
+    if devices.dut.nvl_internal_fnm_ports:
+        ports.append(random.choice(devices.dut.nvl_internal_fnm_ports))
+    return ports
 
 
 def _verify_nvl7_debug_counters_default(selected_port, devices):

@@ -24,6 +24,8 @@ from ngts.tests_nvos.interfaces.nvl_port.helpers import (
 )
 
 logger = logging.getLogger(__name__)
+# Trunks are waited for once per session: they take minutes to link in mloop and stay up between tests
+_trunk_wait = {'done': False}
 
 
 @pytest.fixture(scope='session')
@@ -69,9 +71,10 @@ def nvl_simx_cleanup(engines, devices):
 
     logger.info("Cleaning up: disabling per-interface MLOOP")
     try:
-        access_ports = devices.dut.nvl_access_ports_list
-        if access_ports:
-            port_range = summarize_switch_ports(access_ports)
+        for ports in (devices.dut.nvl_access_ports_list, devices.dut.nvl_trunk_ports_list):
+            if not ports:
+                continue
+            port_range = summarize_switch_ports(ports)
             with allure.step(f"Disable mloop on {port_range}"):
                 NvCommand().fae.interfaces[port_range].link.mloop.set(
                     op_param_name=MloopConsts.Mode.DISABLED,
@@ -93,8 +96,9 @@ def nvl_simx_setup(engines, devices, mloop_mode):
 
     Per nvbug 6072833 the FAE mloop knob is per-interface, and the system toggles
     affected ports automatically. The fixture:
-    1. Ensures fae mloop=<mloop_mode> on all access ports
-    2. Waits for every access port to be up
+    1. Ensures fae mloop=<mloop_mode> on all access and trunk ports
+    2. Waits for every access port to be up, and once per session for the trunk ports
+       (a trunk that stays down is only logged)
 
     The mode comes from the `mloop_mode` fixture (default: LOGICAL); test modules
     can override that fixture to pick a different mode.
@@ -118,6 +122,14 @@ def nvl_simx_setup(engines, devices, mloop_mode):
     access_ports = devices.dut.nvl_access_ports_list
     with allure.step(f"Wait for all {len(access_ports)} ACP ports to be up"):
         wait_for_ports_state(devices, access_ports, 'acp')
+    trunk_ports = devices.dut.nvl_trunk_ports_list
+    if trunk_ports and not _trunk_wait['done']:
+        _trunk_wait['done'] = True
+        with allure.step(f"Wait for all {len(trunk_ports)} trunk ports to be up"):
+            try:
+                wait_for_ports_state(devices, trunk_ports, 'sw')
+            except AssertionError as error:
+                logger.warning("Not all trunk ports are up, trunk tests use the up ones: %s", error)
     logger.info("All NVL SIMX ACP links are up")
 
 

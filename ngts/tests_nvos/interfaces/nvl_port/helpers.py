@@ -77,9 +77,12 @@ def acp_link_up_timeout(devices) -> int:
 
 
 def group_link_up_timeout(devices, prefix: str, state=nv_consts.NvosConsts.LINK_STATE_UP) -> int:
-    """Budget for a port group to reach state. Only acp ports going up link up slowly."""
-    if prefix != 'acp' or state != nv_consts.NvosConsts.LINK_STATE_UP:
+    """Budget for a port group to reach state. Only acp and sw ports going up link up slowly."""
+    if state != nv_consts.NvosConsts.LINK_STATE_UP or prefix not in ('acp', 'sw'):
         return nv_consts.InternalNvosConsts.DEFAULT_TIMEOUT
+    if prefix == 'sw':
+        return devices.dut.expected_operation_durations.get(nv_consts.InternalNvosConsts.SW_PORT_GOES_UP,
+                                                            nv_consts.InternalNvosConsts.NVL7_SW_LINK_UP_TIMEOUT)
     return acp_link_up_timeout(devices)
 
 

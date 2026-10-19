@@ -94,6 +94,10 @@ logger = logging.getLogger(__name__)
 class IbSwitch(BaseSwitch):
     ErotFirmwareImagesTestConsts = namedtuple('ErotFirmwareImagesTestConsts',
                                               ('previous_image_path', 'current_image_path', 'version_names'))
+    # Set by the NVLink switch classes only.
+    nvl_access_ports_list: list[str]
+    nvl_trunk_ports_list: list[str]
+    default_phy_recovery_attributes: dict[str, str | dict[str, str]]
 
     def __init__(self, asic_amount, switch_type=NvosConst.IB_SWITCH_TYPE, switch_class=NvosConst.IB_SWITCH_TYPE):
         super().__init__(switch_type=switch_type, asic_amount=asic_amount, switch_class=switch_class)
@@ -702,9 +706,10 @@ class IbSwitch(BaseSwitch):
             "nv show fae platform bkv",
             "nv show fae system sto-debug"
         ]
-        # NVL7 CPO trunk-port PHY-recovery leaves + counters debug: pruned everywhere except CPO
-        # NVL7 (removed from the list in PortiaCpoSwitch; PortiaSimx/NPO deliberately keeps them pruned).
+        # NVL7 PHY-recovery leaves + counters debug: pruned everywhere except NVL7 (PortiaSwitch
+        # un-prunes them, the trunk-only leaves only when it has trunk ports).
         self.unsupported_commands_list.extend(PhyRecoveryConsts.NVL7_PRUNED_COMMANDS)
+        self.phy_recovery_step1_caps: dict[str, int] = {}
 
         self.memory_size: list[float] = [15.0]
         self.supported_disk_list: list[SSDConsts.SSDType] = [
@@ -3039,9 +3044,7 @@ class RosalindSurrogateSwitch(JulietNonScaleoutSwitch):
                                           "nv set fae interface {port} link phy-recovery serdes-eq-timeout",
                                           "nv set fae interface {port} link low-power state",
                                           "nv unset fae interface {port} link low-power state"]
-        # NVL7 CPO trunk-port PHY-recovery leaves + counters debug are pruned on NVL6.
-        # (Removed in PortiaCpoSwitch (CPO NVL7), where they ARE supported; PortiaSimx/NPO keeps
-        # them pruned.)
+        # NVL7 PHY-recovery leaves + counters debug are pruned on NVL6 (un-pruned on Portia).
         self.unsupported_commands_list.extend(PhyRecoveryConsts.NVL7_PRUNED_COMMANDS)
 
         # Rosalind does not have fans, PSUs, or transceivers (liquid cooled)
@@ -3843,6 +3846,9 @@ class PortiaSwitch(RosalindSwitch):
         super().__init__(asic_amount=asic_amount)
         SwitchCapabilityHandler.apply_capabilities(
             self, [NoPSUCapability(), NoFanCapability(), NoLeakageCapability()])
+        if self.nvl_trunk_ports_list:
+            self.unsupported_commands_list = [cmd for cmd in self.unsupported_commands_list
+                                              if cmd not in PhyRecoveryConsts.NVL7_TRUNK_ONLY_SET_COMMANDS]
 
     def _init_constants(self):
         super()._init_constants()
@@ -3860,6 +3866,22 @@ class PortiaSwitch(RosalindSwitch):
             for core_clock in self.fae_supported_core_clocks
         }
         self.access_port_speed = '200G'
+        nvl7_commands = PhyRecoveryConsts.NVL7_ACCESS_COMMANDS + [PhyRecoveryConsts.NVL7_POLICY_SET_COMMAND]
+        self.unsupported_commands_list = [cmd for cmd in self.unsupported_commands_list if cmd not in nvl7_commands]
+        self.default_phy_recovery_debug_counters = dict(PhyRecoveryConsts.NVL7_DEFAULT_DEBUG_COUNTERS)
+        # TODO(O-11): observed on 007 chipsim, confirm against the HLD defaults
+        step_2 = self.default_phy_recovery_attributes[PhyRecoveryConsts.STEP_2]
+        assert isinstance(step_2, dict)
+        self.default_phy_recovery_attributes = {
+            PhyRecoveryConsts.LINK_DOWN_TIMEOUT: '0',
+            PhyRecoveryConsts.RECOVERY_ENTRY_REASON: 'Received_TS1',
+            PhyRecoveryConsts.RECOVERY_NEGATIVE_TYPE: PhyRecoveryConsts.AUTO,
+            PhyRecoveryConsts.RECOVERY_STATUS: PhyRecoveryConsts.DISABLED,
+            PhyRecoveryConsts.RECOVERY_SUPPORTED: 'true',
+            PhyRecoveryConsts.STEP_1: {leaf: value for leaf, value in step_2.items()
+                                       if leaf != PhyRecoveryConsts.STATE_60_TO_LINKUP_TIMEOUT},
+            PhyRecoveryConsts.STEP_2: dict(step_2),
+        }
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7200_ld-r0")
         self.show_platform_output.update({
@@ -3972,10 +3994,19 @@ class PortiaSimxDevice(SimxDevice):
 
     MGMT_PORTS = ('eth0',)
     SMA_AMOUNT = 2
+    phy_recovery_step1_caps: dict[str, int]
+    expected_operation_durations: dict[str, int]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         SwitchCapabilityHandler.apply_capability(self, NoAsicPowerCapability())
+        # TODO(O-5): chipsim step-1 caps, real-HW values pending; a missing leaf = preset unsupported
+        self.phy_recovery_step1_caps = {
+            PhyRecoveryConsts.ITERATIONS_PRESET3: 10,
+            PhyRecoveryConsts.CONSECUTIVE_RECOVERY_WINDOW_PRESET3: 0,
+        }
+        # simx mloop trunks link up in >2 min
+        self.expected_operation_durations[InternalNvosConsts.SW_PORT_GOES_UP] = 375
 
     def _init_ib_speeds(self):
         super()._init_ib_speeds()
@@ -4059,11 +4090,6 @@ class PortiaCpoSwitch(PortiaSwitch):
         })
         # sw scale-out ports are 1-lane NVL7 simplex (200G PAM-4 per lane)
         self.nvl_trunk_port_speed = '200G'
-
-        self.default_phy_recovery_debug_counters = dict(PhyRecoveryConsts.NVL7_DEFAULT_DEBUG_COUNTERS)
-        for cmd in PhyRecoveryConsts.NVL7_PRUNED_COMMANDS:
-            if cmd in self.unsupported_commands_list:
-                self.unsupported_commands_list.remove(cmd)
 
     def _init_platform_lists(self):
         super()._init_platform_lists()

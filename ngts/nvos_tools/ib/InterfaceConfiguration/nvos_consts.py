@@ -16,6 +16,7 @@ class InternalNvosConsts:
     # TODO: interim value - update after verifying link-up time on a real Portia (NVL7) system
     NVL7_SW_LINK_UP_TIMEOUT = 2 * 60  # NVL7 (Portia) CPO sw ports
     ACP_PORT_GOES_UP = "acp port goes up"
+    SW_PORT_GOES_UP = "sw port goes up"
     IB_TRAFFIC_SENDER_INTERFACE = "h1p1"
     IB_TRAFFIC_RECEIVER_INTERFACE = "h2p1"
     IB_TRAFFIC_LAT_TYPE = "ib_send_lat"
@@ -364,8 +365,8 @@ class PhyRecoveryConsts:
     # ===================================================================================
     # NVL7 CPO trunk-port PHY recovery (extends NVL5/NVL6 phy-recovery)
     # HLD: HLD_NVOS_CPO_PHY_RECOVERY_NVL7 - "NVUE CLI - New configuration leaves" (Table 4)
-    # These 5 leaves + the "counters debug" node exist ONLY on NVL7 CPO trunk ports (sw*),
-    # and are pruned (absent/not settable) on access ports (acp*) and on NVL5/NVL6/non-NVLink.
+    # recovery-policy-config exists on every NVL7 port; the other 4 leaves on trunk ports (sw*)
+    # only. All 5 are pruned (absent/not settable) on NVL5/NVL6/non-NVLink.
     # ===================================================================================
     RECOVERY_POLICY_CONFIG = 'recovery-policy-config'
     RECOVERY_TX_RE_ITERATION = 'recovery-tx-re-iteration'
@@ -434,6 +435,15 @@ class PhyRecoveryConsts:
         TOTAL_STEP_1_COUNT,
         TOTAL_STEP_2_COUNT,
     ]
+    # COUNTERS_DB stats behind the debug step-counters
+    NVL7_DEBUG_COUNTER_SAI_STATS = [
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TIME_IN_LAST_STEP1',
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TIME_IN_LAST_STEP2',
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TOTAL_TIME_IN_LAST_STEP1',
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TOTAL_TIME_IN_LAST_STEP2',
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TOTAL_STEP1_COUNT',
+        'SAI_PORT_STAT_CUSTOM_NVLINK_UPHY_RECOVERY_TOTAL_STEP2_COUNT',
+    ]
     # Debug step-counters are all 0 before any recovery has been triggered / after clear.
     NVL7_DEFAULT_DEBUG_COUNTERS = {counter: 0 for counter in NVL7_DEBUG_COUNTERS}
 
@@ -451,19 +461,49 @@ class PhyRecoveryConsts:
     # Each carries a VALID sample value: a value-less set errors on ANY device as merely
     # incomplete, so only a valued set (accepted where exposed, rejected where pruned)
     # actually proves the leaf is pruned.
-    NVL7_NEW_LEAF_SAMPLE_VALUES = {
-        RECOVERY_POLICY_CONFIG: RecoveryPolicyConfig.ROBUST_OPTIMIZED,
+    NVL7_TRUNK_ONLY_SAMPLE_VALUES = {
         RECOVERY_TX_TOGGLE_DELAY: 1,
         RECOVERY_TX_TOGGLE_TIME: 1,
         RECOVERY_RX_ALGO_TIME: 1,
         RECOVERY_TX_RE_ITERATION: RecoveryTxReIteration.ENABLED,
     }
-    NVL7_NEW_LEAF_SET_COMMANDS = [
+    NVL7_TRUNK_ONLY_LEAVES = list(NVL7_TRUNK_ONLY_SAMPLE_VALUES)
+    NVL7_POLICY_SET_COMMAND = (
+        f"nv set fae interface {{port}} link phy-recovery {RECOVERY_POLICY_CONFIG} "
+        f"{RecoveryPolicyConfig.ROBUST_OPTIMIZED}"
+    )
+    NVL7_TRUNK_ONLY_SET_COMMANDS = [
         f"nv set fae interface {{port}} link phy-recovery {leaf} {value}"
-        for leaf, value in NVL7_NEW_LEAF_SAMPLE_VALUES.items()
+        for leaf, value in NVL7_TRUNK_ONLY_SAMPLE_VALUES.items()
     ]
-    # Full pruning command list (5 set-leaf commands + counters debug show) for off-NVL7 devices.
-    NVL7_PRUNED_COMMANDS = NVL7_NEW_LEAF_SET_COMMANDS + [SHOW_FAE_COUNTERS_DEBUG_COMMAND]
+    NVL7_NEW_LEAF_SET_COMMANDS = [NVL7_POLICY_SET_COMMAND] + NVL7_TRUNK_ONLY_SET_COMMANDS
+
+    # NVL7 access-port (acp) step-1 leaves
+    ITERATIONS_PRESET1 = 'iterations-preset1'
+    ITERATIONS_PRESET2 = 'iterations-preset2'
+    ITERATIONS_PRESET3 = 'iterations-preset3'
+    CONSECUTIVE_RECOVERY_WINDOW_PRESET1 = 'consecutive-recovery-window-preset1'
+    CONSECUTIVE_RECOVERY_WINDOW_PRESET2 = 'consecutive-recovery-window-preset2'
+    CONSECUTIVE_RECOVERY_WINDOW_PRESET3 = 'consecutive-recovery-window-preset3'
+    NVL7_ACCESS_LEAF_MAX = {
+        ITERATIONS_PRESET1: 255,
+        ITERATIONS_PRESET2: 255,
+        ITERATIONS_PRESET3: 255,
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET1: 65535,
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET2: 65535,
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET3: 65535,
+    }
+    NVL7_ACCESS_LEAVES = list(NVL7_ACCESS_LEAF_MAX)
+    NVL7_ACCESS_LEAF_DEFAULT = 0
+    NVL7_ACCESS_LEAF_DEFAULTS = dict.fromkeys(NVL7_ACCESS_LEAVES, NVL7_ACCESS_LEAF_DEFAULT)
+    NVL7_ACCESS_LEAF_SET_COMMANDS = [
+        f"nv set fae interface {{port}} link phy-recovery step-1 {leaf} 1" for leaf in NVL7_ACCESS_LEAVES
+    ]
+
+    # Pruned on every non-NVL7 device; NVL7 un-prunes the access commands and the policy, the 4
+    # trunk-only leaves only when it has trunk ports.
+    NVL7_ACCESS_COMMANDS = NVL7_ACCESS_LEAF_SET_COMMANDS + [SHOW_FAE_COUNTERS_DEBUG_COMMAND]
+    NVL7_PRUNED_COMMANDS = NVL7_NEW_LEAF_SET_COMMANDS + NVL7_ACCESS_COMMANDS
 
     # ---- NVL7 new-leaf bad-flow / pruning expected-error fragments (any-of match) ----
     # Only schema-shaped fragments (avoid over-broad bare words like 'Error'/'Invalid' that match
@@ -474,8 +514,36 @@ class PhyRecoveryConsts:
     NVL7_ERR_ENUM_INVALID = ["is not one of"]
     NVL7_ERR_NUMERIC_OVER_MAX = ["Valid range", "greater than the maximum"]
     NVL7_ERR_NUMERIC_NEGATIVE = ["Valid range", "less than the minimum"]
-    NVL7_ERR_NUMERIC_NON_NUMERIC = ["is not of type", "is not one of"]
+    NVL7_ERR_NOT_INTEGER = "is not an integer"
+    NVL7_ERR_NUMERIC_NON_NUMERIC = ["is not of type", "is not one of", NVL7_ERR_NOT_INTEGER]
     NVL7_ERR_PRUNED_SET = ["is not one of", "does not exist"]
+    NVL7_ERR_ACCESS_RANGE = "Valid range for {leaf} is 0 - {max}"
+    NVL7_ERR_REST_OVER_MAX = "is greater than the maximum of {max}"
+    NVL7_ERR_REST_UNDER_MIN = "is less than the minimum of 0"
+    NVL7_ERR_REST_NOT_INTEGER = "is not of type 'integer'"
+    NVL7_ERR_STEP_2_LEAF = "'{leaf}' is not one of"
+    NVL7_ERR_REST_STEP_2_LEAF = "Unevaluated properties are not allowed ('{leaf}' was unexpected"
+
+    # orchagent syslog (ERE) when the SAI rejects a step-1 value; port is the SONiC name (InfinibandN)
+    NVL7_ACCESS_LEAF_SAI_ATTR = {
+        ITERATIONS_PRESET1: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_ITERATIONS_ADMIN_PRESET1',
+        ITERATIONS_PRESET2: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_ITERATIONS_ADMIN_PRESET2',
+        ITERATIONS_PRESET3: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_ITERATIONS_ADMIN_PRESET3',
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET1: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_CONSEC_RECOVERY_WINDOW_ADMIN_PRESET1',
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET2: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_CONSEC_RECOVERY_WINDOW_ADMIN_PRESET2',
+        CONSECUTIVE_RECOVERY_WINDOW_PRESET3: 'CUSTOM_NVLINK_UPHY_RECOVERY_STEP1_CONSEC_RECOVERY_WINDOW_ADMIN_PRESET3',
+    }
+    NVL7_SAI_REJECT_LOG = (
+        "WARNING .*Port {port} rejected attribute {attr} value {value}, rv:.*Dropping the configuration"
+    )
+    NVL7_SAI_REJECT_ERR_LOG = (
+        "ERR .*orchagent: :- setPortAttributeWithTypeConversion: "
+        "Failed to set port attribute {attr} {value} for port {port} pid:"
+    )
+    # orchagent logs the attribute as an enum ID only, and also for values the SAI then rejects
+    NVL7_SAI_ACCEPT_LOG = (
+        "NOTICE .*orchagent: :- doPortTask: Set port {port} generic config admin_enum [0-9]+ to {value}$"
+    )
 
 
 class TxBwLossMonitorConsts:
