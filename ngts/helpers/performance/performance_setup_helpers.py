@@ -491,19 +491,20 @@ def dynamic_configuration_helper(players, scenario, performance_parameters, step
                                            performance_clis_function_args=(scenario, performance_parameters), step=step)
 
 
-def run_traffic(players, scenario, traffic_jsons, step="Running Traffic - Test body", attach_traffic_json=True, parallel_run=True):
+def run_traffic(players, scenario, traffic_jsons, step="Running Traffic - Test body", attach_traffic_json=True, parallel_run=True,
+                players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES):
 
     if parallel_run:
-        call_performance_function_with_threads(players, players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+        call_performance_function_with_threads(players, players_aliases=players_aliases,
                                                action="run traffic",
                                                performance_clis_function_name="run_traffic",
                                                performance_clis_function_args=(scenario, traffic_jsons),
                                                step=step)
     else:
-        for player_alias in PerfConsts.PERF_SETUP_TG_ALIASES:
+        for player_alias in players_aliases:
             players[player_alias]['cli'].performance.run_traffic(scenario, traffic_jsons)
     if attach_traffic_json:
-        attach_json_traffic_to_allure(players, tg_players_aliases=PerfConsts.PERF_SETUP_TG_ALIASES,
+        attach_json_traffic_to_allure(players, tg_players_aliases=players_aliases,
                                       traffic_jsons=traffic_jsons)
 
 

@@ -1,0 +1,29 @@
+{
+    "sdk_test_info": {
+        "sdk_test_path": "sx_sdk_py_tests/tests/multi_os_tests/ar_l3_snake/ar_l3_snake_dut.py",
+        "sdk_test_name": "ArL3SnakeDUT"
+    },
+    "{{ PerfConsts.SDK_TEST_CONF }}": {
+        {% set ports = right_left_ports_dict %}
+        {% set right_ports = ports["right_ports"] %}
+        {% set left_ports = ports["left_ports"] %}
+        {% set all_ports = left_ports + right_ports %}
+        {% set split_for_all_ports = conf_args.split_left %}
+
+        "split_dict": {
+            "{{ split_for_all_ports }}": {{ all_ports | tojson }}
+        },
+        "snake_rif_mac": "00:00:00:00:10:60",
+        "snake_variant": "{{ conf_args.snake_variant }}",
+        {# Picks the AR classifier key: the BTH AR bit for an AR-eligible
+           scenario, a key nothing matches for an AR-ineligible one. #}
+        "ar_traffic": {{ conf_args.ar_traffic | tojson }},
+        "scale_route_families": {{ conf_args.scale_route_families | tojson }},
+        "expected_forwarding_hops": {{ conf_args.expected_forwarding_hops }},
+        {# Everything else the snake needs is a single value for every chip and
+           every scenario, so it lives on the DUT rather than in conf: the AR
+           profile and thresholds, the LPM trees, the random ECMP hash and the
+           per-family flow-counter sample. #}
+        "{{ PerfConsts.PORT_GROUPS }}": {{ get_ar_l3_snake_port_groups(split_for_all_ports) | tojson }}
+    }
+}

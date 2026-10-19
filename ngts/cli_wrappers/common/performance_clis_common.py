@@ -680,17 +680,29 @@ class PerformanceCommon:
             logging.error(f"Error running traffic validator: {e}")
             raise TestIssue(msg=f"Error running traffic validator: {type(e).__name__}: {e}") from e
 
-        source_path = os.path.join(dst_dut_dir, "TrafficValidator.json")
+        self.pull_file_from_player("TrafficValidator.json", json_path, dst_dut_dir=dst_dut_dir, description="Traffic validation file")
+
+    def pull_file_from_player(self, remote_filename, local_path, dst_dut_dir="/tmp", description="file"):
+        """Copy a file from the player to the runner and check that it arrived.
+
+        Args:
+            remote_filename: Basename under ``dst_dut_dir`` on the player.
+            local_path: Absolute destination path on the runner.
+            dst_dut_dir: Remote directory (default ``/tmp``).
+            description: What the file is, for the error messages.
+
+        Raises:
+            TestIssue: If the copy fails or the local file is missing.
+        """
+        remote_path = os.path.join(dst_dut_dir, remote_filename)
         try:
-            self.engine.copy_file(source_file="TrafficValidator.json", file_system=dst_dut_dir, dest_file=json_path,
+            self.engine.copy_file(source_file=remote_filename, file_system=dst_dut_dir, dest_file=local_path,
                                   overwrite_file=True, verify_file=False, direction='get')
         except Exception as e:
-            logging.error(f"Error copying validation file from {source_path} on DUT to {json_path}: {e}")
-            raise TestIssue(msg=f"Error copying validation file from DUT: {type(e).__name__}: {e}") from e
-
-        if not os.path.exists(json_path):
-            raise TestIssue(f"Traffic validation file was not created at {json_path} after copy from DUT. "
-                            f"The file may not exist on the DUT at {source_path}.")
+            logging.error(f"Error copying {remote_path} from {self.dut_alias} to {local_path}: {e}")
+            raise TestIssue(msg=f"Error copying {description} {remote_filename} from {self.dut_alias}: {type(e).__name__}: {e}") from e
+        if not os.path.exists(local_path):
+            raise TestIssue(f"{description} was not created at {local_path} after copy from {remote_path} on {self.dut_alias}.")
 
     @retry(exceptions=TestIssue, tries=2, delay=2)
     def stop_traffic(self, burst_config=None):

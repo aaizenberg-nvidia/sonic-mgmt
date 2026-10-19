@@ -2,6 +2,8 @@ import logging
 import os
 import re
 import json
+import tempfile
+import allure
 from ngts.helpers.performance.traffic_helpers import generate_ip_address_dict
 from ngts.constants.constants import BugHandlerConst, ResultUploaderConst
 from ngts.constants.performance_constants import PerfConsts, PowerConsts, ValidationConsts
@@ -93,7 +95,78 @@ class DvsPerformance(PerformanceCommon):
         return {"get_split_ports": self.get_split_ports,
                 "generate_ip_list": generate_ip_address_dict,
                 "get_player_unconnected_connected_after_split": self.get_player_unconnected_connected_after_split,
+                "get_ar_l3_snake_port_groups": self.get_ar_l3_snake_port_groups,
                 "PerfConsts": PerfConsts}
+
+    def get_ar_l3_snake_port_groups(self, split_num):
+        """Build snake_heads / snake_tails / snake_body after breakout for TrafficValidator.
+
+        Mirrors the DUT ``build_single_snake`` order: all post-split ports sorted
+        by log_port form one chain. The first port is the inject head, the last
+        is the exit tail, and every port in between is body.
+
+        Args:
+            split_num: Relative breakout factor applied to every base port.
+
+        Returns:
+            dict: Port-group mapping with decimal string port lists suitable for Jinja.
+        """
+        ports = self.right_left_ports_dict["left_ports"] + self.right_left_ports_dict["right_ports"]
+        split_ports = self.get_all_breakout_ports(split_num, ports)
+        snake = sorted(int(p) for p in split_ports)
+        return {
+            "snake_heads": [str(snake[0])],
+            "snake_tails": [str(snake[-1])],
+            "snake_body": [str(p) for p in snake[1:-1]],
+        }
+
+    def install_snake_user_mloop(self, num_pairs=1, dst_path=PerfConsts.USER_MLOOP_CONFIGURATION_PATH):
+        """Write explicit unconnected->connected mloop pairs for AR L3 snake inject.
+
+        Pairs the first ``num_pairs`` unconnected ports with the first
+        ``num_pairs`` connected ports. Used on right_tg only.
+
+        Must be called *after* ``apply_configuration_file``, which applies the
+        breakout on the player and then refreshes ``connected_ports`` /
+        ``unconnected_ports`` to their post-split values. Those lists are used
+        as-is: re-deriving the breakout here would expand already-split
+        sub-ports a second time (``ports_lanes`` is keyed by pre-split parents).
+
+        Args:
+            num_pairs: Number of FWS inject pairs (default 1 for the single snake head).
+            dst_path: Absolute path on the player for ConfigureMloopOnTG to read.
+        """
+        connected = sorted(int(port) for port in self.connected_ports)
+        unconnected = sorted(int(port) for port in self.unconnected_ports)
+        if len(unconnected) < num_pairs or len(connected) < num_pairs:
+            raise TestIssue(
+                f"{self.dut_alias}: need >= {num_pairs} unconnected and connected ports "
+                f"for snake mloop, got "
+                f"unconnected={len(unconnected)} connected={len(connected)}")
+        mloops = list(zip(unconnected[:num_pairs], connected[:num_pairs]))
+        remote_dir = os.path.dirname(dst_path) or "/"
+        remote_name = os.path.basename(dst_path)
+        with tempfile.TemporaryDirectory() as local_dir:
+            local_path = os.path.join(local_dir, f"{self.dut_alias}_{remote_name}")
+            with open(local_path, "w") as f:
+                json.dump(mloops, f)
+            self.engine.copy_file(source_file=local_path, file_system=remote_dir,
+                                  dest_file=remote_name, overwrite_file=True, verify_file=False, direction="put")
+        logging.info(f"Installed snake user mloop on {self.dut_alias}: {mloops}")
+
+    def remove_snake_user_mloop(self, dst_path=PerfConsts.USER_MLOOP_CONFIGURATION_PATH):
+        """Remove the user mloop override written by ``install_snake_user_mloop``.
+
+        ConfigureMloopOnTG uses this file instead of auto-pairing every unconnected
+        and connected port whenever it exists, so a leftover file leaves only the
+        snake pair configured for every later test on the player. Safe to call when
+        the file is absent.
+
+        Args:
+            dst_path: Absolute path on the player that ``install_snake_user_mloop`` wrote.
+        """
+        self.execute_cmd(f"rm -f {dst_path}")
+        logging.info(f"Removed snake user mloop on {self.dut_alias}: {dst_path}")
 
     def _validate_template_variables(self, template_source, template_context, template_globals):
         """
@@ -319,10 +392,12 @@ class DvsPerformance(PerformanceCommon):
                               overwrite_file=True, verify_file=False)
 
     def save_basic_configuration(self, players):
-        pass
+        # A killed session leaves the snake mloop override behind, which would pair only the snake ports for every test after it.
+        self.remove_snake_user_mloop()
 
     def restore_basic_configuration(self):
         self.cleanup_shared_json_file()
+        self.remove_snake_user_mloop()
         switch_attributes = self.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
         chip_type = get_chip_type(switch_attributes)
 
@@ -848,3 +923,81 @@ class DvsPerformance(PerformanceCommon):
         logging.info(f"Create incremental dips on {self.dut_alias}")
         cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_CREATE_INCREMENTAL_DIPS}"
         self.execute_cmd(cmd)
+
+    def verify_ar_l3_snake_route_hits(self):
+        """Read back the AR L3 snake scale-route flow counters after traffic.
+
+        Fails on the DUT (non-zero rc) when any sampled scale route counted no
+        packets, which means the DIP sweep never reached that route. Pulls the
+        counter JSON back and attaches it to Allure so the report shows the
+        validation actually ran.
+        """
+        logging.info(f"Verify AR L3 snake scale-route hits on {self.dut_alias}")
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_AR_L3_SNAKE_ROUTE_HITS}"
+        try:
+            self.execute_cmd(cmd)
+        except Exception:
+            self._attach_hit_counters_after_failure(PerfConsts.AR_L3_SNAKE_ROUTE_COUNTERS_REMOTE_FILE,
+                                                    PerfConsts.AR_L3_SNAKE_SCENARIO, self._attach_route_hits_to_allure)
+            raise
+        local_path = self._pull_hit_counters_json(PerfConsts.AR_L3_SNAKE_ROUTE_COUNTERS_REMOTE_FILE, PerfConsts.AR_L3_SNAKE_SCENARIO)
+        self._attach_route_hits_to_allure(local_path)
+
+    def _pull_hit_counters_json(self, remote_filename, scenario, dst_dut_dir="/tmp"):
+        """SCP a hit-counter JSON from the player to the runner.
+
+        Args:
+            remote_filename: Basename under ``dst_dut_dir`` on the player.
+            scenario: Scenario whose ``traffic_validation_json_files`` directory receives the copy.
+            dst_dut_dir: Remote directory (default ``/tmp``).
+
+        Returns:
+            str: Absolute local path of the copied file.
+
+        Raises:
+            TestIssue: If the copy fails or the local file is missing.
+        """
+        local_dir = os.path.join(BugHandlerConst.NGTS_PATH, "performance_tests",
+                                 "traffic_validation_json_files", scenario)
+        os.makedirs(local_dir, exist_ok=True)
+        local_path = os.path.join(local_dir, f"{self.dut_alias}_{remote_filename}")
+        self.pull_file_from_player(remote_filename, local_path, dst_dut_dir=dst_dut_dir, description="Hit-counter file")
+        return local_path
+
+    def _attach_hit_counters_after_failure(self, remote_filename, scenario, attach):
+        """Attach a hit-counter JSON after its check failed, without hiding that failure.
+
+        The counters matter most when the check fails, so they are still pulled and
+        attached; a copy or attach error is only logged, so the caller re-raises the
+        check's own failure.
+
+        Args:
+            remote_filename: Basename of the counter JSON under /tmp on the player.
+            scenario: Scenario whose ``traffic_validation_json_files`` directory receives the copy.
+            attach: The ``_attach_*_to_allure`` method that renders it.
+        """
+        try:
+            attach(self._pull_hit_counters_json(remote_filename, scenario))
+        except Exception as error:
+            logging.error(f"Could not attach {remote_filename} from {self.dut_alias} after the failed check: {error}")
+
+    def _attach_route_hits_to_allure(self, local_path):
+        """Attach scale-route hit JSON and a short pass/fail summary to Allure.
+
+        Args:
+            local_path: Local path of ``ar_l3_snake_route_counters.json`` with packet counts.
+        """
+        with open(local_path) as f:
+            data = json.load(f)
+        routes = data.get("routes") or []
+        payload = json.dumps(data, indent=2)
+        allure.attach(payload, f"Scale-route hit counters ({self.dut_alias})", allure.attachment_type.JSON)
+        hit_count = sum(1 for route in routes if route.get("packets", 0) > 0)
+        lines = [f"Scale-route hit verification on {self.dut_alias}: {hit_count}/{len(routes)} sampled routes matched"]
+        for route in routes:
+            lines.append(
+                f"  {route.get('family', '?')} {route.get('prefix')}/{route.get('mask')} "
+                f"VR{route.get('vrid')} port={hex(route.get('port', 0))} packets={route.get('packets')}")
+        summary = "\n".join(lines)
+        allure.attach(summary, f"Scale-route hit summary ({self.dut_alias})", allure.attachment_type.TEXT)
+        logging.info(summary)

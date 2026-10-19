@@ -218,7 +218,14 @@ class PerfConsts:
     DVS_UNSPLIT_ALL_PORTS = "UnsplitAllPorts"
     DVS_DYNAMIC_CONF_PREFIX = "DynamicConfiguration"
     DVS_CREATE_INCREMENTAL_DIPS = "MultiDipsTG"
+    DVS_AR_L3_SNAKE_ROUTE_HITS = "ArL3SnakeRouteHits"
     DVS_MODIFY_PG_BUFFER_CONNECTED_PORTS = "ModifyPGBufferConnectedPorts"
+    # Written by ArL3SnakeDUT on the player; re-written with packet
+    # counts by ArL3SnakeRouteHits so pytest can attach them.
+    AR_L3_SNAKE_SCENARIO = "ar_l3_snake"
+    # Read by ConfigureMloopOnTG instead of auto-pairing when present; must match MultiNosTest.user_mloop_configuration_path.
+    USER_MLOOP_CONFIGURATION_PATH = "/user_mloop_configuration.json"
+    AR_L3_SNAKE_ROUTE_COUNTERS_REMOTE_FILE = "ar_l3_snake_route_counters.json"
 
     CL_ROCE_LOSSLESS_DEFAULT_TC = 96
     DVS_LOSSLESS_TC = 26
