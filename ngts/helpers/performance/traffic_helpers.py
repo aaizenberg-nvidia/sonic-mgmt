@@ -141,7 +141,7 @@ def create_empty_json_traffic_file(json_path):
 
 
 def create_json_traffic_stream(player_alias, traffic_parameters, stream_name, tc=PerfConsts.CL_ROCE_LOSSLESS_DEFAULT_TC,
-                               ip_protocol=PerfConsts.IP_PROTOCOL_UDP):
+                               ip_protocol=PerfConsts.IP_PROTOCOL_UDP, add_bth=True):
     """
     Creates a JSON representation of a traffic stream.
 
@@ -151,6 +151,9 @@ def create_json_traffic_stream(player_alias, traffic_parameters, stream_name, tc
                                    number of packets, MAC addresses, IP addresses, UDP ports, and AR.
         stream_name (str): Name of the traffic stream.
         tc (int, optional): Traffic class. Defaults to PerfConsts.CL_ROCE_LOSSLESS_DEFAULT_TC.
+        add_bth (bool, optional): Build the stream as RoCE with a BTH. Set False for plain UDP traffic;
+                                  the UDP destination port must then not be PerfConsts.ROCE_PORT, or the
+                                  chip parses the payload as a BTH anyway. Defaults to True.
 
     Returns:
         dict: JSON representation of the traffic stream.
@@ -195,7 +198,8 @@ def create_json_traffic_stream(player_alias, traffic_parameters, stream_name, tc
         )
 
     # Add BTH header with acknowledgment request
-    packet.add_bth_header(ar=traffic_parameters["AR"])
+    if add_bth:
+        packet.add_bth_header(ar=traffic_parameters["AR"])
 
     # Add payload header with player alias
     packet.add_payload_header(player_alias)
