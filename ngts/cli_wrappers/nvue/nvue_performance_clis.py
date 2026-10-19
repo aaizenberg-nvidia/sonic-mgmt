@@ -271,6 +271,11 @@ class NvuePerformanceCli(PerformanceCommon):
     def wait_for_lldp_neighbors(self, timeout=60, interval=10):
         """Wait until all required performance-topology LLDP neighbors are visible.
 
+        On the spcx_ra DUT every up data port must also have its TG neighbor: the DUT template
+        builds its port list, and each port's position-based address, from LLDP. A port that is
+        up but lost its neighbor would silently drop out of the rendered config and shift the
+        address of every port after it, so the wait fails and names it instead.
+
         Args:
             timeout: Maximum LLDP convergence wait in seconds.
             interval: Poll interval in seconds.
@@ -279,7 +284,7 @@ class NvuePerformanceCli(PerformanceCommon):
             Mapping of expected neighbor aliases to local interfaces.
 
         Raises:
-            TestIssue: If any required neighbor remains absent.
+            TestIssue: If any required neighbor remains absent, or an up spcx_ra DUT port has none.
         """
         if self.dut_alias == PerfConsts.DUT_ALIAS:
             expected_neighbors = PerfConsts.PERF_SETUP_TG_ALIASES
@@ -289,19 +294,23 @@ class NvuePerformanceCli(PerformanceCommon):
             expected_neighbors = []
         if not expected_neighbors:
             return {}
+        require_all_up_ports = self.dut_alias == PerfConsts.DUT_ALIAS and self._perf_scenario == "spcx_ra"
 
         tries = max(1, timeout // interval)
         last_neighbors = {}
         missing_neighbors = list(expected_neighbors)
+        up_ports_without_neighbor = []
 
         def _poll_neighbors():
-            nonlocal last_neighbors, missing_neighbors
+            nonlocal last_neighbors, missing_neighbors, up_ports_without_neighbor
             last_neighbors = self.cli_obj.interface.filter_lldp_neighbors(expected_neighbors)
             missing_neighbors = [neighbor for neighbor in expected_neighbors if not last_neighbors.get(neighbor)]
-            if missing_neighbors:
+            if require_all_up_ports:
+                up_ports_without_neighbor = self._get_up_swp_ports_without_lldp_neighbor(last_neighbors)
+            if missing_neighbors or up_ports_without_neighbor:
                 logging.info(
                     f"Waiting for LLDP neighbors on {self.dut_alias}: missing={missing_neighbors}, "
-                    f"visible={last_neighbors}")
+                    f"up ports without neighbor={up_ports_without_neighbor}, visible={last_neighbors}")
                 raise _LldpNeighborsNotReady()
             return last_neighbors
 
@@ -310,7 +319,37 @@ class NvuePerformanceCli(PerformanceCommon):
         except _LldpNeighborsNotReady as error:
             raise TestIssue(
                 f"Required LLDP neighbors not populated on {self.dut_alias} after {timeout}s: "
-                f"missing={missing_neighbors}, visible={last_neighbors}") from error
+                f"missing={missing_neighbors}, up ports without neighbor={up_ports_without_neighbor}, "
+                f"visible={last_neighbors}") from error
+
+    def _get_up_swp_ports_without_lldp_neighbor(self, neighbors):
+        """Return oper-up data ports that have no expected LLDP neighbor.
+
+        Bonus/service ports and ports selected out by port selection are skipped, as in
+        ``get_down_swp_ports``.
+
+        Args:
+            neighbors: Mapping of expected neighbor aliases to the local ports that see them.
+
+        Returns:
+            List of oper-up ``swp`` port names that see none of the expected neighbors.
+        """
+        bonus_parents = set(get_swp_parent_port_names(self.cli_obj.interface.get_bonus_ports(self.engine)))
+        excluded_parents = set(get_swp_parent_port_names(self._get_device_excluded_swp_names()))
+        ports_with_neighbor = {port for ports in neighbors.values() for port in ports}
+        output = self.execute_cmd("nv show interface", print_output=False)
+        ports_without_neighbor = []
+        for line in output.splitlines():
+            match = _NV_SHOW_INTERFACE_LINE_RE.match(line.strip())
+            if not match:
+                continue
+            port, _, oper_state = match.groups()
+            parent_port = get_swp_parent_port_names([port])[0]
+            if parent_port in bonus_parents or parent_port in excluded_parents:
+                continue
+            if oper_state == "up" and port not in ports_with_neighbor:
+                ports_without_neighbor.append(port)
+        return ports_without_neighbor
 
     def unsplit_all_ports(self):
         """Initialize NVUE ports before LLDP-based performance templates are rendered."""

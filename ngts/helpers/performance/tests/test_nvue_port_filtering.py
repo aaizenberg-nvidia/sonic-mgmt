@@ -54,6 +54,7 @@ DEPENDENCY_STUBS = {
         MongoDbConsts=Mock(),
         PerfConsts=SimpleNamespace(DEFAULT_PERF_TEMPLATES_DIR=""),
         Cl_Consts=SimpleNamespace(CL_HOME_DIR="", CL_PYTHON_PATH=""),
+        SPCXRAConsts=Mock(),
         ValidationConsts=Mock()),
     "ngts.cli_wrappers.common.performance_clis_common": _module(
         "ngts.cli_wrappers.common.performance_clis_common", PerformanceCommon=_PerformanceCommon),
@@ -125,3 +126,53 @@ def test_get_dut_ports_sdk_ports_behavior_is_unchanged():
     assert cli.get_dut_ports(sdk_ports=True) == [4097, 4098]
     cli.execute_cmd.assert_not_called()
     cli.cli_obj.interface.get_bonus_ports.assert_not_called()
+
+
+PERF_CONSTS = SimpleNamespace(DUT_ALIAS="dut", PERF_SETUP_TG_ALIASES=["left-tg", "right-tg"])
+LLDP_NEIGHBORS = {"left-tg": ["swp13s1"], "right-tg": ["swp33s0"]}
+
+
+def _dut_cli_for_lldp_wait(scenario):
+    cli = performance_module.NvuePerformanceCli.__new__(performance_module.NvuePerformanceCli)
+    cli.dut_alias = "dut"
+    cli._perf_scenario = scenario
+    cli.cli_obj = SimpleNamespace(interface=Mock())
+    cli.cli_obj.interface.filter_lldp_neighbors.return_value = LLDP_NEIGHBORS
+    cli._get_up_swp_ports_without_lldp_neighbor = Mock(return_value=["swp13s0"])
+    return cli
+
+
+def test_up_swp_ports_without_lldp_neighbor_reports_only_up_data_ports():
+    """Verify oper-down, bonus and neighbor-visible ports are not reported."""
+    cli = performance_module.NvuePerformanceCli.__new__(performance_module.NvuePerformanceCli)
+    cli.engine = Mock()
+    cli.cli_obj = SimpleNamespace(interface=Mock())
+    cli.cli_obj.interface.get_bonus_ports.return_value = ["swp65s0", "swp65s1"]
+    cli._get_device_excluded_swp_names = Mock(return_value=set())
+    cli.execute_cmd = Mock(return_value="\n".join([
+        "Interface  Admin Status  Oper Status  Speed  MTU   Type",
+        "swp13s0    up            up           200G   9216  swp",
+        "swp13s1    up            up           200G   9216  swp",
+        "swp13s2    up            down                9216  swp",
+        "swp65s0    up            up           25G    9216  swp",
+    ]))
+
+    assert cli._get_up_swp_ports_without_lldp_neighbor(LLDP_NEIGHBORS) == ["swp13s0"]
+
+
+def test_wait_for_lldp_neighbors_names_up_spcx_ra_port_without_neighbor():
+    """Verify the spcx_ra DUT wait fails and names an up port that lost its TG neighbor."""
+    cli = _dut_cli_for_lldp_wait("spcx_ra")
+    with patch.object(performance_module, "PerfConsts", PERF_CONSTS), \
+            patch.object(performance_module, "retry_call", lambda function, **kwargs: function()):
+        with pytest.raises(_TestIssue, match="swp13s0"):
+            cli.wait_for_lldp_neighbors()
+
+
+def test_wait_for_lldp_neighbors_skips_port_check_outside_spcx_ra():
+    """Verify other scenarios keep the per-neighbor check only."""
+    cli = _dut_cli_for_lldp_wait("srv6")
+    with patch.object(performance_module, "PerfConsts", PERF_CONSTS), \
+            patch.object(performance_module, "retry_call", lambda function, **kwargs: function()):
+        assert cli.wait_for_lldp_neighbors() == LLDP_NEIGHBORS
+    cli._get_up_swp_ports_without_lldp_neighbor.assert_not_called()
