@@ -168,6 +168,28 @@
       egress-shaper:
         default-global:
           port-max-rate: {{ (speed * 0.98) | int }}
+      {# The DUT runs lossless PFC on priority 3, so the TG must stop when the DUT pauses it.
+         Without this the TG sends the test traffic from queue 0 and ignores the pause: a
+         start-up XOFF on one DUT half-cage then overflows its headroom, drops the BGP
+         keepalives with the data, and leaves those ports with no route (TX=0).
+         PFC is receive-only, so the TG never sends pause itself; the full RoCE lossless
+         profile (which also sends pause) stopped the mloop traffic generator on SPC6.
+         NVUE accepts PFC only with a lossless traffic pool, hence the 50/50 split.
+         Trusting DSCP maps the RoCE test traffic (DSCP 26) to priority 3. #}
+      traffic-pool:
+        default-lossy:
+          memory-percent: 50
+        default-lossless:
+          memory-percent: 50
+      pfc:
+        default-global:
+          switch-priority:
+            '3': {}
+          rx: enable
+          tx: disable
+      mapping:
+        default-global:
+          trust: l3
     system:
       aaa:
         user:
