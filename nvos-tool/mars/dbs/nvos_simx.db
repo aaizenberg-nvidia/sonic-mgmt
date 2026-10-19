@@ -34,7 +34,28 @@
 		</Case>
 	</global>
 	<test>
-		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx.cases </cases>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_general.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_security.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_init.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_interfaces.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_platform.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_system.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_system_stats.cases </cases>
+	</test>
+	<test>
+		<cases> sonic-mgmt/nvos-tool/mars/cases/simx/nvos_simx_cluster.cases </cases>
 	</test>
 
 </DBDEF>
