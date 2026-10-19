@@ -20,6 +20,12 @@
         "ar_traffic": {{ conf_args.ar_traffic | tojson }},
         "scale_route_families": {{ conf_args.scale_route_families | tojson }},
         "expected_forwarding_hops": {{ conf_args.expected_forwarding_hops }},
+        {# The customer ACL profile is off by default. When on, the DUT needs the
+           chip to pick the SPC4 port remap and the lane count to size the
+           profile's regions, so both only matter alongside the flag. #}
+        "customer_acl_enabled": {{ conf_args.customer_acl_enabled | tojson }},
+        "chip_type": "{{ conf_args.chip_type }}",
+        "lanes_per_subport": {{ conf_args.lanes_per_subport }},
         {# Everything else the snake needs is a single value for every chip and
            every scenario, so it lives on the DUT rather than in conf: the AR
            profile and thresholds, the LPM trees, the random ECMP hash and the

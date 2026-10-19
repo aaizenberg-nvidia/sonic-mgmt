@@ -48,7 +48,7 @@ import allure
 from ngts.constants.performance_constants import PerfConsts, ValidationConsts
 from ngts.helpers.performance.performance_db_helpers import get_perf_test_name
 from ngts.helpers.performance.performance_setup_helpers import (
-    ValidationConfig, configure_incremental_dips_on_tg, run_traffic, run_validation)
+    ValidationConfig, attach_acl_dump, configure_incremental_dips_on_tg, run_traffic, run_validation)
 from ngts.performance_tests.ar_l3_snake.conftest import TESTS_SCENARIO
 
 logger = logging.getLogger()
@@ -167,6 +167,9 @@ class SnakeLanesConfig:
         return {
             "scenario": TESTS_SCENARIO,
             "chip_type": chip_type,
+            # The customer ACL profile sizes its regions off the setup's port
+            # set, which lanes-per-sub-port is what names.
+            "lanes_per_subport": self.lanes_per_subport,
             # The route families sweep both address families regardless of this,
             # which only picks the TG's own link addressing.
             "is_ipv6": False,
@@ -254,6 +257,10 @@ class _ArL3SnakeTestBase:
             ``conftest.ROUTE_FAMILY_SPECS``. Empty means all of them, which is
             what every generated class uses; pin it on a local subclass to sweep
             one family in isolation.
+        CUSTOMER_ACL: Whether the DUT also applies the customer flex-ACL
+            profile on top of the snake. Off in every generated class, since it
+            adds lookups the snake's bandwidth gates are not calibrated for;
+            pin it True on a local subclass to measure that cost.
         FLOW_TARGET: Distinct 5-tuple flows the TG generates. 0 keeps one flow
             per DIP; a non-zero target adds a UDP SPORT sweep under the DIP sweep
             (SIP, DPORT and protocol stay fixed) so the flows land on distinct
@@ -264,6 +271,7 @@ class _ArL3SnakeTestBase:
     SNAKE_VARIANT: ClassVar[str] = VARIANT_AR_ECMP
     AR_TRAFFIC: ClassVar[bool] = True
     ROUTE_FAMILIES: ClassVar[Tuple[str, ...]] = ()
+    CUSTOMER_ACL: ClassVar[bool] = False
     FLOW_TARGET: ClassVar[int] = 0
 
     def _run_snake_and_validate(self, request):
@@ -299,6 +307,11 @@ class _ArL3SnakeTestBase:
             self.cli_object.performance.verify_ar_l3_snake_route_hits()
 
         allure.dynamic.parameter("injected_frame_size_bytes", SNAKE_PACKET_SIZE)
+
+        if self.CUSTOMER_ACL:
+            with allure.step("Attach the customer flex-ACL dump from the DUT"):
+                attach_acl_dump(self.players)
+
         with allure.step(f"Validate snake traffic at {SNAKE_PACKET_SIZE}B frames"):
             run_validation(ValidationConfig(
                 players=self.players,

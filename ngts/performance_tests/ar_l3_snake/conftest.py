@@ -33,6 +33,8 @@ logger = logging.getLogger()
 
 TESTS_SCENARIO = PerfConsts.AR_L3_SNAKE_SCENARIO
 SNAKE_INJECT_PAIRS = 1
+# Chips the customer ACL profile is verified on; must match CUSTOMER_ACL_CHIP_NEEDS_SPC4_REMAP in perf_sys_sdk's ar_l3_snake_dut.py.
+CUSTOMER_ACL_CHIPS = ("SPC4", "SPC6")
 
 # The DUT and TG consume the same dynamically counted route-family dictionaries.
 # Each unique prefix is installed in every forwarding VR, so dividing the 10K
@@ -197,6 +199,7 @@ def _build_conf_args(request, players, chip_type):
     conf_args = config.to_template_args(chip_type)
     conf_args["snake_variant"] = request.cls.SNAKE_VARIANT
     conf_args["ar_traffic"] = request.cls.AR_TRAFFIC
+    conf_args["customer_acl_enabled"] = request.cls.CUSTOMER_ACL
     port_groups = players[PerfConsts.DUT_ALIAS]["cli"].performance.get_ar_l3_snake_port_groups(conf_args["split_left"])
     forwarding_hops = sum(len(ports) for ports in port_groups.values()) - 1
     conf_args["expected_forwarding_hops"] = forwarding_hops
@@ -227,6 +230,8 @@ def basic_setup_configuration(request, players, chip_type):
     skip_test_on_unsupported_os(players[PerfConsts.DUT_ALIAS]["cli"], CliType.SONIC)
     if config.for_chip(chip_type) is None:
         pytest.skip(f"AR L3 snake config not defined for chip {chip_type}")
+    if request.cls.CUSTOMER_ACL and chip_type not in CUSTOMER_ACL_CHIPS:
+        pytest.skip(f"The customer ACL profile has no verified port mapping for chip {chip_type}")
     conf_args = _build_conf_args(request, players, chip_type)
     baseline_available = False
     primary_error = None

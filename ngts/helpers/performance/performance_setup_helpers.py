@@ -925,6 +925,32 @@ def create_acl_dump(players):
     return players[PerfConsts.DUT_ALIAS]['cli'].performance.create_acl_dump()
 
 
+def attach_acl_dump(players, name="ACL_Dump"):
+    """Take the DUT's ACL dump and attach it to Allure, best effort.
+
+    A failed or empty dump is logged and never fails the test: the dump documents the ACL the
+    traffic ran against, it is not what the test verifies. Only its size goes to the log.
+
+    Args:
+        players: Test players mapping.
+        name: Allure attachment name.
+
+    Returns:
+        str: The dump, or None if it failed or was empty.
+    """
+    try:
+        acl_dump = create_acl_dump(players)
+    except Exception:
+        logger.exception("ACL dump failed, continuing without it")
+        return None
+    if not acl_dump:
+        logger.warning("The DUT returned an empty ACL dump")
+        return None
+    logger.info(f"ACL dump: {len(acl_dump.splitlines())} lines, {len(acl_dump)} bytes")
+    allure.attach(acl_dump, name=name, attachment_type=allure.attachment_type.TEXT)
+    return acl_dump
+
+
 def create_occ_watermark_dump(players, sonic_mgmt_path, tar_file_name="occ_headroom_per_port.tar.gz",
                               tar_file_system='/tmp'):
     """
