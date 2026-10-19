@@ -687,9 +687,7 @@ class TestSRv6NoSrhPerf:
         """Clear DUT port and queue counters right before a traffic run.
 
         The SDK-level force clear must precede ``clear_counters``, otherwise
-        the sonic-clear baseline is snapshotted on pre-reset values. Callers
-        pass ``CLEAR_COUNTERS=False`` to the traffic validator so these
-        counters span the whole traffic run.
+        the sonic-clear baseline is snapshotted on pre-reset values.
 
         Args:
             label (str): Run identifier shown in the allure step title.
@@ -832,14 +830,14 @@ class TestSRv6NoSrhPerf:
                     ValidationConsts.RX: min(self.shaper_value, MRCConsts.DUT_TX_UTIL_TH)},
             }
             samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
-            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(
                 players=self.players, test_name=test_name,
                 scenario=self.scenario, chip_type=self.chip_type,
                 bw_threshold=bw_threshold,
                 tc_occ_threshold=None,
                 power_threshold=self.power_thresholds_by_chip_type,
-                samples_params_dict=samples_params_dict)
+                samples_params_dict=samples_params_dict,
+                skip_first_counters_iteration=True)
             traffic_validation_jsons_list, violations_list = run_validation(
                 config, ignore_violations=True)
 
@@ -1190,14 +1188,14 @@ class TestSRv6NoSrhPerf:
                                              MRCConsts.DUT_TX_UTIL_TH)},
             }
             samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
-            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(
                 players=self.players, test_name=test_name,
                 scenario=self.scenario, chip_type=self.chip_type,
                 bw_threshold=bw_threshold,
                 tc_occ_threshold=None,
                 power_threshold=self.power_thresholds_by_chip_type,
-                samples_params_dict=samples_params_dict)
+                samples_params_dict=samples_params_dict,
+                skip_first_counters_iteration=True)
             _, violations_list = run_validation(config, ignore_violations=True)
 
         # Reset shaper + reconfigure mloops between sub-scenarios (same

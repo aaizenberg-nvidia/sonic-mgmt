@@ -160,7 +160,6 @@ class TestSRv6Leaf(TestSRv6Base):
                 validate_pg_total_occ=True)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
             samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
-            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
