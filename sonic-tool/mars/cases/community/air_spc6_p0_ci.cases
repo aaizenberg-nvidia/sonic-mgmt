@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CASEDEF>
+    <global>
+        <Test>
+            <info> Community AIR SPC6 P0 CI set </info>
+            <name> AIR_SPC6_P0_CI </name>
+            <owner> </owner>
+            <pre></pre>
+            <post></post>
+        </Test>
+        <Case>
+            <tags> AIR_SPC6_P0_CI </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/community_mars_pytest_runner.py  </wrapper>
+            <tout> 7200 </tout>
+        </Case>
+    </global>
+
+    <case>
+        <info> BGP Command Case </info>
+        <name> bgp_command </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts bgp/test_bgp_command.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> BGP sentinel Case </info>
+        <name> bgp_sentinel </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts bgp/test_bgp_sentinel.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> BGP Session </info>
+        <name> bgp_session </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 3600 --session-timeout 3600 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts bgp/test_bgp_session.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> BGP Stress Link Flap </info>
+        <name> bgp_stress_link_flap </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 2000 --session-timeout 4000 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts bgp/test_bgp_stress_link_flap.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> Everflow Packet format </info>
+        <name> everflow_packet_format </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals --clean-alluredir --alluredir=/tmp/allure-results --timeout 1200 --session-timeout 1200 --allure_server_addr=\"10.215.11.120\"\'" --test-scripts everflow/test_everflow_per_interface.py::test_everflow_packet_format </static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <info> NHOP_GROUP Case </info>
+        <name> nhop_group </name>
+        <cmd>
+            <params>
+                <static_args> --sonic-mgmt-dir /root/mars/workspace/[[conf:extra_info.sonic_mgmt_repo_name]] --dut-name [[conf:extra_info.dut_name]] --setup-name [[conf:extra_info.setup_name]] --sonic-topo [[conf:extra_info.topology]] --json-root-dir [[conf:extra_info.json_root_dir]] --pytest-tout-factor "[[conf:extra_info.pytest_tout_factor:*1]]" --raw-options "\'--log-cli-level debug --show-capture=no -ra --showlocals -v --clean-alluredir --alluredir=/tmp/allure-results --timeout 1800 --session-timeout 1800 --allure_server_addr=\"10.215.11.120\" -k \"test_nhop_group_member_count\"\'" --test-scripts ipfwd/test_nhop_group.py </static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>
