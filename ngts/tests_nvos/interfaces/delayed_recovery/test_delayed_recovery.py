@@ -11,11 +11,10 @@ from ngts.tests_nvos.interfaces.delayed_recovery.constants import (
     CUSTOM_RETRY_TH_B,
     FORCE_DISABLED,
     FORCE_ENABLED,
-    OPER_DISABLED_LOSS_TH,
-    OPER_DISABLED_RETRY_TH,
     OPER_ENABLED_RETRY_TH,
     STATE_DISABLED,
     STATE_ENABLED,
+    STATE_FW_DEFAULT,
     admin_values,
     force_values,
     oper_values,
@@ -50,8 +49,8 @@ def test_delayed_recovery_default_values(engines, devices, topology_obj):
 
             with allure.independent_step(f"Verify default values for {selected_port.name}"):
                 expected_output = {
-                    DelayedRecovery.DELAYED_RECOVERY_LOSS_TH: OPER_DISABLED_LOSS_TH,
-                    DelayedRecovery.DELAYED_RECOVERY_RETRY_TH: OPER_DISABLED_RETRY_TH,
+                    DelayedRecovery.DELAYED_RECOVERY_LOSS_TH: devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                    DelayedRecovery.DELAYED_RECOVERY_RETRY_TH: devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"],
                     DelayedRecovery.DELAYED_RECOVERY_STATE: STATE_DISABLED,
                     DelayedRecovery.DELAYED_RECOVERY_LOSS_TH_FORCE: DelayedRecovery.DELAYED_RECOVERY_DEFAULT_FORCE_LOSS_TH,
                     DelayedRecovery.DELAYED_RECOVERY_RETRY_TH_FORCE: DelayedRecovery.DELAYED_RECOVERY_DEFAULT_FORCE_RETRY_TH,
@@ -97,8 +96,20 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
             "Default state after init",
             {},
             {
-                selected_port: delayed_recovery_expected(admin_values(), oper_values()),
-                selected_peer_port: delayed_recovery_expected(admin_values(), oper_values()),
+                selected_port: delayed_recovery_expected(
+                    admin_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
+                ),
+                selected_peer_port: delayed_recovery_expected(
+                    admin_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
+                ),
             },
         ),
         (
@@ -117,7 +128,13 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
                         retry_th=OPER_ENABLED_RETRY_TH,
                     ),
                 ),
-                selected_peer_port: delayed_recovery_expected(admin_values(), oper_values()),
+                selected_peer_port: delayed_recovery_expected(
+                    admin_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
+                ),
             },
         ),
         (
@@ -131,12 +148,17 @@ def test_delayed_recovery_set_unset_values(engines, devices, topology_obj, regis
                 selected_port: delayed_recovery_expected(
                     admin_values(state=STATE_DISABLED),
                     oper_values(
-                        state=STATE_DISABLED,
-                        loss_th=OPER_DISABLED_LOSS_TH,
-                        retry_th=OPER_DISABLED_RETRY_TH,
-                    ),
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
                 ),
-                selected_peer_port: delayed_recovery_expected(admin_values(), oper_values()),
+                selected_peer_port: delayed_recovery_expected(
+                    admin_values(state=STATE_FW_DEFAULT),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
+                ),
             },
         ),
         (
@@ -236,7 +258,10 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
             {
                 selected_port: delayed_recovery_expected(
                     admin_values(loss_th_force=FORCE_ENABLED, retry_th_force=FORCE_ENABLED),
-                    oper_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    ),
                 ),
                 selected_peer_port: delayed_recovery_expected(
                     admin_values(
@@ -244,7 +269,10 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                         loss_th_force=FORCE_DISABLED,
                         retry_th_force=FORCE_DISABLED,
                     ),
-                    oper_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    ),
                 ),
             },
         ),
@@ -307,7 +335,10 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                         loss_th_force=FORCE_ENABLED,
                         retry_th_force=FORCE_ENABLED,
                     ),
-                    oper_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    ),
                 ),
                 selected_peer_port: delayed_recovery_expected(
                     admin_values(
@@ -316,7 +347,10 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                         loss_th_force=FORCE_DISABLED,
                         retry_th_force=FORCE_DISABLED,
                     ),
-                    oper_values(),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    ),
                 ),
             },
         ),
@@ -380,14 +414,20 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                         retry_th=CUSTOM_RETRY_TH_A,
                         retry_th_force=FORCE_ENABLED,
                     ),
-                    oper_values(retry_th=CUSTOM_RETRY_TH_A),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=CUSTOM_RETRY_TH_A
+                    ),
                 ),
                 selected_peer_port: delayed_recovery_expected(
                     admin_values(
                         retry_th=CUSTOM_RETRY_TH_B,
                         retry_th_force=FORCE_DISABLED,
                     ),
-                    oper_values(retry_th=CUSTOM_RETRY_TH_A),
+                    oper_values(
+                        loss_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_LOSS_TH"],
+                        retry_th=CUSTOM_RETRY_TH_A
+                    )
                 ),
             },
         ),
@@ -409,14 +449,20 @@ def test_delayed_recovery_forced_values(engines, devices, topology_obj, register
                         loss_th=CUSTOM_LOSS_TH_A,
                         loss_th_force=FORCE_ENABLED,
                     ),
-                    oper_values(loss_th=CUSTOM_LOSS_TH_A),
+                    oper_values(
+                        loss_th=CUSTOM_LOSS_TH_A,
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"]
+                    )
                 ),
                 selected_peer_port: delayed_recovery_expected(
                     admin_values(
                         loss_th=CUSTOM_LOSS_TH_B,
                         loss_th_force=FORCE_DISABLED,
                     ),
-                    oper_values(loss_th=CUSTOM_LOSS_TH_A),
+                    oper_values(
+                        loss_th=CUSTOM_LOSS_TH_A,
+                        retry_th=devices.dut.default_delayed_recovery_values["OPER_DISABLED_RETRY_TH"],
+                    ),
                 ),
             },
         ),

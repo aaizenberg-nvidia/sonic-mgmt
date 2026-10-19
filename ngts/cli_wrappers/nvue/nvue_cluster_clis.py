@@ -31,6 +31,8 @@ class NvueClusterCli(NvueBaseCli):
 
     @staticmethod
     def action_update_cluster_log_stream(engine, path, stream=''):
+        # readline quoted-insert, so '?' reaches nv untouched over the interactive ssh session
+        stream = (stream or '').replace('?', '\x16?')
         return NvueClusterCli.action_deprecated(engine, action_type=ActionType.UPDATE.replace('@', ''), resource_path=path, param_value=stream)
 
     @staticmethod

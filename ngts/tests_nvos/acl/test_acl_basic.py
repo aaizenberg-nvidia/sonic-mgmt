@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import pytest
 import shlex
@@ -431,7 +432,7 @@ def test_acl_match_dest_port(engines, random_api, topology_obj):
     mgmt_port_name = DutUtilsTool.get_engine_interface_name(engines.dut, topology_obj)
     mgmt_port = Port(mgmt_port_name)
     dest_port_list = ['ANY', 'ssh', 1244]
-    match_ip_port_test(engines, mgmt_port, 'ipv4', 'AA_TEST_ACL_DEST_PORT', dest_port_list, engines.sonic_mgmt.ip, AclConsts.TCP_DEST_PORT, engines.dut)
+    match_ip_port_test(engines, mgmt_port, 'ipv4', 'AA_TEST_ACL_DEST_PORT', dest_port_list, engines.dut.ip, AclConsts.TCP_DEST_PORT, engines.sonic_mgmt)
     set_default_control_plane_acls(engines)
 
 
@@ -634,6 +635,14 @@ def test_acl_match_icmpv6_type(engines, random_api, topology_obj, sonic_mgmt_ipv
     # Get IPv6 address for the destination (not IPv4!)
     dest_addr = mgmt_port.interface.get_ipv6_address()
     src_addr = sonic_mgmt_ipv6_addr
+    # Skip when sonic-mgmt and DUT IPv6 are on different /64s (a router sits between them).
+    # Scapy injects RS/RA on the player; those packets never leave that L2, so they never
+    # reach DUT eth0 and the ACL counter stays 0.
+    if not is_same_ipv6_link(src_addr, dest_addr):
+        pytest.skip(
+            f"Skip: sonic-mgmt {src_addr} and DUT {dest_addr} are on different IPv6 /64s, "
+            f"so RS/RA sent from the player never arrive on {mgmt_port_name}"
+        )
     icmpv6_type_packet_dict = {'router-solicitation': f"IPv6(dst=\"{dest_addr}\") / ICMPv6ND_RS()",
                                'router-advertisement': f"IPv6(dst=\"{dest_addr}\") / ICMPv6ND_RA()"}
     # 'neighbor-solicitation': f"IPv6(dst=\"{dest_addr}\") / ICMPv6ND_NS()",
@@ -946,6 +955,16 @@ def scapy_send_packet(engine, packet, interface=''):
             ret = engine.run_cmd(f'sudo -E env "PATH=$PATH" python3 -c {py_cmd}')
         if "Traceback" in ret or "Sent" not in ret:
             raise Exception("scapy failed to send: " + ret)
+
+
+def is_same_ipv6_link(addr_a, addr_b, prefix_len=64):
+    """Whether two IPv6 addresses share a /64, i.e. traffic between them is not routed."""
+    try:
+        network = ipaddress.ip_network(f"{addr_a.split('/')[0]}/{prefix_len}", strict=False)
+        return ipaddress.ip_address(addr_b.split('/')[0]) in network
+    except ValueError:
+        logger.warning(f"Could not compare IPv6 addresses {addr_a} and {addr_b}")
+        return False
 
 
 def unset_default_control_plane_acls(engines):

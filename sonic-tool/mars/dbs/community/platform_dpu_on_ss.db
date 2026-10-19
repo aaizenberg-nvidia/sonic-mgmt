@@ -20,9 +20,6 @@
             </ignore>
 
             <!-- pre db commands - executed once before DB run -->
-            <!-- copy remote tests -->
-            <pre>
-            </pre>
 
             <!-- post db commands - executed once after DB run -->
             <post>
@@ -40,13 +37,14 @@
                 </params>
             </pre>
             <pre>
-                <type> reg_exec_func </type>
-                <name> pre-test check </name>
-                <mars_cmd_func> run_on_stm </mars_cmd_func>
+                <name> enable NAT for DPU SSH access </name>
+                <type> reg_exec_cmd </type>
                 <tout> 300 </tout>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
                 <params>
-                    <cmd> /root/pyenv/sonic/bin/python -E [[conf:execution_blocks.B_ID1.local_src_path]]/sonic-mgmt/sonic-tool/mars/scripts/pre_test_check.py </cmd>
-                    <cmd_params> --topo [[conf:topology_file]] --test-name [[run_time:test_name]] --sonic-topo [[conf:extra_info.topology]] --workspace-path /root/mars/workspace --repo-name [[conf:extra_info.sonic_mgmt_repo_name]] </cmd_params>
+                    <exec> PYTHONPATH=/devts/ /opt/venv/bin/pytest /root/mars/workspace/sonic-mgmt/tests/test_pretest_nat_dpu.py --setup_name=[[conf:extra_info.setup_name]] --log-cli-level debug --show-capture=no -ra --showlocals --timeout 300 --session-timeout 300 --rootdir=/root/mars/workspace/sonic-mgmt/tests --inventory="/root/mars/workspace/sonic-mgmt/ansible/inventory,/root/mars/workspace/sonic-mgmt/ansible/veos" --host-pattern [[conf:extra_info.dut_name]] --module-path /root/mars/workspace/sonic-mgmt/ansible/library/ --testbed [[conf:extra_info.dut_name]]-[[conf:extra_info.topology]] --testbed_file /root/mars/workspace/sonic-mgmt/ansible/testbed.yaml --disable_loganalyzer --skip_sanity </exec>
                 </params>
             </pre>
             <post>

@@ -22,6 +22,10 @@ dynamic key:
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 # ========================================================================
 # SystemXPaths class hierarchy (SSIM3 parity, xpath-only)
@@ -434,14 +438,45 @@ def get_all_supported_xpaths(xpath_var):
     return [xpath_var['xpath']]
 
 
+def _nvue_major_minor(version) -> tuple:
+    """``(major, minor)`` from a ``python3-nvue`` version, or an empty tuple."""
+    parts = str(version).split('.')
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return ()
+    return int(parts[0]), int(parts[1])
+
+
 def resolve_system_xpath_class(nvue_pkg_version=None):
-    """Return the ``SystemXPaths*`` class for a ``python3-nvue`` version (default 113)."""
-    if nvue_pkg_version:
-        parts = str(nvue_pkg_version).split('.')
-        if len(parts) >= 2:
-            key = f'{parts[0]}.{parts[1]}'
-            if key in SYSTEM_XPATH_CLASS_BY_NVUE:
-                return SYSTEM_XPATH_CLASS_BY_NVUE[key]
+    """Return the ``SystemXPaths*`` class for a ``python3-nvue`` version.
+
+    An exact major.minor uses the map. A newer package keeps the latest modeled
+    class, so NVUE 1.15+ still expects the 1.14 image-partition leaves
+    (``/system/image/partitions/...``). Unparseable versions stay on
+    ``SystemXPaths113``.
+    """
+    parsed = _nvue_major_minor(nvue_pkg_version) if nvue_pkg_version else ()
+    if parsed:
+        exact = '%s.%s' % parsed
+        if exact in SYSTEM_XPATH_CLASS_BY_NVUE:
+            return SYSTEM_XPATH_CLASS_BY_NVUE[exact]
+        known = []
+        for text, cls in SYSTEM_XPATH_CLASS_BY_NVUE.items():
+            key = _nvue_major_minor(text)
+            if key and key <= parsed:
+                known.append((key, cls))
+        if known:
+            known.sort()
+            chosen = known[-1][1]
+            logger.info(
+                'python3-nvue %s is newer than the system xpath map; using %s',
+                nvue_pkg_version,
+                chosen.__name__,
+            )
+            return chosen
+    logger.warning(
+        'python3-nvue version %r missing/unparseable; using SystemXPaths113',
+        nvue_pkg_version,
+    )
     return SystemXPaths113
 
 

@@ -22,6 +22,7 @@ from ngts.helpers.performance.sensors_power_parse import (
     parse_sensor_line as sensors_parse_sensor_line,
 )
 from ngts.helpers.interface_helpers import get_alias_letter, get_alias_number, convert_letter_to_idx
+from ngts.helpers.performance.port_selection import select_ports_max_per_lane_group
 from ngts.helpers.performance.traffic_helpers import generate_ip_address_dict, generate_mac_range
 from ngts.helpers.config_db_utils import save_config_db_json
 from jinja2 import Environment, FileSystemLoader
@@ -193,6 +194,7 @@ class SonicPerformanceCli(PerformanceCommon):
 
         self.disable_im_on_tg()
         self.load_qos_config_on_dut()
+        self.disable_ipv6_dad_if_forced_unconnected()
 
         with allure.step(f'Reload SKU and Test configuration on {self.dut_alias}'):
             self.cli_obj.general.reload_configuration(force=True)
@@ -655,7 +657,8 @@ class SonicPerformanceCli(PerformanceCommon):
         right_left_ports_dict = {"left_ports": dut_ports[:middle], "right_ports": dut_ports[middle:]}
         return right_left_ports_dict
 
-    def get_upstream_downstream_ports_dict(self, upstream_ports_num, downstream_ports_num, sequential=False):
+    def get_upstream_downstream_ports_dict(self, upstream_ports_num, downstream_ports_num, sequential=False,
+                                           max_ports_per_lane_group=None):
         """Select upstream (uplink) and downstream (downlink) DUT ports for T0 traffic tests.
         Ports are taken from the fixed groups in ``MRCConsts.T0_UPSTREAM_DOWNSTREAM_PORT_GROUPS_DICT``.
 
@@ -665,6 +668,8 @@ class SonicPerformanceCli(PerformanceCommon):
             sequential: If True, take the first ``upstream_ports_num`` / ``downstream_ports_num`` ports
                 from each group in order (deterministic; useful so all logical ports on a physical panel
                 are used as intended). If False, sample ports uniformly at random without replacement.
+            max_ports_per_lane_group: If set (and not ``sequential``), take ports in lane order with at most
+                this many ports per 4-lane group instead of sampling at random.
 
         Returns:
             A tuple ``(upstream, downstream)`` where each element is a list of SONiC interface names
@@ -681,6 +686,13 @@ class SonicPerformanceCli(PerformanceCommon):
                                 f"requested {downstream_ports_num}, available {len(downstream_ports)}")
             upstream = upstream_ports[:upstream_ports_num]
             downstream = downstream_ports[:downstream_ports_num]
+        elif max_ports_per_lane_group:
+            port_first_lane = {port: int(attrs["lanes"].split(",")[0])
+                               for port, attrs in self.cli_obj.general.get_config_db()["PORT"].items()}
+            upstream = select_ports_max_per_lane_group(upstream_ports, upstream_ports_num, port_first_lane,
+                                                       max_ports_per_lane_group)
+            downstream = select_ports_max_per_lane_group(downstream_ports, downstream_ports_num, port_first_lane,
+                                                         max_ports_per_lane_group)
         else:
             upstream = random.sample(upstream_ports, upstream_ports_num)
             downstream = random.sample(downstream_ports, downstream_ports_num)
@@ -750,9 +762,13 @@ class SonicPerformanceCli(PerformanceCommon):
         return dut_interfaces_ipv6_configuration_dict
 
     def start_mst(self):
-        """Start MST on host and syncd container for temperature collection via mget_temp."""
+        """Start MST on host and syncd container, and expose the host MST device nodes in syncd for mget_temp."""
         self.execute_cmd("sudo mst start 2>&1 || true")
         self.execute_cmd(f"docker exec {InfraConst.SYNCD_DOCKER} mst start 2>&1 || true")
+        # syncd can start without /dev/mst, so the SDK finds no MST device; recreate the host's nodes in it.
+        for node in self.execute_cmd("ls /dev/mst/*_pci* 2>/dev/null || true").split():
+            major, minor = (int(num, 16) for num in self.execute_cmd(f"stat -c '%t %T' {node}").split())
+            self.execute_cmd(f"docker exec {InfraConst.SYNCD_DOCKER} sh -c 'test -e {node} || mknod {node} c {major} {minor}'")
 
     def validate_traffic(self, json_path, samples_params_dict, dst_dut_dir="/tmp"):
         logging.info("Running traffic validator on the dut")

@@ -53,6 +53,7 @@ TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_4 = "ali_pws_spine_ar_enabled_split_4_hos
 TEST_ID_ALI_PWS_SPINE_AR_ENABLED_ASYM_SPLIT = "ali_pws_spine_ar_enabled_asymmetric_split"
 ALI_PWS_TESTS_LIST = [TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_2, TEST_ID_ALI_PWS_SPINE_AR_ENABLED_SPLIT_4, TEST_ID_ALI_PWS_SPINE_AR_ENABLED_ASYM_SPLIT]
 HIGH_NUM_DIPS = 64000
+SPC6_DUT_LOSSY_PG_LATENCY_SIZE = 3300  # at split 2; scaled per side by the port split
 
 # Dictionary mapping PacketSizeKey to packet_size
 PACKET_SIZE_MAPPING = {
@@ -315,6 +316,7 @@ def conf_args(players, chip_type, test_id, shaper_value, ar_enabled, split_host_
         arch_defined_pipeline_latency_size = 700  # (99% occupancy + max_occupancy) / 2, calculation based on arch definition, results checked manually
         arch_defined_max_borrowed_delta = 600  # (max_watermark - 99% occupancy) * 2, calculation based on arch definition, results checked manually
 
+        conf_args['chip_type'] = chip_type
         conf_args['pg_buffer_configs'] = {
             PerfConsts.LEFT_TG_ALIAS: {
                 "pg_list": [4],
@@ -327,6 +329,27 @@ def conf_args(players, chip_type, test_id, shaper_value, ar_enabled, split_host_
                 "max_borrowed_delta": (arch_defined_max_borrowed_delta // split_host_ports) * 2
             }
         }
+        if chip_type == "SPC6":
+            # SPC6 DUT lossy PG 4 loan (pipeline_latency_size), calculated per side from that side's port split.
+            #
+            # The SDK caps the headroom of each SPC6 port, and the cap scales with the port split: 3892 cells at
+            # split 2, 1946 at split 4. The DUT's default loan (5980) exceeds both, and a single fixed loan sized for
+            # split 2 (3300) still exceeds the split-4 cap, so AlibabaDUT fails in setup on split-4 PWS scenarios:
+            #   sx_api_cos_port_buff_type_set failed, RC: 'NO_RESOURCES' (5)
+            #   __check_headroom_on_port: Allocation request 3590 exceeds the maximum headroom allowed for this
+            #   port 1946
+            #
+            # SPC6_DUT_LOSSY_PG_LATENCY_SIZE is the largest loan that fits at split 2. Each side scales it the same
+            # way as the TG values above, (value // split) * 2: left by split_left, right by split_host_ports
+            # (= split_right in the DUT template). Split 2 gets 3300; split 4 gets 1650, which with the ~290 cells
+            # already reserved on the port stays under the 1946 cap. Asymmetric splits get a different loan per
+            # side. Other chips keep the DUT default.
+            conf_args['pg_buffer_configs'][PerfConsts.DUT_ALIAS] = {
+                "left": {"pg_list": [4],
+                         "pipeline_latency_size": (SPC6_DUT_LOSSY_PG_LATENCY_SIZE // split_left) * 2},
+                "right": {"pg_list": [4],
+                          "pipeline_latency_size": (SPC6_DUT_LOSSY_PG_LATENCY_SIZE // split_host_ports) * 2}
+            }
 
         conf_args['num_routes_ipv4'] = max(num_left_dips, num_right_dips)
         conf_args['num_routes_ipv6'] = max(num_left_dips, num_right_dips)

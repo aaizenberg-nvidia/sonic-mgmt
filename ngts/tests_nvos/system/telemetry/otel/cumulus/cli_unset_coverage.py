@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -19,12 +20,20 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelC
 from ngts.tests_nvos.system.telemetry.otel.cumulus.cli_telemetry import list_swp_interfaces
 from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
     apply_otel_mgmt_vrf_no_tls_telemetry_config,
+    apply_staged_candidate,
+    nvue_quoted,
+    stage_interface_histogram_member,
+    stage_interface_telemetry_label,
 )
 from ngts.tests_nvos.system.telemetry.otel.cumulus.lab_topology import (
     discover_swp_interfaces_on_dut,
 )
 
 logger = logging.getLogger(__name__)
+
+# Applied revision captured after the module baseline. Per-test restore
+# reapplies this id instead of reissuing the interface and telemetry sets.
+_golden_revision_id: Optional[str] = None
 
 
 def get_cumulus_version_tuple(dut) -> Tuple[int, int]:
@@ -133,11 +142,7 @@ def require_cumulus_exactly(dut, version: str) -> None:
 
 
 def _nv_apply(dut) -> None:
-    from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
-
-    NvueGeneralCli.apply_config(
-        dut, ask_for_confirmation=True, verify_execution=True
-    )
+    apply_staged_candidate(dut)
 
 
 def _system_telemetry_node(path: str) -> BaseComponent:
@@ -174,17 +179,128 @@ def _nvos_ib_interfaces_for_unset(dut) -> List[str]:
     return sorted(port.name for port in Port.get_list_of_ports(dut, reqs))
 
 
-def _stage_nv_set(dut, cmd: str) -> None:
-    """Stage one ``nv set`` without probing the shell exit status.
+def _stage_nv_commands(dut, commands: List[str]) -> None:
+    """Stage ``nv`` lines without scraping each exit status.
 
     ``validate=True`` makes the engine run ``echo "$?"`` and scrape the first digits
     out of the reply. On mlx DUT shells every command can carry ``/tmp/cen<N>:
     Permission denied`` bash noise (see ``cleanup_stale_nvue_censor_files``), so that
-    scrape can return the digits of the tempfile name instead of the real status and
-    fail a command that actually succeeded. ``nv config apply`` is the real gate: it
-    rejects the whole staged revision if any of these sets was invalid.
+    scrape can return the digits of the tempfile name instead of the real status.
+    ``nv config apply`` rejects the candidate if any staged line was invalid.
     """
-    dut.run_cmd(cmd, validate=False, print_output=False)
+    for cmd in commands:
+        dut.run_cmd(cmd, validate=False, print_output=False)
+
+
+def discard_pending_nvue_revision(dut) -> None:
+    """Drop a candidate revision left by an unset that was not applied."""
+    dut.run_cmd("nv config detach", validate=False, print_output=False)
+
+
+def _load_nv_json(raw: str) -> Any:
+    starts = [index for index in (raw.find("{"), raw.find("[")) if index != -1]
+    if not starts:
+        return None
+    start = min(starts)
+    closer = "}" if raw[start] == "{" else "]"
+    end = raw.rfind(closer)
+    if end <= start:
+        return None
+    try:
+        return json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _revision_state(row: Dict[str, Any]) -> str:
+    return str(row.get("state") or row.get("status") or "").lower()
+
+
+def _find_applied_revision(payload: Any) -> Optional[str]:
+    """Return the numeric id of the applied revision from ``nv config revision -o json``."""
+    if isinstance(payload, list):
+        for item in payload:
+            found = _find_applied_revision(item)
+            if found:
+                return found
+        return None
+    if not isinstance(payload, dict):
+        return None
+    revision_rows = {
+        str(key): value
+        for key, value in payload.items()
+        if str(key).isdigit() and isinstance(value, dict)
+    }
+    if revision_rows:
+        applied = [
+            key for key, value in revision_rows.items() if _revision_state(value) == "applied"
+        ]
+        if len(applied) == 1:
+            return applied[0]
+        # More than one row marked applied: the newest id is the live config.
+        return max(applied, key=int) if applied else None
+    state = _revision_state(payload)
+    rev = payload.get("rev-id", payload.get("rev_id", payload.get("id")))
+    if state == "applied" and rev is not None and str(rev).isdigit():
+        return str(rev)
+    for value in payload.values():
+        if isinstance(value, (dict, list)):
+            found = _find_applied_revision(value)
+            if found:
+                return found
+    return None
+
+
+def _applied_revision_id(dut) -> str:
+    raw = dut.run_cmd("nv config revision -o json", validate=False, print_output=False)
+    found = _find_applied_revision(_load_nv_json(str(raw)))
+    if found:
+        return found
+    match = re.search(r"^\s*(\d+)\s+applied\b", str(raw), re.MULTILINE | re.IGNORECASE)
+    if match:
+        return match.group(1)
+    pytest.fail(f"Could not read the applied NVUE revision: {str(raw)[:500]}")
+
+
+def capture_otel_cli_coverage_golden(dut) -> str:
+    """Remember the applied revision that holds the module baseline."""
+    global _golden_revision_id
+    _golden_revision_id = _applied_revision_id(dut)
+    logger.info("Unset CLI coverage golden revision is %s", _golden_revision_id)
+    return _golden_revision_id
+
+
+def restore_otel_cli_coverage_golden(dut, *, missing_ok: bool = False) -> None:
+    """Roll applied config back to the module baseline with one ``nv config apply``.
+
+    Replaying interface labels, histogram, device labels, OTLP destinations, and
+    the telemetry tree after every test is what made this module take about an hour.
+    """
+    if not _golden_revision_id:
+        if missing_ok:
+            return
+        pytest.fail(
+            "Unset CLI golden revision was not captured; "
+            "otel_cli_coverage_baseline did not run"
+        )
+    discard_pending_nvue_revision(dut)
+    current = _applied_revision_id(dut)
+    if current == _golden_revision_id:
+        return
+    with allure.step(
+        f"Restore unset CLI golden revision {_golden_revision_id} (applied {current})"
+    ):
+        from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+
+        NvueGeneralCli.apply_config(
+            dut,
+            option="-y",
+            rev_id=_golden_revision_id,
+            verify_execution=True,
+        )
+    # The rollback is a new applied revision with the same contents. Track it so
+    # later rollbacks do not depend on a revision NVUE may prune.
+    capture_otel_cli_coverage_golden(dut)
 
 
 def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -> None:
@@ -200,41 +316,56 @@ def _configure_interface_telemetry_cli_baseline(dut, *, is_nvos: bool = False) -
     cleanup_stale_nvue_censor_files(dut)
     ifaces = swp_interfaces_for_unset(dut, is_nvos=is_nvos)
     label_pairs = _interface_label_pairs()
+    commands: List[str] = []
+    for iface in ifaces:
+        if not is_nvos:
+            for pg in range(8):
+                commands.append(
+                    f"nv set interface {iface} telemetry histogram "
+                    f"ingress-buffer priority-group {pg}"
+                )
+            for tc in range(8):
+                commands.append(
+                    f"nv set interface {iface} telemetry histogram "
+                    f"egress-buffer traffic-class {tc}"
+                )
+                commands.append(
+                    f"nv set interface {iface} telemetry histogram "
+                    f"latency traffic-class {tc}"
+                )
+            for counter_type in ("rx-byte", "crc"):
+                commands.append(
+                    f"nv set interface {iface} telemetry histogram "
+                    f"counter counter-type {counter_type}"
+                )
+        for label_id, description in label_pairs:
+            commands.append(
+                f"nv set interface {iface} telemetry label {label_id} "
+                f'description "{description}"'
+            )
     with allure.step(
         f"Configure interface {'labels' if is_nvos else 'histogram + labels'} "
-        f"on {len(ifaces)} front-panel port(s) (SSIM spine swp loop)"
+        f"on {len(ifaces)} front-panel port(s) ({len(commands)} commands, once per module)"
     ):
         for iface in ifaces:
             if not is_nvos:
                 for pg in range(8):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"ingress-buffer priority-group {pg}",
+                    stage_interface_histogram_member(
+                        dut, iface, "ingress-buffer", "priority-group", pg
                     )
                 for tc in range(8):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"egress-buffer traffic-class {tc}",
+                    stage_interface_histogram_member(
+                        dut, iface, "egress-buffer", "traffic-class", tc
                     )
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"latency traffic-class {tc}",
+                    stage_interface_histogram_member(
+                        dut, iface, "latency", "traffic-class", tc
                     )
                 for counter_type in ("rx-byte", "crc"):
-                    _stage_nv_set(
-                        dut,
-                        f"nv set interface {iface} telemetry histogram "
-                        f"counter counter-type {counter_type}",
+                    stage_interface_histogram_member(
+                        dut, iface, "counter", "counter-type", counter_type
                     )
             for label_id, description in label_pairs:
-                _stage_nv_set(
-                    dut,
-                    f"nv set interface {iface} telemetry label {label_id} "
-                    f'description "{description}"',
-                )
+                stage_interface_telemetry_label(dut, iface, label_id, description)
         _nv_apply(dut)
 
 
@@ -242,11 +373,11 @@ def _set_device_labels(dut) -> None:
     """SSIM ``OtelMgmtVrfNoTLSConfig`` system telemetry device labels (lines 339-359)."""
     with allure.step("Configure system telemetry device labels (CLI coverage)"):
         for label_id, description in CumulusOtelConst.DEVICE_LABELS:
-            _stage_nv_set(
-                dut,
-                f"nv set system telemetry label {label_id} "
-                f'description "{description}"',
-            )
+            BaseComponent(System().telemetry, path=f"/label/{label_id}").set(
+                TelemetryConsts.DESCRIPTION,
+                nvue_quoted(description),
+                dut_engine=dut,
+            ).verify_result()
         _nv_apply(dut)
 
 
@@ -261,17 +392,16 @@ def cleanup_otel_cli_coverage_labels(dut) -> None:
             ifaces = []
         for iface in ifaces:
             for label_id in label_ids:
-                dut.run_cmd(
-                    f"nv unset interface {iface} telemetry label {label_id}",
-                    validate=False,
-                )
+                BaseComponent(
+                    Interface(None, port_name=iface),
+                    path=f"/telemetry/label/{label_id}",
+                ).unset(dut_engine=dut).ignore_result()
 
     with allure.step("Clean system telemetry labels configured by CLI coverage"):
         for label_id, _ in CumulusOtelConst.DEVICE_LABELS:
-            dut.run_cmd(
-                f"nv unset system telemetry label {label_id}",
-                validate=False,
-            )
+            BaseComponent(System().telemetry, path=f"/label/{label_id}").unset(
+                dut_engine=dut
+            ).ignore_result()
         _nv_apply(dut)
 
 
@@ -361,9 +491,12 @@ def apply_otel_cli_coverage_baseline(
     labels are configured, then all telemetry families are enabled over the default
     export VRF via :func:`enable_nvos_telemetry_families`.
 
-    Step 1 costs 36 ``nv set`` calls per front-panel port, which dominates the runtime
-    of a full restore. Pass ``include_interface_baseline=False`` to restore the system
-    tree only — correct for any test that never reads per-interface telemetry.
+    Call this once per module, then :func:`capture_otel_cli_coverage_golden`.
+    Per-test undo is :func:`restore_otel_cli_coverage_golden` (one ``nv config apply``
+    of that revision). Replaying step 1 after every test is 36 ``nv set`` calls per
+    front-panel port and is what made the module take about an hour.
+    ``include_interface_baseline=False`` skips step 1 when a caller only needs the
+    system tree.
     """
     is_nvos = bool(suite and suite.is_nvos)
     if include_interface_baseline:
@@ -500,8 +633,12 @@ def unset_system_telemetry_interface_stats_switch_priority(dut, sp: str) -> None
 
 
 def unset_system_telemetry_interface_stats_sample_interval(dut) -> None:
-    _system_telemetry_node('/interface-stats/sample-interval').unset(
-        '', dut_engine=dut
+    """``nv unset system telemetry interface-stats sample-interval``.
+
+    Same OpenAPI rule as interface-stats: the property name is the unset argument.
+    """
+    _system_telemetry_node('/interface-stats').unset(
+        TelemetryConsts.SAMPLE_INTERVAL, dut_engine=dut
     )
 
 
@@ -510,8 +647,12 @@ def get_system_telemetry_interface_stats_sample_interval_applied(dut) -> Dict[st
 
 
 def unset_system_telemetry_control_plane_stats_sample_interval(dut) -> None:
-    _system_telemetry_node('/control-plane-stats/sample-interval').unset(
-        '', dut_engine=dut
+    """``nv unset system telemetry control-plane-stats sample-interval``.
+
+    Same OpenAPI rule as interface-stats: the property name is the unset argument.
+    """
+    _system_telemetry_node('/control-plane-stats').unset(
+        TelemetryConsts.SAMPLE_INTERVAL, dut_engine=dut
     )
 
 

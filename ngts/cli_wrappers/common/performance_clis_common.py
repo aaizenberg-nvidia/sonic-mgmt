@@ -8,7 +8,8 @@ import pandas as pd
 from typing import Optional
 from retry import retry
 from ngts.constants.constants import BugHandlerConst
-from ngts.constants.performance_constants import PerfConsts, MongoDbConsts, ValidationConsts, MultiNosSharedData
+from ngts.constants.performance_constants import (PerfConsts, MongoDbConsts, ValidationConsts,
+                                                  MultiNosSharedData, NoSrhPerfConsts)
 from ngts.helpers.performance.burst_config import BurstConfig, BurstConfigConsts
 from ngts.helpers.performance.port_selection import (PortSelection, build_port_selection, SWP,
                                                      get_cli_port_selection_options,
@@ -355,6 +356,23 @@ class PerformanceCommon:
             ports_dump,
         )
 
+    def disable_ipv6_dad_if_forced_unconnected(self):
+        """Disable IPv6 DAD on a switch that declares forced-unconnected ports.
+
+        Unlike cable-less MLOOP generator ports, a forced-unconnected port has a cable attached, so
+        its link is up while the test configuration is applied and it briefly bridges the TG VLANs
+        it is cabled between. All TG VLAN interfaces share one MAC-derived IPv6 link-local address,
+        so DAD on one VLAN hears the other's probe and marks its link-local dadfailed; BGP on that
+        VLAN then never establishes and the DUT drops all traffic towards that port. DAD protects
+        nothing here, so it is turned off before the VLAN interfaces are created ("default" covers
+        new interfaces, existing ones are set explicitly). No-op on switches without forced ports.
+        """
+        if not self.forced_unconnected_label_ports:
+            return
+        logging.info(f"[{self.dut_alias}] Disabling IPv6 DAD on {self.hostname}: forced-unconnected label port(s) "
+                     f"{sorted(self.forced_unconnected_label_ports)} are link-up while the configuration is applied")
+        self.execute_cmd("sudo sh -c 'for f in /proc/sys/net/ipv6/conf/*/accept_dad; do echo 0 > \"$f\"; done'")
+
     def execute_cmd(self, cmd, print_output=False):
         """
         All functions on the inheritance classes (DVS, SONiC, Cumulus) will be executed
@@ -623,7 +641,7 @@ class PerformanceCommon:
                 logging.info(f"Burst is enabled on {self.dut_alias}, the SDK mloop configuration will read the burst "
                              f"configuration from {burst_config_path} and turn the bonus ports into burst generators")
                 env_variables.append(burst_env_variable)
-            configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
+            configure_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_MLOOP_CONFIGURATION}"
             self.execute_cmd(self.get_cmd_for_sdk(configure_mloops_cmd, env_variables=env_variables))
             if validate_mloops:
                 self.check_mloops_up()
@@ -638,7 +656,7 @@ class PerformanceCommon:
         traffic_json_path = self.copy_traffic_json_to_player(scenario, json_path)
         self.set_tg_json_env_var(traffic_json_path)
         logging.info("Running traffic onto the device")
-        run_traffic_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_NAME}"
+        run_traffic_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_NAME}"
         self.logrotate("rsyslog")
         try:
             self.execute_cmd(self.get_cmd_for_sdk(run_traffic_cmd, env_variables=[f'TG_JSON={traffic_json_path}']))
@@ -646,75 +664,15 @@ class PerformanceCommon:
             logging.error(f"Error running traffic: {e}")
             raise TestIssue(msg=f"Error running traffic: {type(e).__name__}: {e}") from e
 
-    def _create_sdk_dump_dirs(self):
-        """Create dump directories required by the SDK TrafficValidator.
-
-        The SDK daemon (sx_sdk) may run with systemd PrivateTmp, giving it an
-        isolated /tmp.  The daemon writes dump files into its private /tmp,
-        but the SDK test process (TrafficValidator) runs outside that namespace
-        and needs to read those files.
-
-        The solution is by finding the daemon's actual private tmp path and
-        creating symlinks from /tmp/dump_* to the physical location.  This
-        lets both the daemon and the test process access the same files.
-        If PrivateTmp is not detected, we use nsenter into the daemon's mount
-        namespace as a safe default (handles PrivateTmp regardless of whether
-        we can discover the path).
-        """
-        dump_dir_names = ["dump_with_perf_counters", "dump_without_perf_counters"]
-        try:
-            priv_tmp = self._find_private_tmp()
-            if priv_tmp:
-                for d in dump_dir_names:
-                    self.execute_cmd(f"sudo mkdir -p {priv_tmp}/{d}")
-                    self.execute_cmd(f"sudo ln -sfnT {priv_tmp}/{d} /tmp/{d}")
-                return
-        except Exception:
-            logging.warning("Symlink approach failed, falling back to nsenter + plain mkdir")
-
-        self._create_sdk_dump_dirs_via_nsenter(dump_dir_names)
-
-    def _find_private_tmp(self):
-        """Find the systemd PrivateTmp path for the SDK service.
-
-        The systemd-private-* directories under /tmp are owned by root with
-        mode 0700, so both the glob expansion and the listing must run as
-        root.  We use ``sudo bash -c '...'`` so the shell that expands the
-        glob is already privileged.
-        """
-        for service in ("sx_sdk", "switchd"):
-            try:
-                path = self.execute_cmd(
-                    f"sudo bash -c 'ls -d /tmp/systemd-private-*-{service}.service-*/tmp 2>/dev/null | head -1'"
-                ).strip()
-                if path:
-                    return path
-            except Exception:
-                continue
-        return None
-
-    def _create_sdk_dump_dirs_via_nsenter(self, dump_dir_names):
-        """Enter the SDK daemon mount namespace and create dump directories."""
-        dump_dirs = " ".join(f"/tmp/{d}" for d in dump_dir_names)
-        try:
-            self.execute_cmd(
-                f"sudo bash -c 'PID=$(pgrep -ox sx_sdk || pgrep -ox switchd) && "
-                f"nsenter -m -t $PID -- mkdir -p {dump_dirs} || "
-                f"mkdir -p {dump_dirs}'"
-            )
-        except Exception as e:
-            raise TestIssue(msg=f"Failed to create SDK dump directories: {e}") from e
-
     @retry(exceptions=TestIssue, tries=2, delay=2)
     def validate_traffic(self, json_path, samples_params_dict, dst_dut_dir="/tmp"):
         logging.info("Running traffic validator on the dut")
-        self._create_sdk_dump_dirs()
         env_variables = self.get_power_sensor_env_variables()
         for env_var_name, param_val in samples_params_dict.items():
             set_interval_cmd = f"export {env_var_name}={param_val}"
             env_variables.append(f"{env_var_name}={param_val}")
             self.execute_cmd(set_interval_cmd)
-        run_validator_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_VALIDATOR_NAME}"
+        run_validator_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_VALIDATOR_NAME}"
         self.logrotate("rsyslog")
         try:
             self.execute_cmd(self.get_cmd_for_sdk(run_validator_cmd, env_variables=env_variables))
@@ -737,7 +695,7 @@ class PerformanceCommon:
     @retry(exceptions=TestIssue, tries=2, delay=2)
     def stop_traffic(self, burst_config=None):
         logging.info(f"Remove Mloop configuration from {self.dut_alias}")
-        remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
+        remove_mloops_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_TG_REMOVE_MLOOP_CONFIGURATION}"
         self.logrotate("rsyslog")
         # The burst configuration must be pointed at on teardown as well, otherwise the SDK leaves the
         # policers and ACLs it bound to the bonus ports behind for every following test on this player.
@@ -883,7 +841,7 @@ class PerformanceCommon:
         """
         logging.info(f"[{self.dut_alias}] Running PG buffer modification from existing conf.json")
 
-        modify_pg_buffer_cmd = (f"{PerfConsts.DVS_RUN_TEST_PATH} --names "
+        modify_pg_buffer_cmd = (f"{PerfConsts.DVS_RUN_TEST_CMD} --names "
                                 f"{PerfConsts.DVS_MODIFY_PG_BUFFER_CONNECTED_PORTS}")
 
         try:
@@ -1152,3 +1110,109 @@ class PerformanceCommon:
         This method is used to create the incremental dips on the traffic generator
         """
         raise NotImplementedError
+
+    @staticmethod
+    def _parse_split_share_read_back(out):
+        """Hex-parse the last non-empty line of an ``mcra`` read-back.
+
+        The split-share enable/disable scripts print register writes plus a
+        trailing read-back line like ``"0x00000001"`` / ``"0x00000000"``.
+        Any leading echo / warning line is skipped so downstream comparisons
+        against the enabled / disabled markers are robust.
+
+        Args:
+            out: Raw stdout from the enable / disable script invocation.
+
+        Returns:
+            int | None: The parsed integer value of the last hex line, or
+            ``None`` if the tail is empty or not a hex literal.
+        """
+        stripped = out.strip()
+        if not stripped:
+            return None
+        last = stripped.splitlines()[-1].strip()
+        try:
+            return int(last, 16)
+        except ValueError:
+            return None
+
+    def enable_split_sharing(self, chip_type):
+        """SPC6 WA: enable SRv6 no-SRH DCL split resource sharing on the DUT.
+
+        The perf_sys_sdk-deployed enable script lives inside the syncd
+        container (``mcra`` needs the ``/dev/mst/mt53124_pciconf0`` device
+        node which only exists there), so it's invoked via
+        ``get_cmd_for_sdk`` — same docker-exec pattern as ``run_traffic``.
+        The script writes 132 mcra registers then reads back ``0x9b0408.7``;
+        stdout tails with the mcra read-back in hex. Asserts the parsed
+        value equals ``NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER`` as
+        confirmation that the DCL bit flip took effect.
+
+        Gated on ``chip_type`` — the ``mcra`` register set and the script
+        contents are SPC6-specific. Callers on other generations should
+        never reach this method; if they do, an informative ``TestIssue``
+        is raised rather than executing a chip-inappropriate script.
+
+        Args:
+            chip_type: Chip family key (e.g. ``"SPC6"``); must be in
+                ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES``.
+
+        Raises:
+            TestIssue: If ``chip_type`` is unsupported, or if the read-back
+                value differs from ``SPLIT_SHARING_ENABLED_MARKER`` after
+                the script ran.
+        """
+        if chip_type not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES:
+            raise TestIssue(
+                f"enable_split_sharing: chip_type={chip_type!r} not in "
+                f"NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES!r}; "
+                f"mcra register + scripts are SPC6-specific")
+        cmd = f"sh {NoSrhPerfConsts.SPLIT_SHARING_ENABLE_SCRIPT}"
+        out = self.execute_cmd(self.get_cmd_for_sdk(cmd))
+        value = self._parse_split_share_read_back(out)
+        if value != NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER:
+            raise TestIssue(
+                f"enable_split_sharing: expected split-share read-back=="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_ENABLED_MARKER}, "
+                f"parsed={value!r}, raw stdout={out.strip()!r}")
+
+    def disable_split_sharing(self, chip_type):
+        """SPC6 WA: disable SRv6 no-SRH DCL split resource sharing on the DUT.
+
+        Runs the disable script inside the syncd container (see
+        ``enable_split_sharing`` for why). Idempotent — safe to call from a
+        teardown ``finally`` block even if ``enable_split_sharing`` never
+        ran successfully. Failures are logged and swallowed so they don't
+        mask the primary teardown reason.
+
+        Gated on ``chip_type``: callers on non-SPC6 generations are
+        rejected with a clear ``TestIssue`` rather than executing a
+        chip-inappropriate script.
+
+        Args:
+            chip_type: Chip family key (e.g. ``"SPC6"``); must be in
+                ``NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES``.
+
+        Raises:
+            TestIssue: If ``chip_type`` is unsupported. Post-script
+                read-back mismatches are logged (not raised) so teardown
+                completes.
+        """
+        if chip_type not in NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES:
+            raise TestIssue(
+                f"disable_split_sharing: chip_type={chip_type!r} not in "
+                f"NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES="
+                f"{NoSrhPerfConsts.SPLIT_SHARING_SUPPORTED_CHIP_TYPES!r}; "
+                f"mcra register + scripts are SPC6-specific")
+        cmd = f"sh {NoSrhPerfConsts.SPLIT_SHARING_DISABLE_SCRIPT}"
+        try:
+            out = self.execute_cmd(self.get_cmd_for_sdk(cmd))
+            value = self._parse_split_share_read_back(out)
+            if value != NoSrhPerfConsts.SPLIT_SHARING_DISABLED_MARKER:
+                logging.warning(
+                    f"disable_split_sharing: expected split-share read-back=="
+                    f"{NoSrhPerfConsts.SPLIT_SHARING_DISABLED_MARKER}, "
+                    f"parsed={value!r}, raw stdout={out.strip()!r}")
+        except Exception:
+            logging.exception("disable_split_sharing failed (ignored in teardown)")

@@ -143,6 +143,14 @@ acl/test_acl_outer_vlan.py::TestAclVlanOuter_Egress::test_untagged_forwarded[ipv
     conditions:
       - "'t0-isolated-d256u256s2' in topo_name and platform in ['x86_64-nvidia_sn5640-r0']"
 
+acl/test_src_mac_rewrite.py:
+  skip:
+    reason: "Source Mac rewrite is not supported on Cisco 8223/8122 platforms"
+    conditions_logical_operator: or
+    conditions:
+      - "platform.startswith('x86_64-8223')"
+      - "platform.startswith('x86_64-8122')"
+
 acl/test_stress_acl.py:
   skip:
     reason: "skip for IPv6-only topologies"
@@ -799,9 +807,16 @@ bgp/test_bgp_update_timer.py::test_bgp_update_timer_single_route:
 
 bgp/test_bgp_vnet.py:
   skip:
-    reason: "Test is only enabled for VS, Cisco and Nvidia mellanox platforms"
+    reason: "Test is only enabled for VS, Cisco and Nvidia mellanox platforms."
     conditions:
       - "asic_type not in ['vs', 'cisco-8000', 'mellanox']"
+  xfail:
+    reason: "Testcase expected to fail due to issue https://github.com/sonic-net/sonic-mgmt/issues/25167 on sn5640.
+             Also not supported on topologies without PortChannel uplinks due to GH issue https://github.com/sonic-net/sonic-mgmt/issues/26523."
+    conditions_logical_operator: or
+    conditions:
+      - "https://github.com/sonic-net/sonic-mgmt/issues/25167 and platform in ['x86_64-nvidia_sn5640-r0']"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/26523 and topo_name in ['t0-isolated-d32u32s2-mix', 't0-isolated-d256u256s2', 't0-isolated-v6-d256u256s2']"
 
 bgp/test_bgp_vnet_scale.py:
   skip:
@@ -864,12 +879,6 @@ bgp/test_traffic_shift_sup.py:
     reason: "Not supported on T2 single node topology"
     conditions:
       - "'t2_single_node' in topo_name"
-
-bgp/test_bgp_vnet.py:
-  xfail:
-    reason: "Testcase expected to fail due to issue https://github.com/sonic-net/sonic-mgmt/issues/25167 on sn5640"
-    conditions:
-      - "https://github.com/sonic-net/sonic-mgmt/issues/25167 and platform in ['x86_64-nvidia_sn5640-r0']"
 
 bmp/:
   skip:
@@ -1443,7 +1452,7 @@ dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_restart_with_stress:
   xfail:
     reason: "Testcase ignored due to github issue"
     conditions:
-    - "https://github.com/sonic-net/sonic-mgmt/issues/23601"
+      - "https://github.com/sonic-net/sonic-mgmt/issues/27983"
 
 dhcp_relay/test_dhcp_relay_stress.py::test_dhcp_relay_stress:
   skip:
@@ -3701,9 +3710,9 @@ iface_namingmode/test_iface_namingmode.py::TestConfigInterface:
 
 iface_namingmode/test_iface_namingmode.py::TestConfigInterface::test_config_interface_speed:
   skip:
-    reason: "Arista-7060X6 doesn't support speed change as it's ASIC limitation. Skipping this test."
+    reason: "Platform or hwsku doesn't support speed change. Skipping this test."
     conditions:
-      - "'Arista-7060X6' in hwsku"
+      - "'Arista-7060X6' in hwsku or platform in ['x86_64-micas_m2-w6940-128x1-fr4-r0']"
 
 iface_namingmode/test_iface_namingmode.py::TestShowIP::test_show_ip_route_v4:
   skip:
@@ -4481,7 +4490,7 @@ platform_tests/api/test_sfp.py::TestSfpApi::test_get_error_description:
   xfail:
     reason: "xfail due to RM issue: https://github.com/sonic-net/sonic-buildimage/issues/29043"
     conditions:
-    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and 'sn6600_ld' in platform"
+    - "https://github.com/sonic-net/sonic-buildimage/issues/29043 and ('sn6600_ld' in platform or 'sn5640' in platform)"
 
 platform_tests/api/test_sfp.py::TestSfpApi::test_get_transceiver_info:
   xfail:
@@ -5450,9 +5459,9 @@ show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_rate_limit_
     conditions:
       - "'bmc' in topo_type"
 
-show_techsupport/test_sai_sdk_dump.py::TestSaiSdkDump::test_sai_sdk_dump:
+show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_sai_sdk_dump:
   skip:
-    reason: "Test supported only on Nvidia(Mellanox) devices / SAI failure dump on multi asic platforms doesnt work"
+    reason: "Test supported only on Nvidia(Mellanox) devices / auto techsupport on multi asic platforms doesnt work"
     conditions_logical_operator: or
     conditions:
       - "asic_type not in ['mellanox']"
@@ -5786,6 +5795,12 @@ span:
     conditions:
       - "asic_type in ['broadcom', 'cisco-8000']"
 
+span/test_erspan_sampling_truncation.py:
+  skip:
+    reason: "ERSPAN sampling/truncation tests are not supported on the current platform/topology."
+    conditions:
+      - "asic_gen != 'spc5' or topo_type not in ['t0', 't1']"
+
 span/test_port_mirroring.py:
   xfail:
     reason: "Testcase ignored on dualtor topology and mellanox setups due to Github issue: https://github.com/sonic-net/sonic-mgmt/issues/9647"
@@ -5865,6 +5880,14 @@ srv6/test_srv6_vlan_forwarding.py::test_srv6_uN_no_vlan_flooding[False]:
     reason: "Test case has issue on the t0-isolated-d256u256s2 topo."
     conditions:
       - "'t0-isolated-d256u256s2' in topo_name and platform in ['x86_64-nvidia_sn5640-r0']"
+
+srv6/test_srv6_warmboot.py:
+  skip:
+    reason: "SRv6 over warm reboot is only expected to work on Mellanox/NVIDIA Spectrum-5 and newer platforms, with a master or 202611+ image."
+    conditions_logical_operator: or
+    conditions:
+      - "asic_type != 'mellanox' or (release != 'master' and release < '202611')"
+      - "asic_gen in ['spc1', 'spc2', 'spc3', 'spc4']"
 
 #######################################
 #####             ssh             #####

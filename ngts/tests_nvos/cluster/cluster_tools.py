@@ -21,6 +21,7 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
 from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.infra.AirTool import is_air_external_ips
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.tests_nvos.helpers import redmine_helpers
@@ -145,7 +146,7 @@ class ClusterTools:
             # Apply nv-bridge config for devices that need it (e.g., Rosalind)
             # This must happen AFTER cluster is enabled, then restart nmx-controller
             # This is required because cluster.unset() clears the node primary server config
-            ClusterTools._apply_nv_bridge_config_if_needed(cluster, devices, engine=engine)
+            ClusterTools._apply_nv_bridge_config_if_needed(cluster, devices, engine=engine, setup_name=setup_name)
 
             output = OutputParsingTool.parse_show_output_to_dict(
                 cluster.show(output_format=output_format, dut_engine=engine),
@@ -177,7 +178,7 @@ class ClusterTools:
             return False
 
     @staticmethod
-    def _apply_nv_bridge_config_if_needed(cluster, devices=None, engine=None):
+    def _apply_nv_bridge_config_if_needed(cluster, devices=None, engine=None, setup_name=None):
         """
         Apply nv-bridge configuration for devices that require it.
         This sets the cluster node primary server which is required for nv-bridge to function.
@@ -215,9 +216,17 @@ class ClusterTools:
             with allure.step(f"Apply nv-bridge config for {devices.dut.__class__.__name__}"):
                 logger.info(f"Device {devices.dut.__class__.__name__} requires nv-bridge config - setting node primary server")
 
-                # Step 1: Set node primary server
+                # Step 1: Set node primary server. With external AIR IPs, cur_mgmt_port_ip is the AIR worker IP, so
+                # read the switch's own mgmt IP (eth0/eth1) instead, in the same address family as cur_mgmt_port_ip.
+                primary_server = devices.dut.cur_mgmt_port_ip
+                if setup_name and is_air_external_ips(setup_name):
+                    mgmt_interface = Port(devices.dut.cur_mgmt_port_name).interface
+                    mgmt_ip = mgmt_interface.ipv6 if ':' in primary_server else mgmt_interface.ipv4
+                    primary_server = mgmt_ip.get_primary_ip_address(dut_engine=engine)
+                    assert primary_server, f"No mgmt IP found on {devices.dut.cur_mgmt_port_name}"
+                logger.info(f"Setting node primary server to {primary_server}")
                 cluster.node.primary.set_cluster_node(op_param_name=SystemConsts.NV_BRIDGE_NODE_SERVER,
-                                                      op_param_value=devices.dut.cur_mgmt_port_ip, apply=True, dut_engine=engine)
+                                                      op_param_value=primary_server, apply=True, dut_engine=engine)
 
                 # Step 2: Stop nmx-controller
                 logger.info("Stopping nmx-controller to apply nv-bridge config")

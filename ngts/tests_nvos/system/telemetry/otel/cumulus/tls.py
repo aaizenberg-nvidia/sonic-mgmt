@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shlex
@@ -16,9 +17,12 @@ import pytest
 import ngts.tools.test_utils.allure_utils as allure
 from devts.infra.tools.linux_tools.linux_tools import scp_file
 
-from ngts.nvos_constants.constants_nvos import ConfState, TelemetryConsts
+from ngts.nvos_constants.constants_nvos import ApiType, ConfState, TelemetryConsts
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
+from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import nvue_auto_confirm
 from ngts.tests_nvos.system.telemetry.otel.constants import OtelCollectorConst
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
 from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
@@ -192,6 +196,27 @@ def _upload_local_file_to_dut(dut, local_path: str, remote_path: str) -> None:
     )
 
 
+def _action_output(result: ResultObj) -> str:
+    """Text of an NVUE/OpenAPI action. Marks the ResultObj handled."""
+    text = result.returned_value if result.returned_value is not None else result.info
+    result.ignore_result()
+    return "" if text is None else str(text)
+
+
+def _ca_certificate_show_text(dut, ca_name: str) -> str:
+    """``nv show system security ca-certificate <name>`` via the security component."""
+    result = System().security.ca_certificate.cert_id[ca_name].show(
+        dut_engine=dut, if_returned_value=False
+    )
+    result.ignore_result()
+    raw = result.returned_value
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw)
+    if raw:
+        return str(raw)
+    return str(result.info or "")
+
+
 def _nvue_ca_certificate_present(dut, ca_name: str) -> bool:
     """True when NVUE still holds ``ca_name`` (CA store or on-disk nvue dir)."""
     nvue_ca_dir = "/usr/local/share/ca-certificates/nvue"
@@ -202,11 +227,7 @@ def _nvue_ca_certificate_present(dut, ca_name: str) -> bool:
     )
     if f"{ca_name}.crt" in (listing or "").splitlines():
         return True
-    show = dut.run_cmd(
-        f"nv show system security ca-certificate {ca_name} -o json 2>&1",
-        validate=False,
-        print_output=False,
-    )
+    show = _ca_certificate_show_text(dut, ca_name)
     return not ("Error:" in show or "does not exist" in (show or "").lower())
 
 
@@ -220,18 +241,18 @@ def _delete_dut_ca_certificate_if_present(dut, ca_name: str) -> None:
         if not _nvue_ca_certificate_present(dut, ca_name):
             return
         logger.info("Deleting pre-existing NVUE CA certificate %r (try %d)", ca_name, attempt)
-        dut.run_cmd(
-            f"nv action delete system security ca-certificate {ca_name}",
-            validate=False,
-        )
+        ca = System().security.ca_certificate.cert_id[ca_name]
+        delete_result = ca.action_delete(dut_engine=dut)
+        _action_output(delete_result)
         time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
         if not _nvue_ca_certificate_present(dut, ca_name):
             return
-        dut.run_cmd(
-            f"nv unset system security ca-certificate {ca_name} -y && nv config apply -y",
-            validate=False,
-            print_output=False,
-        )
+        ca.unset(
+            op_param=nvue_auto_confirm(),
+            apply=True,
+            ask_for_confirmation=True,
+            dut_engine=dut,
+        ).ignore_result()
         time.sleep(_CA_IMPORT_RETRY_DELAY_SEC)
 
 
@@ -274,13 +295,25 @@ def _log_staged_ca_validity_on_dut(dut, staged_path: str) -> None:
 
 def _import_ca_certificate_on_dut(dut, ca_name: str, staged_path: str) -> str:
     """SSIM ``OtelMgmtVrfWithTLSConfig.configure_topo_post_boot`` import with retry."""
-    import_cmd = (
-        f"nv action import system security ca-certificate {ca_name} "
-        f"uri file://127.0.0.1{staged_path}"
-    )
+    ca = System().security.ca_certificate.cert_id[ca_name]
     import_out = ""
     for attempt in range(1, _CA_IMPORT_RETRIES + 1):
-        import_out = dut.run_cmd(import_cmd, validate=False, print_output=False)
+        result = ca.action_import(
+            uri=f"file://127.0.0.1{staged_path}", dut_engine=dut
+        )
+        succeeded = bool(result.result)
+        import_out = _action_output(result)
+        if (
+            succeeded and
+            TestToolkit.tested_api != ApiType.NVUE and
+            "Succeeded in importing" not in import_out
+        ):
+            # Callers key off the NVUE success phrase. OpenAPI reports success
+            # with different wording; keep that phrase when the action succeeded.
+            # On NVUE the raw phrase is required — inventing it treats an empty
+            # action result as an import and leaves the previous CA in place,
+            # so the OTLP client never completes the TLS handshake.
+            import_out = f"Succeeded in importing {ca_name}\n{import_out}"
         if "Succeeded in importing" in import_out:
             break
         logger.warning("CA import attempt %d/%d did not succeed yet", attempt, _CA_IMPORT_RETRIES)
@@ -303,11 +336,7 @@ def _assert_ca_import_succeeded(import_out: str, ca_name: str) -> None:
 
 def _assert_nvue_ca_active_on_dut(dut, ca_name: str) -> None:
     """Confirm NVUE CA store shows current validity before OTLP TLS ``nv config apply``."""
-    show = dut.run_cmd(
-        f"nv show system security ca-certificate {ca_name} -o json 2>&1",
-        validate=False,
-        print_output=False,
-    )
+    show = _ca_certificate_show_text(dut, ca_name)
     if "Error:" in show or "does not exist" in show.lower():
         pytest.fail(f"NVUE CA {ca_name!r} missing after import: {show.strip()!r}")
     parsed = OutputParsingTool.parse_json_str_to_dictionary(show).get_returned_value()

@@ -195,8 +195,8 @@ PORTS_SI_PARAM_NAMES_EXCEL_TO_JSON = {
         'tap1': 'pre2',
         'tap2': 'pre1',
         'tap3': 'main',
-        'tap4': 'post',
-        'tap5': 'post1'
+        'tap4': 'post1',
+        'tap5': 'post2'
     }
 }
 

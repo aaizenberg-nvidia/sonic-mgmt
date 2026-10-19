@@ -2238,6 +2238,22 @@
     - Affected_test_cases:
         - tests_nvos/general/test_cpu_memory_monitoring.py
 
+# NVOS: Expected logs
+- Errors_list:
+    - '.*WARNING kernel: .*invoked oom-killer:.*'
+    - '.*WARNING kernel: .*CPU: .* PID: .* Comm: .*'
+    - '.*WARNING kernel: .*Hardware name: .*'
+    - '.*WARNING kernel: .*Call Trace:'
+    - '.*WARNING kernel: .*(?:<TASK>|<\/TASK>)'
+    - '.*WARNING kernel: .*[A-Za-z0-9_.]+\+0x[0-9a-f]+\/0x[0-9a-f]+'
+    - '.*WARNING kernel: .*RIP: .*'
+    - '.*WARNING kernel: .*Code: .*'
+    - '.*WARNING kernel: .*(?:RSP|RAX|RBX|RCX|RDX|RSI|RDI|RBP|R08|R09|R10|R11|R12|R13|R14|R15): .*'
+    - '.*ERR kernel: .*Memory cgroup out of memory: Killed process .*'
+  Conditions:
+    - Affected_test_cases:
+        - tests_nvos/general/test_cpu_memory_monitoring.py::test_high_memory_usage_simulation
+
 # NVOS: Expected logs when SSD is full
 - Errors_list:
     - '.*ERR kernel:.* I/O error.*'

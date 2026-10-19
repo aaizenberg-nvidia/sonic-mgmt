@@ -11,13 +11,14 @@ from tests.common.cisco_data import is_cisco_device
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.platform.processes_utils import wait_critical_processes
 from tests.common.reboot import reboot, REBOOT_TYPE_COLD, SONIC_SSH_PORT, SONIC_SSH_REGEX
-from tests.common.helpers.dut_utils import is_mellanox_devices
+from tests.common.helpers.dut_utils import is_mellanox_devices, enable_nat_for_dpus
 from tests.smartswitch.common.device_utils_dpu import (  # noqa: F401
     check_dpu_link_and_status,
     pre_test_check, post_test_switch_check, post_test_dpus_check,
     dpus_shutdown_and_check, dpus_startup_and_check, check_dpus_module_status,
     check_dpu_module_status, num_dpu_modules, check_dpus_are_not_pingable,
     check_dpus_reboot_cause, get_dpuhost_for_dpu, get_all_dpu_uptimes,
+    check_dpus_system_health_reason, get_dpu_reboot_cause_count,
 )
 from tests.common.platform.device_utils import platform_api_conn, start_platform_api_service  # noqa: F401,F403
 from tests.smartswitch.common.reboot import perform_reboot
@@ -108,6 +109,10 @@ def test_dpu_status_post_switch_reboot(duthosts, dpuhosts,
                            dpu_on_list, dpu_off_list,
                            ip_address_list)
 
+    if getattr(duthost, 'dpu_nat_port_mapping', None):
+        logging.info("Restoring NAT rules for DPU SSH access after reboot")
+        enable_nat_for_dpus(duthost)
+
     logging.info("Executing post switch reboot dpu check")
     post_test_dpus_check(duthost, dpuhosts,
                          dpu_on_list, ip_address_list,
@@ -137,6 +142,10 @@ def test_dpu_status_post_switch_config_reload(duthosts, dpuhosts,
 
     logging.info("Wait until all critical services are fully started")
     wait_critical_processes(duthost)
+
+    if getattr(duthost, 'dpu_nat_port_mapping', None):
+        logging.info("Restoring NAT rules for DPU SSH access after reboot")
+        enable_nat_for_dpus(duthost)
 
     logging.info("Checking DPU link status and connectivity")
     check_dpu_link_and_status(duthost, dpu_on_list,
@@ -189,6 +198,10 @@ def test_dpu_status_post_switch_mem_exhaustion(duthosts, dpuhosts,
                            dpu_on_list, dpu_off_list,
                            ip_address_list)
 
+    if getattr(duthost, 'dpu_nat_port_mapping', None):
+        logging.info("Restoring NAT rules for DPU SSH access after reboot")
+        enable_nat_for_dpus(duthost)
+
     logging.info("Executing post switch mem exhaustion dpu check")
     post_test_dpus_check(duthost, dpuhosts,
                          dpu_on_list, ip_address_list,
@@ -237,6 +250,10 @@ def test_dpu_status_post_switch_kernel_panic(duthosts, dpuhosts,
                            dpu_on_list, dpu_off_list,
                            ip_address_list)
 
+    if getattr(duthost, 'dpu_nat_port_mapping', None):
+        logging.info("Restoring NAT rules for DPU SSH access after reboot")
+        enable_nat_for_dpus(duthost)
+
     logging.info("Executing post switch kernel panic dpu check")
     post_test_dpus_check(duthost, dpuhosts,
                          dpu_on_list, ip_address_list,
@@ -262,6 +279,8 @@ def test_dpu_status_post_dpu_kernel_panic(duthosts, dpuhosts,
 
     logging.info("Recording DPU boot times before DPU kernel panic")
     pre_boot_times = get_all_dpu_uptimes(dpuhosts, dpu_on_list)
+    pre_reboot_cause_counts = {dpu: get_dpu_reboot_cause_count(duthost, dpu)
+                               for dpu in dpu_on_list}
 
     triggered_dpu_on_list = []
     triggered_ip_list = []
@@ -301,6 +320,12 @@ def test_dpu_status_post_dpu_kernel_panic(duthosts, dpuhosts,
         logging.info("Check DPUs are offline")
         check_dpus_module_status(duthost, triggered_dpu_on_list, "off")
 
+    if is_mellanox_devices(duthost.facts['hwsku']):
+        logging.info("Checking system-health dpu reason while DPUs are down (kernel_panic)")
+        check_dpus_system_health_reason(duthost, triggered_dpu_on_list,
+                                        num_dpu_modules,
+                                        "Unplanned: 'Non-Hardware, Reset from Main board'")
+
     logging.info("Executing post test dpu check")
     reboot_cause_pattern = r"reboot|Non-Hardware"
     if is_mellanox_devices(duthost.facts['hwsku']):
@@ -311,7 +336,8 @@ def test_dpu_status_post_dpu_kernel_panic(duthosts, dpuhosts,
                          re.compile(reboot_cause_pattern,
                                     re.IGNORECASE),
                          EXTRA_DPU_ONLINE_TIMEOUT_FOR_WATCHDOG,
-                         pre_boot_times=pre_boot_times)
+                         pre_boot_times=pre_boot_times,
+                         pre_reboot_cause_counts=pre_reboot_cause_counts)
 
 
 def test_dpu_check_post_dpu_mem_exhaustion(duthosts, dpuhosts,
@@ -329,11 +355,14 @@ def test_dpu_check_post_dpu_mem_exhaustion(duthosts, dpuhosts,
                                                  platform_api_conn,
                                                  num_dpu_modules)
 
+    pre_reboot_cause_counts = {dpu: get_dpu_reboot_cause_count(duthost, dpu)
+                               for dpu in dpu_on_list}
+
     triggered_dpu_on_list = []
     triggered_ip_list = []
     for index in range(len(dpu_on_list)):
         logging.info(
-                "Triggering Memory Exhaustion on %s" % (dpu_on_list[index])
+                f"Triggering Memory Exhaustion on {dpu_on_list[index]}"
                 )
         dpu_on = dpu_on_list[index]
         dpu_id = int(re.search(r'\d+', dpu_on).group())
@@ -371,6 +400,12 @@ def test_dpu_check_post_dpu_mem_exhaustion(duthosts, dpuhosts,
         logging.info("Check DPUs are offline")
         check_dpus_module_status(duthost, triggered_dpu_on_list, "off")
 
+    if is_mellanox_devices(duthost.facts['hwsku']):
+        logging.info("Checking system-health dpu reason while DPUs are down (mem_exhaustion)")
+        check_dpus_system_health_reason(duthost, triggered_dpu_on_list,
+                                        num_dpu_modules,
+                                        "Unplanned: 'Non-Hardware, Reset from Main board'")
+
     logging.info("Executing post test dpu check")
     reboot_cause_pattern = r"reboot|Non-Hardware"
     if is_mellanox_devices(duthost.facts['hwsku']):
@@ -382,7 +417,8 @@ def test_dpu_check_post_dpu_mem_exhaustion(duthosts, dpuhosts,
                          re.compile(reboot_cause_pattern,
                                     re.IGNORECASE),
                          EXTRA_DPU_ONLINE_TIMEOUT_FOR_WATCHDOG,
-                         pre_boot_times=pre_boot_times)
+                         pre_boot_times=pre_boot_times,
+                         pre_reboot_cause_counts=pre_reboot_cause_counts)
 
 
 def test_cold_reboot_dpus(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname,
@@ -409,6 +445,8 @@ def test_cold_reboot_dpus(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname,
 
     logging.info("Recording DPU boot times before cold reboot")
     pre_boot_times = get_all_dpu_uptimes(dpuhosts, dpu_on_list)
+    pre_reboot_cause_counts = {dpu: get_dpu_reboot_cause_count(duthost, dpu)
+                               for dpu in dpu_on_list}
 
     # For Nvidia smartswitch, the DPUs shutdown time should not differ too much.
     # We will check it in post_test_dpus_check.
@@ -421,7 +459,8 @@ def test_cold_reboot_dpus(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname,
         with SafeThreadPoolExecutor(max_workers=num_dpu_modules) as executor:
             logging.info("Rebooting all DPUs in parallel")
             for dpu_name in dpu_on_list:
-                executor.submit(perform_reboot, duthost, REBOOT_TYPE_COLD, dpu_name, invocation_type,
+                executor.submit(perform_reboot, duthost, REBOOT_TYPE_COLD,
+                                dpu_name, invocation_type,
                                 ptf_gnoi=gnmi_tls.gnoi)
 
         logging.info("Executing post test dpu check")
@@ -430,7 +469,8 @@ def test_cold_reboot_dpus(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname,
                              num_dpu_modules,
                              re.compile(r"reboot|Non-Hardware",
                                         re.IGNORECASE),
-                             pre_boot_times=pre_boot_times)
+                             pre_boot_times=pre_boot_times,
+                             pre_reboot_cause_counts=pre_reboot_cause_counts)
 
 
 def test_cold_reboot_switch(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname,
@@ -465,6 +505,10 @@ def test_cold_reboot_switch(duthosts, dpuhosts, enum_rand_one_per_hwsku_hostname
                            dpu_on_list, dpu_off_list,
                            ip_address_list)
 
+    if getattr(duthost, 'dpu_nat_port_mapping', None):
+        logging.info("Restoring NAT rules for DPU SSH access after reboot")
+        enable_nat_for_dpus(duthost)
+
     logging.info("Executing post switch reboot dpu check")
     post_test_dpus_check(duthost, dpuhosts, dpu_on_list, ip_address_list, num_dpu_modules,
                          re.compile(r"reboot|Non-Hardware", re.IGNORECASE),
@@ -485,8 +529,12 @@ def test_reboot_cause(duthosts, dpuhosts,
         platform_api_conn,
         num_dpu_modules)
 
+    pre_reboot_cause_counts = {dpu: get_dpu_reboot_cause_count(duthost, dpu)
+                               for dpu in dpu_on_list}
+
     logging.info("Shutting DOWN the DPUs in parallel")
-    dpus_shutdown_and_check(duthost, dpu_on_list, num_dpu_modules)
+    dpus_shutdown_and_check(duthost, dpu_on_list, num_dpu_modules,
+                            expected_reason="Planned: 'shutdown'")
 
     logging.info("Starting UP the DPUs in parallel")
     dpus_startup_and_check(duthost, dpu_on_list, num_dpu_modules)
@@ -495,4 +543,5 @@ def test_reboot_cause(duthosts, dpuhosts,
                          dpu_on_list, ip_address_list,
                          num_dpu_modules,
                          re.compile(r"reboot|Non-Hardware",
-                                    re.IGNORECASE))
+                                    re.IGNORECASE),
+                         pre_reboot_cause_counts=pre_reboot_cause_counts)

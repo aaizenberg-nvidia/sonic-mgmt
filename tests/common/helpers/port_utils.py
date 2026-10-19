@@ -76,7 +76,7 @@ def get_cable_supported_speeds_helper(duthost):
 
 
 class MlnxCableSupportedSpeedsHelper(object):
-    from tests.platform_tests.mellanox.software_control_helper import ASIC_DETECT_GET_DEVICE_PATH_CMD
+    from tests.platform_tests.mellanox.software_control_constants import ASIC_DETECT_GET_DEVICE_PATH_CMD
     # To avoid getting ports list again and again, use a class level variable to save
     # all sorted ports.
     # Key: dut host object, value: a sorted list of interface name

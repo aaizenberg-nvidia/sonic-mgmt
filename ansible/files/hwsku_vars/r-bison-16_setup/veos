@@ -3869,7 +3869,116 @@ vms_94:
       ansible_host: 10.215.35.38
     VM7487:
       ansible_host: 10.215.35.39
-
+    VM7488:
+      ansible_host: 10.215.35.40
+    VM7489:
+      ansible_host: 10.215.35.41
+    VM7490:
+      ansible_host: 10.215.35.42
+    VM7491:
+      ansible_host: 10.215.35.43
+    VM7492:
+      ansible_host: 10.215.35.44
+    VM7493:
+      ansible_host: 10.215.35.45
+    VM7494:
+      ansible_host: 10.215.35.46
+    VM7495:
+      ansible_host: 10.215.35.47
+    VM7496:
+      ansible_host: 10.215.35.48
+    VM7497:
+      ansible_host: 10.215.35.49
+    VM7498:
+      ansible_host: 10.215.35.50
+    VM7499:
+      ansible_host: 10.215.35.51
+    VM7500:
+      ansible_host: 10.215.35.52
+    VM7501:
+      ansible_host: 10.215.35.53
+    VM7502:
+      ansible_host: 10.215.35.54
+    VM7503:
+      ansible_host: 10.215.35.55
+    VM7504:
+      ansible_host: 10.215.35.56
+    VM7505:
+      ansible_host: 10.215.35.57
+    VM7506:
+      ansible_host: 10.215.35.58
+    VM7507:
+      ansible_host: 10.215.35.59
+    VM7508:
+      ansible_host: 10.215.35.60
+    VM7509:
+      ansible_host: 10.215.35.61
+    VM7510:
+      ansible_host: 10.215.35.62
+    VM7511:
+      ansible_host: 10.215.35.63
+    VM7512:
+      ansible_host: 10.215.35.64
+    VM7513:
+      ansible_host: 10.215.35.65
+    VM7514:
+      ansible_host: 10.215.35.66
+    VM7515:
+      ansible_host: 10.215.35.67
+    VM7516:
+      ansible_host: 10.215.35.68
+    VM7517:
+      ansible_host: 10.215.35.69
+    VM7518:
+      ansible_host: 10.215.35.70
+    VM7519:
+      ansible_host: 10.215.35.71
+    VM7520:
+      ansible_host: 10.215.35.72
+    VM7521:
+      ansible_host: 10.215.35.73
+    VM7522:
+      ansible_host: 10.215.35.74
+    VM7523:
+      ansible_host: 10.215.35.75
+    VM7524:
+      ansible_host: 10.215.35.76
+    VM7525:
+      ansible_host: 10.215.35.77
+    VM7526:
+      ansible_host: 10.215.35.78
+    VM7527:
+      ansible_host: 10.215.35.79
+    VM7528:
+      ansible_host: 10.215.35.80
+    VM7529:
+      ansible_host: 10.215.35.81
+    VM7530:
+      ansible_host: 10.215.35.82
+    VM7531:
+      ansible_host: 10.215.35.83
+    VM7532:
+      ansible_host: 10.215.35.84
+    VM7533:
+      ansible_host: 10.215.35.85
+    VM7534:
+      ansible_host: 10.215.35.86
+    VM7535:
+      ansible_host: 10.215.35.87
+    VM7536:
+      ansible_host: 10.215.35.88
+    VM7537:
+      ansible_host: 10.215.35.89
+    VM7538:
+      ansible_host: 10.215.35.90
+    VM7539:
+      ansible_host: 10.215.35.91
+    VM7540:
+      ansible_host: 10.215.35.92
+    VM7541:
+      ansible_host: 10.215.35.93
+    VM7542:
+      ansible_host: 10.215.35.94
 
 vms_95:
   hosts:

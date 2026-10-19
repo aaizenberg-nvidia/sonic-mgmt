@@ -36,8 +36,6 @@ from ngts.cli_wrappers.nvue.nvue_performance_clis import get_swp_parent_port_nam
 from ngts.constants.constants import CliType, InfraConst
 from ngts.constants.performance_constants import (
     MongoDbConsts, PerfConsts, SPCXRAConsts, ValidationConsts, BwFairnessThreshold)
-from ngts.helpers.performance.performance_counter_helpers import (
-    should_validate_performance_counters)
 from ngts.helpers.performance.performance_db_helpers import (
     add_test_mongo_metadata, get_perf_test_name)
 from ngts.helpers.performance.performance_recovery import get_performance_session_state
@@ -51,8 +49,8 @@ from ngts.helpers.performance.performance_setup_helpers import (
 from ngts.helpers.performance.traffic_helpers import validate_bw_per_ports
 from ngts.performance_tests.spcx_ra.conftest import (
     TESTS_SCENARIO, TRAFFIC_PROFILE_AI_MIX, compute_flap_validation_overrides,
-    get_ai_mix_mean_packet_size, get_leaf_scenario_traffic,
-    get_spcx_ra_ai_mix_spine_traffic, resolve_ar_algorithm)
+    get_leaf_scenario_traffic, get_spcx_ra_ai_mix_spine_traffic,
+    resolve_ar_algorithm)
 
 logger = logging.getLogger()
 
@@ -319,6 +317,9 @@ class LanesConfig:
             "congestion_thresh_hi": high_ar_threshold,
             PerfConsts.AR_ALGORITHM: resolve_ar_algorithm(chip_type).value,
             **PerfConsts.get_ar_extended_grading_conf_args(chip_type, ar_extended_thresholds),
+            "ecmp_type_stateless": "True",
+            "ecmp_size": PerfConsts.ECMP_SIZE_MAX,
+            "hash_type": "random",
             "two_sided_ar": True,
             "is_ipv6": is_ipv6,
             "is_ipv4": is_ipv4,
@@ -381,8 +382,12 @@ def _with_lanes_allure_title(method):
     """
     @functools.wraps(method)
     def wrapper(self, request, *args, **kwargs):
-        allure.dynamic.title(
-            f"{request.node.name} {self.CONFIG.allure_title_suffix(self.chip_type)}")
+        title = f"{request.node.name} {self.CONFIG.allure_title_suffix(self.chip_type)}"
+        if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+            title += f" [{self.traffic_profile}]"
+        if self.conf_args.get("extended_grading"):
+            title += " [ar_extended_thresholds]"
+        allure.dynamic.title(title)
         return method(self, request, *args, **kwargs)
     return wrapper
 
@@ -428,20 +433,16 @@ class _SpcXRATestBase:
             if isinstance(self.cli_object, NvueCli):
                 validate_perf_dut_rebalancer_buffer_mode(self.players)
 
-        validation_packet_size = data_packet_size
         if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
             with allure.step("Switch the spine traffic to the AI packet mix"):
                 self.traffic_jsons = get_spcx_ra_ai_mix_spine_traffic(
                     self.players, self.conf_args, data_packet_size=data_packet_size,
                     data_packet_count=data_packet_count,
                     control_packet_count=control_packet_count)
-                validation_packet_size = self._get_ai_mix_validation_packet_size(
-                    data_packet_size, data_packet_count=data_packet_count,
-                    control_packet_count=control_packet_count)
 
         self._run_spine_traffic(data_packet_size)
         self._validate(
-            test_name, validation_packet_size,
+            test_name, data_packet_size,
             skip_first_counters_iteration=(self.chip_type in ("SPC5", "SPC6") and
                                            isinstance(self.cli_object, NvueCli)))
 
@@ -470,17 +471,14 @@ class _SpcXRATestBase:
             if isinstance(self.cli_object, NvueCli):
                 validate_perf_dut_ingress_buffer_mode(self.players)
 
-        validation_packet_size = data_packet_size
         if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
             with allure.step("Switch the spine traffic to the AI packet mix"):
                 self.traffic_jsons = get_spcx_ra_ai_mix_spine_traffic(
                     self.players, self.conf_args, data_packet_size=data_packet_size)
-                validation_packet_size = self._get_ai_mix_validation_packet_size(
-                    data_packet_size)
 
         self._run_spine_traffic(data_packet_size)
         self._validate(
-            test_name, validation_packet_size,
+            test_name, data_packet_size,
             bw_threshold=self.CONFIG.ibm_bandwidth_threshold(self.chip_type),
             skip_first_counters_iteration=True)
 
@@ -546,9 +544,7 @@ class _SpcXRATestBase:
             tc_occ_baseline=PerfConsts.OCC_TH_DICT)
         samples_params = dict(PerfConsts.SAMPLES_PARAMS)
         if flap_scenario == "port_hiccup":
-            # Example: enable expensive collectors only for this flap scenario.
             samples_params[PerfConsts.COLLECT_TC_LATENCY_ENV_VAR] = "True"
-            samples_params[PerfConsts.COLLECT_SDK_DUMP_ENV_VAR] = "True"
         self._validate(
             test_name, packet_size, skip_first_counters_iteration=True,
             samples_params_dict=samples_params,
@@ -577,61 +573,6 @@ class _SpcXRATestBase:
         self._validate(test_name, packet_size, skip_first_counters_iteration=True)
 
     # ============================================================== helpers
-
-    def _get_ai_mix_validation_packet_size(self, data_packet_size: int,
-                                           data_packet_count: Optional[int] = None,
-                                           control_packet_count: int = 1) -> int:
-        """Return the frame size :meth:`_validate` has to be given for the AI mix.
-
-        The byte-weighted mean frame size of one send cycle. Must be called with the same
-        ``data_packet_size``, ``data_packet_count`` and ``control_packet_count`` passed to
-        ``get_spcx_ra_ai_mix_spine_traffic``. The ``sanity`` profile needs none of this -
-        its single stream is already one size.
-
-        Why the size is not simply ``data_packet_size`` on the mix:
-
-        validate_performance_counters never compares bytes to bytes. It takes a port's
-        measured byte rate, divides by ONE frame size to predict the packet count, and fails
-        if the real counter is more than PerfConsts.PERF_COUNTERS_ALLOWED_DEVIATION (2.5%)
-        off that prediction - see get_port_expected_pps() in performance_counter_helpers.py,
-        which is literally bandwidth_Bps / packet_size.
-
-        That division is only sound when every frame is the same size. It is on the sanity
-        profile (one 4096B RoCE stream) and is not on ai_mix, which puts six sizes on the
-        port per cycle: 96/138/118/116B of control traffic plus traffic_packets_per_port
-        data frames. At an unchanged byte rate, smaller frames mean MORE packets, so passing
-        4096 would under-predict the packet count by 12.9% (SPC6 800G x1) to 42.7% (SPC6
-        200G x4) and redden a perfectly healthy run.
-
-        The byte-weighted mean of one cycle is the size that makes the division come out
-        right. Nothing about the generated traffic depends on this value - it only changes
-        what the counter check expects. Note it also feeds the Allure step label, so the
-        ai_mix report reads "packet size 3101" rather than 4096.
-
-        Args:
-            data_packet_size: Frame size of the RoCE data stream, in bytes.
-            data_packet_count: RoCE data packets per port per cycle. Defaults to
-                ``None``, which uses the chip's ``traffic_packets_per_port`` (the
-                default ``get_spcx_ra_ai_mix_spine_traffic`` also falls back to).
-                Pass the same override given to that function if one was used.
-            control_packet_count: Packets sent per control stream per cycle.
-                Must match ``control_packet_count`` passed to
-                ``get_spcx_ra_ai_mix_spine_traffic``.
-
-        Returns:
-            The frame size to hand to :meth:`_validate`.
-        """
-        resolved_data_packet_count = (
-            data_packet_count if data_packet_count is not None
-            else self.CONFIG.chip_dict[self.chip_type].traffic_packets_per_port)
-        mean_packet_size = get_ai_mix_mean_packet_size(
-            resolved_data_packet_count, data_packet_size=data_packet_size,
-            control_packet_count=control_packet_count)
-        logger.info(f"Validating against the {mean_packet_size}B byte-weighted mean frame "
-                    f"size of one send cycle ({resolved_data_packet_count} x "
-                    f"{data_packet_size}B data packets + {control_packet_count}x control "
-                    f"mix) instead of {data_packet_size}B")
-        return mean_packet_size
 
     def _run_spine_traffic(self, packet_size: int, wait_for_nexthop: bool = True) -> None:
         """Run the spine-side traffic JSON on all configured players.
@@ -810,8 +751,7 @@ class _SpcXRATestBase:
                 bottleneck side legitimately accrues non-zero drop / error
                 counters during the flap window.
             samples_params_dict: Optional TrafficValidator sample/env overrides
-                (e.g. ``COLLECT_TC_LATENCY``, ``COLLECT_SDK_DUMP``). Defaults to
-                ``PerfConsts.SAMPLES_PARAMS``.
+                (e.g. ``COLLECT_TC_LATENCY``). Defaults to ``PerfConsts.SAMPLES_PARAMS``.
             step: Override for the Allure step label; defaults to
                 ``"Verifying the traffic for packet size {packet_size}"``.
         """
@@ -827,14 +767,11 @@ class _SpcXRATestBase:
                 test_name=test_name,
                 scenario=self.scenario,
                 chip_type=self.chip_type,
-                packet_size=packet_size,
                 bw_threshold=bw_threshold,
                 bw_fairness_threshold_per_port_group=(
                     BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold)),
                 tc_occ_threshold=tc_occ_threshold,
                 run_validate_counters=run_validate_counters,
-                run_validate_performance_counters=should_validate_performance_counters(
-                    self.cli_object),
                 power_threshold=self.power_thresholds_by_chip_type,
                 skip_first_counters_iteration=skip_first_counters_iteration,
                 samples_params_dict=(samples_params_dict

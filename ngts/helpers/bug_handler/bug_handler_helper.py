@@ -307,11 +307,20 @@ def bug_handler_wrapper_err_msg(conf_path: str, redmine_project: str, branch: st
 
 
 def _collect_tech_support_for_ticket(bug_handler_params):
-    """Collect techsupport and enforce Redmine size limits. Raises on failure."""
+    """
+    Collect techsupport once per DUT/test and reuse it for every error group, enforcing Redmine size limits.
+    All error groups are taken from syslog before the bug handler starts, so the first dump already covers them.
+    Raises on failure.
+    """
+    if cached_tar_file_path_list := bug_handler_params.get("tech_support_files"):
+        logger.info(f"Reusing techsupport collected earlier in this run: {cached_tar_file_path_list}")
+        return cached_tar_file_path_list
     tar_file_path_list = get_tech_support_from_switch(bug_handler_params)
     # Note: Executed commands are now included directly in the ticket description via get_nvue_additional_info
     # No longer attaching the commands file separately
-    return [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
+    tar_file_path_list = [handle_file_size_exceedance(tar_file_path) for tar_file_path in tar_file_path_list]
+    bug_handler_params["tech_support_files"] = tar_file_path_list
+    return tar_file_path_list
 
 
 def _upload_tech_support_attachments(redmine_project, ticket_id, tar_file_path_list):
@@ -380,11 +389,14 @@ def run_err_msg_bug_handler_tool(conf_path: str, redmine_project: str, branch: s
                 if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_UPDATE:
                     bug_handler_file_result["status"] = "done"
 
-        if is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
+        # Collect before the real run only for a new ticket; for an update the real run may still skip it
+        # (e.g. ticket updated in the last 8 hours), so the dump is collected after the real run if needed.
+        if bug_handler_file_result["action"] == BugHandlerConst.BUG_HANDLER_DECISION_CREATE and \
+                is_attachment_needed(bug_handler_file_result, update_only, bug_handler_no_action, yaml_parsed_file):
             try:
                 tar_file_path_list = _collect_tech_support_for_ticket(bug_handler_params)
             except Exception as e:
-                err_msg = f"Techsupport collection failed; refusing to open/update ticket: {e}"
+                err_msg = f"Techsupport collection failed; refusing to open ticket: {e}"
                 logger.error(err_msg)
                 raise RuntimeError(err_msg) from e
 

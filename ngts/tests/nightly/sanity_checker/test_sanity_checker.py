@@ -8,11 +8,17 @@ import json
 import shlex
 import subprocess
 
-from retry.api import retry
+from retry.api import retry, retry_call
 from ngts.cli_util.cli_parsers import generic_sonic_output_parser
+from ngts.helpers.json_file_helper import extract_fw_data, normalize_firmware_chassis_name
+from ngts.constants.constants import MarsConstants
+from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.helpers.secure_boot_helper import SonicSecureBootHelper
+from ngts.helpers.shared_fanout_helper import (
+    is_shared_fanout, software_control_enabled, software_control_warning,
+)
 from ngts.tests.conftest import get_dut_loopbacks
-from ngts.constants.constants import FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE, CliType
+from ngts.constants.constants import FILE_INCLUDE_FAILED_SANITY_CHECKER_CASE
 from ngts.tests.nightly.sanity_checker.analyze_sanity_checker_result_and_take_action import write_failed_sanity_checker_cases_to_file
 from ngts.tools.sysdumps import copy_dump_file
 from tests.common.helpers.firmware_helper import (
@@ -30,7 +36,12 @@ logger = logging.getLogger()
 
 POSSIBLE_CPLD_LIST = ['CPLD1', 'CPLD2', 'CPLD3', 'CPLD4']
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-FANOUTS_TO_SKIP = ["r-moose-06"]
+
+BIOS_RESTORE_SKIP_HOSTS = {
+    'r-bobcat-01',  # BIOS restore fails on this host, remove when the setup is fixed.
+    'slm-174',  # BIOS update fails on this host.
+}
+BIOS_INSTALL_REBOOT_TIMEOUT = 900
 
 # Component version check constants
 COMPONENT_SCRIPT_NAME = "get_component_versions.py"
@@ -101,24 +112,14 @@ def enable_and_disable_fanout_lldp(request, engines, topology_obj, interfaces):
     :param topology_obj: topology object fixture
     """
 
-    def get_hostname(topology_obj, engine):
-        """Get hostname depending on CLI type."""
-        fanout_cli_type = topology_obj.players['fanout']['attributes'].noga_query_data['attributes']['Topology Conn.']['CLI_TYPE']
-        if fanout_cli_type == CliType.SONIC:
-            return engine.run_cmd("hostname").strip()
-        elif fanout_cli_type == CliType.MLNX_OS:
-            show_hosts_output = engine.run_cmd("show hosts")
-            hostname_match = re.search(r"Hostname\s*:\s*(\S+)", show_hosts_output)
-            return hostname_match.group(1) if hostname_match else ""
-        return
-
-    def should_skip_fanout(topology_obj, engine):
+    def should_skip_fanout(topology_obj, player_alias):
         """Check if fanout should be skipped (shared resource)"""
-        hostname = get_hostname(topology_obj, engine)
-        if hostname in FANOUTS_TO_SKIP:
-            logger.info(f"Skipping LLDP enable/disable on shared fanout {hostname}")
-            return True
-        return False
+        player = topology_obj.players.get(player_alias)
+        if not is_shared_fanout(player):
+            return False
+        hostname = player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
+        logger.info(f"Skipping LLDP enable/disable on shared fanout {hostname}")
+        return True
 
     def enable_lldp(engine):
         logger.info(f"enable lldp on {engine.ip}")
@@ -136,13 +137,13 @@ def enable_and_disable_fanout_lldp(request, engines, topology_obj, interfaces):
             engine.run_cmd("docker container stop lldp")
             engine.run_cmd("docker container rm lldp")
 
-    fanout_skipped = should_skip_fanout(topology_obj, engines.fanout)
+    fanout_skipped = should_skip_fanout(topology_obj, "fanout")
     fanout_b_skipped = False
 
     if not fanout_skipped:
         enable_lldp(engines.fanout)
     if 'fanout_b' in engines:
-        fanout_b_skipped = should_skip_fanout(topology_obj, engines.fanout_b)
+        fanout_b_skipped = should_skip_fanout(topology_obj, "fanout-b")
         if not fanout_b_skipped:
             enable_lldp(engines.fanout_b)
 
@@ -225,6 +226,130 @@ def test_cpld_version_check(topology_obj, engines, platform_params, cli_objects,
     write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
 
 
+@pytest.mark.sanity_checker_common
+def test_bios_version_check(topology_obj, engines, platform_params, cli_objects,
+                            request, is_in_deploy_image_flow, sonic_topo):
+    """
+    Validate that the BIOS version on the DUT matches the target version defined in firmware.json.
+    If there is a mismatch, restore BIOS via fwutil install and wait for the automatic cold reboot.
+    """
+    if "dpu" in sonic_topo:
+        pytest.skip("DPU platform does not support this case")
+
+    hostname = platform_params.get('host_name', '')
+    if hostname in BIOS_RESTORE_SKIP_HOSTS:
+        pytest.skip(f"Host {hostname} is in BIOS restore skip list, skipping BIOS version check")
+
+    is_test_failed = False
+
+    with allure.step('Getting target BIOS version from firmware.json'):
+        try:
+            fw_pkg_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)).split("ngts")[0],
+                MarsConstants.UPDATED_FW_TAR_PATH
+            )
+            fw_data = extract_fw_data(fw_pkg_path)
+            chassis = normalize_firmware_chassis_name(platform_params.filtered_platform)
+            chassis_data = fw_data.get('chassis', {}).get(chassis, {})
+            component = dict(chassis_data.get('component', {}))
+            if 'host' in fw_data and hostname in fw_data['host']:
+                for comp_type in list(fw_data['host'][hostname]['component'].keys()):
+                    component[comp_type] = fw_data['host'][hostname]['component'][comp_type]
+            bios_revisions = component.get('BIOS')
+            if not bios_revisions:
+                err_msg = f"BIOS component not found in firmware.json for chassis {chassis}"
+                assert_failure_or_just_print_err(err_msg, is_in_deploy_image_flow)
+                is_test_failed = True
+                write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
+                return
+            target_version = bios_revisions[0]['version']
+            target_firmware_url = bios_revisions[0]['firmware']
+            logger.info(f"Target BIOS version for chassis {chassis}: {target_version}")
+        except Exception as e:
+            err_msg = f"Failed to get BIOS data from firmware.json: {e}"
+            assert_failure_or_just_print_err(err_msg, is_in_deploy_image_flow)
+            is_test_failed = True
+            write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
+            return
+
+    with allure.step('Getting current BIOS version from DUT'):
+        component_versions_dict = get_info_about_current_components_version_dict(engines.dut)
+        current_bios = component_versions_dict.get('BIOS')
+        logger.info(f"Current BIOS: {current_bios}, Target BIOS: {target_version}")
+
+    if current_bios == target_version:
+        logger.info("BIOS version matches target. No restore needed.")
+        write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
+        return
+
+    with allure.step(f'BIOS version mismatch detected: current={current_bios}, target={target_version}'):
+        if is_in_deploy_image_flow:
+            logger.error(f"BIOS version {current_bios} does not match target {target_version}")
+            is_test_failed = True
+        else:
+            try:
+                dut_cli = topology_obj.players['dut']['cli']
+
+                with allure.step('Verify dockers are up before BIOS install'):
+                    cli_objects.dut.general.verify_dockers_are_up()
+
+                fw_filename = os.path.basename(target_firmware_url.rstrip('/'))
+                local_fw_path = f'/tmp/{fw_filename}'
+                dut_fw_path = f'/tmp/{fw_filename}'
+
+                with allure.step(f'Download BIOS firmware from {target_firmware_url}'):
+                    try:
+                        logger.info(f"Downloading BIOS firmware to NGTS:{local_fw_path}")
+                        subprocess.run(
+                            ['wget', '--timeout=60', '--continue', '-O', local_fw_path, target_firmware_url],
+                            check=True)
+                        logger.info(f"Copying BIOS firmware from NGTS:{local_fw_path} to DUT:{dut_fw_path}")
+                        engines.dut.copy_file(source_file=local_fw_path, dest_file=fw_filename,
+                                              file_system='/tmp/', direction='put')
+                    finally:
+                        if os.path.exists(local_fw_path):
+                            os.remove(local_fw_path)
+
+                with allure.step(f'Install BIOS via fwutil (will trigger automatic cold reboot)'):
+                    install_cmd = f'sudo fwutil install chassis component BIOS fw {dut_fw_path} -y'
+                    logger.info(f"Running: {install_cmd}")
+                    engines.dut.engine.send_config_set([install_cmd], exit_config_mode=False, cmd_verify=False)
+
+                port_check_delay = 10
+                port_check_tries = BIOS_INSTALL_REBOOT_TIMEOUT // port_check_delay
+
+                with allure.step(f'Wait for switch shutdown (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)'):
+                    check_port_status_till_alive(False, engines.dut.ip, engines.dut.ssh_port)
+
+                with allure.step('Disconnect DUT'):
+                    engines.dut.disconnect()
+
+                with allure.step(f'Wait for switch bring-up (max {BIOS_INSTALL_REBOOT_TIMEOUT}s)'):
+                    check_port_status_till_alive(True, engines.dut.ip, engines.dut.ssh_port,
+                                                 tries=port_check_tries, delay=port_check_delay)
+
+                with allure.step('Wait for CLI to be ready'):
+                    retry_call(engines.dut.run_cmd, fargs=[""], tries=80, delay=2, logger=logger)
+
+                with allure.step('Verify dockers and ports are up after BIOS restore'):
+                    cli_objects.dut.general.verify_dockers_are_up()
+                    check_port_oper_up_on_admin_up(dut_cli)
+
+                with allure.step(f'Verify BIOS version is now {target_version}'):
+                    component_versions_dict = get_info_about_current_components_version_dict(engines.dut)
+                    new_bios = component_versions_dict.get('BIOS')
+                    assert new_bios == target_version, \
+                        f"BIOS version after restore is {new_bios}, expected {target_version}"
+                    logger.info(f"BIOS successfully restored to {target_version}")
+
+            except Exception as err:
+                is_test_failed = True
+                err_msg = f"Failed to restore BIOS: {err}"
+                assert_failure_or_just_print_err(err_msg, is_in_deploy_image_flow)
+
+    write_failed_case_name(is_test_failed, request.node.name, is_in_deploy_image_flow)
+
+
 @pytest.mark.sanity_checker_airspin
 def test_export_sonic_mgmt_location_env_var():
     """
@@ -260,6 +385,16 @@ def test_device_asic_check(engines, platform_params):
     assert pci_device_name, "device asic is not up"
 
 
+@pytest.mark.sanity_checker_community
+def test_shared_fanout_software_control_check(topology_obj):
+    hostnames = []
+    for alias in ("fanout", "fanout-b"):
+        player = topology_obj.players.get(alias)
+        if is_shared_fanout(player) and software_control_enabled(player):
+            hostnames.append(player["attributes"].noga_query_data["attributes"]["Common"]["Name"])
+    assert not hostnames, "\n".join(software_control_warning(hostname) for hostname in hostnames)
+
+
 @pytest.mark.flaky(reruns=2, reruns_delay=10)
 @pytest.mark.sanity_checker_community
 def test_cable_connection_between_dut_and_fanout_check(engines, topology_obj, request, enable_and_disable_fanout_lldp):
@@ -272,14 +407,14 @@ def test_cable_connection_between_dut_and_fanout_check(engines, topology_obj, re
 
     with allure.step("Check cable connection between dut a and fanout a"):
         logger.info("Check cable connection between dut a and fanout a")
-        check_one_dut_to_fanout_cable_connection(cli_object_a, dut_a)
+        check_one_dut_to_fanout_cable_connection(cli_object_a, dut_a, topology_obj)
 
     if "dual" in request.config.getoption("--setup_name"):
         cli_object_a = topology_obj.players['dut-b']['cli']
         dut_b = engines.dut_b
         with allure.step("Check cable connection between dut b and fanout b"):
             logger.info("Check cable connection between dut b and fanout b")
-            check_one_dut_to_fanout_cable_connection(cli_object_a, dut_b)
+            check_one_dut_to_fanout_cable_connection(cli_object_a, dut_b, topology_obj)
 
 
 @pytest.mark.flaky(reruns=30, reruns_delay=4)
@@ -476,7 +611,7 @@ def get_setup_dir_name(dut_name):
     return f"{dut_name}_setup"
 
 
-def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine):
+def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine, topology_obj):
     dut_name = dut_engine.run_cmd("hostname")
     hwsku = cli_object.chassis.get_platform_hwsku()
     setup_dir_name = get_setup_dir_name(dut_name)
@@ -488,11 +623,15 @@ def check_one_dut_to_fanout_cable_connection(cli_object, dut_engine):
     interface_status_dict = cli_object.interface.parse_interfaces_status()
     logger.info(f"interface_status_dict:\n {interface_status_dict}")
 
+    shared_fanouts = [player["attributes"].noga_query_data["attributes"]["Common"]["Name"]
+                      for player in (topology_obj.players.get("fanout"), topology_obj.players.get("fanout-b"))
+                      if is_shared_fanout(player)]
+
     map_dut_oper_up_interface_and_fanout_interface = {}
     for one_dut_fanout_link in dut_fanout_link_data:
         if one_dut_fanout_link["StartDevice"] != dut_name:
             continue
-        if one_dut_fanout_link.get("EndDevice") in FANOUTS_TO_SKIP:
+        if one_dut_fanout_link.get("EndDevice") in shared_fanouts:
             logger.info(f"Skipping port {one_dut_fanout_link['StartPort']} connected to {one_dut_fanout_link['EndDevice']}")
             continue
         dut_port = one_dut_fanout_link["StartPort"]
@@ -599,7 +738,7 @@ def parse_readme_versions(sonic_image):
     :param sonic_image: the current sonic image deployed on the dut
     :return: A dictionary, stating for each component what is the readme version of it, example - {"SDK", "4.6.2202"}
     """
-    readme_path = resolve_sonic_image_readme_path(sonic_image)
+    readme_path = resolve_sonic_image_readme_path(sonic_image, ci_build_fallback=True)
     if not readme_path:
         raise Exception(
             f"Sonic image path: /auto/sw_system_release/sonic/{sonic_image}/dev/README "

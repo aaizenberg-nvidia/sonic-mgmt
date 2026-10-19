@@ -114,6 +114,7 @@ class ReportRenderer:
             "In the NvidiaTestData DB the versions are: {}".format(
                 report.request.version
             ),
+            "Excel path on NFS: {}".format(report.request.excel_path),
             "",
             "Coverage: {}{}".format(
                 _percent(report.workbook.coverage)
@@ -218,7 +219,8 @@ class ReportRenderer:
             "for the image hash {}<br>"
             "sonic-buildimage branch: {}<br>"
             "sonic-mgmt public hash ({}): {}<br>"
-            "In the NvidiaTestData DB the versions are: {}</p>".format(
+            "In the NvidiaTestData DB the versions are: {}<br>"
+            "Excel path on NFS: {}</p>".format(
                 _bold_value(
                     _image_public_hash(report)
                 ),
@@ -226,6 +228,7 @@ class ReportRenderer:
                 _bold_value(_release_train(report.request.version)),
                 _bold_value(report.git.public_hash if report.git else ""),
                 _bold_value(report.request.version),
+                _bold_value(report.request.excel_path),
             ),
         ]
         if report.errors:

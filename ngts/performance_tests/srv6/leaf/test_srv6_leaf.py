@@ -94,9 +94,12 @@ class TestSRv6Leaf(TestSRv6Base):
         with allure.step(f"Set test correct allure title with {self.ip} parameter"):
             test_name = get_perf_test_name(request)
             num_of_ports = MRCConsts.UPSTREAM_DOWNSTREAM_NUM_OF_PORTS_BY_CHIP_TYPE[self.chip_type]
+            max_ports_per_lane_group = (MRCConsts.MAX_PORTS_PER_LANE_GROUP
+                                        if is_min_packet_size and not isinstance(self.cli_object, NvueCli) else None)
             upstream, downstream, port_group_df = get_upstream_downstream_port_group_df(self.players, upstream_ports_num=num_of_ports,
                                                                                         downstream_ports_num=num_of_ports,
-                                                                                        sequential=is_drop_over_max)
+                                                                                        sequential=is_drop_over_max,
+                                                                                        max_ports_per_lane_group=max_ports_per_lane_group)
             self.cli_object.performance.update_port_group_df_on_dut(port_group_df)
             add_test_mongo_metadata(test_name, {MongoDbConsts.CONF_NAME: "bisection",
                                                 MongoDbConsts.TEST_WORKLOAD: workload,
@@ -113,6 +116,11 @@ class TestSRv6Leaf(TestSRv6Base):
                 self.cli_object.performance.configure_dummy_acls(
                     self.conf_args["template_path"],
                     dut_ports, drop_over_max_config['num_dummy_acls'])
+
+        with allure.step("Clear counters"):
+            self.cli_object.interface.clear_counters_by_force()
+            self.cli_object.interface.clear_counters()
+            self.cli_object.interface.clear_queue_counters()
 
         with allure.step(f"Run bisection traffic pattern on {len(upstream)} upstream ports <-> {len(downstream)} downstream ports"):
             create_workload_stream = get_workload_method(workload)
@@ -151,6 +159,8 @@ class TestSRv6Leaf(TestSRv6Base):
                 tc_occ_reference_offset=tc_occ_reference_offset,
                 validate_pg_total_occ=True)
             bw_threshold = self.get_bisection_bw_threshold() if not is_drop_over_max else None
+            samples_params_dict = PerfConsts.SAMPLES_PARAMS.copy()
+            samples_params_dict[PerfConsts.CLEAR_COUNTERS_ENV_VAR] = "False"
             config = ValidationConfig(players=self.players, test_name=test_name, scenario=self.scenario,
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
@@ -159,6 +169,7 @@ class TestSRv6Leaf(TestSRv6Base):
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       run_validate_counters=not is_drop_over_max,
                                       run_validate_no_drops_on_tg_ports=not is_drop_over_max,
+                                      samples_params_dict=samples_params_dict,
                                       additional_validations=additional_validations)
             try:
                 run_validation(config)

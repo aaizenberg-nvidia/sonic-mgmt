@@ -16,6 +16,23 @@ from ngts.helpers.performance.traffic_helpers import (create_json_traffic_file, 
 logger = logging.getLogger()
 TESTS_SCENARIO = "alibaba_performance"
 
+# PWS stream configurations: (name_suffix, num_packets, packet_size)
+PWS_STREAM_CONFIGS = [
+    ("RoCE_ack", 19, 100),
+    ("RTT_probe", 19, 200),
+    ("RTT_probe_response", 20, 200),
+    ("RoCE_data_", 42, PerfConsts.PACKET_SIZE_LIST[0])
+]
+# On SPC6 the TG connected ports drop on ingress once small packets exceed ~25-37.5% of the PWS packets,
+# regardless of PG headroom, so the SPC6 mix keeps them at ~21%.
+# Small-packet counts must stay >= 2 so they survive the split-4 num_packets halving.
+PWS_STREAM_CONFIGS_SPC6 = [
+    ("RoCE_ack", 3, 100),
+    ("RTT_probe", 3, 200),
+    ("RTT_probe_response", 3, 200),
+    ("RoCE_data_", 33, PerfConsts.PACKET_SIZE_LIST[0])
+]
+
 
 def get_alibaba_leaf_traffic(players, conf_args, template_suite="traffic_packets_json_files",
                              incremental_dip_num_packets=None):
@@ -240,13 +257,7 @@ def get_spine_2_packet_types_traffic(spine_tg, traffic_parameters, conf_args, js
 
     ports = copy.deepcopy(traffic_parameters["ports"])
 
-    # Define stream configurations: (name_suffix, num_packets, packet_size)
-    stream_configs = [
-        ("RoCE_ack", 19, 100),
-        ("RTT_probe", 19, 200),
-        ("RTT_probe_response", 20, 200),
-        ("RoCE_data_", 42, PerfConsts.PACKET_SIZE_LIST[0])
-    ]
+    stream_configs = PWS_STREAM_CONFIGS_SPC6 if conf_args.get("chip_type") == "SPC6" else PWS_STREAM_CONFIGS
 
     split_num = conf_args['split_right'] if spine_tg == PerfConsts.RIGHT_TG_ALIAS else conf_args['split_left']
     num_packets_adjust = (1.0 / split_num) * 2

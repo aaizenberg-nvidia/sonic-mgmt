@@ -34,6 +34,7 @@ NETWORK_NAME = "containers_network"
 GET_NETWORK_CMD = "docker network ls | grep '{}'".format(NETWORK_NAME)
 SONIC_MGMT_SSH_PORT = 2222
 SONIC_MGMT_RPYC_PORT = 18812
+OTEL_PORTS = [4317, 4318, 15317]
 CREATE_CONTAINER_MAX_TRIES = 10
 NVOS = "NVOS"
 SONIC = "SONIC"
@@ -101,7 +102,8 @@ def inspect_container(conn, image_name, image_tag, container_name):
         "container_exists": None,
         "container_running": None,
         "container_matches_image": None,
-        "image_exists": None
+        "image_exists": None,
+        "published_ports": []
     }
 
     res["container_exists"] = conn.run("docker ps -a -f name=%s$ --format '{{.Names}}'" % container_name).\
@@ -115,6 +117,7 @@ def inspect_container(conn, image_name, image_tag, container_name):
         container_info = json.loads(conn.run("docker inspect {}".format(container_name)).stdout.strip())
         try:
             res["container_running"] = container_info[0]["State"]["Running"]
+            res["published_ports"] = list((container_info[0]["HostConfig"].get("PortBindings") or {}).keys())
 
             if res["image_exists"]:
                 res["container_matches_image"] = image_id == container_info[0]["Image"]
@@ -241,6 +244,8 @@ def create_and_start_container(conn, image_name, image_tag, container_name, mac_
     )
     if air_setup:
         cmd += " -p {}:{} -p {}:{}".format(SONIC_MGMT_SSH_PORT, 22, SONIC_MGMT_RPYC_PORT, 18812)
+        if setup_type == NVOS:
+            cmd += "".join(" -p {0}:{0}".format(port) for port in OTEL_PORTS)
     else:
         cmd += " --network=containers_network"
     cmd += " {}:{} /bin/bash".format(image_name, image_tag)
@@ -514,6 +519,12 @@ def main():
         logger.error("    curl -X GET http://{}/v2/{}/tags/list".format(registry_url, docker_image_name))
         sys.exit(1)
     delete_container_required = args.delete_container
+    if args.air_setup and get_setup_type(args.topo) == NVOS and inspect_res["container_exists"]:
+        missing_ports = [port for port in OTEL_PORTS
+                         if "{}/tcp".format(port) not in inspect_res["published_ports"]]
+        if missing_ports:
+            logger.info("Container {} does not publish ports {}, re-creating it".format(container_name, missing_ports))
+            delete_container_required = True
     if not delete_container_required:
         if inspect_res["container_matches_image"]:
             if inspect_res["container_running"]:

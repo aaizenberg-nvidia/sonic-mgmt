@@ -9,7 +9,6 @@ import ngts.tools.test_utils.allure_utils as allure
 from ngts.nvos_constants.constants_nvos import ConfState, TelemetryConsts
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
 from ngts.tests_nvos.system.telemetry.otel.cumulus.constants import CumulusOtelConst
-from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.telemetry.otel.cumulus.data_collection import (
     ensure_asic_monitor_running,
@@ -25,6 +24,7 @@ from ngts.tests_nvos.system.telemetry.otel.cumulus.helpers import (
     _enable_stats_group_simple_export,
     _enable_stats_group_software_stats_systemd,
     _stats_group_subtree,
+    apply_staged_candidate,
     enable_cumulus_lab_interface_histogram,
 )
 from ngts.tests_nvos.system.telemetry.otel.helpers import (
@@ -50,9 +50,13 @@ _STATS_GROUP = CumulusOtelConst.SPLIT_PIPELINE_STATS_GROUP_ID
 
 
 def _nv_apply(dut) -> None:
-    NvueGeneralCli.apply_config(
-        dut, ask_for_confirmation=True, verify_execution=True
-    )
+    """Apply the candidate staged by the component model, then let services settle.
+
+    Histogram and stats-group sets go through ``BaseComponent.set``, which follows
+    ``TestToolkit.tested_api``. Applying with raw ``nv config apply`` would commit
+    the NVUE candidate and leave an OpenAPI revision unapplied.
+    """
+    apply_staged_candidate(dut)
     time.sleep(10)
 
 

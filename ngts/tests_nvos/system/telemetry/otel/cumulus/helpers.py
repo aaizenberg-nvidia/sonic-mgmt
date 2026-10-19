@@ -6,8 +6,10 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import pytest
 
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.nvos_constants.constants_nvos import ConfState, TelemetryConsts
+from ngts.nvos_constants.constants_nvos import ApiType, ConfState, TelemetryConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.infra.BaseComponent import BaseComponent
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.system.System import System
@@ -170,6 +172,63 @@ def _configure_stats_families(
 def _telemetry_subtree(system: System, path: str) -> BaseComponent:
     """``BaseComponent`` under ``system telemetry`` for NVUE paths not modeled in ``Telemetry.py``."""
     return BaseComponent(system.telemetry, path=path)
+
+
+def apply_staged_candidate(dut, *, verify_execution: bool = True) -> None:
+    """Commit the staged candidate on the API the suite is running.
+
+    ``nv config apply`` always commits the NVUE candidate. Sets that went through
+    OpenAPI live in a different revision, so a raw apply would commit the wrong
+    one (or none). ``TestToolkit.GeneralApi`` dispatches to NVUE or OpenAPI.
+    """
+    TestToolkit.GeneralApi[TestToolkit.tested_api].apply_config(
+        dut, ask_for_confirmation=True, verify_execution=verify_execution
+    )
+
+
+def nvue_auto_confirm() -> str:
+    """``-y`` for NVUE commands that prompt. OpenAPI has no confirm flag."""
+    return "-y" if TestToolkit.tested_api == ApiType.NVUE else ""
+
+
+def nvue_quoted(value: str) -> str:
+    """Double-quote a multi-word value for NVUE. OpenAPI ``set`` strips the quotes."""
+    text = str(value)
+    if any(char.isspace() for char in text):
+        return f'"{text}"'
+    return text
+
+
+def cli_token_for_api(value: str) -> str:
+    """Shell-quote ``value`` on NVUE. OpenAPI receives the raw token."""
+    import shlex
+
+    if TestToolkit.tested_api == ApiType.NVUE:
+        return shlex.quote(value)
+    return value
+
+
+def stage_telemetry_value(system: System, dut, path: str, name: str, value) -> None:
+    """Stage one ``nv set system telemetry <path> <name> <value>`` without applying."""
+    _telemetry_subtree(system, path).set(name, value, dut_engine=dut).verify_result()
+
+
+def stage_interface_histogram_member(dut, iface: str, kind: str, leaf: str, member) -> None:
+    """Stage ``nv set interface <iface> telemetry histogram <kind> <leaf> <member>``."""
+    BaseComponent(
+        Interface(None, port_name=iface),
+        path=f"/telemetry/histogram/{kind}/{leaf}",
+    ).set(str(member), "", dut_engine=dut).verify_result()
+
+
+def stage_interface_telemetry_label(dut, iface: str, label_id: str, description: str) -> None:
+    """Stage ``nv set interface <iface> telemetry label <id> description <text>``."""
+    BaseComponent(
+        Interface(None, port_name=iface),
+        path=f"/telemetry/label/{label_id}",
+    ).set(
+        TelemetryConsts.DESCRIPTION, nvue_quoted(description), dut_engine=dut
+    ).verify_result()
 
 
 def _enable_simple_telemetry_export(
@@ -717,34 +776,22 @@ def enable_cumulus_lab_interface_histogram(dut, hostname: str) -> None:
     with allure.step(f"Enable interface histogram on {', '.join(ifaces)}"):
         for iface in ifaces:
             for pg in range(8):
-                dut.run_cmd(
-                    f"nv set interface {iface} telemetry histogram "
-                    f"ingress-buffer priority-group {pg}",
-                    validate=True,
+                stage_interface_histogram_member(
+                    dut, iface, "ingress-buffer", "priority-group", pg
                 )
             for tc in range(8):
-                dut.run_cmd(
-                    f"nv set interface {iface} telemetry histogram "
-                    f"egress-buffer traffic-class {tc}",
-                    validate=True,
+                stage_interface_histogram_member(
+                    dut, iface, "egress-buffer", "traffic-class", tc
                 )
-                dut.run_cmd(
-                    f"nv set interface {iface} telemetry histogram "
-                    f"latency traffic-class {tc}",
-                    validate=True,
+                stage_interface_histogram_member(
+                    dut, iface, "latency", "traffic-class", tc
                 )
             for counter_type in ("rx-byte", "crc"):
-                dut.run_cmd(
-                    f"nv set interface {iface} telemetry histogram "
-                    f"counter counter-type {counter_type}",
-                    validate=True,
+                stage_interface_histogram_member(
+                    dut, iface, "counter", "counter-type", counter_type
                 )
             for label_id, description in label_pairs:
-                dut.run_cmd(
-                    f"nv set interface {iface} telemetry label {label_id} "
-                    f'description "{description}"',
-                    validate=True,
-                )
+                stage_interface_telemetry_label(dut, iface, label_id, description)
 
 
 def apply_otel_mgmt_vrf_no_tls_telemetry_config(

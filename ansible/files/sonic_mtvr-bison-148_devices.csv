@@ -1,0 +1,4 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+mtvr-bison-148,10.245.21.148/22,Mellanox-SN5640-C512S2,DevSonic,,sonic
+pdu-10-245-2-17,10.245.2.17,Vertiv,Pdu,snmp,
+pdu-10-245-2-50,10.245.2.50,Vertiv,Pdu,snmp,

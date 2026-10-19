@@ -1,7 +1,28 @@
 import re
 import logging
+from functools import cache
+
+from devts.infra.tools.general_constants.air_constants import NvidiaAirConstants
+from devts.infra.tools.nvidia_air_tools.air import get_air_api_object, get_project_from_simulation_name
+from devts.infra.tools.nvidia_air_tools.air_metadata import SimulationMetadata, SimulationMetadataHandler
 
 logger = logging.getLogger()
+
+
+@cache
+def is_air_external_ips(setup_name):
+    """
+    True when an AIR setup is reached through external (port-forwarded) IPs - the rule devts uses to build the
+    topology: forced by FORCE_AIR_EXTERNAL_IPS, or the simulation's sonic-mgmt is not internal.
+    Cached: the answer holds for the whole session, so the AIR API is queried at most once per setup.
+    """
+    if 'air' not in setup_name:
+        return False
+    if NvidiaAirConstants.FORCE_AIR_EXTERNAL_IPS:
+        return True
+    air = get_air_api_object(get_project_from_simulation_name(setup_name))
+    simulation = next(air.simulations.list(name=setup_name))
+    return not SimulationMetadataHandler(simulation).get_field(SimulationMetadata.SONIC_MGMT_INTERNAL, False)
 
 
 def get_internal_ip_for_oob_server(oob_mgmt_server):

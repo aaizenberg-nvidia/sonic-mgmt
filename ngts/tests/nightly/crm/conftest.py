@@ -11,7 +11,7 @@ logger = logging.getLogger()
 
 
 @pytest.fixture(scope='module')
-def env(duthosts, topology_obj, setup_name, platform_params):
+def env(duthosts, topology_obj, platform_params):
     """ Fixture which contains DUT - engine and CLI objects """
 
     class Collector:
@@ -30,7 +30,7 @@ def env(duthosts, topology_obj, setup_name, platform_params):
     Collector.platform_params = platform_params
     Collector.MAX_CRM_UPDATE_TIME = 15
     Collector.APPLY_CFG_MAX_UPDATE_TIME = 30
-    if 'simx' in setup_name:
+    if 'simx' in platform_params.platform:
         Collector.MAX_CRM_UPDATE_TIME = 60
         Collector.APPLY_CFG_MAX_UPDATE_TIME = 90
     yield Collector

@@ -1,5 +1,6 @@
 import logging
 import os
+from collections import defaultdict
 
 import allure
 import pytest
@@ -10,6 +11,7 @@ from ngts.helpers.performance.performance_recovery import has_primary_test_failu
 from ngts.helpers.performance.performance_setup_helpers import (
     apply_test_configuration_guarded, restore_session_basic_configuration,
     save_session_base_configuration)
+from ngts.cli_wrappers.nvue.nvue_cli import NvueCli
 from ngts.cli_wrappers.nvue.nvue_performance_clis import get_srv6_dut_left_ports_num
 from ngts.performance_tests.srv6.utils.srv6_traffic_patterns import get_tg_bisection_traffic_params
 
@@ -36,7 +38,7 @@ def get_bisection_traffic(players, conf_args, traffic_type,
             address so the switch treats each packet as a unique flow.
     """
     traffic_jsons = {}
-    tg_src_dst_port_bisection_pairs_dict = sort_bisection_pairs_by_tg_alias(upstream_ports, downstream_ports)
+    tg_src_dst_port_bisection_pairs_dict = sort_bisection_pairs_by_tg_alias(players, upstream_ports, downstream_ports)
     for tg_alias, bisection_pairs in tg_src_dst_port_bisection_pairs_dict.items():
         get_tg_bisection_traffic_params(players, tg_alias, conf_args, traffic_type, template_suite, create_workload_stream,
                                         dut_interfaces_ipv6_configuration_dict, traffic_jsons, bisection_pairs,
@@ -47,17 +49,35 @@ def get_bisection_traffic(players, conf_args, traffic_type,
     return traffic_jsons
 
 
-def sort_bisection_pairs_by_tg_alias(upstream_ports, downstream_ports):
-    """Assign the caller's established left/right bisection pairs to each TG.
+def sort_bisection_pairs_by_tg_alias(players, upstream_ports, downstream_ports):
+    """Assign the bisection pairs to the TG that is cabled to each pair's source port.
 
-    The port lists are captured from DUT LLDP before traffic starts. Re-reading
-    DUT LLDP here races with convergence after mloops are removed and recreated
-    between traffic runs, which can produce an empty traffic JSON mapping.
+    NVUE selects upstream from the left ports and downstream from the right ports, so
+    the pairs are assigned directly; re-reading DUT LLDP here races with convergence
+    after mloops are recreated between traffic runs. Other OSes select from fixed port
+    lists that span both sides, so each pair is routed by the DUT's left/right ports.
+
+    Args:
+        players: Mapping of alias -> player dict; must contain a ``'dut'`` entry.
+        upstream_ports: Selected upstream DUT ports.
+        downstream_ports: Selected downstream DUT ports.
+
+    Returns:
+        dict: TG alias -> list of (source port, destination port) pairs.
     """
-    return {
-        PerfConsts.LEFT_TG_ALIAS: list(zip(upstream_ports, downstream_ports)),
-        PerfConsts.RIGHT_TG_ALIAS: list(zip(downstream_ports, upstream_ports)),
-    }
+    if isinstance(players['dut']['cli'], NvueCli):
+        return {
+            PerfConsts.LEFT_TG_ALIAS: list(zip(upstream_ports, downstream_ports)),
+            PerfConsts.RIGHT_TG_ALIAS: list(zip(downstream_ports, upstream_ports)),
+        }
+    ports = players['dut']['cli'].performance.get_right_left_ports_dict()
+    pairs_by_tg = defaultdict(list)
+    for pair in list(zip(upstream_ports, downstream_ports)) + list(zip(downstream_ports, upstream_ports)):
+        if pair[0] in ports["left_ports"]:
+            pairs_by_tg[PerfConsts.LEFT_TG_ALIAS].append(pair)
+        elif pair[0] in ports["right_ports"]:
+            pairs_by_tg[PerfConsts.RIGHT_TG_ALIAS].append(pair)
+    return pairs_by_tg
 
 
 def build_conf_args_base(chip_type, players):

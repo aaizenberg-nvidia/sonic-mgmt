@@ -4,6 +4,15 @@
     "deployment_configurations": {
       "OSFP_8X_100G": {
         "sff8024_identifier": "OSFP 8X Pluggable Transceiver"
+      },
+      "OSFP_2X_800G": {
+        "sff8024_identifier": "OSFP 8X Pluggable Transceiver"
+      },
+      "OSFP_2X_400G_1X_800G": {
+        "sff8024_identifier": "OSFP 8X Pluggable Transceiver"
+      },
+      "QSFP_2X_100G": {
+        "sff8024_identifier": "QSFP+ or later with CMIS"
       }
     }
   }

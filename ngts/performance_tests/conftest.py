@@ -37,6 +37,7 @@ from tests.common.plugins.allure_server import get_pytest_run_cmd, PYTEST_RUN_CM
 logger = logging.getLogger()
 
 PLAYERS_CMD_LOG_PREFIX = "players_commands"
+AR_EXTENDED_THRESHOLDS_SKIP_REASON = "--ar_extended_thresholds is supported only on SPC6"
 _players_cmd_log_run_timestamp = None
 
 
@@ -59,6 +60,9 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when in ("setup", "call") and report.failed:
         record_performance_test_failure(item.nodeid)
+    if (report.when == "setup" and report.skipped and
+            AR_EXTENDED_THRESHOLDS_SKIP_REASON in str(report.longrepr)):
+        allure.dynamic.title(f"{item.name} [ar_extended_thresholds]")
 
 
 def pytest_configure(config):
@@ -179,6 +183,18 @@ def init(request):
 @pytest.fixture(scope='session', autouse=True)
 def power_thresholds_by_chip_type(chip_type):
     return RailModel.asic_total_threshold(chip_type)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def skip_ar_extended_thresholds_on_non_spc6(pytestconfig, chip_type):
+    """Skip the performance tests when ``--ar_extended_thresholds`` is passed on a non-SPC6 DUT.
+
+    Args:
+        pytestconfig: pytest ``Config`` (provides the ``--ar_extended_thresholds`` option).
+        chip_type: Chip type of the DUT.
+    """
+    if pytestconfig.getoption("--ar_extended_thresholds", default=False) and chip_type != "SPC6":
+        pytest.skip(AR_EXTENDED_THRESHOLDS_SKIP_REASON)
 
 
 @pytest.fixture(scope="session")

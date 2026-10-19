@@ -23,7 +23,8 @@ def restore_default_port_group_df_after_test(players):
     restore_default_port_group_df_on_dut(players[PerfConsts.DUT_ALIAS]['cli'].performance)
 
 
-def get_upstream_downstream_port_group_df(players, upstream_ports_num, downstream_ports_num, sequential=False):
+def get_upstream_downstream_port_group_df(players, upstream_ports_num, downstream_ports_num, sequential=False,
+                                          max_ports_per_lane_group=None):
     """
     This function creates a port group dataframe for the upstream and downstream groups.
     The ports are selected consecutively from the left and right ports.
@@ -34,14 +35,18 @@ def get_upstream_downstream_port_group_df(players, upstream_ports_num, downstrea
         downstream_ports_num: number of ports in the downstream group
         sequential: if True, select the first N ports instead of random sampling.
             This ensures all 8 logical ports of each physical OSFP panel port are utilized.
+        max_ports_per_lane_group: if set (and not sequential), select ports in lane order with at most this many
+            ports per 4-lane group instead of random sampling. SONiC only.
     Returns:
         upstream: list of ports in the upstream group
         downstream: list of ports in the downstream group
         port_group_df: list of dictionaries containing the port and the port group name
     """
     port_group_df = []
+    lane_group_kwargs = {"max_ports_per_lane_group": max_ports_per_lane_group} if max_ports_per_lane_group else {}
     upstream, downstream = players['dut']['cli'].performance.get_upstream_downstream_ports_dict(upstream_ports_num, downstream_ports_num,
-                                                                                                sequential=sequential)
+                                                                                                sequential=sequential,
+                                                                                                **lane_group_kwargs)
     sdk_port_list_upstream = players['dut']['cli'].performance.get_sdk_ports(upstream)
     sdk_port_list_downstream = players['dut']['cli'].performance.get_sdk_ports(downstream)
     for port in sdk_port_list_upstream:

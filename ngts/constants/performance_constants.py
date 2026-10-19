@@ -14,11 +14,7 @@ logger = logging.getLogger()
 
 class ValidationConsts:
     IGNORE_COUNTER_LIST = "ignore_counter_list"
-    DEVIATION = "deviation"
-    DEVIATION_ABOVE_THRESHOLD = "deviationAboveThreshold"
     SPEED = "speed"
-    INSTANCE = "instance"
-    DUMP_GENERATION_TIME = "dumpGenerationTime"
     VALIDATION_KEY = "validation_key"
     PORT_GROUPS = "port_groups"
     # Metadata block of TrafficValidator.json. TrafficValidator fills the DUT-side
@@ -62,7 +58,6 @@ class ValidationConsts:
         PG_BUFFER_DATAFRAME: [OCC_AVG, OCC_99, OCC_MAX, MAX_WATERMARK]
     }
     COUNTERS_SAMPLES = "Counters_samples"
-    PERF_COUNTERS_SAMPLES = "perf_counters_samples"
     SAMPLES_PARAMS = "sample_params"
     COUNTERS_DATAFRAME = "counters_dataframe"
     BW_SAMPLES = "Bandwidth_samples"
@@ -75,13 +70,6 @@ class ValidationConsts:
     TX = 'tx'
     RX = 'rx'
     PORT = "port"
-    PERFORMANCE_COUNTERS_DATAFRAME = "performanceCountersDataframe"
-    PERFORMANCE_COUNTER_NAME = "performanceCounterName"
-    PERFORMANCE_COUNTER_VALUE = "performanceCounterValue"
-    SDK_GENERATION_TIME_WITH_PERF_COUNTERS = "sdkGenerationTimeWithPerfCounters"
-    SDK_GENERATION_TIME_WITHOUT_PERF_COUNTERS = "sdkGenerationTimeWithoutPerfCounters"
-    PERFORMANCE_COUNTER_EXPECTED_VALUE = "performanceCounterExpectedValue"
-    PORT_BW = "portBandwidth"
     QUEUE = "queue"
     ACL = "acl"
     OS_PORT_NAME = "osPortName"
@@ -123,11 +111,9 @@ class PerfConsts:
         "COUNTERS_SAMPLE_DELAY": 5,
         "CLEAR_COUNTERS": "True",
         "COLLECT_TC_LATENCY": "False",
-        "COLLECT_SDK_DUMP": "False",
         DISABLE_HFT_ENV_VAR: DISABLE_HFT,
     }
     COLLECT_TC_LATENCY_ENV_VAR = "COLLECT_TC_LATENCY"
-    COLLECT_SDK_DUMP_ENV_VAR = "COLLECT_SDK_DUMP"
     SENSORS_CMD_ENV_VAR = "SENSORS_CMD"
     DEFAULT_SENSORS_CMD = r"sensors *-i2c-5-*"
     SPC6_SENSORS_CMD = "sensors"
@@ -168,8 +154,7 @@ class PerfConsts:
     MED_AR_THRESHOLD_EXTENDED_SPC6 = 383
     HIGH_AR_THRESHOLD_EXTENDED_SPC6 = 567
     AR_EXTENDED_THRESHOLDS_SPC6 = (750, 933, 1117, 1300)
-    SDK_GENERATION_SECONDS_THRESHOLD = 30
-    PERF_COUNTERS_ALLOWED_DEVIATION = 2.5
+    ECMP_SIZE_MAX = 4096
     DEFAULT_FAIRNESS_THRESHOLD = 0.05
     DEFAULT_TC_OCC_FAIRNESS_THRESHOLD = 0.05
 
@@ -179,6 +164,8 @@ class PerfConsts:
     # Paths and Directories
 
     DVS_RUN_TEST_PATH = "/root/sys_sdk/sx_sdk_py_tests/tests/run_tests.py"
+    # The runner's per-invocation cable table runs mlxcables on every port (~10-18s) and is never consumed here
+    DVS_RUN_TEST_CMD = f"{DVS_RUN_TEST_PATH} --skip-cable-info"
     PORTS_JSON_FILENAME = "ports.json"
     PORTS_JSON_PATH = f"/{PORTS_JSON_FILENAME}"
     PERF_SYS_SDK_CHANGE_FILE = "/tmp/perf_sys_sdk_change"
@@ -683,6 +670,7 @@ class Cl_Consts:
         'Spectrum-6': ['swp65s0', 'swp65s1']
     }
     CL_HOME_DIR = "/home/cumulus"
+    CL_SDK_CLEAR_ALL_COUNTERS_FORCE_CMD = "sudo sx_api_port_counter_clear_all.py --force"
     CL_PYTHON_PATH = "/home/cumulus/sdk_env/bin/python3.11"
     CL_GA_IMAGE = "/auto/sw_system_project/NVOS_INFRA/cumulus_images/GA/5.10/cumulus-linux-mlx-amd64.bin.devsigned"
     COMMON_IP_PREFIX_LEFT = "130"
@@ -841,7 +829,6 @@ class SPCXRAConsts:
 
 
 class MongoDbConsts:
-    PERFORMANCE_COUNTERS_DATA = "performanceCountersData"
     PERF_MONGO_DB_FILENAME = "perf_res.db"
     PERF_MONGO_DB_RESULTS_PATH = os.path.join(PerfConsts.REQUIRMENTS_DIR, PERF_MONGO_DB_FILENAME)
     PORT_GROUP_NAME = "portGroupName"
@@ -1112,6 +1099,7 @@ class MRCConsts:
         "SPC5": 180,
         "SPC6": 180
     }
+    MAX_PORTS_PER_LANE_GROUP = 3
     VICTIM_PORTS_NUM = 90
     LEAF_ROUND_ROBIN_PORTS_NUM_BY_CHIP_TYPE = {
         "SPC4": {'group_size': 16, 'group_num': 8},
@@ -1304,7 +1292,7 @@ class MRCConsts:
     # Only SRv6 traffic has a measured minimum; a chip type or traffic type absent here is skipped by the test.
     MIN_PACKET_SIZE_BY_CHIP_TYPE = {
         "SPC5": {
-            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=462, mrc_num_packets=66, retransmit_num_packets=13),
+            TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=328, mrc_num_packets=90, retransmit_num_packets=22),
         },
         "SPC6": {
             TRAFFIC_TYPE_SRV6: MinPacketSizeConfig(packet_size=1496, mrc_num_packets=23, retransmit_num_packets=4),
@@ -1323,9 +1311,9 @@ class NoSrhPerfConsts:
     PACKET_SIZE_SWEEP_LIST = [370, 512, 1024, 2048, 4096]
 
     # Per-chip minimum packet size for the all-ports bisection scenario.
-    # SPC4/SPC5 (100G/lane) sustain line rate down to 370B; SPC6 (200G/lane)
-    # needs 1024B to sustain line rate on all-ports.
-    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 1024}
+    # SPC6 (200G/lane) needs 1024B to sustain line rate on all-ports.
+    ALL_PORTS_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 512, "SPC5": 512, "SPC6": 1024}
+    SINGLE_CAGE_MIN_PACKET_SIZE_BY_CHIP_TYPE = {"SPC4": 370, "SPC5": 370, "SPC6": 512}
 
     ENTROPY_HIGH = "high_entropy"
     ENTROPY_LOW = "low_entropy"
@@ -1348,11 +1336,34 @@ class NoSrhPerfConsts:
 
     NO_SRH_PACKETS_PER_DIP_SCALING_EXPONENT = 0.55
 
+    # Faster ports need more in-flight packets to reach line rate. Packets per DIP are also scaled by
+    # (port speed / port speed of the chip's lowest split) ** this exponent.
+    NO_SRH_PACKETS_PER_DIP_SPEED_EXPONENT = 0.6
+
+    # Packets per DIP at the chip's all-ports minimum packet size, by lanes per port. Overrides the formula
+    # above where it under-fills: SPC6's lowest split is already 200G, so the speed scaling gives 1x no boost.
+    NO_SRH_PACKETS_PER_DIP_BY_CHIP_AND_SPLIT = {"SPC6": {1: 3, 4: 10}}
+
+    # Keys are lanes per port; the largest key is the cage width in lanes.
+    # On Cumulus it sets ports per cage (cage width // lanes per port), so it must match the platform.
     SONIC_BREAKOUT_MODE_BY_CHIP_AND_SPLIT = {
-        "SPC4": {1: "4x100G", 2: "2x200G[100G]", 4: "1x400G"},
+        "SPC4": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x800G[400G]"},
         "SPC5": {1: "8x100G[50G]", 2: "4x200G[100G]", 4: "2x400G[200G]", 8: "1x400G"},
         "SPC6": {1: "8x200G[100G]", 2: "4x400G[200G]", 4: "2x800G[400G]", 8: "1x800G"},
     }
+
+    SPLIT_SHARING_SUPPORTED_CHIP_TYPES = ["SPC6"]
+    SPLIT_SHARING_SUPPORTED_PORT_SPLITS = [(1, 1)]
+    SINGLE_CAGE_PORTS_PER_SIDE = 2
+    SPLIT_SHARING_NUM_DUMMY_ACLS = 1
+    SPLIT_SHARING_SCRIPT_DIR = ("/root/sys_sdk/sx_sdk_py_tests/tests/"
+                                "multi_os_tests/srv6/split_sharing")
+    SPLIT_SHARING_ENABLE_SCRIPT = (f"{SPLIT_SHARING_SCRIPT_DIR}/"
+                                   "maglan_dcl_split_share_dump_1.sh")  # SpellCheck-ignoreLine
+    SPLIT_SHARING_DISABLE_SCRIPT = (f"{SPLIT_SHARING_SCRIPT_DIR}/"
+                                    "maglan_dcl_split_share_dump_0.sh")  # SpellCheck-ignoreLine
+    SPLIT_SHARING_ENABLED_MARKER = 1
+    SPLIT_SHARING_DISABLED_MARKER = 0
 
 
 class PowerConsts:

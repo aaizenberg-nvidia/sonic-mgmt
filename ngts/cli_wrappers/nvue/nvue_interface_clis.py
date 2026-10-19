@@ -213,6 +213,23 @@ class NvueInterfaceCli(SonicInterfaceCli):
     def clear_queue_counters(self):
         pass
 
+    def clear_counters_by_force(self, validate: bool = True) -> None:
+        """
+        Clears all port counters at the SDK level, running the SDK tool directly on the switch.
+
+        `nv action clear interface counters` does not reset the SDK counters that TrafficValidator reads,
+        so drops counted before traffic (e.g. loopback_filter during configuration) would otherwise
+        persist into the validation samples.
+
+        Args:
+            validate (bool): Verify the command succeeded.
+
+        Returns:
+            None
+        """
+        logging.info("Clearing all SDK port counters by force")
+        self.engine.run_cmd(Cl_Consts.CL_SDK_CLEAR_ALL_COUNTERS_FORCE_CMD, validate=validate)
+
     def get_sorted_ports_list(self, ports_list, breakout=4):
         return sorted(ports_list, key=lambda port: int(re.search(r'swp(\d+)s(\d+)', port).group(1)) * breakout + int(re.search(r'swp(\d+)s(\d+)', port).group(2)))
 

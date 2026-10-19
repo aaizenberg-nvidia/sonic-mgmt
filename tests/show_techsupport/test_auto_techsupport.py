@@ -4,9 +4,11 @@ import logging
 import dateutil.parser
 import random
 import copy
+import os
 import re
 from decimal import Decimal
 
+from tests.common.config_reload import config_reload
 from tests.common.errors import RunAnsibleModuleFail
 from tests.common.utilities import wait_until
 from tests.common.multibranch.cli import SonicCli
@@ -38,6 +40,9 @@ DEFAULT_SINCE = '2 days ago'
 
 KB_SIZE = 1000  # We use 1000 to have the same value as in shutil.disk_usage() method which used in SONiC code
 CMD_GET_AUTO_TECH_SUPPORT_HISTORY_REDIS_KEYS = 'sudo redis-cli --raw -n 6  KEYS AUTO_TECHSUPPORT*'
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'templates')
+SAI_CALL_TEMPLATE_FILE_PATH = os.path.join(TEMPLATES_DIR, 'sai_call_fail_config.j2')
+DUT_SAI_CALL_CONFIG_PATH = '/tmp/sai_call_fail_config.json'
 
 
 def cleanup(cleanup_list):
@@ -1357,6 +1362,118 @@ def create_core_file_generator_script(duthost):
     """
     duthost.shell('sudo echo \'sleep 10 & kill -6 $!\' > /etc/sonic/core_file_generator.sh')
     duthost.shell('sudo echo \'echo $?\' >> /etc/sonic/core_file_generator.sh')
+
+
+def get_random_physical_port_non_po_member(minigraph_facts):
+    """
+    Get physical port which is not PortChannel member
+    :param minigraph_facts: minigraph_facts(dict) object
+    :return: string, port name
+    """
+    po_members = []
+    test_port = None
+    for po_iface, po_data in list(minigraph_facts['minigraph_portchannels'].items()):
+        po_members += po_data['members']
+    all_ports = list(minigraph_facts['minigraph_ports'].keys())
+    non_po_ports = [port for port in all_ports if port not in po_members]
+    if non_po_ports:
+        test_port = random.choice(non_po_ports)
+    return test_port
+
+
+def get_port_vlan(minigraph_facts, port):
+    """
+    Get VLAN related to test port
+    :param minigraph_facts: minigraph_facts(dict) object
+    :param port: string, port name
+    :return: string with Vlan ID, or None
+    """
+    test_port_vlan = None
+    for vlan in minigraph_facts.get('minigraph_vlans', []):
+        if port in minigraph_facts['minigraph_vlans'][vlan]['members']:
+            test_port_vlan = vlan.split('Vlan')[1]  # Get string '1000' from 'Vlan1000
+            break
+
+    return test_port_vlan
+
+
+def get_port_ips(minigraph_facts, port):
+    """
+    Get IPs which are assigned to port
+    :param minigraph_facts: minigraph_facts(dict) object
+    :param port: string, port name
+    :return: list, example: [(ip, mask), (ip, mask)]
+    """
+    iface_ips_data = []
+    for iface_data in minigraph_facts.get('minigraph_interfaces', []):
+        if iface_data['attachto'] == port:
+            ip_addr = iface_data['addr']
+            ip_mask = iface_data['prefixlen']
+            iface_ips_data.append((ip_addr, ip_mask))
+
+    return iface_ips_data
+
+
+def remove_port_from_vlan(duthost, minigraph_facts, test_port):
+    """
+    Remove test port from VLAN
+    :param duthost: duthost object
+    :param minigraph_facts: minigraph_facts(dict) object
+    :param test_port: string, port name
+    """
+    test_port_vlan = get_port_vlan(minigraph_facts, test_port)
+    if test_port_vlan:
+        with allure.step('Remove interface: {} from VLAN: {}'.format(test_port, test_port_vlan)):
+            duthost.shell('sudo config vlan member del {} {}'.format(test_port_vlan, test_port))
+
+
+def remove_ips_from_port(duthost, minigraph_facts, test_port):
+    """
+    Remove IPs from test port
+    :param duthost: duthost object
+    :param minigraph_facts: minigraph_facts(dict) object
+    :param test_port: string, port name
+    """
+    test_port_ips = get_port_ips(minigraph_facts, test_port)
+    if test_port_ips:
+        with allure.step('Remove IP addresses from port: {}'.format(test_port)):
+            for ip_addr, ip_mask in test_port_ips:
+                duthost.shell('sudo config interface ip remove {} {}/{}'.format(test_port, ip_addr, ip_mask))
+
+
+def remove_acl_tables(duthost, failure_info):
+    """
+    Remove ACL tables which related to our test port
+    :param duthost: duthost object
+    :param failure_info: string with output which contains ACL tables
+    """
+    acl_tables_list = re.findall(r'ACL_TABLE\|(\w+)', failure_info)
+    for acl_table in acl_tables_list:
+        with allure.step('Remove ACL table: {}'.format(acl_table)):
+            duthost.shell('sudo config acl remove table {}'.format(acl_table))
+
+
+def add_po_member(duthost, po_name, test_port, minigraph_facts):
+    """
+    Add interface to PortChannel
+    :param duthost: duthost object
+    :param po_name: string, PortChannel iface name
+    :param test_port: string, port name
+    :param minigraph_facts: minigraph_facts(dict) object
+    :return:
+    """
+    add_po_member_cmd = 'sudo config portchannel member add {} {}'.format(po_name, test_port)
+
+    remove_port_from_vlan(duthost, minigraph_facts, test_port)
+    remove_ips_from_port(duthost, minigraph_facts, test_port)
+
+    po_member_add = duthost.shell(add_po_member_cmd, module_ignore_errors=True)
+    if po_member_add['failed']:
+        failure_info = po_member_add['stderr_lines'][-1]
+        if 'is already bound to following ACL_TABLES' in failure_info:
+            remove_acl_tables(duthost, failure_info)
+
+        duthost.shell(add_po_member_cmd)
 
 
 def get_files_info(duthost, validation_folder, file_pattern='sonic_dump_*.tar.gz'):

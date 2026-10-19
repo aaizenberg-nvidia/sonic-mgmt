@@ -275,6 +275,7 @@ def test_rtc_in_local_tz(engines, nv_command):
 @pytest.mark.system
 @pytest.mark.simx
 @pytest.mark.clock
+@pytest.mark.cumulus
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_set_system_invalid_timezone_ntp_off_error_flow(test_api, engines, system, valid_timezones, orig_timezone, ntp_off):
     """

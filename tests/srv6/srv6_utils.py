@@ -1,16 +1,51 @@
+import json
 import logging
+import random
+import re
+import string
 import time
+from collections import defaultdict
+import pytest
 import requests
 import ptf.packet as scapy
 import ptf.testutils as testutils
+
+from ptf.mask import Mask
+from ptf.testutils import simple_ipv6_sr_packet, verify_no_packet_any
+from scapy.all import Raw
+from scapy.layers.inet6 import IPv6, UDP
+from scapy.layers.l2 import Ether
 from tests.common.helpers.dut_utils import get_available_tech_support_files, get_new_techsupport_files_list, \
     extract_techsupport_tarball_file
 from tests.common.helpers.assertions import pytest_assert
-from tests.common.helpers.srv6_helper import SRv6, create_srv6_locator, create_srv6_sid, del_srv6_locator, del_srv6_sid
+from tests.common.portstat_utilities import parse_portstat
+from tests.common.utilities import wait_until
+from tests.common.mellanox_data import is_mellanox_device, get_chip_type
+from tests.common.plugins.allure_wrapper import allure_step_wrapper as allure
+from tests.common.helpers.srv6_helper import SRv6, create_srv6_locator, create_srv6_sid, del_srv6_locator, \
+    del_srv6_sid, is_bgp_route_synced
 
 logger = logging.getLogger(__name__)
 LOCATOR_NUM = 128
 ROUTE_BASE = '2001'
+
+# CRM refreshes its resource counters on this interval, in seconds
+CRM_DEFAULT_POLL_INTERVAL = 300
+CRM_FAST_POLL_INTERVAL = 10
+
+#
+# uN configuration used by the SRv6 data plane and warm reboot tests
+#
+UN_LOCATOR_NAME = 'loc1'
+UN_LOCATOR_PREFIX = 'fcbb:bbbb:1::'
+UN_SID_PREFIX = 'fcbb:bbbb:1::/48'
+UN_SID_APPL_DB_KEY = 'SRV6_MY_SID_TABLE:32:16:0:0:fcbb:bbbb:1::'
+# Destination address of the injected packets, it matches the uN SID above
+UN_SID_TRAFFIC_DST = 'fcbb:bbbb:1:2::'
+# Destination address of the packets once the uN behavior has been applied
+UN_EGRESS_DST = 'fcbb:bbbb:2::'
+UN_EGRESS_ROUTE = 'fcbb:bbbb:2::/48'
+SRV6_BLACKHOLE_ROUTE = 'fcbb:bbbb::/32'
 
 
 class MyLocators():
@@ -27,6 +62,18 @@ class MySIDs(MyLocators):
         [locator_name, sid, SRv6.uN, 'default']
         for locator_name, sid, _ in MyLocators.my_locator_list
     ]
+
+
+# Chips known not to support SRv6 warm-reboot.
+SRV6_WARM_REBOOT_UNSUPPORTED_CHIPS = ("spectrum6",)
+
+
+def is_srv6_warm_reboot_support(duthost):
+    """Return True for Mellanox chips not in the unsupported list; non-Mellanox is not supported."""
+    if not is_mellanox_device(duthost):
+        return False
+    chip_type = get_chip_type(duthost)
+    return chip_type not in SRV6_WARM_REBOOT_UNSUPPORTED_CHIPS
 
 
 def create_all_srv6_locators_and_sids(duthost, decap_dscp_mode):
@@ -252,11 +299,30 @@ def runSendReceive(pkt, src_port, exp_pkt, dst_ports, pkt_expected, ptfadapter):
     ptfadapter.dataplane.flush()
     ptfadapter.dataplane.set_qlen(1000000)
     # Send the packet and poll on destination ports
-    testutils.send(ptfadapter, src_port, pkt, 1)
+    testutils.send(ptfadapter, ptfadapter.dataplane.port_to_tuple(src_port), pkt, 1)
     logger.debug("Sent packet: " + pkt.summary())
 
     time.sleep(1)
-    (index, rcv_pkt) = testutils.verify_packet_any_port(ptfadapter, exp_pkt, dst_ports, timeout=60)
+    expected_ports = [ptfadapter.dataplane.port_to_tuple(port) for port in dst_ports]
+    devices = sorted({device for device, port in expected_ports})
+    pytest_assert(devices, "No destination PTF ports were supplied")
+    deadline = time.monotonic() + 60
+    while True:
+        for device in devices:
+            remaining = max(0, deadline - time.monotonic())
+            timeout = min(1, remaining) if len(devices) > 1 else remaining
+            result = testutils.dp_poll(ptfadapter, device_number=device, exp_pkt=exp_pkt, timeout=timeout)
+            if isinstance(result, ptfadapter.dataplane.PollSuccess):
+                break
+        if isinstance(result, ptfadapter.dataplane.PollSuccess) or time.monotonic() >= deadline:
+            break
+    if not isinstance(result, ptfadapter.dataplane.PollSuccess):
+        pytest_assert(False, "Did not receive the expected packet on {}:\n{}".format(dst_ports, result.format()))
+    pytest_assert((result.device, result.port) in expected_ports,
+                  "Received packet on {}, expected one of {}".format((result.device, result.port), expected_ports))
+    for device in devices:
+        testutils.verify_no_other_packets(ptfadapter, device_number=device)
+    index, rcv_pkt = expected_ports.index((result.device, result.port)), result.packet
     received = False
     if rcv_pkt:
         received = True
@@ -600,6 +666,28 @@ def validate_srv6_counters(duthost, srv6_pkt_list, mysid_list, pkt_num):
         raise Exception(f"Failed to validate SRv6 counters: {str(e)}")
 
 
+def get_crm_polling_interval(duthost):
+    """
+    Return the CRM polling interval, in seconds, configured on the DUT.
+
+    Falls back to the SONiC default when the value cannot be parsed, so that the
+    caller always has something to restore.
+    """
+    output = duthost.command("crm show summary", module_ignore_errors=True)["stdout"]
+    match = re.search(r'Polling Interval:\s*(\d+)\s*second', output)
+    if match:
+        return int(match.group(1))
+    logger.warning("Could not parse the CRM polling interval from {!r}, assuming the default {}s"
+                   .format(output, CRM_DEFAULT_POLL_INTERVAL))
+    return CRM_DEFAULT_POLL_INTERVAL
+
+
+def set_crm_polling_interval(duthost, interval):
+    """Set the CRM polling interval, in seconds, on the DUT."""
+    logger.info("Setting the CRM polling interval to {}s".format(interval))
+    duthost.command("crm config polling interval {}".format(interval))
+
+
 def get_srv6_mysid_entry_usage(duthost):
     """
     Get the usage information of SRv6 MySID Entry resources.
@@ -706,3 +794,447 @@ def verify_asic_db_sid_entry_exist(duthost, sonic_db_cli):
     asic_db_my_sids = duthost.command(sonic_db_cli +
                                       " ASIC_DB keys *ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY*")["stdout"]
     return len(asic_db_my_sids.strip()) > 0
+
+
+def get_ptf_src_port_and_dut_port_and_neighbor(dut, tbinfo):
+    """Get the PTF port mapping for the duthost or an asic of the duthost"""
+    dut_mg_facts = dut.get_extended_minigraph_facts(tbinfo)
+    ports_map = dut_mg_facts["minigraph_ptf_indices"]
+    if len(ports_map) == 0:
+        pytest.skip("No PTF ports found for {}".format(dut))
+
+    lldp_table = dut.command("show lldp table")['stdout'].split("\n")[3:]
+    neighbor_table = [line.split() for line in lldp_table]
+    for entry in neighbor_table:
+        intf = entry[0]
+        if intf in ports_map:
+            # Check if this interface is part of a portchannel
+            ptf_ports = [ports_map[intf]]
+
+            # Check if the interface is a member of any portchannel
+            if 'minigraph_portchannels' in dut_mg_facts:
+                for pc_name, pc_info in dut_mg_facts['minigraph_portchannels'].items():
+                    if intf in pc_info.get('members', []):
+                        # Found a portchannel - get PTF ports for all members
+                        logger.info("Interface {} is a member of portchannel {}".format(intf, pc_name))
+                        ptf_ports = []
+                        for member in pc_info['members']:
+                            if member in ports_map:
+                                ptf_ports.append(ports_map[member])
+                                logger.info("Added portchannel member {} with PTF port {}".format(
+                                    member, ports_map[member]))
+                        break
+
+            return intf, ptf_ports, entry[1]  # local intf, ptf_src_ports (list), neighbor hostname
+
+    pytest.skip("No active LLDP neighbor found for {}".format(dut))
+    return None
+
+
+def run_srv6_traffic_test(duthost, dut_mac, ptf_src_ports, neighbor_ip, ptfadapter, ptfhost, with_srh):
+    # Convert single port to list for uniform handling
+    if isinstance(ptf_src_ports, int):
+        ptf_src_ports_list = [ptf_src_ports]
+    else:
+        ptf_src_ports_list = ptf_src_ports
+
+    # Use the first port for sending packets
+    ptf_src_port = ptf_src_ports_list[0]
+    device, port = ptfadapter.dataplane.port_to_tuple(ptf_src_port)
+    ptfhost = ptfadapter.ptfhosts[device]
+    src_mac = ptfadapter.dataplane.get_mac(device, port).decode()
+
+    for i in range(0, 10):
+        # generate a random payload
+        payload = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
+        if with_srh:
+            injected_pkt = simple_ipv6_sr_packet(
+                eth_dst=dut_mac,
+                eth_src=src_mac,
+                ipv6_src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1",
+                ipv6_dst="fcbb:bbbb:1:2::",
+                srh_seg_left=1,
+                srh_nh=41,
+                inner_frame=IPv6() / UDP(dport=4791) / Raw(load=payload)
+            )
+        else:
+            injected_pkt = Ether(dst=dut_mac, src=src_mac) \
+                           / IPv6(src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1", dst="fcbb:bbbb:1:2::") \
+                           / IPv6() / UDP(dport=4791) / Raw(load=payload)
+
+        expected_pkt = injected_pkt.copy()
+        expected_pkt['Ether'].dst = get_neighbor_mac(duthost, neighbor_ip)
+        expected_pkt['Ether'].src = dut_mac
+        expected_pkt['IPv6'].dst = "fcbb:bbbb:2::"
+        expected_pkt['IPv6'].hlim -= 1
+        logger.debug("Expected packet #{}: {}".format(i, expected_pkt.summary()))
+        runSendReceive(injected_pkt, ptf_src_port, expected_pkt, ptf_src_ports_list, True, ptfadapter)
+
+
+def _normalize_asic_db_mysid_key(key):
+    """
+    Build a comparable identity for an ASIC_DB MY_SID entry key.
+
+    The key embeds the entry definition as a json document, e.g.
+    ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY:{"switch_id":"oid:0x21...","sid":"fcbb:bbbb:1::",...}
+    The SAI object ids are dropped so that the comparison only covers the entry
+    itself: both the switch id and the virtual router id are allocated by syncd
+    and are legitimately reassigned across a warm reboot, while the SID and its
+    locator, function and argument lengths identify the entry.
+    """
+    _, _, entry = key.partition('SAI_OBJECT_TYPE_MY_SID_ENTRY:')
+    if not entry:
+        return key
+    try:
+        decoded = json.loads(entry)
+    except ValueError:
+        return entry
+    if isinstance(decoded, dict):
+        decoded.pop('switch_id', None)
+        decoded.pop('vr_id', None)
+        return json.dumps(decoded, sort_keys=True)
+    return entry
+
+
+def get_asic_db_mysid_entries(duthost, sonic_db_cli="sonic-db-cli"):
+    """
+    Collect the SRv6 MY_SID entries programmed in the ASIC DB.
+
+    Returns:
+        dict: {normalized entry key: {attribute: value}}
+    """
+    entries = {}
+    keys = duthost.command(
+        sonic_db_cli + ' ASIC_DB KEYS "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY*"')["stdout"]
+    for key in keys.splitlines():
+        key = key.strip()
+        if not key:
+            continue
+        attributes = duthost.command(
+            "{} ASIC_DB HGETALL '{}'".format(sonic_db_cli, key), module_ignore_errors=True)["stdout"]
+        entries[_normalize_asic_db_mysid_key(key)] = attributes
+    return entries
+
+
+def verify_static_route_installed(duthost, prefix, nexthop=None, ifname=None, blackhole=False,
+                                  sonic_db_cli="sonic-db-cli", cli_options=""):
+    """
+    Verify that a static route is installed all the way down to the ASIC.
+
+    The static routes used for SRv6 forwarding are configured in CONFIG_DB and
+    are never redistributed into BGP, so they cannot be verified from a BGP
+    neighbor. They are instead checked on the box, stage by stage, so that a
+    failure tells which component did not program the route:
+    FRR RIB -> kernel -> APPL_DB -> ASIC_DB.
+
+    Args:
+        duthost: DUT host object
+        prefix: the route prefix, e.g. fcbb:bbbb:2::/48
+        nexthop: expected next hop address, checked when given
+        ifname: expected egress interface, checked when given
+        blackhole: True when the route is expected to be a blackhole route
+        sonic_db_cli: sonic-db-cli command, including the namespace options
+        cli_options: namespace options for vtysh
+
+    Returns:
+        bool: True when the route is installed everywhere it is expected to be
+    """
+    # 1. FRR RIB
+    frr_route = duthost.command(
+        'vtysh{} -c "show ipv6 route {} json"'.format(cli_options, prefix),
+        module_ignore_errors=True)["stdout"]
+    try:
+        frr_routes = json.loads(frr_route) if frr_route.strip() else {}
+    except ValueError:
+        logger.error("Unable to parse the FRR route entry for {}: {}".format(prefix, frr_route))
+        return False
+
+    frr_entries = []
+    for route_entries in frr_routes.values():
+        frr_entries.extend(route_entries)
+    static_entries = [entry for entry in frr_entries if entry.get('protocol') == 'static']
+    if not static_entries:
+        logger.error("Static route {} is missing from the FRR RIB".format(prefix))
+        return False
+    if not any(entry.get('selected') or entry.get('installed') for entry in static_entries):
+        logger.error("Static route {} is in the FRR RIB but is not selected nor installed".format(prefix))
+        return False
+
+    # 2. Linux kernel
+    kernel_route = duthost.command(
+        "ip -6 route show {}".format(prefix), module_ignore_errors=True)["stdout"]
+    if prefix.split('/')[0] not in kernel_route:
+        logger.error("Static route {} is missing from the kernel routing table".format(prefix))
+        return False
+    if blackhole and "blackhole" not in kernel_route:
+        logger.error("Route {} is not a blackhole route in the kernel: {}".format(prefix, kernel_route))
+        return False
+    if nexthop and nexthop not in kernel_route:
+        logger.error("Static route {} does not use next hop {} in the kernel: {}".format(
+            prefix, nexthop, kernel_route))
+        return False
+    if ifname and ifname not in kernel_route:
+        logger.error("Static route {} does not use interface {} in the kernel: {}".format(
+            prefix, ifname, kernel_route))
+        return False
+
+    # 3. APPL_DB
+    appl_db_route = duthost.command(
+        "{} APPL_DB HGETALL 'ROUTE_TABLE:{}'".format(sonic_db_cli, prefix),
+        module_ignore_errors=True)["stdout"]
+    if not appl_db_route.strip():
+        logger.error("Static route {} is missing from APPL_DB".format(prefix))
+        return False
+    if blackhole and "true" not in appl_db_route.lower():
+        logger.error("Route {} is not marked as blackhole in APPL_DB: {}".format(prefix, appl_db_route))
+        return False
+    if nexthop and nexthop not in appl_db_route:
+        logger.error("Static route {} does not use next hop {} in APPL_DB: {}".format(
+            prefix, nexthop, appl_db_route))
+        return False
+
+    # 4. ASIC_DB
+    asic_db_route = duthost.command(
+        '{} ASIC_DB KEYS "*SAI_OBJECT_TYPE_ROUTE_ENTRY*{}*"'.format(sonic_db_cli, prefix),
+        module_ignore_errors=True)["stdout"]
+    if not asic_db_route.strip():
+        logger.error("Static route {} is missing from ASIC_DB".format(prefix))
+        return False
+
+    logger.info("Static route {} is installed in the FRR RIB, the kernel, APPL_DB and ASIC_DB".format(prefix))
+    return True
+
+
+def verify_reboot_cause_warm(duthost):
+    """
+    Verify that the last reboot was a warm reboot.
+
+    A warm reboot which silently degraded into a cold one would make any hitless
+    expectation meaningless, so this is checked explicitly.
+    """
+    reboot_cause = duthost.command("show reboot-cause")["stdout"]
+    logger.info("Reboot cause: {}".format(reboot_cause))
+    return "warm-reboot" in reboot_cause
+
+
+def collect_warmboot_diagnostics(duthost, sonic_db_cli="sonic-db-cli"):
+    """Collect the warm restart state, to be called when a warm boot test fails."""
+    commands = [
+        "show reboot-cause",
+        "show warm_restart state",
+        "show warm_restart config",
+        '{} STATE_DB KEYS "WARM_RESTART_TABLE|*"'.format(sonic_db_cli),
+        '{} STATE_DB KEYS "WARM_RESTART_ENABLE_TABLE|*"'.format(sonic_db_cli),
+    ]
+    for command in commands:
+        output = duthost.command(command, module_ignore_errors=True)["stdout"]
+        logger.info("=== {} ===\n{}".format(command, output))
+
+
+def run_srv6_no_sid_blackhole_test(setup_uN, ptfadapter, ptfhost, with_srh, request=None):
+    """
+    Verify that packets sent to a SID which is not programmed are dropped.
+
+    The drop relies on the fcbb:bbbb::/32 blackhole static route, so this also
+    covers the persistence of that route across a disruption.
+
+    When ``request`` is provided, the check is executed once per enabled
+    ``--srv6_dscp_mode_test`` phase (with and/or without ``decap_dscp_mode``
+    configured on the uN SID).
+    """
+    duthost = setup_uN['duthost']
+    dut_mac = setup_uN['dut_mac']
+    dut_port = setup_uN['dut_port']
+    ptf_src_ports = setup_uN['ptf_src_ports']
+    neighbor_ip = setup_uN['neighbor_ip']
+    ptf_port_ids = setup_uN['ptf_port_ids']
+
+    # Use the first port to send traffic
+    first_ptf_port = ptf_src_ports[0] if isinstance(ptf_src_ports, list) else ptf_src_ports
+    device, port = ptfadapter.dataplane.port_to_tuple(first_ptf_port)
+    ptfhost = ptfadapter.ptfhosts[device]
+    src_mac = ptfadapter.dataplane.get_mac(device, port).decode()
+    ports_by_device = defaultdict(list)
+    for ptf_port in ptf_port_ids:
+        port_device, port_id = ptfadapter.dataplane.port_to_tuple(ptf_port)
+        ports_by_device[port_device].append(port_id)
+
+    sonic_db_cli = "sonic-db-cli" + setup_uN['cli_options']
+
+    def _blackhole_once():
+        # Verify that the ASIC DB has the SRv6 SID entries
+        assert wait_until(20, 5, 0, verify_asic_db_sid_entry_exist, duthost, sonic_db_cli), \
+            "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY entries are missing in ASIC_DB before blackhole test"
+
+        # get the drop counter before traffic test
+        if duthost.facts["asic_type"] == "broadcom":
+            portstat = parse_portstat(duthost.command(f'portstat -i {dut_port}')['stdout_lines'])
+            before_count = int(portstat[dut_port]['rx_drp'])
+        elif duthost.facts["asic_type"] == "mellanox":
+            before_count = int(
+                duthost.command(f"show interfaces counters rif {dut_port}")['stdout_lines'][6].split()[0])
+        else:
+            pytest.skip("Blackhole drop counter check is not supported for asic_type {}".format(
+                duthost.facts["asic_type"]))
+
+        # inject a number of packets with random payload
+        pkt_count = 100
+        payload = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
+        if with_srh:
+            injected_pkt = simple_ipv6_sr_packet(
+                eth_dst=dut_mac,
+                eth_src=src_mac,
+                ipv6_src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1",
+                ipv6_dst="fcbb:bbbb:3:2::",
+                srh_seg_left=1,
+                srh_nh=41,
+                inner_frame=IPv6(
+                    dst=neighbor_ip,
+                    src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1") / UDP(
+                    dport=4791) / Raw(load=payload)
+            )
+        else:
+            injected_pkt = Ether(dst=dut_mac, src=src_mac) \
+                           / IPv6(src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1",
+                                  dst="fcbb:bbbb:3:2::") \
+                           / IPv6(dst=neighbor_ip,
+                                  src=ptfhost.mgmt_ipv6 if ptfhost.mgmt_ipv6 else "1000::1") \
+                           / UDP(dport=4791) / Raw(load=payload)
+
+        expected_pkt = injected_pkt.copy()
+        expected_pkt['IPv6'].dst = "fcbb:bbbb:3:2::"
+        expected_pkt['IPv6'].hlim -= 1
+        logger.debug("Expected packet: {}".format(expected_pkt.summary()))
+
+        expected_pkt = Mask(expected_pkt)
+        expected_pkt.set_do_not_care_packet(Ether, "dst")
+        expected_pkt.set_do_not_care_packet(Ether, "src")
+        testutils.send(ptfadapter, (device, port), injected_pkt, count=pkt_count)
+        for pd, ports in ports_by_device.items():
+            verify_no_packet_any(ptfadapter, expected_pkt, ports, device_number=pd, timeout=1)
+
+        # verify that the RX_DROP counter is incremented
+        if duthost.facts["asic_type"] == "broadcom":
+            portstat = parse_portstat(duthost.command(f'portstat -i {dut_port}')['stdout_lines'])
+            after_count = int(portstat[dut_port]['rx_drp'])
+            assert after_count >= (before_count + pkt_count), "RX_DRP counter is not incremented as expected"
+        elif duthost.facts["asic_type"] == "mellanox":
+            after_count = int(
+                duthost.command(f"show interfaces counters rif {dut_port}")['stdout_lines'][6].split()[0])
+            assert after_count >= (before_count + pkt_count), "RIF RX_ERR counter is not incremented as expected"
+
+    if request is None:
+        _blackhole_once()
+    else:
+        run_srv6_dscp_mode_phases(
+            request, setup_uN, _blackhole_once,
+            dscp_mode_step='Validate SRv6 no SID blackhole with decap_dscp_mode configured',
+            no_dscp_mode_step='Validate SRv6 no SID blackhole without decap_dscp_mode configured'
+        )
+
+
+# ---------------------------------------------------------------------------
+# DSCP-mode phase helpers used by the SRv6 uN resilience/blackhole tests.
+# They let a test run once per enabled dscp_mode configuration (both /
+# dscp_mode / no_dscp_mode) and share the uN SID reconfiguration across tests.
+# ---------------------------------------------------------------------------
+
+
+def _get_srv6_dscp_mode_test_flags(request):
+    dscp_mode_test = request.config.getoption("--srv6_dscp_mode_test")
+    run_dscp_mode = dscp_mode_test in ("both", "dscp_mode")
+    run_no_dscp_mode = dscp_mode_test in ("both", "no_dscp_mode")
+    return run_dscp_mode, run_no_dscp_mode
+
+
+def _reconfigure_un_sid(duthost, sonic_db_cli, decap_dscp_mode=SRv6.pipe_mode):
+    """Rewrite the uN SID used by the resilience/blackhole tests with (or without) decap_dscp_mode."""
+    duthost.command(sonic_db_cli + " CONFIG_DB DEL SRV6_MY_SIDS\\|loc1\\|fcbb:bbbb:1::/48")
+    if decap_dscp_mode:
+        duthost.command(sonic_db_cli +
+                        f" CONFIG_DB HSET SRV6_MY_SIDS\\|loc1\\|fcbb:bbbb:1::/48 action uN "
+                        f"decap_dscp_mode {decap_dscp_mode}")
+    else:
+        duthost.command(sonic_db_cli +
+                        " CONFIG_DB HSET SRV6_MY_SIDS\\|loc1\\|fcbb:bbbb:1::/48 action uN")
+    duthost.command("config save -y")
+    pytest_assert(wait_until(20, 5, 0, verify_asic_db_sid_entry_exist, duthost, sonic_db_cli),
+                  "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY entries are missing in ASIC_DB")
+    pytest_assert(wait_until(180, 2, 0, verify_appl_db_sid_entry_exist, duthost, sonic_db_cli,
+                             "SRV6_MY_SID_TABLE:32:16:0:0:fcbb:bbbb:1::", True),
+                  "SID is missing in APPL_DB")
+
+
+def _get_enabled_un_sid_modes(request):
+    run_dscp_mode, run_no_dscp_mode = _get_srv6_dscp_mode_test_flags(request)
+    modes = []
+    if run_dscp_mode:
+        modes.append((SRv6.pipe_mode, 'with decap_dscp_mode configured'))
+    if run_no_dscp_mode:
+        modes.append((None, 'without decap_dscp_mode configured'))
+    return modes
+
+
+def _verify_un_forwarding(setup_uN, ptfadapter, ptfhost, with_srh):
+    run_srv6_traffic_test(
+        setup_uN['duthost'], setup_uN['dut_mac'], setup_uN['ptf_src_ports'],
+        setup_uN['neighbor_ip'], ptfadapter, ptfhost, with_srh
+    )
+
+
+def _wait_for_srv6_un_ready(duthost, sonic_db_cli, neighbor_ip):
+    pytest_assert(wait_until(180, 2, 0, verify_appl_db_sid_entry_exist, duthost, sonic_db_cli,
+                             "SRV6_MY_SID_TABLE:32:16:0:0:fcbb:bbbb:1::", True),
+                  "SID is missing in APPL_DB")
+    pytest_assert(wait_until(20, 5, 0, verify_asic_db_sid_entry_exist, duthost, sonic_db_cli),
+                  "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY entries are missing in ASIC_DB")
+    pytest_assert(wait_until(60, 5, 0, is_bgp_route_synced, duthost), "BGP route is not synced")
+    pytest_assert(wait_until(60, 5, 0, get_neighbor_mac, duthost, neighbor_ip),
+                  "IP table not updating MAC for neighbour")
+
+
+def run_srv6_resilience_test(request, setup_uN, ptfadapter, ptfhost, with_srh,
+                             disruptive_action_fn, disruptive_step):
+    """Run a disruptive action once; pre/post forwarding checks per enabled dscp mode."""
+    duthost = setup_uN['duthost']
+    sonic_db_cli = "sonic-db-cli" + setup_uN['cli_options']
+    neighbor_ip = setup_uN['neighbor_ip']
+    dscp_mode_test = request.config.getoption("--srv6_dscp_mode_test")
+    current_mode = [None if dscp_mode_test == "no_dscp_mode" else SRv6.pipe_mode]
+
+    def _set_mode(decap_dscp_mode):
+        if current_mode[0] != decap_dscp_mode:
+            _reconfigure_un_sid(duthost, sonic_db_cli, decap_dscp_mode)
+            current_mode[0] = decap_dscp_mode
+
+    for decap_dscp_mode, label in _get_enabled_un_sid_modes(request):
+        with allure.step(f'Pre-check forwarding {label}'):
+            _set_mode(decap_dscp_mode)
+            _verify_un_forwarding(setup_uN, ptfadapter, ptfhost, with_srh)
+
+    with allure.step(disruptive_step):
+        disruptive_action_fn()
+        _wait_for_srv6_un_ready(duthost, sonic_db_cli, neighbor_ip)
+
+    for decap_dscp_mode, label in _get_enabled_un_sid_modes(request):
+        with allure.step(f'Post-check forwarding {label}'):
+            _set_mode(decap_dscp_mode)
+            _verify_un_forwarding(setup_uN, ptfadapter, ptfhost, with_srh)
+
+
+def run_srv6_dscp_mode_phases(request, setup_uN, test_fn, dscp_mode_step="", no_dscp_mode_step=""):
+    """Run a lightweight test function once per enabled dscp mode configuration."""
+    run_dscp_mode, run_no_dscp_mode = _get_srv6_dscp_mode_test_flags(request)
+    duthost = setup_uN['duthost']
+    sonic_db_cli = "sonic-db-cli" + setup_uN['cli_options']
+
+    if run_dscp_mode:
+        with allure.step(dscp_mode_step or 'Run test with decap_dscp_mode configured'):
+            test_fn()
+
+    if run_no_dscp_mode:
+        if run_dscp_mode:
+            with allure.step('Change the SRv6 configuration to no dscp_mode'):
+                _reconfigure_un_sid(duthost, sonic_db_cli, decap_dscp_mode=None)
+        with allure.step(no_dscp_mode_step or 'Run test without decap_dscp_mode configured'):
+            test_fn()

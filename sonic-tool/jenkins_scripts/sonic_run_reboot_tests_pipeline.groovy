@@ -385,7 +385,7 @@ pipeline {
                     -v /auto/sw_regression/system/SONIC/MARS/tarballs:/auto/sw_regression/system/SONIC/MARS/tarballs/ \
                     -v /auto/sw_regression/system/SONIC/MARS/reboot_tests_config.d:/auto/sw_regression/system/SONIC/MARS/reboot_tests_config.d/ \
                     -v /auto/sw_system_release/sonic:/auto/sw_system_release/sonic"""
-                 label 'mtl-stm-az-183'
+                 label 'r-build-sonic-ci03-242-lite'
 
             }
         }

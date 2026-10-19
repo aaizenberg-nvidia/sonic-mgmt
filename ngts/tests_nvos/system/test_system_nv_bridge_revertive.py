@@ -742,7 +742,7 @@ def test_nvbridge_config_ingestion(
         show = get_nv_bridge_show(nv_bridge, dut)
         server_id = show.get(NvBridgeRevertiveConsts.SHOW_SERVER_ID, "")
         assert NvBridgeRevertiveConsts.SERVER_ID_RE.match(server_id), (
-            f"server-id '{server_id}' does not match chassis-sn-<sn>-tray-index-<id>"
+            f"server-id '{server_id}' does not match {NvBridgeRevertiveConsts.SERVER_ID_RE.pattern}"
         )
 
     with allure.step("Step 4: dynamic reload picks up an updated interface IP"):

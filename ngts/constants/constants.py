@@ -75,6 +75,7 @@ class PytestConst:
 
 
 class SonicConst:
+    SDK_CLEAR_ALL_COUNTERS_FORCE_CMD = "docker exec syncd bash -c 'sx_api_port_counter_clear_all.py --force'"
     PORT_SPLIT_NUM_1 = 1
     PORT_SPLIT_NUM_2 = 2
     PORT_SPLIT_NUM_3 = 3
@@ -294,6 +295,7 @@ class InfraConst:
     SELECTED_DPUS = 'selected_dpus'
 
     LOOPBOX_LABEL = 'loopbox'
+    SHARED_FANOUT_LABEL = 'shared_fanout'
 
 
 class LinuxConsts:
@@ -1758,13 +1760,11 @@ class BugHandlerConst:
                              "'NVOS - Design'": os.path.join(NGTS_PATH, "helpers/bug_handler/nvos_bug_handler.conf")}
     BUG_HANDLER_PYTHON_PATH = "/mswg/projects/swvt/MARS/scripts/python37_wrapper.sh"
     BH_1_5_2_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/1_5_2/bin/"
-    BH_1_5_3_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/1_5_3/bin/"
-    BH_2026_1_1_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_1_1/bin/"
     BH_2026_9_PATH = "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_9/bin/"
     BUG_HANDLER_PATH = {
         "SONiC-Design": BH_2026_9_PATH,
         "SONiC-Verification": BH_2026_9_PATH,
-        "'NVOS - Design'": "/auto/sw_tools/Internal/BugHandling/RELEASES/2026_9/bin/",
+        "'NVOS - Design'": BH_2026_9_PATH,
         "default": BH_1_5_2_PATH
     }
     BUG_HANDLER_SCRIPT = {}
@@ -1984,7 +1984,7 @@ class WJHConsts:
 
 class FanoutVersionConsts:
     EXPECTED_MLNX_VERSION = ["3.10.4206", "3.10.4302", "3.10.4602"]
-    EXPECTED_SONIC_VERSION_LIST = ["202511_RC.129-48da86131_Internal", "202511_RC.150-cf87140a93_Internal", "202605_RC.76-88000f5c8c_Internal"]
+    EXPECTED_SONIC_VERSION_LIST = ["202605_RC.114-7f1d7b2470_Internal"]
 
 
 class SerialConsts:

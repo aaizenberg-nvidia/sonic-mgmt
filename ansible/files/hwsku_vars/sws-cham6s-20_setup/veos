@@ -223,7 +223,7 @@ vms_30:
     VM3098:
       ansible_host: 10.220.188.249
     VM3099:
-      ansible_host: 10.220.188.250
+      ansible_host: 10.220.188.10
     VM3100:
       ansible_host: 10.220.188.251
     VM3101:
@@ -276,6 +276,10 @@ vms_30:
       ansible_host: 10.220.189.80
     VM3125:
       ansible_host: 10.220.189.81
+    VM3126:
+      ansible_host: 10.220.189.82
+    VM3127:
+      ansible_host: 10.220.189.83
 
 server_30:
   children:

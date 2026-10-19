@@ -29,7 +29,7 @@ class DvsPerformance(PerformanceCommon):
                                        collectors_list=[ValidationConsts.COUNTERS_SAMPLES,
                                                         ValidationConsts.BW_SAMPLES]):
         self.set_configuration_file(port_group_df, shared_buffer_size, collectors_list)
-        configure_shared_buffer_size_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names HeadroomConfig"
+        configure_shared_buffer_size_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names HeadroomConfig"
         self.execute_cmd(self.get_cmd_for_sdk(configure_shared_buffer_size_cmd))
 
     def set_configuration_file(self, port_group_df, shared_buffer_size, collectors_list=None):
@@ -39,10 +39,6 @@ class DvsPerformance(PerformanceCommon):
         if collectors_list:
             conf_json["sdk_test_conf"][ValidationConsts.COLLECTORS_LIST] = collectors_list
         self.save_configuration_file(conf_path, conf_json)
-
-    def _create_sdk_dump_dirs(self):
-        "This is not needed in DVS"
-        pass
 
     def get_cmd_for_sdk(self, cmd, env_variables=None):
         """
@@ -73,7 +69,7 @@ class DvsPerformance(PerformanceCommon):
         test_name = self.get_configuration_file(scenario, conf_args, template_suite)
         logging.info(f"Configuration to be run {test_name}")
         logging.info(f"Applying the configuration on {self.dut_alias}")
-        cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {test_name}"
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {test_name}"
         self.execute_cmd(cmd)
         self.update_player_ports()
         self.add_ports_connectivity_to_dut(conf_args)
@@ -773,7 +769,7 @@ class DvsPerformance(PerformanceCommon):
                 "osVersion": "dvs-os-sonic_4.7.1920_DEV_LK6.1.38_x86_64---2024-09-09 10:43:49"
             }
         """
-        cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} -si"
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} -si"
         output = self.execute_cmd(cmd)
         dut_system_information = {"marsSessionId": session_id,
                                   "setupName": setup_name,
@@ -810,7 +806,7 @@ class DvsPerformance(PerformanceCommon):
         This is needed because SPC5 comes up with ports already split after dvs_start.sh
         """
         logging.info("Unsplit all ports")
-        unsplit_ports_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_UNSPLIT_ALL_PORTS}"
+        unsplit_ports_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_UNSPLIT_ALL_PORTS}"
         self.execute_cmd(unsplit_ports_cmd)
         self.update_player_ports()
         self.get_base_ports()
@@ -842,7 +838,7 @@ class DvsPerformance(PerformanceCommon):
             verify_file=False
         )
 
-        get_dynamic_conf_cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_DYNAMIC_CONF_PREFIX}{scenario}"
+        get_dynamic_conf_cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_DYNAMIC_CONF_PREFIX}{scenario}"
         self.execute_cmd(get_dynamic_conf_cmd)
 
     def configure_incremental_dips_on_tg(self):
@@ -850,5 +846,5 @@ class DvsPerformance(PerformanceCommon):
         This method is used to create the incremental dips on the traffic generator
         """
         logging.info(f"Create incremental dips on {self.dut_alias}")
-        cmd = f"{PerfConsts.DVS_RUN_TEST_PATH} --names {PerfConsts.DVS_CREATE_INCREMENTAL_DIPS}"
+        cmd = f"{PerfConsts.DVS_RUN_TEST_CMD} --names {PerfConsts.DVS_CREATE_INCREMENTAL_DIPS}"
         self.execute_cmd(cmd)

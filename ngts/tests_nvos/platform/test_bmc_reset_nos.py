@@ -344,6 +344,7 @@ BMC_CLI_NOS_RESET_TYPES = [
 @pytest.mark.platform
 @pytest.mark.disable_loganalyzer
 @pytest.mark.skip_clear_config
+@pytest.mark.cumulus
 class TestBmcCliResetNos:
     """BMC resets the main NOS (host CPU) via the CL-native ``bmc-cli reset ...``
     command, issued from the CPU over the internal usb0 link.

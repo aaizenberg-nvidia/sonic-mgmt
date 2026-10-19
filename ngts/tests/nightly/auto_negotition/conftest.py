@@ -393,21 +393,6 @@ def convert_speeds_to_mb_format(speeds_list):
     return ",".join(speeds_in_mb_format)
 
 
-@pytest.fixture(autouse=False)
-def ignore_main_loganalyzer(cli_objects, loganalyzer):
-    """
-    :param cli_objects: cli objects fixture
-    :param loganalyzer: loganalyzer fixture
-    :return: None
-    """
-    dut_hostname = cli_objects.dut.chassis.get_hostname()
-    if loganalyzer:
-        loganalyzer[dut_hostname].add_start_ignore_mark()
-    yield
-    if loganalyzer:
-        loganalyzer[dut_hostname].add_end_ignore_mark()
-
-
 def get_all_advertised_speeds_sorted_string(speeds_list, physical_interface_type=None):
     """
     :param speeds_list: a list of speeds ['10000', '50000']

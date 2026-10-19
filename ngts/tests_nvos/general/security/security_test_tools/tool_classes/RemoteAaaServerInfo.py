@@ -118,6 +118,18 @@ def check_port(address: str, port: int, timeout: int = 3, dut_engine=None) -> bo
         return False
 
 
+def dut_lab(topology_obj):
+    """Return (noga site, lab, VM AAA addresses). A missing site falls back to Yokneam."""
+    site = ''
+    try:
+        attributes = topology_obj.players['dut']['attributes'].noga_query_data['attributes']
+        site = attributes.get('Common', {}).get('Site', '') or ''
+    except Exception as ex:
+        logger.warning('Could not read DUT "Common.Site" from Noga topology data: %s', ex)
+    location = AaaServerLocation.location_from_site(site)
+    return site, location, AaaServerLocation.VM_SERVER_ADDR_BY_LOCATION[location]
+
+
 class RemoteAaaServerInfo(abc.ABC):
     def __init__(
         self,
@@ -201,23 +213,15 @@ class RemoteAaaServerInfo(abc.ABC):
         if addressing_type is None:
             return  # not a VM AAA server - leave its address as is
 
-        site = ''
-        try:
-            dut_attributes = TestToolkit.topology_obj.players['dut']['attributes'].noga_query_data['attributes']
-            site = dut_attributes.get('Common', {}).get('Site', '') or ''
-        except Exception as ex:
-            logger.warning(f'Could not read DUT "Common.Site" from Noga topology data: {ex}')
-
-        location = AaaServerLocation.location_from_site(site)
-        addresses_for_location = AaaServerLocation.VM_SERVER_ADDR_BY_LOCATION[location]
-        new_hostname = addresses_for_location[addressing_type]
+        site, location, addresses = dut_lab(TestToolkit.topology_obj)
+        new_hostname = addresses[addressing_type]
         if new_hostname != self.hostname:
             logger.info(f'Re-targeting VM AAA server "{self.hostname}" -> "{new_hostname}" '
                         f'(lab: "{location}", Noga site: "{site}")')
             self.hostname = new_hostname
         # keep ipv4_addr (used for mgmt/availability fallbacks) aligned with the chosen location
         if self.ipv4_addr:
-            self.ipv4_addr = addresses_for_location[AddressingType.IPV4]
+            self.ipv4_addr = addresses[AddressingType.IPV4]
         # some containers are published on a different host port per lab - align it too
         port_override = AaaServerLocation.port_override_for(location, self.docker_name)
         if port_override is not None and port_override != self.port:

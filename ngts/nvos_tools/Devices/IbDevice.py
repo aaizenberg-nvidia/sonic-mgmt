@@ -495,7 +495,7 @@ class IbSwitch(BaseSwitch):
                                                       'event_db.json', 'accept_eula_version']
         self.techsupport_cluster_empty_files_to_ignore = ['redis.log', 'config_storage.json', 'user_config_changed',
                                                           'nvlink_domain_telemetry.csv']
-        self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh']
+        self.techsupport_hw_mgmt_empty_files_to_ignore = ['hw-management-fixup.sh', 'hw-management-bmc-fixup.sh', 'hw-mgmt-i2c-trace.log']
         self.techsupport_skynet_hw_mgmt_empty_files_to_ignore = ['udev_events.log']
         # System message constants for IB devices - set after pre/post login messages are initialized
         self.default_user_name = SystemConsts.DEFAULT_USER_ADMIN
@@ -740,6 +740,10 @@ class IbSwitch(BaseSwitch):
         # timestamps must reflect the configured local timezone. verify_show_and_log_times()
         # asserts against this reference only, instead of accepting either local or UTC.
         self.syslog_time_reference = DateTimeConsts.LOCAL_TIME
+        self.default_delayed_recovery_values = {
+            "OPER_DISABLED_LOSS_TH": "126",
+            "OPER_DISABLED_RETRY_TH": "32"
+        }
 
     def _init_link_error_counters(self):
         """
@@ -3446,6 +3450,12 @@ class RosalindSwitch(RosalindSurrogateSwitch):
                 PhyRecoveryConsts.STATE_67_TO_68_TIME_PRESET3: '0',
             }
         }
+        self.default_delayed_recovery_values = {
+            "OPER_DISABLED_LOSS_TH": "60",
+            "OPER_DISABLED_RETRY_TH": "16",
+            "OPER_ENABLED_LOSS_TH": "60",
+            "OPER_ENABLED_RETRY_TH": "255"
+        }
         self.memory_size: list[float] = [30.77, 31.21]
         self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.VTPM24GLXI160_BM11, SSDConsts.VTPM24GLXI160_BM12]
         self.constants = self.constants._replace(
@@ -3519,7 +3529,8 @@ class RosalindSwitch(RosalindSurrogateSwitch):
             "hardware-version": None,
             "model": ExpectedString(
                 regex="699-23809-0600-EB1|920-9K42W-00L6-GS0|920-9K42W-00L6-EB2|920-9K24W-00L6-ES1|"
-                      "920-9K42W-00L6-TS1|920-9K42W-00L6-TS2|920-9K42W-1313-TS3|920-9K42W-1313-TS4|920-9K42W-1313-TS5"),
+                      "920-9K42W-00L6-TS1|920-9K42W-00L6-TS2|920-9K42W-1313-TS3|920-9K42W-1313-TS4|"
+                      "920-9K42W-1313-TS5|920-9K42W-1313-EB6|920-9K42W-00L6-QS1"),
         })  # TBD -- This is for OPN, need to replace with the real one once arrive.
 
 

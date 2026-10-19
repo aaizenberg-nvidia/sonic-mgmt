@@ -106,6 +106,9 @@
 
         {# Buffer configuration #}
         "adjust_buffer_config": "{{ conf_args.adjust_buffer_config }}",
+        {% if conf_args.pg_buffer_configs is defined and PerfConsts.DUT_ALIAS in conf_args.pg_buffer_configs %}
+        "pg_buffer_config": {{ conf_args.pg_buffer_configs[PerfConsts.DUT_ALIAS] | tojson }},
+        {% endif %}
 
         {# LPM root configuration #}
         "set_lpm_root": "{{ conf_args.set_lpm_root }}",

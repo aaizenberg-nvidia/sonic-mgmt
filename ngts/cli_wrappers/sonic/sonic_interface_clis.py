@@ -652,6 +652,22 @@ class SonicInterfaceCli(InterfaceCliCommon, SonicMultiAsicCli):
         self.engine.run_cmd("sonic-clear counters", validate=validate)
         self.engine.run_cmd("sudo sonic-clear counters", validate=validate)
 
+    def clear_counters_by_force(self, validate: bool = True) -> None:
+        """
+        Clears all port counters at the SDK level inside the syncd container.
+
+        sonic-clear only snapshots the CLI baseline, so the SDK counters keep their values. Call this
+        before clear_counters(), otherwise the sonic-clear snapshot is taken on pre-reset values.
+
+        Args:
+            validate (bool): Verify the command succeeded.
+
+        Returns:
+            None
+        """
+        logger.info("Clearing all SDK port counters by force")
+        self.engine.run_cmd(SonicConst.SDK_CLEAR_ALL_COUNTERS_FORCE_CMD, validate=validate)
+
     def clear_queue_counters(self):
         """
         clear queue counters

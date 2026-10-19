@@ -36,14 +36,13 @@ NO_SPLIT_LOOPBACK_SKIP_REASON = ("Test is skipped because the test could only ru
 
 
 @pytest.fixture(autouse=False)
-def local_loganalyzer_mismatch_speed_type(duthosts, ignore_main_loganalyzer, request):
+def local_loganalyzer_mismatch_speed_type(duthosts, request):
     """
     This fixture is specific for the mismatch speed and type test.
     It creates a local loganalyzer to catch the SAI errors in the log.
     It also disables the main loganalyzer to avoid the SAI errors in the log.
 
     :param duthosts: duthosts fixture
-    :param ignore_main_loganalyzer: disable main loganalyzer
     :param request: pytest request object fixture
     :return: None
     """
@@ -219,6 +218,7 @@ class TestAutoNegNegative(TestAutoNegBase):
         conf[lb[1]][AutonegCommandConstants.ADV_TYPES] = ",".join(port_2_adv_type)
         return conf
 
+    @pytest.mark.disable_loganalyzer
     def test_negative_advertised_speed_type_mismatch(self,
                                                      local_loganalyzer_mismatch_speed_type,
                                                      cleanup_list):

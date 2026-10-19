@@ -15,6 +15,7 @@ Layered on the existing OTEL harness (do not reinvent — see
   for the field-mapping test (Section 6.2).
 """
 
+import json
 import logging
 import shlex
 import time
@@ -31,7 +32,10 @@ from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.telemetry.otel.constants import OtelCollectorConst
-from ngts.tests_nvos.system.telemetry.otel.helpers import _read_otel_collector_documents
+from ngts.tests_nvos.system.telemetry.otel.helpers import (
+    _read_otel_collector_documents,
+    component_show_text,
+)
 from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
 from ngts.tests_nvos.system.telemetry.otel.syslog_constants import SyslogOtelConst
 from ngts.tests_nvos.system.syslog.test_system_syslog import (
@@ -54,12 +58,16 @@ def is_syslog_otel_supported(dut) -> bool:
     (``Error: 'logs' is not one of [...]``); tests use this to skip gracefully
     instead of failing on the missing knob.
 
-    Deliberately a low-level probe: it must survive the "node absent" NVUE error,
+    Deliberately a low-level probe: it must survive the "node absent" error,
     so it does not go through :func:`logs_export_state` (whose JSON parse assumes
-    the node exists and would raise on an unsupported build).
+    the node exists and would raise on an unsupported build). The show goes
+    through the telemetry component so OpenAPI is covered as well as NVUE.
     """
-    out = dut.run_cmd("nv show system telemetry logs export") or ""
-    return "is not one of" not in out
+    out = component_show_text(System().telemetry.logs.export, dut)
+    lowered = out.lower()
+    if "is not one of" in out or "not found" in lowered:
+        return False
+    return True
 
 
 def logs_export_state(dut, rev=ConfState.OPERATIONAL):
@@ -95,20 +103,55 @@ def unset_logs_export(dut, *, apply=True):
     ).verify_result()
 
 
+def _mapping_has_logs_export_state(node) -> bool:
+    """True when a config document has an explicit logs/export/state key."""
+    if isinstance(node, dict):
+        logs = node.get(TelemetryConsts.LOGS)
+        if isinstance(logs, dict):
+            export = logs.get(TelemetryConsts.EXPORT)
+            if isinstance(export, dict) and SyslogOtelConst.STATE in export:
+                return True
+        return any(_mapping_has_logs_export_state(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_mapping_has_logs_export_state(item) for item in node)
+    return False
+
+
 def running_config_has_logs_export(dut):
-    """True when `nv config show` carries an explicit telemetry logs/export/state key.
+    """True when applied config carries an explicit telemetry logs/export/state key.
 
     Distinguishes an explicit ``set … state disabled`` (key present) from ``unset``
-    (key absent), which both read back as ``disabled`` via ``nv show``.
+    (key absent), which both read back as ``disabled`` via ``nv show``. The read
+    goes through ``GeneralApi`` so OpenAPI ``filled=false`` and NVUE ``nv config show``
+    are both covered.
     """
-    out = dut.run_cmd("nv config show") or ""
-    lines = out.splitlines()
-    for idx, line in enumerate(lines):
-        if line.strip().rstrip(":") == TelemetryConsts.LOGS:
-            window = " ".join(lines[idx: idx + 6])
-            if TelemetryConsts.EXPORT in window and SyslogOtelConst.STATE in window:
-                return True
-    return False
+    raw = TestToolkit.GeneralApi[TestToolkit.tested_api].show_config(
+        dut, revision=ConfState.APPLIED, output_type="yaml"
+    )
+    document = raw if isinstance(raw, (dict, list)) else None
+    if document is None:
+        text = str(raw or "").strip()
+        if text[:1] in "{[":
+            try:
+                document = json.loads(text)
+            except json.JSONDecodeError:
+                document = None
+        if document is None:
+            lines = text.splitlines()
+            for idx, line in enumerate(lines):
+                if line.strip().rstrip(":") == TelemetryConsts.LOGS:
+                    window = " ".join(lines[idx: idx + 6])
+                    if TelemetryConsts.EXPORT in window and SyslogOtelConst.STATE in window:
+                        return True
+            try:
+                import yaml
+                loaded = yaml.safe_load(text)
+            except Exception:  # noqa: BLE001 - show text is not always a YAML document
+                loaded = None
+            if isinstance(loaded, (dict, list)):
+                return _mapping_has_logs_export_state(loaded)
+            return False
+    return _mapping_has_logs_export_state(document)
 
 
 # =============================================================================

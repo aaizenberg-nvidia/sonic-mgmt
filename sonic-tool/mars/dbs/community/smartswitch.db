@@ -38,6 +38,17 @@
                     <tags_type> ignore_tags </tags_type>
                 </params>
             </pre>
+            <pre>
+                <name> enable NAT for DPU SSH access </name>
+                <type> reg_exec_cmd </type>
+                <tout> 300 </tout>
+                <players_selection>
+                    <ep_targets> SONIC_MGMT </ep_targets>
+                </players_selection>
+                <params>
+                    <exec> PYTHONPATH=/devts/ /opt/venv/bin/pytest /root/mars/workspace/sonic-mgmt/tests/test_pretest_nat_dpu.py --setup_name=[[conf:extra_info.setup_name]] --log-cli-level debug --show-capture=no -ra --showlocals --timeout 300 --session-timeout 300 --rootdir=/root/mars/workspace/sonic-mgmt/tests --inventory="/root/mars/workspace/sonic-mgmt/ansible/inventory,/root/mars/workspace/sonic-mgmt/ansible/veos" --host-pattern [[conf:extra_info.dut_name]] --module-path /root/mars/workspace/sonic-mgmt/ansible/library/ --testbed [[conf:extra_info.dut_name]]-[[conf:extra_info.topology]] --testbed_file /root/mars/workspace/sonic-mgmt/ansible/testbed.yaml --disable_loganalyzer --skip_sanity </exec>
+                </params>
+            </pre>
             <post>
             </post>
         </Test>

@@ -21,7 +21,7 @@
     <tout> 10800 </tout>
     <cmd>
       <params>
-          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/security/test_login_ssh_notification/test_login_ssh_notification.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m cumulus --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800    \'"</static_args>
+          <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/security/test_login_ssh_notification/test_login_ssh_notification.py --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"cumulus or cumulus_only\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --clean-alluredir  --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800    \'"</static_args>
       </params>
     </cmd>
   </case>

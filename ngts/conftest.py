@@ -89,6 +89,12 @@ def pytest_sessionstart(session: pytest.Session):
     _disable_logging_root_handlers()
 
 
+def is_dvs_run(session, switch_attributes):
+    cli_type = session.config.getoption('--target_cli_type', default=None) or \
+        switch_attributes['Topology Conn.']['CLI_TYPE']
+    return cli_type == CliType.DVS
+
+
 def pytest_collection(session: pytest.Session):
     # If pytest is running in collect-only mode, skip the rest of the code
     # WHY? because we want the collection mode to run faster
@@ -120,6 +126,11 @@ def pytest_collection(session: pytest.Session):
         # Required for prevent SSH attempts into DUT at the beginning of deploy image test(in case when device in ONIE)
         branch = 'master'
         image = ''
+        session.config.cache.set(PytestConst.IS_SANITIZER_IMAGE, False)
+    elif is_dvs_run(session, switch_attributes):
+        # DVS has no /etc/sonic/sonic_version.yml; each sonic-cfggen probe costs a fresh SSH login and fails anyway
+        branch = 'master'
+        image = 'Unknown'
         session.config.cache.set(PytestConst.IS_SANITIZER_IMAGE, False)
     else:
         branch = get_sonic_branch(topology)

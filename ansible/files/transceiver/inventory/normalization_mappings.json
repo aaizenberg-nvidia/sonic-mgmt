@@ -1,8 +1,12 @@
 {
   "vendor_names": {
-    "PINEWAVE": "PINEWAVE"
+    "PINEWAVE": "PINEWAVE",
+    "NVIDIA": "NVIDIA"
   },
   "part_numbers": {
-    "T-OH8CNT-NMT": "T-OH8CNT-NMT"
+    "T-OH8CNT-NMT": "T-OH8CNT-NMT",
+    "T-RH8ENH-NMT": "T-RH8ENH-NMT",
+    "980-9IAU9-00XM0H": "980-9IAU9-00XM0H",
+    "MMS1X00-NS400": "MMS1X00-NS400"
   }
 }

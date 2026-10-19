@@ -1,0 +1,3 @@
+StartDevice,StartPort,EndDevice,EndPort,EndFeed
+pdu-10-245-2-17,7,mtvr-bison-148,PSU1,
+pdu-10-245-2-50,7,mtvr-bison-148,PSU2,

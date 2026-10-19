@@ -5,111 +5,19 @@ import pytest
 import logging
 import functools
 from tests.platform_tests.mellanox.interface_utils import get_physical_index_to_interfaces_map, get_interfaces_physical_path
+from tests.platform_tests.mellanox import software_control_constants as sc_const
+
 
 logger = logging.getLogger()
 
-SC_ENABLED = 1
-
-
-SERVICE_PORTS_BY_PLATFORM = {
-    "x86_64-nvidia_sn5600-r0": ["Ethernet512"],
-    "x86_64-nvidia_sn5600_simx-r0": ["Ethernet512"],
-    "x86_64-nvidia_sn5640-r0": ["Ethernet512", "Ethernet520"],
-    "x86_64-nvidia_sn5640_simx-r0": ["Ethernet512", "Ethernet520"],
-    "x86_64-nvidia_sn6600-r0": ["Ethernet512", "Ethernet520", "Ethernet528", "Ethernet536"],
-    "x86_64-nvidia_sn6600_simx-r0": ["Ethernet512", "Ethernet520", "Ethernet528", "Ethernet536"],
-    "x86_64-nvidia_sn5810_ld-r0": ["Ethernet512", "Ethernet513"],
-    "x86_64-nvidia_sn5810_ld_simx-r0": ["Ethernet512", "Ethernet513"],
-    "x86_64-nvidia_sn6600_ld-r0": ["Ethernet512", "Ethernet513"],
-    "x86_64-nvidia_sn6600_ld_simx-r0": ["Ethernet512", "Ethernet513"],
-}
-
-# Command to get ASIC device (PCI) path on DUT
-ASIC_DETECT_GET_DEVICE_PATH_CMD = '/usr/bin/asic_detect/asic_detect.sh -p'
-
-SAI_PROFILE_FILE_NAME = "sai.profile"
-PMON_DEAMON_CONTROL_FILE_NAME = "pmon_daemon_control.json"
-PLATFORM_FOLDER_PATH = "/usr/share/sonic/device/"
-SC_SAI_ATTRIBUTE_NAME = "SAI_INDEPENDENT_MODULE_MODE"
-XCVRD_PMON_PROCESS_SKIP = "python3 /usr/local/bin/xcvrd --skip_cmis_mgr"
-
-SC_EEPROM_SPECIFICATION_KEY = "Specification compliance"
-SC_EEPROM_VENDOR_DATE_KEY = "Vendor Date Code\\(YYYY-MM-DD Lot\\)"
-SC_EEPROM_VENDOR_NAME_KEY = "Vendor Name"
-SC_EEPROM_VENDOR_OUI_KEY = "Vendor OUI"
-SC_EEPROM_VENDOR_PM_KEY = "Vendor PN"
-SC_EEPROM_VENDOR_REV_KEY = "Vendor Rev"
-SC_EEPROM_VENDOR_SN_KEY = "Vendor SN"
-
-SC_REDIS_SPECIFICATION_KEY = "specification_compliance"
-SC_REDIS_VENDOR_DATE_KEY = "vendor_date"
-SC_REDIS_VENDOR_NAME_KEY = "manufacturer"
-SC_REDIS_VENDOR_OUI_KEY = "vendor_oui"
-SC_REDIS_VENDOR_PM_KEY = "model"
-SC_REDIS_VENDOR_REV_KEY = "vendor_rev"
-SC_REDIS_VENDOR_SN_KEY = "serial"
-SC_REDIS_SFP_IDENTIFIER_KEY = "type"
-
-SC_TRANCEIVER_STATUS_MODULE_STATE = "Current module state"
-SC_TRANCEIVER_STATUS_REASON_FAULT = "Reason of entering the module fault state"
-SC_REDIS_TRANCEIVER_STATUS_MODULE_STATE = "module_state"
-SC_REDIS_TRANCEIVER_STATUS_REASON_FAULT = "module_fault_cause"
-
-EEPROM_CLI_KEYS = [
-    SC_EEPROM_SPECIFICATION_KEY,
-    SC_EEPROM_VENDOR_DATE_KEY,
-    SC_EEPROM_VENDOR_NAME_KEY,
-    SC_EEPROM_VENDOR_OUI_KEY,
-    SC_EEPROM_VENDOR_PM_KEY,
-    SC_EEPROM_VENDOR_REV_KEY,
-    SC_EEPROM_VENDOR_SN_KEY,
-]
-
-TRANCEIVER_CLI_KEYS = [
-    SC_TRANCEIVER_STATUS_MODULE_STATE,
-    SC_TRANCEIVER_STATUS_REASON_FAULT
-]
-
-EEPROM_TO_REDIS_KEY_MAP = {
-    SC_EEPROM_SPECIFICATION_KEY: SC_REDIS_SPECIFICATION_KEY,
-    SC_EEPROM_VENDOR_DATE_KEY: SC_REDIS_VENDOR_DATE_KEY,
-    SC_EEPROM_VENDOR_NAME_KEY: SC_REDIS_VENDOR_NAME_KEY,
-    SC_EEPROM_VENDOR_OUI_KEY: SC_REDIS_VENDOR_OUI_KEY,
-    SC_EEPROM_VENDOR_PM_KEY: SC_REDIS_VENDOR_PM_KEY,
-    SC_EEPROM_VENDOR_REV_KEY: SC_REDIS_VENDOR_REV_KEY,
-    SC_EEPROM_VENDOR_SN_KEY: SC_REDIS_VENDOR_SN_KEY
-}
-
-TRANSCEIVER_STATUS_TO_REDIS_KEY_MAP = {
-    SC_TRANCEIVER_STATUS_MODULE_STATE: SC_REDIS_TRANCEIVER_STATUS_MODULE_STATE,
-    SC_TRANCEIVER_STATUS_REASON_FAULT: SC_REDIS_TRANCEIVER_STATUS_REASON_FAULT
-}
-
-BER_EFFECTIVE_PHYSICAL_ERRORS = "Effective Physical Errors"
-BER_EFFECTIVE_PHYSICAL_BER = "Effective Physical BER"
-BER_ROW_PHYSICAL_ERRORS_PER_LANE = "Raw Physical Errors Per Lane"
-BER_RAW_PHYSICAL_BER = "Raw Physical BER"
-
-BER_KEY_MAP = {
-    BER_EFFECTIVE_PHYSICAL_ERRORS,
-    BER_EFFECTIVE_PHYSICAL_BER,
-    BER_ROW_PHYSICAL_ERRORS_PER_LANE,
-    BER_RAW_PHYSICAL_BER
-}
-
-PLATFORM_GENERATION = ['4280', '4700', '5600', '5610', '5640', '6600', '6810']
-
-CMD_INTERFACE_TRANSCEIVER = "show interface transceiver eeprom"
-CMD_SFPUTIL_EEPROM = "sudo sfputil show eeprom"
-CMD_INTERFACE_TRANSCEIVER_STATUS = "show interfaces transceiver status"
-CMD_REDIS_TRANSCEIVERS = {
-    "TRANSCEIVER_INFO": 'redis-cli -n 6 keys "TRANSCEIVER_INFO|*"',
-    "TRANSCEIVER_STATUS": 'redis-cli -n 6 keys "TRANSCEIVER_STATUS|*"'
-}
 
 def get_service_ports(platform):
-    """Return the platform's service ports, or an empty list if it has none."""
-    return SERVICE_PORTS_BY_PLATFORM.get(platform, [])
+    """
+    @summary: Return the platform's service ports, or an empty list if it has none
+    @param platform: DUT platform name
+    @return: List of service port names
+    """
+    return sc_const.SERVICE_PORTS_BY_PLATFORM.get(platform, [])
 
 
 def enable_cmis_mgr_in_pmon_file(duthost):
@@ -118,8 +26,8 @@ def enable_cmis_mgr_in_pmon_file(duthost):
     @param: duthosts: duthosts fixture
     """
     dut_platfrom = duthost.facts['platform']
-    pmon_daemon_path = os.path.join(PLATFORM_FOLDER_PATH, dut_platfrom)
-    pmon_daemon_file_path = os.path.join(pmon_daemon_path, PMON_DEAMON_CONTROL_FILE_NAME)
+    pmon_daemon_path = os.path.join(sc_const.PLATFORM_FOLDER_PATH, dut_platfrom)
+    pmon_daemon_file_path = os.path.join(pmon_daemon_path, sc_const.PMON_DEAMON_CONTROL_FILE_NAME)
     cmd = f'sudo sed -i \'s/"skip_xcvrd_cmis_mgr": true/"skip_xcvrd_cmis_mgr": false/\' {pmon_daemon_file_path}'
     duthost.shell(cmd)
 
@@ -130,12 +38,12 @@ def check_cmis_mgr_not_skipped(duthost):
     @param: duthosts: duthosts fixture
     """
     dut_platfrom = duthost.facts['platform']
-    pmon_daemon_path = os.path.join(PLATFORM_FOLDER_PATH, dut_platfrom)
-    pmon_daemon_file_path = os.path.join(pmon_daemon_path, PMON_DEAMON_CONTROL_FILE_NAME)
+    pmon_daemon_path = os.path.join(sc_const.PLATFORM_FOLDER_PATH, dut_platfrom)
+    pmon_daemon_file_path = os.path.join(pmon_daemon_path, sc_const.PMON_DEAMON_CONTROL_FILE_NAME)
     cmd = duthost.shell('cat {}'.format(pmon_daemon_file_path))
     daemon_control_dict = json.loads(cmd['stdout'])
     if daemon_control_dict['skip_xcvrd_cmis_mgr'] is True:
-        pytest.skip(f"Skip TC as skip_xcvrd_cmis_mgr skipped in {PMON_DEAMON_CONTROL_FILE_NAME} file")
+        pytest.skip(f"Skip TC as skip_xcvrd_cmis_mgr skipped in {sc_const.PMON_DEAMON_CONTROL_FILE_NAME} file")
 
 
 def check_xcvrd_pmon_process_not_skipped(duthost):
@@ -144,7 +52,7 @@ def check_xcvrd_pmon_process_not_skipped(duthost):
     @param: duthosts: duthosts fixture
     """
     cmd = duthost.shell("docker exec pmon /bin/bash -c 'ps -ax'")
-    if XCVRD_PMON_PROCESS_SKIP in cmd['stdout']:
+    if sc_const.XCVRD_PMON_PROCESS_SKIP in cmd['stdout']:
         pytest.skip("Skip TC as Software Control started with skip flag in pmon processes")
 
 
@@ -155,8 +63,9 @@ def add_sc_sai_attribute(duthost):
     """
     dut_hwsku = duthost.facts['hwsku']
     dut_platfrom = duthost.facts['platform']
-    sai_profile_path = os.path.join(PLATFORM_FOLDER_PATH, dut_platfrom, dut_hwsku, SAI_PROFILE_FILE_NAME)
-    duthost.shell(f'echo "{SC_SAI_ATTRIBUTE_NAME}=1" >> {sai_profile_path}')
+    sai_profile_path = os.path.join(
+        sc_const.PLATFORM_FOLDER_PATH, dut_platfrom, dut_hwsku, sc_const.SAI_PROFILE_FILE_NAME)
+    duthost.shell(f'echo "{sc_const.SC_SAI_ATTRIBUTE_NAME}=1" >> {sai_profile_path}')
 
 
 def check_sc_sai_attribute_value(duthost):
@@ -166,10 +75,11 @@ def check_sc_sai_attribute_value(duthost):
     """
     dut_hwsku = duthost.facts['hwsku']
     dut_platfrom = duthost.facts['platform']
-    sai_profile_path = os.path.join(PLATFORM_FOLDER_PATH, dut_platfrom, dut_hwsku, SAI_PROFILE_FILE_NAME)
+    sai_profile_path = os.path.join(
+        sc_const.PLATFORM_FOLDER_PATH, dut_platfrom, dut_hwsku, sc_const.SAI_PROFILE_FILE_NAME)
     cmd = duthost.shell('cat {}'.format(sai_profile_path))
-    if SC_SAI_ATTRIBUTE_NAME in cmd['stdout']:
-        sc_enabled_in_sai = re.search(f"{SC_SAI_ATTRIBUTE_NAME}=(\\d?)", cmd['stdout']).group(1)
+    if sc_const.SC_SAI_ATTRIBUTE_NAME in cmd['stdout']:
+        sc_enabled_in_sai = re.search(f"{sc_const.SC_SAI_ATTRIBUTE_NAME}=(\\d?)", cmd['stdout']).group(1)
         if sc_enabled_in_sai == '1':
             return True
     return False
@@ -208,7 +118,7 @@ def parse_sc_eeprom(output_lines):
     @param output_lines: command output lines
     @return: returns result in a dictionary
     """
-    return parse_output_to_dict(output_lines, EEPROM_CLI_KEYS)
+    return parse_output_to_dict(output_lines, sc_const.EEPROM_CLI_KEYS)
 
 
 def parse_all_interfaces_eeprom_output_to_dict(output):
@@ -248,7 +158,7 @@ def get_all_transceivers_info_from_redis(duthost, asichost, cmd_type):
     @return: Returns result in a dictionary
     """
     cmd = (
-        f"for port in $({CMD_REDIS_TRANSCEIVERS[cmd_type]}); do echo \"=== $port ===\"; redis-cli -n 6 hgetall \"$port\"; done"
+        f"for port in $({sc_const.CMD_REDIS_TRANSCEIVERS[cmd_type]}); do echo \"=== $port ===\"; redis-cli -n 6 hgetall \"$port\"; done"
     )
     docker_cmd = asichost.get_docker_cmd(cmd, "database")
     all_interfaces_xcvr_info = parse_transceivers_info_from_redis(duthost.shell(docker_cmd)["stdout"],cmd_type)
@@ -295,7 +205,7 @@ def get_sff_cables(duthost, cmd_type, asic_index, port_list):
     for port in port_list:
         redis_output = transform_redis_transceiver_data(duthost, cmd_type,
                                                  asic_index, [port])
-        if 'QSFP28' in redis_output[port][SC_REDIS_SFP_IDENTIFIER_KEY]:
+        if 'QSFP28' in redis_output[port][sc_const.SC_REDIS_SFP_IDENTIFIER_KEY]:
             sff_ports.append(port)
     return sff_ports
 
@@ -306,17 +216,149 @@ def parse_sc_transceiver_status(output_lines):
     @param output_lines: Command output lines
     @return: Returns result in a dictionary
     """
-    return parse_output_to_dict(output_lines, TRANCEIVER_CLI_KEYS)
+    return parse_output_to_dict(output_lines, sc_const.TRANCEIVER_CLI_KEYS)
 
 
 @functools.lru_cache(maxsize=1)
 def get_mst_path(duthost):
-    return duthost.shell(ASIC_DETECT_GET_DEVICE_PATH_CMD)['stdout'].strip()
+    return duthost.shell(sc_const.ASIC_DETECT_GET_DEVICE_PATH_CMD)['stdout'].strip()
+
+
+def _mlxlink_plain(text):
+    """
+    @summary: Remove mlxlink color codes so field values can be compared
+    @param text: mlxlink stdout
+    @return: stdout without color codes
+    """
+    return sc_const._MLXLINK_ANSI_RE.sub('', text or '')
+
+
+def get_mlxlink_tool_errors(output):
+    """
+    @summary: Return the mlxlink Errors-section body, or an empty string
+    @param output: mlxlink stdout
+    @return: Errors-section text, or an empty string when that section is missing
+    """
+    match = sc_const.MLXLINK_TOOL_ERRORS_RE.search(_mlxlink_plain(output))
+    return match.group(1).strip() if match else ''
+
+
+def assert_mlxlink_no_tool_errors(output, port, cmd):
+    """
+    @summary: Assert that mlxlink stdout has an empty Errors section
+    @param output: mlxlink stdout
+    @param port: DUT interface name
+    @param cmd: mlxlink command label used in the assertion message
+    """
+    tool_errors = get_mlxlink_tool_errors(output)
+    assert not tool_errors, f"mlxlink {cmd} reported errors for port {port}: {tool_errors}"
+
+
+def is_mlxlink_sc_cable_dump_no_cable(output):
+    """
+    @summary: True when the Errors section says no cable is plugged
+    @param output: mlxlink --cable --dump stdout
+    @return: True when 'No plugged cable detected' is in the Errors section
+    """
+    errors = get_mlxlink_tool_errors(output)
+    return sc_const.MLXLINK_SC_CABLE_DUMP_NO_CABLE in errors
+
+
+def is_mlxlink_sc_cable_dump_expected_fail(output, module_present=False):
+    """
+    @summary: True when SC blocked mlxlink --cable --dump
+    @param output: mlxlink --cable --dump stdout
+    @param module_present: When True, 'No plugged cable detected' also counts as the expected failure
+    @return: True for a PDDR, register-not-supported, or EEPROM-dump error
+    """
+    errors = get_mlxlink_tool_errors(output)
+    if any(pattern in errors for pattern in sc_const.MLXLINK_SC_CABLE_DUMP_ACCESS_BLOCK_ERRORS):
+        return True
+    return bool(module_present) and sc_const.MLXLINK_SC_CABLE_DUMP_NO_CABLE in errors
+
+
+def is_mlxlink_sc_module_state_expected_fail(output):
+    """
+    @summary: True when mlxlink --module_state failed as the SC coverage table requires
+    @param output: mlxlink --module_state stdout
+    @return: True for a PMAOS or register-not-supported error
+    """
+    errors = get_mlxlink_tool_errors(output)
+    return any(pattern in errors for pattern in sc_const.MLXLINK_SC_MODULE_STATE_EXPECTED_ERRORS)
+
+
+def get_mlxlink_operational_fec(output):
+    """
+    @summary: Return the Operational Info FEC value from mlxlink stdout
+    @param output: mlxlink stdout
+    @return: FEC value, or an empty string when it is missing
+    """
+    match = sc_const.MLXLINK_OPERATIONAL_FEC_RE.search(_mlxlink_plain(output))
+    return match.group(1).strip() if match else ''
+
+
+def is_mlxlink_fec_histogram_unsupported(output):
+    """
+    @summary: True when the active FEC cannot provide an RX FEC histogram, for example No FEC
+    @param output: mlxlink --rx_fec_histogram stdout
+    @return: True for No FEC. RS-FEC and FC-FEC still return False when the histogram error appears
+    """
+    fec = get_mlxlink_operational_fec(output).lower()
+    if fec == sc_const.MLXLINK_FEC_NO_FEC:
+        return True
+    errors = get_mlxlink_tool_errors(output)
+    if sc_const.MLXLINK_NO_HISTOGRAM_FOR_FEC not in errors:
+        return False
+    # Fallback when FEC is No FEC (or unparsed) but mlxlink already said no histogram.
+    # RS-FEC / FC-FEC must still fail on this Errors section.
+    return sc_const.MLXLINK_FEC_RS_FEC not in fec and sc_const.MLXLINK_FEC_FC_FEC not in fec
+
+
+def parse_mlxlink_rx_fec_histogram(output):
+    """
+    @summary: Parse the Histogram of FEC Errors section from mlxlink stdout
+    @param output: mlxlink --rx_fec_histogram stdout
+    @return: Dictionary of bins, or None when the section, header, or bin rows are missing
+    """
+    if not output or sc_const.MLXLINK_RX_FEC_HISTOGRAM_SECTION not in output:
+        return None
+    if not sc_const.MLXLINK_RX_FEC_HISTOGRAM_HEADER_RE.search(output):
+        return None
+    bins = {}
+    for bin_match in sc_const.MLXLINK_RX_FEC_HISTOGRAM_BIN_RE.finditer(output):
+        bin_id = int(bin_match.group(1))
+        bins[bin_id] = {
+            "range": bin_match.group(2),
+            "occurrences": int(bin_match.group(3)),
+        }
+    if not bins:
+        return None
+    return {"bins": bins}
+
+
+def parse_mlxlink_serdes_tx(output):
+    """
+    @summary: Parse mlxlink --show_serdes_tx stdout. Parameter names are read from the output
+    @param output: mlxlink --show_serdes_tx stdout
+    @return: Dictionary of parameter names and lanes, or None when the section is missing
+    """
+    if not output or sc_const.MLXLINK_SERDES_TX_SECTION not in output:
+        return None
+    param_match = sc_const.MLXLINK_SERDES_TX_PARAMETERS_RE.search(output)
+    if not param_match:
+        return None
+    parameters = [name.strip() for name in param_match.group(1).split(',') if name.strip()]
+    lanes = {}
+    for lane_match in sc_const.MLXLINK_SERDES_TX_LANE_RE.finditer(output):
+        lane_id = int(lane_match.group(1))
+        values = [value.strip() for value in lane_match.group(2).split(',') if value.strip()]
+        lanes[lane_id] = values
+    return {"parameters": parameters, "lanes": lanes}
 
 
 def parse_mlxlink_interfaces_output(output, interfaces_physical_paths):
     '''
-    @summary: Parse the mlxlink output from get_mlxlink_output_all_interfaces into a dictionary.
+    @summary: Parse the mlxlink output from run_mlxlink_all_interfaces into a dictionary.
     @param output: mlxlink output per interface
     @param interfaces_physical_paths: dictionary of interfaces and their physical paths
     @return: Returns result in a dictionary
@@ -327,29 +369,112 @@ def parse_mlxlink_interfaces_output(output, interfaces_physical_paths):
         interface_output_splitted = interface_output.split("===")
         interface_path = interface_output_splitted[0].strip()
         interface_name = reverse_interfaces_physical_paths[interface_path]
-        result[interface_name] = interface_output_splitted[1]
+        result[interface_name] = _mlxlink_plain(interface_output_splitted[1])
     return result
 
 
-def get_mlxlink_interfaces_output(duthost,interfaces):
+def run_mlxlink_all_interfaces(duthost, interfaces, mlxlink_flags, ignore_errors=False):
+    """
+    @summary: Run mlxlink for all interfaces with the given flags and return the output
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @param mlxlink_flags: mlxlink command flags (e.g., '--show_serdes_tx', '-c')
+    @param ignore_errors: If True, do not raise when mlxlink returns rc!=0 (caller inspects stdout).
+                          Used by --rx_fec_histogram, --cable --dump, and --module_state.
+    @return: Dictionary with mlxlink output per interface
+    """
     interfaces_physical_paths = get_interfaces_physical_path(duthost, interfaces)
     mst_path = get_mst_path(duthost)
     interfaces_physical_paths_as_str = ' '.join(interfaces_physical_paths.values())
-    cmd = f"""for iface in {interfaces_physical_paths_as_str}; do echo "=== Interface: $iface ==="; mlxlink -d {mst_path} -p "$iface" -c; done"""
-    output=duthost.shell(cmd)['stdout']
-    output_per_interface=output.split("=== Interface: ")
-    output_per_interface=output_per_interface[1:]
+    cmd = f"""for iface in {interfaces_physical_paths_as_str}; do echo "=== Interface: $iface ==="; mlxlink -d {mst_path} -p "$iface" {mlxlink_flags}; done"""
+    result = duthost.shell(cmd, module_ignore_errors=ignore_errors)
+    if ignore_errors and result.get('rc'):
+        logger.warning(
+            "mlxlink '%s' exited with code %s. The test continues and checks the command output.",
+            mlxlink_flags, result['rc'])
+    output = result['stdout']
+    output_per_interface = output.split("=== Interface: ")
+    output_per_interface = output_per_interface[1:]
     return parse_mlxlink_interfaces_output(output_per_interface, interfaces_physical_paths)
+
+
+def get_mlxlink_ber_output_all_interfaces(duthost, interfaces):
+    """
+    @summary: Get raw mlxlink -c output for all interfaces
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @return: Dictionary with mlxlink output per interface
+    """
+    return run_mlxlink_all_interfaces(duthost, interfaces, '-c')
+
 
 def get_mlxlink_ber_all_interfaces(duthost, interfaces):
     """
-    @summary: Parse the  output
+    @summary: Parse the BER output from mlxlink -c. The Errors section must be empty
     @param duthost: duthost fixture
-    @param interface: DUT interface
+    @param interfaces: List of DUT interfaces
     @return: BER values dictionary
     """
-    mlxlink_output_all_interfaces = get_mlxlink_interfaces_output(duthost, interfaces)
-    return { interface: parse_output_to_dict(output, BER_KEY_MAP)  for interface, output in mlxlink_output_all_interfaces.items()}
+    mlxlink_output_all_interfaces = get_mlxlink_ber_output_all_interfaces(duthost, interfaces)
+    result = {}
+    for interface, output in mlxlink_output_all_interfaces.items():
+        assert_mlxlink_no_tool_errors(output, interface, "-c")
+        result[interface] = parse_output_to_dict(output, sc_const.BER_KEY_MAP)
+    return result
+
+
+def get_mlxlink_serdes_tx_all_interfaces(duthost, interfaces):
+    """
+    @summary: Get mlxlink SERDES TX parameters for all interfaces
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @return: Dictionary with mlxlink output per interface
+    """
+    return run_mlxlink_all_interfaces(duthost, interfaces, '--show_serdes_tx')
+
+
+def get_mlxlink_rx_fec_histogram_all_interfaces(duthost, interfaces):
+    """
+    @summary: Get mlxlink RX FEC histogram for all interfaces. A non-zero rc is ignored
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @return: Dictionary with mlxlink output per interface
+    """
+    return run_mlxlink_all_interfaces(
+        duthost, interfaces, '--rx_fec_histogram --show_histogram', ignore_errors=True)
+
+
+def get_mlxlink_cable_dump_all_interfaces(duthost, interfaces):
+    """
+    @summary: Get mlxlink cable EEPROM dump for all interfaces. A non-zero rc is ignored
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @return: Dictionary with mlxlink output per interface
+    """
+    return run_mlxlink_all_interfaces(
+        duthost, interfaces, '--cable --dump', ignore_errors=True)
+
+
+def get_mlxlink_counters_all_interfaces(duthost, interfaces):
+    """
+    @summary: Get mlxlink port counters for all interfaces
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @return: Dictionary with mlxlink output per interface
+    """
+    return run_mlxlink_all_interfaces(duthost, interfaces, '--show_counters')
+
+
+def set_mlxlink_module_state_all_interfaces(duthost, interfaces, module_state):
+    """
+    @summary: Set mlxlink module state for all interfaces. A non-zero rc is ignored
+    @param duthost: duthost fixture
+    @param interfaces: List of DUT interfaces
+    @param module_state: DN (plug out) or UP (plug in)
+    @return: Dictionary with command output per interface
+    """
+    return run_mlxlink_all_interfaces(
+        duthost, interfaces, f'--module_state {module_state}', ignore_errors=True)
 
 
 def get_split_ports(duthost, port_index, include_down_ports=False):
@@ -384,7 +509,7 @@ def get_ports_supporting_sc(duthost, only_ports_index_up=False):
     for module_sc_status in res:
         module_number, sc_status =  re.findall(r'module(\d+): (\d+)', module_sc_status)[0]
         port_number = int(module_number) + 1
-        if int(sc_status) == SC_ENABLED and str(port_number) in physical_ports_map:
+        if int(sc_status) == sc_const.SC_ENABLED and str(port_number) in physical_ports_map:
             ports_with_sc_support.extend(physical_ports_map[str(port_number)])
     return ports_with_sc_support
 
@@ -422,7 +547,7 @@ def sc_ms_sku(duthost):
     @param: duthost: duthost fixture
     @return: True if HWSKU is in platform generation supporting Software Control feature
     """
-    return any(item in duthost.facts['hwsku'] for item in PLATFORM_GENERATION)
+    return any(item in duthost.facts['hwsku'] for item in sc_const.PLATFORM_GENERATION)
 
 
 def cleanup_placeholder(parsed_eeprom:dict, key:str):

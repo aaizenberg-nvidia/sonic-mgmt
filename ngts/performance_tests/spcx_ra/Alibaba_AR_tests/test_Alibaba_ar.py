@@ -11,7 +11,6 @@ from ngts.performance_tests.spcx_ra.Alibaba_AR_tests.conftest import (AlibabaSce
                                                                       get_alibaba_traffic, extract_acl_counters,
                                                                       get_conf_args)
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
-from ngts.helpers.performance.performance_counter_helpers import should_validate_performance_counters
 
 logger = logging.getLogger()
 
@@ -62,10 +61,6 @@ class Test_Alibaba_scenarios_with_reset:
             configure_mloops(self.players)
             pytest.skip("Skipping test due to active Redmine issue 4584135 for IPv6")
 
-        with allure.step(f"Adjusting min packet size for SDK branch {sdk_branch}"):
-            if sdk_branch == "sx_sdk_4_7_4500" and is_redmine_issue_active([4885962])[0]:
-                packet_size += 100
-
         test_name = get_perf_test_name(request)
 
         with allure.step("Adding dynamic description to allure report"):
@@ -93,8 +88,6 @@ class Test_Alibaba_scenarios_with_reset:
                                       chip_type=self.chip_type,
                                       bw_threshold=bw_threshold,
                                       bw_fairness_threshold_per_port_group=BwFairnessThreshold.get_bw_fairness_threshold_per_port_group(bw_threshold),
-                                      packet_size=packet_size,
-                                      run_validate_performance_counters=should_validate_performance_counters(self.cli_object),
                                       tc_occ_threshold=PerfConsts.OCC_TH_DICT,
                                       power_threshold=self.power_thresholds_by_chip_type,
                                       skip_first_counters_iteration=skip_first_counters_iteration)

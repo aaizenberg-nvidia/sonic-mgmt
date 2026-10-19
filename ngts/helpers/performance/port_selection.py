@@ -22,8 +22,9 @@ import logging
 import os
 import re
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -559,3 +560,34 @@ def load_forced_unconnected_label_ports(hostname: str, config_path: Optional[str
                         f"front-panel label ports, got {ports!r}.") from e
     logger.info(f"Forced-unconnected label ports for {hostname} from {path}: {sorted(label_ports)}")
     return label_ports
+
+
+def select_ports_max_per_lane_group(ports: List[str], num_ports: int, port_first_lane: Dict[str, int],
+                                    max_per_group: int, lanes_per_group: int = 4) -> List[str]:
+    """Select ``num_ports`` ports in lane order, at most ``max_per_group`` from each lane group.
+
+    A lane group is ``lanes_per_group`` consecutive ASIC lanes (half of an 8-lane OSFP cage by default).
+    At minimum packet size the TG MLOOP generation does not reach line rate when every port of a
+    4-lane group transmits, so capping the group occupancy keeps all selected ports at line rate.
+
+    Args:
+        ports: Candidate port names, in any order.
+        num_ports: Number of ports to return.
+        port_first_lane: Port name -> first ASIC lane of the port.
+        max_per_group: Maximum number of ports taken from one lane group.
+        lanes_per_group: Number of consecutive lanes that form a group.
+
+    Returns:
+        list: ``num_ports`` port names ordered by lane.
+
+    Raises:
+        TestIssue: When the capped candidates are fewer than ``num_ports``.
+    """
+    groups = defaultdict(list)
+    for port in sorted(ports, key=lambda p: port_first_lane[p]):
+        groups[port_first_lane[port] // lanes_per_group].append(port)
+    selected = [port for group in sorted(groups) for port in groups[group][:max_per_group]]
+    if len(selected) < num_ports:
+        raise TestIssue(msg=f"Only {len(selected)} ports available with at most {max_per_group} ports per "
+                        f"{lanes_per_group}-lane group, {num_ports} requested")
+    return selected[:num_ports]

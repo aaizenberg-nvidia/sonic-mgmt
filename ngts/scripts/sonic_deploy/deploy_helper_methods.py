@@ -213,7 +213,7 @@ def check_fw_version(image):
     if image:
         fw_version = get_image_fw_version(image)
         if fw_version < "2020.1136":
-            pytest.exit(f"Deployment paused: SPC6 requires FW >= 2020.1136, "
+            pytest.exit(f"Deployment paused: SN6600_LD requires FW >= 2020.1136, "
                         f"but image {image} contains {fw_version}")
 
 
@@ -892,7 +892,8 @@ class DeployOrchestrator:
 
     def execute_installation(self):
         """Execute installation phase for all DUTs"""
-        if self.context.primary_dut['cli_type'] == CliType.SONIC and self.context.chip_type == "SPC6":
+        if (self.context.primary_dut['cli_type'] == CliType.SONIC and
+                'sn6600_ld' in self.context.platform_params['platform']):
             # deploy_only_target installs only the target image.
             base_image = "" if self.context.deploy_only_target else self.context.base_version
             target_image = self.context.target_version
