@@ -4170,7 +4170,7 @@ class PortiaSurrogateNex(PortiaSwitch):
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7210_ld-r0")
         self.asic_type = NvosConst.NVL5
-        self.mst_dev_name = tuple(f'/dev/mst/mt54002_pciconf{i}' for i in range(self.asic_amount))
+        self.mst_dev_name = tuple(f'/dev/mst/mt54004_pciconf{i}' for i in range(self.asic_amount))
         self.show_platform_output.update({
             PlatformConsts.SYSTEM_TYPE: "N7210_LD",
             "asic-model": self.asic_type,
@@ -4179,8 +4179,8 @@ class PortiaSurrogateNex(PortiaSwitch):
         self._extend_firmware_by_cpld_amount()
         self.memory_size: list[float] = [14.9]
         self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.MD681GEEBC82]
-        # QTM3 access links behave like Juliet, not the inherited NVL7 Portia ones
-        self.supported_nvl_speeds = ['200G', '400G']
+        # N7210_LD access ports advertise 400G only (NVBug 6933997, not a bug)
+        self.supported_nvl_speeds = ['400G']
         self.access_port_speed = '400G'
         self.expected_operation_durations[InternalNvosConsts.ACP_PORT_GOES_UP] = \
             InternalNvosConsts.NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED
@@ -4190,6 +4190,11 @@ class PortiaSurrogateNex(PortiaSwitch):
     def _init_interfaces_ib_lanes(self):
         super()._init_interfaces_ib_lanes()
         self.supported_lanes = '2X'
+
+    def _init_interface_lists(self):
+        super()._init_interface_lists()
+        # only FNM port 1 is wired (fnm_ring 0,1 / 2,3); fae still lists the unwired p2 ports
+        self.nvl_internal_fnm_ports = [port for port in self.nvl_internal_fnm_ports if port.endswith('p1')]
 
     def _init_platform_lists(self):
         super()._init_platform_lists()
@@ -4205,7 +4210,8 @@ class PortiaSurrogateNex(PortiaSwitch):
         floors = range(1, self.SWB_FLOORS + 1)
         self.temperature_sensors = (
             [f"ASIC{asic_num}" for asic_num in range(1, self.asic_amount + 1)] +
-            ["CPU-Pack-Temp", "Drive-Temp", "HSC-VinDC-Temp"] +
+            ["CPU-Pack-Temp", "Drive-Temp"] +
+            [f"HSC-{floor}-Temp" for floor in floors] +
             [f"PDB-Conv-{floor}-Temp" for floor in floors] +
             [f"PMIC-{pmic_num}-Temp" for pmic_num in range(1, asic_pmic_amount + self.COMEX_PMICS + 1)] +
             ["SODIMM-1-Temp", "SODIMM-2-Temp"]
