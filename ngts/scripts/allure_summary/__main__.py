@@ -26,9 +26,7 @@ from ngts.scripts.allure_summary.email_sender import send_email
 from ngts.scripts.allure_summary.logger import setup_logger, get_logger
 from ngts.scripts.allure_summary.multi_system import fetch_and_aggregate
 from ngts.scripts.allure_summary.templates.multi_system_template import generate_multi_system_email
-
-# Path where allure_reporter.py writes the predicted URL
-VERIFICATION_FILES_DIR = "/auto/sw_system_project/NVOS_INFRA/verification_files"
+from ngts.nvos_constants.constants_nvos import NvosConst
 
 
 def get_url_from_verification_file(project_name: str) -> Optional[str]:
@@ -36,7 +34,7 @@ def get_url_from_verification_file(project_name: str) -> Optional[str]:
     Read the Allure report URL from the verification file.
 
     The allure_reporter.py script writes the predicted URL to:
-    /auto/sw_system_project/NVOS_INFRA/verification_files/{project_name}.txt
+    NvosConst.allure_url_folder(project_name)/{project_name}.txt
 
     Note: The file may use different naming conventions:
     - {project_name}.txt
@@ -62,7 +60,7 @@ def get_url_from_verification_file(project_name: str) -> Optional[str]:
     # Find all existing files and their modification times
     found_files = []
     for filename in possible_names:
-        file_path = os.path.join(VERIFICATION_FILES_DIR, filename)
+        file_path = os.path.join(NvosConst.allure_url_folder(project_name), filename)
         if os.path.exists(file_path):
             mtime = os.path.getmtime(file_path)
             found_files.append((file_path, filename, mtime))

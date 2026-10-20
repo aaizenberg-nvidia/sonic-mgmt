@@ -216,6 +216,13 @@ class NvosConst:
     SDK_DUMP_FOLDER = "/var/log/mellanox/sdk-dumps/"
     MARS_RESULTS_FOLDER = "/auto/sw_regression/system/NVOS/MARS/results/"
     MARS_DUMPS_FOLDER = "/auto/sw_regression/system/NVOS/MARS/dumps/"
+    ALLURE_URL_FOLDER = "/auto/sw_system_project/NVOS_INFRA/verification_files/"
+
+    @staticmethod
+    def allure_url_folder(allure_project):
+        """Folder where allure_reporter.py writes <allure_project>.txt with the report URL.
+        /auto/sw_system_project is read-only from AIR sonic-mgmt containers."""
+        return NvosConst.MARS_RESULTS_FOLDER if 'air' in allure_project.lower() else NvosConst.ALLURE_URL_FOLDER
 
     PATH_TO_IMAGES = "/host/nos-images"
 

@@ -10,12 +10,11 @@ import requests
 import retry
 
 FILE_PATH = Path(__file__).resolve()
-_PATH_TO_UPLOAD_URL = Path("/auto/sw_system_project/NVOS_INFRA/verification_files/")
 sonic_mgmt_path = FILE_PATH.parents[len(FILE_PATH.parts) - FILE_PATH.parts.index('ngts') - 1]
 sys.path.append(str(sonic_mgmt_path))
 
 from ngts.constants.constants import CliType, DbConstants, InfraConst  # noqa: E402
-from ngts.nvos_constants.constants_nvos import TopologyConsts  # noqa: E402
+from ngts.nvos_constants.constants_nvos import NvosConst, TopologyConsts  # noqa: E402
 from ngts.scripts.pbi import la_helpers, parser_helpers, database_helpers  # noqa: E402
 from ngts.scripts.pbi.models import Args, TestRuntime, Summary, TestResult  # noqa: E402
 from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL  # noqa: E402
@@ -108,7 +107,7 @@ def main():
     args = _parse_args()
     _setup_logger()
 
-    file_path = _PATH_TO_UPLOAD_URL / f"{args.allure_project_id}.txt"
+    file_path = Path(NvosConst.allure_url_folder(args.allure_project_id)) / f"{args.allure_project_id}.txt"
     logger.info(f"File Path: {file_path}")
     if not (report_url := file_path.read_text().strip()):
         file_path.unlink()

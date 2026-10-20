@@ -39,8 +39,8 @@ from ngts.scripts.allure_summary.allure_client import AllureClient
 from ngts.scripts.allure_summary.config import ALLURE_BASE_URL
 from ngts.scripts.allure_summary.llm_client import LLMGatewayClient
 from ngts.scripts.allure_summary.logger import setup_logger, get_logger
+from ngts.nvos_constants.constants_nvos import NvosConst
 
-VERIFICATION_FILES_DIR = "/auto/sw_system_project/NVOS_INFRA/verification_files"
 DEFAULT_OUTPUT_DIR = "/tmp"
 ERROR_EXCERPT_CHARS = 600
 BUG_SUBJECT_CHARS = 200
@@ -65,7 +65,7 @@ def read_predicted_url(project_name: str) -> Optional[str]:
     ]
     found: List[Tuple[str, float]] = []
     for name in candidates:
-        path = os.path.join(VERIFICATION_FILES_DIR, name)
+        path = os.path.join(NvosConst.allure_url_folder(project_name), name)
         if os.path.exists(path):
             found.append((path, os.path.getmtime(path)))
     if not found:
