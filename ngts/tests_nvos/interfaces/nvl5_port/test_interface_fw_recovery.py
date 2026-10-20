@@ -51,7 +51,7 @@ FAE_RECOVERY_CONFIG_DICT = {
 FAE_RECOVERY_CONFIG_PARAMS = [pytest.param(config, id=name) for name, config in FAE_RECOVERY_CONFIG_DICT.items()]
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_show_fw_recovery_counters(engines, devices):
     """
@@ -99,7 +99,7 @@ def test_show_fw_recovery_counters(engines, devices):
         verify_msg_in_out_or_err(f"{random_counter}: {FWRecoveryConsts.DEFAULT_FW_RECOVERY_COUNTERS.get(random_counter)}", out)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.parametrize("test_api", random.sample(ApiType.ALL_TYPES, 1))
 def test_fw_recovery_bad_flow(devices, engines, test_name, test_api):
@@ -146,7 +146,7 @@ def test_fw_recovery_bad_flow(devices, engines, test_name, test_api):
             ).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.parametrize("config", FAE_RECOVERY_CONFIG_PARAMS)
 def test_set_fae_fw_recovery_trunk_ports(engines, devices, random_api, standalone_system: bool, has_loopbox: bool, config):
@@ -177,7 +177,7 @@ def test_set_fae_fw_recovery_trunk_ports(engines, devices, random_api, standalon
     )
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.parametrize("config", FAE_RECOVERY_CONFIG_PARAMS)
 def test_set_fae_fw_recovery_access_ports(engines, devices, random_api, standalone_system, has_loopbox, config, setup_name):
@@ -301,7 +301,7 @@ def _validate_timeout(selected_port, config, expected_timeout=None, verify_after
             _verify_config(selected_port, config, FWRecoveryConsts.ENABLED, expected_timeout)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 def test_phy_recovery_go_once(engines, devices, test_api):

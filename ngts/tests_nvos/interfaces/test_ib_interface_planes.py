@@ -350,7 +350,7 @@ def verify_planes_up(port_name: str, num_of_planes: int, exclude_plane: int = No
     return plane_states
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_interface_plane_status_change(engines, devices, setup_name, test_api):

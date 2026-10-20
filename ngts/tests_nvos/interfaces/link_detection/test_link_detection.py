@@ -16,7 +16,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.link_detection
 def test_port_xdr(engines, devices, random_api):
     """
@@ -41,7 +41,7 @@ def test_port_xdr(engines, devices, random_api):
         _verify_port_planarization(port_name, LinkDetectionConsts.CONNECTION_MODE_XDR)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.link_detection
 def test_port_legacy(engines, devices, random_api):
     """
@@ -69,7 +69,7 @@ def test_port_legacy(engines, devices, random_api):
         _verify_port_planarization(port_name, LinkDetectionConsts.CONNECTION_MODE_NDR)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.link_detection
 def test_port_loop_out(engines, devices, random_api):
     """
@@ -110,7 +110,7 @@ def test_port_loop_out(engines, devices, random_api):
         _verify_port_planarization(p2_name, LinkDetectionConsts.CONNECTION_MODE_XDR)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.link_detection
 def test_port_ranges(engines, devices):
     """
@@ -137,7 +137,7 @@ def test_port_ranges(engines, devices):
         _switch_port_connection_mode_to_default(port_ranges_name)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.link_detection
 def test_port_split(engines, devices):
     """

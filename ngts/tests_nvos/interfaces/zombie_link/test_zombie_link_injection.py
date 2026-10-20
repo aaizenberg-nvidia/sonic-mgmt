@@ -156,7 +156,7 @@ def phy_diag_deployed(engines):
             PhyDiagTool.cleanup_deployed(engines.dut)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_tx_bw_loss_injection_and_link_down(engines, devices, phy_diag_deployed,
                                             asic_error_injection):

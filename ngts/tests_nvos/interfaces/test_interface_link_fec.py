@@ -12,7 +12,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('fec_mode', LinkDetectionConsts.FEC_MODES)
 def test_set_interface_link_fec_mode(engines, fec_mode):
     """
@@ -57,7 +57,7 @@ def test_set_interface_link_fec_mode(engines, fec_mode):
         ValidationTool.verify_fec_config_in_auto_output(link_output, LinkDetectionConsts.FEC_MODE_DEFAULT)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 def test_set_interface_link_fec_mode_invalid(engines):
     """
     Try to configure interface link fec mode to invalid mode and verify the configuration is not applied

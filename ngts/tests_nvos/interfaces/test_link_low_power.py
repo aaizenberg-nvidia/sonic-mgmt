@@ -15,7 +15,7 @@ logger = logging.getLogger()
 
 
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
 def test_link_low_power_disabled(engines, devices, prepare_traffic, test_api):
     """
@@ -38,7 +38,7 @@ def test_link_low_power_disabled(engines, devices, prepare_traffic, test_api):
 
 
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
 def test_link_low_power_enabled(engines, devices, topology_obj, prepare_traffic, test_api):
     """

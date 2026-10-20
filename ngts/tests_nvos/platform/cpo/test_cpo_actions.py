@@ -365,7 +365,7 @@ def test_cpo_fault_injection(engines, devices, random_api):
     """
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cpov2
 def test_cpo_link_up_time(engines, devices, random_api, register_cleanup):
     """Validate link-up timing on CPO sw ports and laser-sharing isolation.

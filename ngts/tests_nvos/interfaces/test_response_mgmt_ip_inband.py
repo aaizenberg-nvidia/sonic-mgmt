@@ -18,7 +18,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_configure_feature_state(engines, devices, start_sm, test_api):
     """
@@ -93,7 +93,7 @@ def test_configure_feature_state(engines, devices, start_sm, test_api):
             fae.ib.ufm_mad.unset(op_param=UfmMadConsts.STATE, apply=True).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_configure_mgmt_port_ipv4(engines, devices, topology_obj, prepare_traffic, test_api, serial_engine):
     """
@@ -187,7 +187,7 @@ def test_configure_mgmt_port_ipv4(engines, devices, topology_obj, prepare_traffi
             fae.ib.ufm_mad.unset(op_param=UfmMadConsts.STATE, apply=True, dut_engine=serial_engine).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_configure_mgmt_port_ipv6(engines, devices, topology_obj, prepare_traffic, test_api, serial_engine):
     """
@@ -278,7 +278,7 @@ def test_configure_mgmt_port_ipv6(engines, devices, topology_obj, prepare_traffi
             fae.ib.ufm_mad.unset(op_param=UfmMadConsts.STATE, apply=True, ask_for_confirmation=True, dut_engine=serial_engine).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
 def test_configure_mgmt_port_link_state(engines, devices, topology_obj, prepare_traffic, test_api, serial_engine):
     """

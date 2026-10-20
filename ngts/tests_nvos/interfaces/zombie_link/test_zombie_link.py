@@ -76,7 +76,7 @@ def _validate_state_with_retry(fae_obj, expected_oper_state, expected_applied_st
 # Test 1 — Configuration (test plan 6.1)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_tx_bw_loss_monitor_configuration(engines, devices, random_api):
     """
@@ -150,7 +150,7 @@ def test_tx_bw_loss_monitor_configuration(engines, devices, random_api):
 # Test 2 — Link Events (test plan 7.1)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_tx_bw_loss_monitor_link_state_down(engines, devices, random_api):
     """
@@ -214,7 +214,7 @@ def test_tx_bw_loss_monitor_link_state_down(engines, devices, random_api):
 # Test 3 — Range-based configuration (ports under test)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_tx_bw_loss_monitor_range(engines, devices, random_api, standalone_system, has_loopbox, is_simx,
                                   zombie_link_manager):
@@ -287,7 +287,7 @@ def test_tx_bw_loss_monitor_range(engines, devices, random_api, standalone_syste
 # Test 4 — FNM ports (internal or external, depending on platform)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 def test_tx_bw_loss_monitor_fnm_port(engines, devices, random_api, zombie_link_manager):
     """

@@ -27,7 +27,7 @@ from ngts.tools.test_utils import allure_utils as allure
 logger = logging.getLogger()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.nvos_ci
 def test_internal_fnm_ports(devices):
@@ -43,7 +43,7 @@ def test_internal_fnm_ports(devices):
     assert not down_internal_fnm_ports
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 def test_fae_interface_commands(engines, devices, random_api, start_sm, setup_name):
@@ -175,7 +175,7 @@ def test_fae_interface_commands(engines, devices, random_api, start_sm, setup_na
     # tested on test_action_fae_clear_counters
 
 
-# @pytest.mark.interface
+# @pytest.mark.interfaces
 # @pytest.mark.multiplanar
 # @pytest.mark.simx_xdr
 # @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
@@ -286,7 +286,7 @@ class AggregatedPortConfigStateTest(AggregatedPortConfigBaseTest):
 
 
 # todo: pending decision which speeds are actually supported by mamba
-# @pytest.mark.interface
+# @pytest.mark.interfaces
 # @pytest.mark.multiplanar
 # @pytest.mark.simx_xdr
 # @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -295,7 +295,7 @@ class AggregatedPortConfigStateTest(AggregatedPortConfigBaseTest):
 
 
 @pytest.mark.timeout(5 * MINUTE)
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -304,7 +304,7 @@ def test_aggregated_port_config_op_vls(engines, devices, start_sm, test_api, tes
 
 
 @pytest.mark.timeout(5 * MINUTE)
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -313,7 +313,7 @@ def test_aggregated_port_config_mtu(engines, devices, start_sm, test_api, test_n
 
 
 @pytest.mark.timeout(5 * MINUTE)
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -321,7 +321,7 @@ def test_aggregated_port_config_state(engines, devices, start_sm, test_api, test
     AggregatedPortConfigStateTest.test_config(engines, devices, test_api, test_name, setup_name)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 def test_aggregated_port_mismatch_between_planes(engines, devices, random_api):
@@ -440,7 +440,7 @@ def test_aggregated_port_mismatch_between_planes(engines, devices, random_api):
             set_mp_config_to_default()
 
 
-# @pytest.mark.interface
+# @pytest.mark.interfaces
 # @pytest.mark.multiplanar
 # @pytest.mark.simx_xdr
 # @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
@@ -513,7 +513,7 @@ def test_aggregated_port_mismatch_between_planes(engines, devices, random_api):
 #             set_mp_config_to_default()
 
 
-# @pytest.mark.interface
+# @pytest.mark.interfaces
 # @pytest.mark.multiplanar
 # @pytest.mark.simx_xdr
 # @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -606,7 +606,7 @@ def test_aggregated_port_mismatch_between_planes(engines, devices, random_api):
 #                 selected_aggregated_port.interface.link.unset(apply=True, ask_for_confirmation=True).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -659,7 +659,7 @@ def test_symmetry_manager_log_and_tech_support(engines, devices, test_api, setup
             selected_aggregated_port.interface.link.unset(apply=True, ask_for_confirmation=True).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -707,7 +707,7 @@ def test_fae_invalid_commands(engines, devices, test_api):
         Port(fnm_internal_port_name).interface.show(should_succeed=False)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 def test_verify_sm_commands_not_exist(engines, random_api):

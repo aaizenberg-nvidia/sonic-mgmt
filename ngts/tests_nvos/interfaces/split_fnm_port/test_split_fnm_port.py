@@ -12,7 +12,7 @@ from ngts.nvos_tools.ib.opensm.OpenSmTool import OpenSmTool
 logger = logging.getLogger()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx_xdr
 @pytest.mark.system_profile_cleanup

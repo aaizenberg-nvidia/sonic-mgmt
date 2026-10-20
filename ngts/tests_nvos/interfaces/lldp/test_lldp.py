@@ -43,7 +43,7 @@ LLDP_STATE_CHANGE_POLL_INTERVAL = 2
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_enabled(engines, devices, random_api):
     """
@@ -59,7 +59,7 @@ def test_lldp_enabled(engines, devices, random_api):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_show(engines, devices):
     """
@@ -89,7 +89,7 @@ def test_lldp_show(engines, devices):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_disabled(engines, devices, random_api):
     """
@@ -118,7 +118,7 @@ def test_lldp_disabled(engines, devices, random_api):
 @pytest.mark.lldp
 @pytest.mark.simx
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_with_custom_interval(engines, devices, random_api):
     """
@@ -145,7 +145,7 @@ def test_lldp_with_custom_interval(engines, devices, random_api):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_custom_hostname(engines, devices, random_api):
     """
@@ -176,7 +176,7 @@ def test_lldp_custom_hostname(engines, devices, random_api):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_one_neighbor(engines, devices, random_api):
     """
@@ -207,7 +207,7 @@ def test_lldp_one_neighbor(engines, devices, random_api):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_incorrect_values(engines, devices, random_api):
     """
@@ -244,7 +244,7 @@ def test_lldp_incorrect_values(engines, devices, random_api):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_max_values(engines, devices):
     """
@@ -285,7 +285,7 @@ def test_lldp_max_values(engines, devices):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.timeout(5 * MINUTE, func_only=True)
 @pytest.mark.cumulus
 def test_lldp_additional_ipv6(engines, devices, serial_engine):
@@ -333,7 +333,7 @@ def test_lldp_additional_ipv6(engines, devices, serial_engine):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_interface_flapping(engines, devices, serial_engine):
     """
@@ -395,7 +395,7 @@ def test_lldp_interface_flapping(engines, devices, serial_engine):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus
 def test_lldp_disable_dhcp(engines, devices, serial_engine):
     """
@@ -464,7 +464,7 @@ def test_lldp_disable_dhcp(engines, devices, serial_engine):
 
 @pytest.mark.lldp
 @pytest.mark.system
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.cumulus_only
 def test_lldp_max_values_for_cumulus(engines, devices):
     """

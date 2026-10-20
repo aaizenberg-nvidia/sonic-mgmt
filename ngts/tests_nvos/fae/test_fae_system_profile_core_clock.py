@@ -30,7 +30,7 @@ CORE_CLK_SPEED_LINE_RE = re.compile(r'^core_clk_speed\s*\|\s*(0x[0-9a-fA-F]+)\s*
 
 @pytest.mark.dut_reboot
 @pytest.mark.fae
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_fae_core_clock_main_flow(engines, devices, has_loopbox, standalone_system, test_name, random_api):
     """ Validate core-clock is updated as expected.
@@ -124,7 +124,7 @@ def test_fae_core_clock_main_flow(engines, devices, has_loopbox, standalone_syst
 
 @pytest.mark.dut_reboot
 @pytest.mark.fae
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_system, test_name, random_api):
     """ Validate invalid core-clock values and blocked changes when port speed is illegal for the target clock.
@@ -221,7 +221,7 @@ def test_fae_core_clock_invalid_flow(engines, devices, has_loopbox, standalone_s
 
 @pytest.mark.dut_reboot
 @pytest.mark.fae
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 def test_fae_core_clock_ports_down(engines, devices, has_loopbox, standalone_system, test_name, random_api):
     """ Validate access ports go down after core-clock change when no speed is saved and reset factory behaves as expected.
