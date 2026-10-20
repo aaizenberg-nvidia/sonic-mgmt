@@ -238,3 +238,24 @@ def test_device_overrides_laser_operation_steps():
     assert sorted(switch.cpo.laser_operation_steps) == sorted(captured)
     steps = ("fiber-check", "laser-on")
     assert PortiaCpoCapability(laser_operation_steps=steps)._build_topology(switch).laser_operation_steps == steps
+
+
+@pytest.mark.parametrize(
+    ("switch_type", "access_supported", "policy_supported", "trunk_supported"),
+    [
+        ("N6100_LD - Rosalind", False, False, False),
+        (PORTIA_NVL72_SIMX_KEY, True, True, False),
+        (PORTIA_NPO_HW_KEY, True, True, True),
+        (PORTIA_CPO_HW_KEY, True, True, True),
+    ],
+)
+def test_phy_recovery_pruning_by_device(switch_type, access_supported, policy_supported, trunk_supported):
+    from ngts.nvos_tools.Devices.DeviceFactory import DeviceFactory
+    from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import PhyRecoveryConsts
+
+    unsupported = DeviceFactory.create_device(switch_type).unsupported_commands_list
+    for cmd in PhyRecoveryConsts.NVL7_ACCESS_COMMANDS:
+        assert (cmd in unsupported) is not access_supported, cmd
+    assert (PhyRecoveryConsts.NVL7_POLICY_SET_COMMAND in unsupported) is not policy_supported
+    for cmd in PhyRecoveryConsts.NVL7_TRUNK_ONLY_SET_COMMANDS:
+        assert (cmd in unsupported) is not trunk_supported, cmd
