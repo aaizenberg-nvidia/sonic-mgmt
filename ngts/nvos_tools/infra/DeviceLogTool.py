@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from typing import List, Union
 
@@ -52,3 +53,18 @@ def grep_log_lines_after_datetime(engine: LinuxSshEngine, expression: str, start
             output = log_lines
         allure.attach(f'Found log lines with {repr(expression)}', '\n'.join(output))
         return output
+
+
+def mark_syslog(engine: LinuxSshEngine, marker: str | None = None, tag: str = 'ngts') -> str:
+    """Write a marker line (unique when not given) to the DUT syslog and return it."""
+    marker = marker or f'ngts-marker-{time.time_ns()}'
+    engine.run_cmd(f"sudo logger -t {tag} '{marker}'")
+    return marker
+
+
+def count_log_lines_after_marker(engine: LinuxSshEngine, marker: str, expression: str,
+                                 log_files=(SyslogConsts.SYSLOG_LOG_PATH + '.1', SyslogConsts.SYSLOG_LOG_PATH)) -> int:
+    """Count log lines matching ``expression`` (grep -E) written after the ``marker`` line."""
+    output = engine.run_cmd(f"sudo cat {' '.join(log_files)} 2>/dev/null"
+                            f" | awk 'index($0, \"{marker}\") {{seen=1; next}} seen' | grep -acE '{expression}'")
+    return int(output.strip().splitlines()[-1])

@@ -68,6 +68,7 @@ from ngts.nvos_tools.infra.CertificateGenerator import CertificateGenerator
 from ngts.nvos_tools.infra.CrlValidator import ClientConfig, RevokeConfig
 from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurationTool
 from ngts.nvos_tools.ib.InterfaceConfiguration import Port, nvos_consts as ib_consts
+from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.FWComponentsTool import FWComponentsTool
 from ngts.nvos_tools.infra.ImaTool import ImaTool
 from ngts.nvos_tools.infra.SSDTool import SSDTool
@@ -195,8 +196,11 @@ from ngts.tests_nvos.general.security.test_ssh_cert_auth.helpers import (
 )
 from ngts.tests_nvos.interfaces.nvl_port.helpers import get_acp_ports_in_state, get_linked_ports_pair
 from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
+    nvl7_access_leaves_supported,
     nvl7_stage_and_apply_leaves,
+    nvl7_step1_test_value,
     nvl7_verify_new_leaves,
+    nvl7_verify_no_applied_access_leaf,
     nvl7_wait_trunk_up,
     select_nvl7_trunk_fae_port,
 )
@@ -1509,6 +1513,46 @@ def _check_phy_recovery_nvl7(engines: EnginesT, devices: DevicesT, **kwargs) -> 
                 logger.warning(f"NVL7 cleanup: trunk {fae_port.port.name} did not come back up: {err}")
 
 
+@_requires_compatibility(IbDevice.PortiaSwitch)
+def _check_phy_recovery_nvl7_access(engines: EnginesT, devices: DevicesT, **kwargs) -> Generator[None, None, None]:
+    """
+    Verify NVL7 access-port (acp) step-1 phy-recovery config across a version change, also from or to a build
+    without the step-1 access leaves (detected on the port before and after the change).
+
+    Test Steps:
+        1. Base has the leaves: set step-1 iterations-preset3 on a random acp port and save
+        2. Do upgrade
+        3. Target has the leaves: the applied value is preserved (all six applied 0 when the base lacked them)
+        4. Target lacks the leaves: no port has a step-1 access leaf in the applied config
+        5. Cleanup phy-recovery configuration
+    """
+    consts = ib_consts.PhyRecoveryConsts
+    acp_port = Fae(port_name=random.choice(devices.dut.nvl_access_ports_list))
+    leaf = consts.ITERATIONS_PRESET3
+    expected = {leaf: nvl7_step1_test_value(devices, leaf)}
+    on_base = nvl7_access_leaves_supported(acp_port)
+    saved = False
+
+    try:
+        if on_base:
+            with allure.step(f"Set {expected} on access port {acp_port.port.name} and save"):
+                saved = True
+                nvl7_stage_and_apply_leaves(acp_port, expected.items(), subtree=consts.STEP_1)
+                NvueGeneralCli.save_config(engines.dut)
+
+        yield  # Do upgrade
+
+        if nvl7_access_leaves_supported(acp_port):
+            nvl7_verify_new_leaves(acp_port, expected if on_base else consts.NVL7_ACCESS_LEAF_DEFAULTS,
+                                   subtree=consts.STEP_1, applied=True)
+        else:
+            nvl7_verify_no_applied_access_leaf()
+    finally:
+        if saved:
+            with allure.step("Cleanup NVL7 access phy-recovery configuration"):
+                acp_port.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+
+
 # #################### End of Feature Checkers ###################
 
 
@@ -1799,6 +1843,7 @@ _CHECKERS: list[CheckerFn] = [
     _check_phy_role,
     _check_link_training,
     _check_phy_recovery_nvl7,
+    _check_phy_recovery_nvl7_access,
 ]
 
 _CHECKERS.append(

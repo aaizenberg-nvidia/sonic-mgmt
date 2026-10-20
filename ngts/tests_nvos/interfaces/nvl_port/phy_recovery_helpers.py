@@ -1,5 +1,5 @@
 """
-Phy-recovery test helpers: NVL5 (serdes-eq) vs NVL6 (recovery-status / link-down-timeout).
+Phy-recovery test helpers: NVL5 (serdes-eq) vs NVL6/NVL7 (recovery-status / link-down-timeout).
 
 NVL7 CPO - HLD open questions resolved by dev (Ben/Omer, 2026-07-17):
   Q1 new-leaf defaults : literal echo (no FW-resolved display); defaults policy/re-iteration=
@@ -19,10 +19,13 @@ from typing import Optional, Tuple, Type
 
 from retry.api import retry_call
 
+from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.ngts_types import DevicesT
-from ngts.nvos_constants.constants_nvos import NvosConst
+from ngts.nvos_constants.constants_nvos import ApiType, ConfState, NvosConst
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, PhyRecoveryConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.infra import DeviceLogTool
+from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -84,7 +87,7 @@ class PhyRecoveryTestProfile(ABC):
     label: str
 
     def is_nvl6(self) -> bool:
-        return self.label == 'NVL6'
+        return isinstance(self, Nvl6PhyRecoveryTestProfile)
 
     @classmethod
     @abstractmethod
@@ -161,14 +164,30 @@ class Nvl6PhyRecoveryTestProfile(PhyRecoveryTestProfile):
             ValidationTool.compare_dictionaries(filtered_out, expected).verify_result()
 
 
-# NOTE: there is deliberately NO Nvl7PhyRecoveryTestProfile. The shared mode/timeout flows never
-# run on NVL7 today (test_phy_recovery_attributes skips all NVL7; the access flow's speed setup
-# skips on 200G-only Portia; the trunk flow skips all Juliet-derived devices) - NVL7 coverage
-# lives in the dedicated test_nvl7_phy_recovery_* tests. Per dev (2026-07-17) NVL7 inherits the
-# NVL6 mode/timeout semantics (recovery-status master enable, group-vs-local NVL6 rules), so if a
-# shared-flow NVL7 run is ever wanted, add a profile AND toggle-up waits inside the flow (any
-# phy-recovery apply admin-DOWNs NVL7 ports and they stay down).
+class Nvl7PhyRecoveryTestProfile(Nvl6PhyRecoveryTestProfile):
+    """NVL7: NVL6 mode/timeout semantics; acp admin state is restored after the apply."""
+
+    label = 'NVL7'
+
+    @classmethod
+    def matches(cls, devices: DevicesT) -> bool:
+        return devices.dut.asic_type == NvosConst.NVL7
+
+    def verify_default_phy_recovery_show(self, devices: DevicesT, selected_port: Fae) -> None:
+        """Compares only the leaves in the device defaults, nested step-1/step-2 included."""
+
+        def pick(output: dict, expected: dict) -> dict:
+            return {key: pick(output.get(key) or {}, value) if isinstance(value, dict) else output.get(key)
+                    for key, value in expected.items()}
+
+        with allure_step("Check default config"):
+            expected = devices.dut.default_phy_recovery_attributes
+            output = nvl7_parse_phy_recovery(selected_port)
+            ValidationTool.compare_dictionaries(pick(output, expected), expected).verify_result()
+
+
 _PROFILE_REGISTRY: Tuple[Type[PhyRecoveryTestProfile], ...] = (
+    Nvl7PhyRecoveryTestProfile,
     Nvl6PhyRecoveryTestProfile,
     Nvl5PhyRecoveryTestProfile,
 )
@@ -253,19 +272,86 @@ def verify_phy_recovery_config_after_wait(
 
 
 # ==================== NVL7 CPO trunk-port PHY recovery helpers ====================
-# HLD: HLD_NVOS_CPO_PHY_RECOVERY_NVL7. The 5 new leaves + "counters debug" node exist
-# only on NVL7 CPO trunk ports (sw*). All helpers below are FAE-namespace and NVL7-only.
+# HLD: HLD_NVOS_CPO_PHY_RECOVERY_NVL7. recovery-policy-config exists on every NVL7 port, the
+# other 4 new leaves on trunk ports (sw*) only. All helpers below are FAE-namespace and NVL7-only.
 
 
 def is_nvl7(devices: DevicesT) -> bool:
     return devices.dut.asic_type == NvosConst.NVL7
 
 
-def nvl7_parse_phy_recovery(fae_port: Fae) -> dict:
-    """Return ``nv show fae interface <intf> link phy-recovery`` as a dict."""
+def nvl7_parse_phy_recovery(fae_port: Fae, rev: str = ConfState.OPERATIONAL) -> dict:
+    """Return ``nv show fae interface <intf> link phy-recovery`` (``rev`` revision) as a dict."""
     return OutputParsingTool.parse_json_str_to_dictionary(
-        fae_port.port.interface.link.phy_recovery.show()
+        fae_port.port.interface.link.phy_recovery.show(rev=rev)
     ).get_returned_value()
+
+
+def nvl7_access_operational(fae_port: Fae) -> dict:
+    """Operational step-1 access leaves shown on the port; with nothing applied these are the firmware defaults."""
+    step_1 = nvl7_parse_phy_recovery(fae_port).get(PhyRecoveryConsts.STEP_1, {})
+    return {leaf: step_1[leaf] for leaf in PhyRecoveryConsts.NVL7_ACCESS_LEAVES if leaf in step_1}
+
+
+def nvl7_step1_test_value(devices: DevicesT, leaf: str = PhyRecoveryConsts.ITERATIONS_PRESET3) -> int:
+    """A step-1 value the device accepts: up to its cap when known, else 1."""
+    cap = devices.dut.phy_recovery_step1_caps.get(leaf)
+    return random.randint(1, cap) if cap else 1
+
+
+def nvl7_access_leaves_supported(fae_port: Fae) -> bool:
+    """The applied step-1 of the port exposes all the access leaves (images without the feature show none)."""
+    applied = nvl7_parse_phy_recovery(fae_port, ConfState.APPLIED).get(PhyRecoveryConsts.STEP_1, {})
+    return all(leaf in applied for leaf in PhyRecoveryConsts.NVL7_ACCESS_LEAVES)
+
+
+def nvl7_access_before_reset_factory(devices: DevicesT) -> tuple[Fae, dict] | None:
+    """NVL7: record the firmware-default operational step-1 leaves of a random acp port, then apply a step-1 value."""
+    if not is_nvl7(devices):
+        return None
+    fae_port = Fae(port_name=random.choice(devices.dut.nvl_access_ports_list))
+    fw_default = nvl7_access_operational(fae_port)
+    leaf = PhyRecoveryConsts.ITERATIONS_PRESET3
+    with allure.step(f"NVL7: set step-1 {leaf} on {fae_port.port.name} before reset factory"):
+        nvl7_stage_and_apply_leaves(fae_port, [(leaf, nvl7_step1_test_value(devices, leaf))],
+                                    subtree=PhyRecoveryConsts.STEP_1)
+    return fae_port, fw_default
+
+
+def nvl7_verify_no_applied_access_leaf() -> None:
+    """No port has a step-1 access leaf in the applied config (``nv config show -o commands``)."""
+    applied = NvueGeneralCli.show_config(TestToolkit.get_engine(), revision=ConfState.APPLIED, output_type='commands')
+    leaves = [f" phy-recovery {PhyRecoveryConsts.STEP_1} {leaf} " for leaf in PhyRecoveryConsts.NVL7_ACCESS_LEAVES]
+    found = [line for line in applied.splitlines() if any(leaf in line for leaf in leaves)]
+    assert not found, f"Step-1 access leaves in the applied config: {found}"
+
+
+def nvl7_access_verify_after_reset_factory(context: tuple[Fae, dict] | None) -> None:
+    """No acp has a step-1 access leaf applied; the tested port shows 0 applied and firmware-default operational."""
+    if context is None:
+        return
+    fae_port, fw_default = context
+    with allure.step(f"NVL7: step-1 back to defaults on every acp and on {fae_port.port.name} after reset factory"):
+        nvl7_verify_no_applied_access_leaf()
+        nvl7_verify_new_leaves(fae_port, PhyRecoveryConsts.NVL7_ACCESS_LEAF_DEFAULTS, subtree=PhyRecoveryConsts.STEP_1,
+                               applied=True)
+        # Only leaves shown both before and after are compared; a down acp (simx without mloop) shows none
+        operational = nvl7_access_operational(fae_port)
+        common = fw_default.keys() & operational.keys()
+        changed = {leaf: (fw_default[leaf], operational[leaf]) for leaf in common
+                   if fw_default[leaf] != operational[leaf]}
+        assert not changed, f"Operational step-1 not back to firmware defaults (before, after): {changed}"
+
+
+def set_phy_recovery_attribute(phy_recovery, path_list, attribute, value, **kwargs):
+    """Set a phy-recovery leaf, top-level or nested (``nv set ... step-N <attr> <value>``), on either API."""
+    if TestToolkit.tested_api == ApiType.OPENAPI and isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if len(path_list) == 1 and path_list[0] == attribute:
+        return phy_recovery.set(attribute, value, **kwargs)
+    if TestToolkit.tested_api == ApiType.OPENAPI:
+        return phy_recovery.set(path_list[0], {attribute: value}, **kwargs)
+    return phy_recovery.set(path_list[0], [attribute, str(value)], **kwargs)
 
 
 def nvl7_enable_recovery(
@@ -306,16 +392,18 @@ def nvl7_set_new_leaf(fae_port: Fae, leaf: str, value, apply: bool = True, **kwa
 def nvl7_verify_new_leaves(
     selected_port: Fae,
     expected: dict,
-    retries: int = PHY_RECOVERY_VALIDATE_RETRIES,
-    delay: int = PHY_RECOVERY_VALIDATE_RETRY_DELAY_SECONDS,
+    subtree: str | None = None,
+    applied: bool = False,
 ) -> None:
     """
-    Verify (with retries; show returns OPERATIONAL values after apply) that each leaf in
-    ``expected`` reads back the expected value (string-compared to tolerate int/str show output).
+    Verify (with retries) that each leaf in ``expected`` (under ``subtree`` if given) reads back the
+    expected value from the operational or applied revision (string-compared: operational is str, applied int).
     """
 
     def _check():
-        output = nvl7_parse_phy_recovery(selected_port)
+        output = nvl7_parse_phy_recovery(selected_port, ConfState.APPLIED if applied else ConfState.OPERATIONAL)
+        if subtree:
+            output = output.get(subtree, {})
         mismatched = {
             leaf: output.get(leaf)
             for leaf, value in expected.items()
@@ -326,21 +414,27 @@ def nvl7_verify_new_leaves(
         )
 
     with allure.step(f"Verify new leaves {expected} on {selected_port.port.name}"):
-        retry_call(_check, exceptions=AssertionError, tries=retries, delay=delay)
+        retry_call(
+            _check, exceptions=AssertionError,
+            tries=PHY_RECOVERY_VALIDATE_RETRIES, delay=PHY_RECOVERY_VALIDATE_RETRY_DELAY_SECONDS,
+        )
 
 
-def nvl7_stage_and_apply_leaves(fae_port: Fae, pairs) -> None:
+def nvl7_stage_and_apply_leaves(fae_port: Fae, pairs, subtree: str | None = None) -> None:
     """
-    Stage several phy-recovery leaf sets on ``fae_port`` and apply them in a single 'nv config apply'.
+    Stage several phy-recovery leaf sets (under ``subtree`` if given) on ``fae_port`` and apply them
+    in a single 'nv config apply'.
 
     ``pairs`` is an ordered iterable of (leaf, value). Batching several leaves per apply limits
-    the number of trunk link bounces. Works for a single port or a bulk port range (Fae).
+    the number of link bounces. Works for a single port or a bulk port range (Fae).
     """
     pairs = list(pairs)
     phy_recovery = fae_port.port.interface.link.phy_recovery
     for index, (leaf, value) in enumerate(pairs):
         is_last = index == len(pairs) - 1
-        phy_recovery.set(leaf, value, apply=is_last, ask_for_confirmation=is_last).verify_result()
+        set_phy_recovery_attribute(
+            phy_recovery, [subtree or leaf], leaf, value, apply=is_last, ask_for_confirmation=is_last
+        ).verify_result()
 
 
 def nvl7_trunk_port_type() -> str:
@@ -349,7 +443,7 @@ def nvl7_trunk_port_type() -> str:
 
 
 def nvl7_trunk_port_names(
-    requested_state: str = NvosConsts.LINK_STATE_UP,
+    requested_state: str | list[str] = NvosConsts.LINK_STATE_UP,
     fallback_all_states: bool = True,
 ) -> list:
     """
@@ -419,16 +513,43 @@ def _tolerant_show_dict(component) -> dict:
     return output if isinstance(output, dict) else {}
 
 
-def nvl7_new_leaves_present(fae_port: Fae) -> Tuple[bool, list]:
+def nvl7_new_leaves_present(
+    port: Fae | Port, leaves: list[str] = PhyRecoveryConsts.NVL7_NEW_LEAVES, subtree: str | None = None
+) -> tuple[bool, list[str]]:
     """
-    Return (all_present, missing) for the 5 new NVL7 leaves in the phy-recovery show output.
+    Return (all_present, missing) for ``leaves`` (under ``subtree`` if given) in the phy-recovery show output.
 
-    Tolerant of ports where the phy-recovery node itself is absent/pruned (e.g. eth0/lo or
-    non-CPO NVL7): a failing or non-dict show is treated as "all new leaves missing" (pruned).
+    ``port`` is a ``Fae`` (FAE namespace) or a plain ``Port`` (non-FAE namespace).
+    Tolerant of ports where the phy-recovery node itself is absent/pruned (e.g. eth0/lo,
+    non-CPO NVL7 or the non-FAE namespace): a failing or non-dict show is treated as "all leaves missing".
     """
-    output = _tolerant_show_dict(fae_port.port.interface.link.phy_recovery)
-    missing = [leaf for leaf in PhyRecoveryConsts.NVL7_NEW_LEAVES if leaf not in output]
+    output = _tolerant_show_dict(port.interface.link.phy_recovery)
+    if subtree:
+        output = output.get(subtree, {})
+    missing = [leaf for leaf in leaves if leaf not in output]
     return (not missing, missing)
+
+
+_IB_PORT_BY_ALIAS_LUA = (
+    "for _, key in ipairs(redis.call('KEYS', 'IB_PORT|*')) do "
+    "if redis.call('HGET', key, 'alias') == KEYS[1] then return key end end"
+)
+
+
+def nvl_port_sonic_name(port_name: str) -> str:
+    """Return the SONiC name (``InfinibandN``) of an NVL port, looked up by alias in CONFIG_DB ``IB_PORT``."""
+    output = str(DatabaseTool.sonic_db_cli_eval(
+        TestToolkit.get_engine(), '', 'CONFIG_DB', _IB_PORT_BY_ALIAS_LUA, [port_name]
+    )).strip()
+    assert output.startswith('IB_PORT|'), f"No CONFIG_DB IB_PORT entry with alias {port_name}: {output!r}"
+    return output.removeprefix('IB_PORT|')
+
+
+def nvl_port_flaps_since(marker: str, port_name: str) -> int:
+    """Count oper up->down transitions of an NVL port logged by orchagent since ``marker``."""
+    sonic_name = nvl_port_sonic_name(port_name)
+    return DeviceLogTool.count_log_lines_after_marker(
+        TestToolkit.get_engine(), marker, f"updatePortOperStatus: Port {sonic_name} oper state set from up to down")
 
 
 def nvl7_read_debug_counters(fae_port: Fae) -> dict:

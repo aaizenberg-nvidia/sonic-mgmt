@@ -9,6 +9,7 @@ class PhyRecovery(BaseComponent):
 
     def __init__(self, parent_obj=None):
         BaseComponent.__init__(self, parent=parent_obj, path='/phy-recovery')
+        self.step_1 = BaseComponent(self, path='/step-1')
 
     def action_start_go_once(self) -> ResultObj:
         """

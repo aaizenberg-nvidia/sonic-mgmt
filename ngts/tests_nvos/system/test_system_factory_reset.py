@@ -25,6 +25,10 @@ from ngts.tests_nvos.system.reboot_telemetry_helpers import (
     take_reboot_telemetry_snapshot,
     verify_reboot_telemetry_after_reboot,
 )
+from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import (
+    nvl7_access_before_reset_factory,
+    nvl7_access_verify_after_reset_factory,
+)
 from ngts.tests_nvos.interfaces.nvl_port.link_health_helpers import (
     prepare_nvl_link_health_before_trigger,
     recover_nvl_link_health_prep,
@@ -55,6 +59,8 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
     Validate reset factory without params cleanup done as expected
 
         Test flow:
+            0.  NVL7 (right before the reset): record the firmware-default operational step-1 leaves of an
+                access port, set one
             1.  Set description to ib/nvl ports:
                  - set, apply and save configuration
                  - set and apply
@@ -68,9 +74,11 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
             8.  Validate description is deleted
             9.  Validate system contact information is deleted
             10. Validate system location information is deleted
-            11. Verify the setup is functional:
-                11.1.	Run several show commands
-                11.2.    Run set command & apply
+            11. NVL7: no access port has a step-1 leaf in the applied config; the tested access port is back to
+                applied 0 and firmware-default operational
+            12. Verify the setup is functional:
+                12.1.	Run several show commands
+                12.2.    Run set command & apply
     """
     serial_analyzer = list(serial_log_analyzers.values())[0]
     system = System()
@@ -102,6 +110,7 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
     )
 
     try:
+        phy_recovery_context = nvl7_access_before_reset_factory(devices)
         with allure.step("Run reset factory without params"):
             with serial_analyzer.stage('Reset-factory'):
                 duration = execute_reset_factory(engines, system, devices.dut.reset_factory, "", current_time, test_name=test_name)
@@ -132,6 +141,8 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
 
         with allure.step("Verify the cleanup done successfully"):
             verify_cleanup_done(engines.dut, current_time, system, username, ib_router=ib_router)
+
+        nvl7_access_verify_after_reset_factory(phy_recovery_context)
 
         with allure.step("Verify the setup is functional"):
             verify_the_setup_is_functional(system, engines)

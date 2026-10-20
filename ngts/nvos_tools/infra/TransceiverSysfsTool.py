@@ -9,6 +9,8 @@ needing a special SDK build or an out-of-spec cable.
 import json
 import logging
 
+from ngts.nvos_tools.infra import DeviceLogTool
+
 logger = logging.getLogger()
 
 
@@ -77,8 +79,7 @@ class TransceiverSysfsTool:
     @staticmethod
     def mark_syslog(engine, marker=DEFAULT_SYSLOG_MARKER, tag="qg_supported_cable_ib_speed"):
         """Emit a sentinel line into /var/log/syslog so warnings can be sliced by time."""
-        engine.run_cmd(f"sudo logger -t {tag} '{marker}'")
-        return marker
+        return DeviceLogTool.mark_syslog(engine, marker, tag)
 
     @staticmethod
     def grep_supported_cable_speed_warnings(engine, marker):

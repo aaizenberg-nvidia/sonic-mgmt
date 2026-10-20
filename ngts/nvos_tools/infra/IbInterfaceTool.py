@@ -158,8 +158,8 @@ class IbInterfaceTool:
         manual link state down/up dance is needed.
 
         Steps:
-        1. Return immediately if all access ports already use <mloop_mode>
-        2. Otherwise, set fae mloop=<mloop_mode> on all access ports
+        1. Return immediately if all access and trunk ports already use <mloop_mode>
+        2. Otherwise, set fae mloop=<mloop_mode> on all access and trunk ports
         3. Save configuration for persistence across reboots
 
         Args:
@@ -182,27 +182,29 @@ class IbInterfaceTool:
                 logger.warning("No access ports found, skipping NVL SIMX configuration")
                 return False
 
-            port_range = summarize_switch_ports(access_ports)
-            logger.info(f"Access ports range: {port_range}")
+            port_groups = [ports for ports in (access_ports, devices.dut.nvl_trunk_ports_list) if ports]
+            port_ranges = [summarize_switch_ports(ports) for ports in port_groups]
+            logger.info("MLOOP port ranges: %s", port_ranges)
 
             applied_commands = set(NvueGeneralCli.show_config(
                 engines.dut, revision='applied', output_type='commands', param='--expand'
             ).splitlines())
             mloop_is_configured = all(
                 f'nv set fae interface {port} link mloop {mloop_mode}' in applied_commands
-                for port in access_ports
+                for ports in port_groups for port in ports
             )
             if mloop_is_configured:
-                logger.info(f"MLOOP is already configured as {mloop_mode} on {port_range}, skipping configuration")
+                logger.info("MLOOP is already configured as %s on %s, skipping configuration", mloop_mode, port_ranges)
                 return True
 
-            with allure.step(f"Enable mloop={mloop_mode} on {port_range}"):
-                NvCommand().fae.interfaces[port_range].link.mloop.set(
-                    op_param_name=mloop_mode,
-                    apply=True,
-                    ask_for_confirmation=True,
-                ).verify_result()
-                logger.info(f"Set mloop={mloop_mode} on {port_range} (system auto-toggles ports)")
+            for port_range in port_ranges:
+                with allure.step(f"Enable mloop={mloop_mode} on {port_range}"):
+                    NvCommand().fae.interfaces[port_range].link.mloop.set(
+                        op_param_name=mloop_mode,
+                        apply=True,
+                        ask_for_confirmation=True,
+                    ).verify_result()
+                    logger.info("Set mloop=%s on %s (system auto-toggles ports)", mloop_mode, port_range)
 
             with allure.step("Save configuration"):
                 engines.dut.run_cmd('nv config save')
