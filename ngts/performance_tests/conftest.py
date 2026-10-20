@@ -32,6 +32,7 @@ from ngts.helpers.performance.port_selection import (set_cli_port_selection_opti
                                                      port_selection_was_activated,
                                                      DEFAULT_PORT_SELECTION_CONFIG)
 from devts.infra.tools.exceptions.test_issue import TestIssue
+from ngts.performance_tests.spcx_ra.conftest import TRAFFIC_PROFILE_AI_MIX
 from tests.common.plugins.allure_server import get_pytest_run_cmd, PYTEST_RUN_CMD
 
 logger = logging.getLogger()
@@ -60,9 +61,14 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when in ("setup", "call") and report.failed:
         record_performance_test_failure(item.nodeid)
-    if (report.when == "setup" and report.skipped and
-            AR_EXTENDED_THRESHOLDS_SKIP_REASON in str(report.longrepr)):
-        allure.dynamic.title(f"{item.name} [ar_extended_thresholds]")
+    if report.when == "setup":
+        title_suffixes = []
+        if item.config.getoption("--spcx-ra-traffic-profile", default=None) == TRAFFIC_PROFILE_AI_MIX:
+            title_suffixes.append(f"[{TRAFFIC_PROFILE_AI_MIX}]")
+        if item.config.getoption("--ar_extended_thresholds", default=False):
+            title_suffixes.append("[ar_extended_thresholds]")
+        if title_suffixes:
+            allure.dynamic.title(" ".join([item.name] + title_suffixes))
 
 
 def pytest_configure(config):

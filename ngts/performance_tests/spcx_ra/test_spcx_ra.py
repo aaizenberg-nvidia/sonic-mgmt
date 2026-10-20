@@ -387,7 +387,7 @@ def _with_lanes_allure_title(method):
             title += " [min_packet_size]"
         if self.traffic_profile == TRAFFIC_PROFILE_AI_MIX:
             title += f" [{self.traffic_profile}]"
-        if self.conf_args.get("extended_grading"):
+        if get_performance_session_state().ar_extended_thresholds:
             title += " [ar_extended_thresholds]"
         allure.dynamic.title(title)
         return method(self, request, *args, **kwargs)
