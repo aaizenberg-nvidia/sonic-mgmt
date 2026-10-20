@@ -1892,6 +1892,12 @@ show_techsupport/test_auto_techsupport.py::TestAutoTechSupport::test_sai_sdk_dum
     conditions:
     - "https://redmine.mellanox.com/issues/5056883"
 
+span/test_erspan_sampling_truncation.py::test_erspan_truncation_packet_size:
+  xfail:
+    reason: "xfail due to RM issue https://redmine.nvidia.com/issues/5352288"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5352288"
+
 span/test_port_mirroring.py::test_mirroring_both:
   skip:
     reason: "tx mirroring not supported on SPC6"
