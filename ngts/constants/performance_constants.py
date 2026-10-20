@@ -793,13 +793,16 @@ class SPCXRAConsts:
     LEAF_DIP_BASE_IPV6 = "192:168:5:1:1:1:2:0"
     LEAF_DIP_STEP = 1
 
-    # PFC port buffer in bytes, per chip. 363000 is the Spectrum-4 / SN5600 figure from the
-    # Spectrum-X v2.2 deployment guide and is what SPC6 runs with. SPC4 and SPC5 use 20200 because
-    # they reject 363000: their cells are 192 bytes and the buffer caps at 258432 bytes, exactly
-    # 1346 cells, so even SPC6's 1417 cells does not fit. Both are placeholders pending the QoS PFC
-    # values the architecture team is confirming for those generations. A chip left out of this map
-    # renders without "port-buffer" at all and takes whatever NVUE derives instead.
-    PFC_PORT_BUFFER_BY_CHIP = {"SPC6": 363000, "SPC5": 20200, "SPC4": 20200}
+    # PFC port buffer in bytes, per chip. SPC6 uses 250000: the Spectrum-X v2.2 deployment guide
+    # figure (363000, Spectrum-4 / SN5600) plus the 75000 xoff reserves almost the whole SPC6 buffer
+    # at 1x lanes (512 x 200G), so the shared pools drop to 0, every port pauses and, with TGs that
+    # honor PFC, TX falls to 0.58 of line rate. A sweep with traffic started at each value kept full
+    # bandwidth and no drops from 100000 to 350000; 250000 had the fewest pause events and keeps
+    # about 49 MB of shared pool. SPC4 and SPC5 use 20200 because they reject 363000: their cells
+    # are 192 bytes and the buffer caps at 258432 bytes, exactly 1346 cells. Both are placeholders
+    # pending the QoS PFC values the architecture team is confirming for those generations. A chip
+    # left out of this map renders without "port-buffer" at all and takes whatever NVUE derives.
+    PFC_PORT_BUFFER_BY_CHIP = {"SPC6": 250000, "SPC5": 20200, "SPC4": 20200}
 
     # Loops' worth of multicast buffer the TG templates reserve on every TG port, with no shared
     # multicast buffer on top. The reserve keeps an mloop's circling packets admitted while the DUT

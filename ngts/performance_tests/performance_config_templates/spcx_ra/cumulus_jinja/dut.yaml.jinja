@@ -129,9 +129,9 @@
       pfc:
         default-global:
           {# port-buffer only on chips with a published value, from PFC_PORT_BUFFER_BY_CHIP.
-             Omitted elsewhere so NVUE sizes it: SPC5 rejects the SPC6 figure against a
-             258432-byte limit, and neither Spectrum-X deployment guide gives a Spectrum-5
-             replacement. #}
+             Omitted elsewhere so NVUE sizes it: SPC5 rejects the Spectrum-X figure (363000)
+             against a 258432-byte limit, and neither Spectrum-X deployment guide gives a
+             Spectrum-5 replacement. #}
           {% if parameter_dict.get('pfc_port_buffer') %}
           port-buffer: {{ parameter_dict.pfc_port_buffer }}
           {% endif %}
