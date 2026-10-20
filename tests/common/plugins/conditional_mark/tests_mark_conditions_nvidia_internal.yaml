@@ -2063,6 +2063,13 @@ platform_tests/test_advanced_reboot.py::test_fast_reboot:
     conditions:
     - "https://redmine.mellanox.com/issues/5064631 and 'leopard-1288' in testbed"
 
+hash/test_generic_hash.py::test_reboot\[.*-fast\]:
+  regex: true
+  skip:
+    reason: "fast-reboot is disabled on sn6810_ld platform - RM https://redmine.nvidia.com/issues/4799042"
+    conditions:
+    - "https://redmine.nvidia.com/issues/4799042 and 'sn6810_ld' in platform"
+
 platform_tests/test_advanced_reboot.py::test_warm_reboot:
   skip:
     reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
