@@ -1,0 +1,5 @@
+Hostname,ManagementIp,HwSku,Type,Protocol,Os
+slm-244,10.220.15.244/22,Mellanox-SN6600_LD-P64O128C2,DevSonic,,sonic
+slm-244-bmc,10.193.69.244,bmc,DevSonic,,sonic
+pdu-10-193-230-180,10.193.230.180,Raritan,Pdu,snmp,
+mec01-rcon-ff-o7.mec01.nbulabs.nvidia.com,10.193.67.29,,ConsoleServer,ssh,sonic

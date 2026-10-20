@@ -1,0 +1,2 @@
+StartDevice,StartPort,EndDevice,Console_type,Console_menu_type,Proxy
+mec01-rcon-ff-o7.mec01.nbulabs.nvidia.com,7003,slm-113-bmc,ssh,,rcon
