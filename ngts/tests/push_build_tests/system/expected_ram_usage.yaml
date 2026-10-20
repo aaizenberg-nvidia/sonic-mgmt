@@ -71,7 +71,7 @@ master:
     fdbsyncd: 10
     portsyncd: 10
     tunnelmgrd: 10
-    eventd: 90
+    eventd: 100
     redis: 30
     wjhd: 150
     hostcfgd: 50
