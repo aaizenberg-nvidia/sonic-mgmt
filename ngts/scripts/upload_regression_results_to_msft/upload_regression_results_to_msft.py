@@ -276,12 +276,14 @@ class ReleaseResultsUploader:
             sessions_for_excel = self.filter_sessions(sessions)
             logger.info(f'Platform filtered Sessions are: {sessions_for_excel}')
         self.create_excel_table(sessions_for_excel)
-        logger.info(f'Collected excel results table is at : {self.excel_table_path}')
+        self.prepare_collected_results_for_report()
+        self.send_regression_report(self.excel_table_path)
+        self.sanitize_collected_errors()
         setups_in_results = self.get_setups_from_results(self.all_setups)
         setups_not_in_results = set(self.all_setups).difference(setups_in_results)
         filter_setups_not_in_results = self.filter_setups(setups_not_in_results)
         self.compose_collect_results_mail(setups_in_results, filter_setups_not_in_results)
-        self.send_regression_report(self.excel_table_path)
+        logger.info(f'Collected excel results table is at : {self.excel_table_path}')
 
     def send_regression_report(self, excel_path):
         """Run the deterministic report workflow in the current NGTS Docker."""
@@ -348,6 +350,45 @@ class ReleaseResultsUploader:
                 df.loc[i, "message"] = df.loc[i, "message"].replace(internal_name, commercial_name)
         return df
 
+    def prepare_collected_results_for_report(self):
+        df = pd.read_excel(self.excel_table_path, sheet_name=self.sheet_name, index_col=0)
+        self.redmine_issues_to_update = dict()
+        host_commercial_name_col = []
+        for i in range(len(df)):
+            self.update_xml_path_if_modified(df, i)
+            session_id = df.loc[i, "session_id"]
+            junit_xml_path = df.loc[i, "xml_path"]
+            old_hostname = df.loc[i, "host"]
+            platform = df.loc[i, "platform"]
+            commercial_name = re.search(r"(?:x86_64|arm64)-\w*_(\w+\d{4}\w*)-.*", platform).group(1)
+            new_hostname = self.get_new_hostname(old_hostname, commercial_name)
+            df = self.update_commercials_in_columns(df, i, old_hostname, new_hostname)
+            host_commercial_name_col.append(new_hostname)
+            self.handle_sanitize_hostname_data(junit_xml_path, session_id, old_hostname, new_hostname)
+            self.update_xml_path_if_modified(df, i)
+            self.handle_redmine_url_update(
+                df, i, df.loc[i, "xml_path"], session_id, df.loc[i, "result"], df.loc[i, "message"]
+            )
+        self.handle_update_of_modified_xml_path(df)
+        df.update(pd.DataFrame({'host': host_commercial_name_col}))
+        df.to_excel(self.excel_table_path, sheet_name=self.sheet_name)
+
+    def sanitize_collected_errors(self):
+        df = pd.read_excel(self.excel_table_path, sheet_name=self.sheet_name, index_col=0)
+        for i in range(len(df)):
+            self.update_xml_path_if_modified(df, i)
+            self.handle_sanitize_error_message(
+                df,
+                i,
+                df.loc[i, "session_id"],
+                df.loc[i, "xml_path"],
+                df.loc[i, "test name"],
+                df.loc[i, "result"],
+            )
+            self.update_xml_path_if_modified(df, i)
+        self.handle_update_of_modified_xml_path(df)
+        df.to_excel(self.excel_table_path, sheet_name=self.sheet_name)
+
     def modify_results(self):
         df = pd.read_excel(self.user_excel_table_path, sheet_name=self.sheet_name, index_col=0)
         self.load_redmine_issues_to_update()
@@ -356,7 +397,6 @@ class ReleaseResultsUploader:
                 "modify: generate_upload_mail is set and skip.json was not provided; "
                 "skipping bug URL replacement")
         row_idx_to_remove = []
-        host_commercial_name_col = []
         for i in range(len(df)):
             self.update_xml_path_if_modified(df, i)
             session_id = df.loc[i, "session_id"]
@@ -364,30 +404,23 @@ class ReleaseResultsUploader:
             junit_xml_path = df.loc[i, "xml_path"]
             modify_xml = df.loc[i, "modify_xml"]
             test_name = df.loc[i, "test name"]
-            old_hostname = df.loc[i, "host"]
             platform = df.loc[i, "platform"]
             # Extract the commercial model name from the platform string. Switch
             # platforms are x86_64 and BMC platforms are arm64; both are supported:
             #   x86_64-nvidia_sn5640-r0            -> sn5640
             #   arm64-aspeed_nvidia_ast2700_bmc-r0 -> ast2700_bmc
             commercial_name = re.search(r"(?:x86_64|arm64)-\w*_(\w+\d{4}\w*)-.*", platform).group(1)
-            new_hostname = self.get_new_hostname(old_hostname, commercial_name)
-            df = self.update_commercials_in_columns(df, i, old_hostname, new_hostname)
-            host_commercial_name_col.append(new_hostname)
-            junit_xml_path = self.handle_sanitize_data(df, i, junit_xml_path, session_id,
-                                                       old_hostname, new_hostname, test_name, result)
             message = df.loc[i, "message"]
-            junit_xml_path = self.handle_redmine_url_update(df, i, junit_xml_path, session_id, result, message)
-            self.handle_remove_failures(row_idx_to_remove, i, session_id, junit_xml_path, test_name, modify_xml, commercial_name)
+            if not (self.generate_upload_mail and not self.redmine_issues_to_update):
+                junit_xml_path = self.handle_redmine_url_update(df, i, junit_xml_path, session_id, result, message)
+            self.handle_remove_failures(row_idx_to_remove, i, session_id, junit_xml_path, test_name,
+                                        modify_xml, commercial_name)
             self.update_xml_path_if_modified(df, i)
         self.handle_update_of_modified_xml_path(df)
-        new_host_col = pd.DataFrame({'host': host_commercial_name_col})
         if row_idx_to_remove:
             logger.info(f"The following rows are dropped from results per user request: {row_idx_to_remove}")
             df = df.drop(row_idx_to_remove)
-            new_host_col = new_host_col.drop(row_idx_to_remove)
             df.reset_index(drop=True, inplace=True)
-        df.update(new_host_col)
         df.to_excel(self.user_modified_excel_table_path, sheet_name=self.sheet_name)
         logger.info(f'Modified excel results table is at : {self.user_modified_excel_table_path}')
         self.compose_modify_results_mail(self.user_modified_excel_table_path)
@@ -424,10 +457,6 @@ class ReleaseResultsUploader:
             df.loc[row_idx, "was_xml_updated"] = True
 
     def handle_redmine_url_update(self, df, row_idx, junit_xml_path, session_id, result, message):
-        # generate_upload_mail produces skip.json after modify; without that file
-        # there is nothing to replace, so do not look up internal issues/GitHub issues.
-        if self.generate_upload_mail and not self.redmine_issues_to_update:
-            return junit_xml_path
         updated_junit_xml_path, replacements = self.update_redmine_url(junit_xml_path,
                                                                        session_id,
                                                                        result, message)
@@ -557,13 +586,6 @@ class ReleaseResultsUploader:
             mytree.write(updated_junit_xml_path)
             logger.info(f"Create: new updated xml at {updated_junit_xml_path}")
         return updated_junit_xml_path
-
-    def handle_sanitize_data(self, df, row_idx, junit_xml_path, session,
-                             old_hostname, new_hostname, test_name_to_update, result):
-        junit_xml_path = self.handle_sanitize_hostname_data(junit_xml_path, session, old_hostname, new_hostname)
-        junit_xml_path = self.handle_sanitize_error_message(df, row_idx, session, junit_xml_path,
-                                                            test_name_to_update, result)
-        return junit_xml_path
 
     def handle_sanitize_hostname_data(self, junit_xml_path, session, old_hostname, new_hostname):
         updated_junit_xml_path = junit_xml_path
@@ -1159,7 +1181,9 @@ class ReleaseResultsUploader:
 
     def compose_collect_results_mail(self, setups_in_results, setups_not_in_results):
         build_table_dict_content = {
-            "Collected Results Summary": {"Collected Results Excel Table": self.excel_table_path},
+            "Collected Results Summary": {
+                "Collected Results Excel Table": self.excel_table_path,
+            },
             "Nvidia tests excluded in excel": {self.get_list_in_html_format(self.nvidia_community_tests): ""},
             "Setups in collected results": {self.get_list_in_html_format(setups_in_results): ""},
             "Setups not in collected results": {self.get_list_in_html_format(setups_not_in_results): ""},
