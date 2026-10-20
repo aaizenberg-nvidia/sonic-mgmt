@@ -1546,7 +1546,7 @@ def _check_phy_recovery_nvl7_access(engines: EnginesT, devices: DevicesT, **kwar
             nvl7_verify_new_leaves(acp_port, expected if on_base else consts.NVL7_ACCESS_LEAF_DEFAULTS,
                                    subtree=consts.STEP_1, applied=True)
         else:
-            nvl7_verify_no_applied_access_leaf()
+            nvl7_verify_no_applied_access_leaf(engines.dut)
     finally:
         if saved:
             with allure.step("Cleanup NVL7 access phy-recovery configuration"):

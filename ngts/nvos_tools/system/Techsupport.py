@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -174,6 +175,13 @@ class TechSupport(BaseComponent):
             full_path = SystemConsts.TECHSUPPORT_FILES_PATH + self.file_name.replace(".tar.gz", "")
             output = engine.run_cmd("sudo find " + full_path + "/" + tech_folder + " -type f -empty")
             return [file.split("/")[-1] for file in output.split()]
+
+    def get_db_dump_hash(self, engine, db_name: str, key: str) -> dict:
+        """Return the first redis hash at jq path ``key`` in the extracted ``dump/<db_name>.json*`` files, or {}."""
+        dump_dir = SystemConsts.TECHSUPPORT_FILES_PATH + self.file_name.replace('.tar.gz', '')
+        dump_files = f"{dump_dir}/dump/{db_name}.json*"
+        output = engine.run_cmd(f"sudo jq -Mcs 'map({key}.value // empty) | first // {{}}' {dump_files}")
+        return json.loads(output)
 
     def cleanup(self, engine):
         engine.run_cmd("sudo rm -rf " + SystemConsts.TECHSUPPORT_FILES_PATH + self.file_name.replace(".tar.gz", ""))

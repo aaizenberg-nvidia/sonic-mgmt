@@ -142,7 +142,7 @@ def test_reset_factory_without_params(engines, devices, topology_obj, platform_p
         with allure.step("Verify the cleanup done successfully"):
             verify_cleanup_done(engines.dut, current_time, system, username, ib_router=ib_router)
 
-        nvl7_access_verify_after_reset_factory(phy_recovery_context)
+        nvl7_access_verify_after_reset_factory(engines.dut, phy_recovery_context)
 
         with allure.step("Verify the setup is functional"):
             verify_the_setup_is_functional(system, engines)

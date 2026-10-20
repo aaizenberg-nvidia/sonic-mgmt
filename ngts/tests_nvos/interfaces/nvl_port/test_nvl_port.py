@@ -88,7 +88,7 @@ from ngts.tools.test_utils.allure_utils import step as allure_step
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 @pytest.mark.air
 @pytest.mark.air_ci
@@ -126,7 +126,7 @@ def test_show_nvl_interface(devices, random_api):
             verify_link_health_hidden_on_platform(dut_engine)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 @pytest.mark.air
@@ -158,7 +158,7 @@ def test_nvl_internal_fnm_ports(devices):
     logger.info("Found expected %d/%d internal FNM ports UP", actual_up_count, len(internal_fnm_states))
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_nvl_fnm_ports_up(devices, has_loopbox, standalone_system):
@@ -189,7 +189,7 @@ def test_nvl_fnm_ports_up(devices, has_loopbox, standalone_system):
     logger.info(f"✓ All {len(devices.dut.nvl_fnm_ports)} regular FNM ports are UP")
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_show_nvl_interface_commands(engines, devices, random_api, has_loopbox, standalone_system):
@@ -312,7 +312,7 @@ def test_show_nvl_interface_commands(engines, devices, random_api, has_loopbox, 
             verify_link_health_hidden_on_platform(engines.dut)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 @pytest.mark.nvl_ci
 def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, standalone_system):
@@ -468,7 +468,7 @@ def test_toggle_interface_state(test_name, devices, random_api, has_loopbox, sta
             clear_link_health_attention_on_port(lifecycle_port, devices, test_name)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 def test_link_health_attention_and_toggle_stress(test_name, devices, random_api):
     """Exercise sticky attention on one port while repeatedly toggling another."""
@@ -562,7 +562,7 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
             clear_link_health_attention_on_port(attention_port, devices, test_name)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 def test_link_health_fae_clear_range(test_name, devices, random_api):
     """HLD 0.17/0.18: FAE clear restores healthy, including ranged ids.
 
@@ -699,7 +699,7 @@ def _verify_time_to_link_up(
     )
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup,
@@ -774,7 +774,7 @@ def test_time_to_link_up(devices, linked_ports_pair, test_api, register_cleanup,
         )
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 @pytest.mark.nvl_ci
@@ -803,7 +803,7 @@ def test_nvl_port_configuration(engines, devices, random_api):
             selected_port.interface.unset(apply=True, ask_for_confirmation=True).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_nvl_negative(engines, devices, random_api):
@@ -847,7 +847,7 @@ def test_nvl_negative(engines, devices, random_api):
         NvueGeneralCli.detach_config(TestToolkit.engines.dut)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 @pytest.mark.multiplanar
 def test_interface_xdr_slow_speed_access_ports(engines, devices, random_api, setup_name, standalone_system, has_loopbox, is_simx):
@@ -857,7 +857,7 @@ def test_interface_xdr_slow_speed_access_ports(engines, devices, random_api, set
                                         standalone_system, acp_ports_range, prefix='acp')
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.simx
 @pytest.mark.multiplanar
 def test_interface_xdr_slow_speed_trunk_ports(engines, devices, random_api, setup_name, standalone_system):
@@ -1050,7 +1050,7 @@ def _test_port_state_change_with_speeds(selected_port, expected_speeds_set, test
                 logger.info(f"Restored {selected_port.name} to original state: {original_state}")
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_nvl_supported_speeds_validation(test_name, engines, devices, random_api, has_loopbox, standalone_system):
@@ -1134,7 +1134,7 @@ def test_nvl_supported_speeds_validation(test_name, engines, devices, random_api
             logger.info("Skipping internal FNM validation (no ports or no expected speeds defined)")
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
@@ -1223,7 +1223,7 @@ def test_nvl_invalid_speed_configuration_negative(devices: DevicesT, test_api: s
         logger.info(f"Successfully validated invalid speed configuration for {selected_port.name}")
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_nvl_speed_configuration(engines, devices, random_api, has_loopbox, standalone_system):
@@ -1336,7 +1336,7 @@ def test_nvl_speed_configuration(engines, devices, random_api, has_loopbox, stan
             logger.info(f"✓ All access ports restored to {default_speed}")
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.simx
 def test_nvl_200g_simplex_lanes_validation(engines, devices, random_api, has_loopbox):

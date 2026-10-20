@@ -241,6 +241,8 @@ class AutoNegotiateConsts:
 class MloopConsts:
     """FAE per-interface mloop knob: nv set fae interface <port> link mloop <mode>."""
 
+    MLOOP = "mloop"
+
     class Mode(StrEnum):
         PHY = "phy"  # PHY-level loopback (was system-wide "enabled")
         LOGICAL = "logical"  # LLU2LLU loopback

@@ -3,9 +3,8 @@ import re
 import time
 from functools import lru_cache
 
-from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
 from ngts.constants.constants import InfraConst
-from ngts.nvos_constants.constants_nvos import LinkDetectionConsts
+from ngts.nvos_constants.constants_nvos import ConfState, LinkDetectionConsts
 from ngts.nvos_tools.Devices.IbDevice import JulietSwitch
 from ngts.nvos_tools.ib.InterfaceConfiguration.Interface import Interface
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, MloopConsts
@@ -148,6 +147,13 @@ class IbInterfaceTool:
         return get_log_port(table_output, port_number, lane_bmap)
 
     @staticmethod
+    def is_mloop_configured(engine, ports: list[str], mloop_mode: MloopConsts.Mode) -> bool:
+        """All ``ports`` have fae mloop ``mloop_mode`` in the applied config (one show of all fae interfaces)."""
+        applied = Fae(port_name='').interface.parse_show(dut_engine=engine, rev=ConfState.APPLIED)
+        return all(applied.get(port, {}).get(IbInterfaceConsts.LINK, {}).get(MloopConsts.MLOOP) == mloop_mode
+                   for port in ports)
+
+    @staticmethod
     def configure_nvl_simx_loopback(engines, devices,
                                     mloop_mode: MloopConsts.Mode = MloopConsts.Mode.LOGICAL):
         """
@@ -186,14 +192,8 @@ class IbInterfaceTool:
             port_ranges = [summarize_switch_ports(ports) for ports in port_groups]
             logger.info("MLOOP port ranges: %s", port_ranges)
 
-            applied_commands = set(NvueGeneralCli.show_config(
-                engines.dut, revision='applied', output_type='commands', param='--expand'
-            ).splitlines())
-            mloop_is_configured = all(
-                f'nv set fae interface {port} link mloop {mloop_mode}' in applied_commands
-                for ports in port_groups for port in ports
-            )
-            if mloop_is_configured:
+            if IbInterfaceTool.is_mloop_configured(engines.dut, [port for ports in port_groups for port in ports],
+                                                   mloop_mode):
                 logger.info("MLOOP is already configured as %s on %s, skipping configuration", mloop_mode, port_ranges)
                 return True
 

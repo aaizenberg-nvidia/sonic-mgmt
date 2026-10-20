@@ -11,6 +11,7 @@ from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.Devices.IbDevice import RosalindSimx, RosalindStackedSimx, RosalindSwitch  # TODO: Remove RosalindSwitch import when XDR WA is removed
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import MloopConsts, NvosConsts
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
+from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
 from ngts.tools.test_utils import allure_utils as allure
@@ -20,8 +21,11 @@ from ngts.tests_nvos.cluster.cluster_tools import summarize_switch_ports
 from ngts.tests_nvos.interfaces.nvl_port.helpers import (
     get_acp_ports_in_state,
     get_linked_ports_pair,
+    reset_gpus_if_needed,
+    skip_if_no_access_links,
     wait_for_ports_state,
 )
+from ngts.tests_nvos.interfaces.nvl_port.phy_recovery_helpers import is_nvl7
 
 logger = logging.getLogger(__name__)
 # Trunks are waited for once per session: they take minutes to link in mloop and stay up between tests
@@ -131,6 +135,27 @@ def nvl_simx_setup(engines, devices, mloop_mode):
             except AssertionError as error:
                 logger.warning("Not all trunk ports are up, trunk tests use the up ones: %s", error)
     logger.info("All NVL SIMX ACP links are up")
+
+
+@pytest.fixture
+def nvl7_acp_phy_recovery(request, devices, is_simx, has_loopbox, standalone_system):
+    """
+    Skip off NVL7 or without connected access ports. If the test failed before its own unset, unset
+    phy-recovery on all access ports and wait for them up.
+    """
+    if not is_nvl7(devices):
+        pytest.skip("NVL7 only test")
+    skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
+    yield
+    rep_call = getattr(request.node, 'rep_call', None)
+    if rep_call is None or not rep_call.failed:
+        return
+    acp_names = devices.dut.nvl_access_ports_list
+    all_ports = Fae(port_name=summarize_switch_ports(acp_names))
+    with allure.step(f"Cleanup - unset phy-recovery on {all_ports.port.name}"):
+        all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+        reset_gpus_if_needed(request.getfixturevalue('setup_name'))
+        wait_for_ports_state(devices, acp_names, 'acp')
 
 
 # TODO: XDR Workaround Fixture - Currently DISABLED

@@ -20,6 +20,8 @@ from typing import Optional, Tuple, Type
 from retry.api import retry_call
 
 from ngts.cli_wrappers.nvue.nvue_general_clis import NvueGeneralCli
+from ngts.cli_wrappers.openapi.openapi_command_builder import OpenApiRequest
+from ngts.cli_wrappers.openapi.openapi_general_clis import OpenApiGeneralCli
 from ngts.ngts_types import DevicesT
 from ngts.nvos_constants.constants_nvos import ApiType, ConfState, NvosConst
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts, PhyRecoveryConsts
@@ -30,6 +32,7 @@ from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.RandomizationTool import RandomizationTool
+from ngts.nvos_tools.infra.ResultObj import ResultObj
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.tests_nvos.interfaces.nvl_port.helpers import setup_nvl_speed
 from ngts.tools.test_utils import allure_utils as allure
@@ -318,21 +321,21 @@ def nvl7_access_before_reset_factory(devices: DevicesT) -> tuple[Fae, dict] | No
     return fae_port, fw_default
 
 
-def nvl7_verify_no_applied_access_leaf() -> None:
+def nvl7_verify_no_applied_access_leaf(engine) -> None:
     """No port has a step-1 access leaf in the applied config (``nv config show -o commands``)."""
-    applied = NvueGeneralCli.show_config(TestToolkit.get_engine(), revision=ConfState.APPLIED, output_type='commands')
+    applied = NvueGeneralCli.show_config(engine, revision=ConfState.APPLIED, output_type='commands')
     leaves = [f" phy-recovery {PhyRecoveryConsts.STEP_1} {leaf} " for leaf in PhyRecoveryConsts.NVL7_ACCESS_LEAVES]
     found = [line for line in applied.splitlines() if any(leaf in line for leaf in leaves)]
     assert not found, f"Step-1 access leaves in the applied config: {found}"
 
 
-def nvl7_access_verify_after_reset_factory(context: tuple[Fae, dict] | None) -> None:
+def nvl7_access_verify_after_reset_factory(engine, context: tuple[Fae, dict] | None) -> None:
     """No acp has a step-1 access leaf applied; the tested port shows 0 applied and firmware-default operational."""
     if context is None:
         return
     fae_port, fw_default = context
     with allure.step(f"NVL7: step-1 back to defaults on every acp and on {fae_port.port.name} after reset factory"):
-        nvl7_verify_no_applied_access_leaf()
+        nvl7_verify_no_applied_access_leaf(engine)
         nvl7_verify_new_leaves(fae_port, PhyRecoveryConsts.NVL7_ACCESS_LEAF_DEFAULTS, subtree=PhyRecoveryConsts.STEP_1,
                                applied=True)
         # Only leaves shown both before and after are compared; a down acp (simx without mloop) shows none
@@ -536,20 +539,70 @@ _IB_PORT_BY_ALIAS_LUA = (
 )
 
 
-def nvl_port_sonic_name(port_name: str) -> str:
+def nvl_port_sonic_name(engine, port_name: str) -> str:
     """Return the SONiC name (``InfinibandN``) of an NVL port, looked up by alias in CONFIG_DB ``IB_PORT``."""
-    output = str(DatabaseTool.sonic_db_cli_eval(
-        TestToolkit.get_engine(), '', 'CONFIG_DB', _IB_PORT_BY_ALIAS_LUA, [port_name]
-    )).strip()
+    output = str(DatabaseTool.sonic_db_cli_eval(engine, '', 'CONFIG_DB', _IB_PORT_BY_ALIAS_LUA, [port_name])).strip()
     assert output.startswith('IB_PORT|'), f"No CONFIG_DB IB_PORT entry with alias {port_name}: {output!r}"
     return output.removeprefix('IB_PORT|')
 
 
-def nvl_port_flaps_since(marker: str, port_name: str) -> int:
+def nvl_port_flaps_since(engine, marker: str, port_name: str) -> int:
     """Count oper up->down transitions of an NVL port logged by orchagent since ``marker``."""
-    sonic_name = nvl_port_sonic_name(port_name)
+    sonic_name = nvl_port_sonic_name(engine, port_name)
     return DeviceLogTool.count_log_lines_after_marker(
-        TestToolkit.get_engine(), marker, f"updatePortOperStatus: Port {sonic_name} oper state set from up to down")
+        engine, marker, f"updatePortOperStatus: Port {sonic_name} oper state set from up to down")
+
+
+def nvl7_link_admin_state(fae_port: Fae) -> str:
+    return next(iter(OutputParsingTool.parse_json_str_to_dictionary(
+        fae_port.port.interface.link.state.show()).get_returned_value()))
+
+
+def nvl7_assert_access_leaves_in_range(port_name: str, operational: dict) -> None:
+    out_of_range = {leaf: operational.get(leaf) for leaf, maximum in PhyRecoveryConsts.NVL7_ACCESS_LEAF_MAX.items()
+                    if not 0 <= int(operational.get(leaf, -1)) <= maximum}
+    assert not out_of_range, f"Operational step-1 leaves out of schema range on {port_name}: {out_of_range}"
+
+
+def nvl7_staged_config(engine) -> str:
+    """The pending (staged, not applied) config of the tested API; empty when nothing is staged."""
+    if TestToolkit.tested_api != ApiType.OPENAPI:
+        return NvueGeneralCli.diff_config(engine).strip()
+    if OpenApiRequest.changeset is None:
+        return ''
+    return OpenApiGeneralCli.diff_config(engine, ConfState.APPLIED, OpenApiRequest.changeset, output_type='str').strip()
+
+
+def assert_one_log_line_since(engine, marker: str, pattern: str, what: str) -> None:
+    """Wait for exactly one log line matching ``pattern`` after ``marker``."""
+
+    def _check():
+        count = DeviceLogTool.count_log_lines_after_marker(engine, marker, pattern)
+        assert count == 1, f"Expected 1 {what} in this apply, got {count}"
+
+    retry_call(_check, exceptions=AssertionError, tries=6, delay=10)
+
+
+def nvl7_sai_rejects_since(engine, marker: str, sonic_name: str, leaves: list[str]) -> int:
+    """Count SAI rejections (warning or error) of the step-1 ``leaves`` on ``sonic_name`` logged after ``marker``."""
+    attrs = '|'.join(PhyRecoveryConsts.NVL7_ACCESS_LEAF_SAI_ATTR[leaf] for leaf in leaves)
+    patterns = (PhyRecoveryConsts.NVL7_SAI_REJECT_LOG, PhyRecoveryConsts.NVL7_SAI_REJECT_ERR_LOG)
+    pattern = '|'.join(f"({p.format(port=sonic_name, attr=f'({attrs})', value='[0-9]+')})" for p in patterns)
+    return DeviceLogTool.count_log_lines_after_marker(engine, marker, pattern)
+
+
+def nvl7_unset_phy_recovery_with_retry(fae_port: Fae) -> ResultObj:
+    """
+    Unset phy-recovery on ``fae_port``, retried once. Returned unverified: a cleanup verifies it after its
+    own save/reboot, so a failed unset is loud but cannot abort the rest of the cleanup.
+    """
+    phy_recovery = fae_port.port.interface.link.phy_recovery
+    result = phy_recovery.unset(apply=True, ask_for_confirmation=True)
+    if not result.result:
+        logger.warning("phy-recovery unset on %s failed (%s), retrying", fae_port.port.name, result.info)
+        result.ignore_result()
+        result = phy_recovery.unset(apply=True, ask_for_confirmation=True)
+    return result
 
 
 def nvl7_read_debug_counters(fae_port: Fae) -> dict:

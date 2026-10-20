@@ -18,7 +18,7 @@ def fae_objs(linked_ports_pair: tuple[str, str]) -> tuple[Fae.Fae, Fae.Fae]:
     return tuple(Fae.Fae(port_name=port) for port in linked_ports_pair)
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.fae
 @pytest.mark.parametrize('test_api', [random.choice(consts_nv.ApiType.ALL_TYPES)])
 def test_fae_link_training(
@@ -127,7 +127,7 @@ def test_fae_link_training(
                     ).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.fae
 @pytest.mark.parametrize('test_api', [random.choice(consts_nv.ApiType.ALL_TYPES)])
 def test_fae_link_training_fail_action(
@@ -187,7 +187,7 @@ def test_fae_link_training_fail_action(
                         ).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.fae
 @pytest.mark.parametrize('test_api', [random.choice(consts_nv.ApiType.ALL_TYPES)])
 def test_fae_link_training_negotiation(
@@ -312,7 +312,7 @@ def test_fae_link_training_negotiation(
             ).verify_result()
 
 
-@pytest.mark.interface
+@pytest.mark.interfaces
 @pytest.mark.fae
 # @pytest.mark.parametrize('test_api', [random.choice(consts_nv.ApiType.ALL_TYPES)])
 @pytest.mark.parametrize('test_api', [consts_nv.ApiType.NVUE])
