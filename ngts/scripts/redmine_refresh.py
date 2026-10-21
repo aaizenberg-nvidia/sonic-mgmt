@@ -60,7 +60,7 @@ def get_all_branches(client):
     all_branches = []
     skip = 0
     limit = 50
-    branch_pattern = re.compile(r"^develop(-\d{6})?$")
+    branch_pattern = re.compile(r"^(?:develop(?:-\d{6})?|nvos_ver-\d{2}-\d{2}-\d{4})$")
     # pull branches from gerrit in batches of 50
     while True:
         branches = client.projects.get(Sonic_Cache.PROJECT_NAME).branches.list(limit=limit, skip=skip)
@@ -81,7 +81,7 @@ def get_active_branches(client, all_branches):
     since_date = (datetime.utcnow() - timedelta(days=DAYS_THRESHOLD)).strftime('%Y-%m-%d')
 
     for branch_name in all_branches:
-        query = f"project:{Sonic_Cache.PROJECT_NAME} branch:{branch_name} after:{since_date}"
+        query = f"project:{Sonic_Cache.PROJECT_NAME} branch:{branch_name} mergedafter:{since_date}"
         if client.changes.search(query):
             active_branches.append(branch_name)
 
