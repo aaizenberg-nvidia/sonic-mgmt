@@ -238,7 +238,7 @@
         "default_hwsku": "NVIDIA-AST2700-BMC",
         "support_hwsku": ["NVIDIA-AST2700-BMC"]
     },
-    "sonic_slm-113": {
+    "CI_sonic_BMC_1": {
         "default_hwsku": "NVIDIA-AST2700-BMC",
         "support_hwsku": ["NVIDIA-AST2700-BMC"]
     },

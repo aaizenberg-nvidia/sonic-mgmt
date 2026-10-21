@@ -3264,7 +3264,7 @@ ptf-r-salamandra-01 ansible_host=10.213.86.105 ansible_ssh_user="{{ lookup('env'
 ptf-slm-233 ansible_host=10.220.163.254 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
 10.220.163.254 ansible_host=10.220.163.254 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
 
-# canonical testbed sonic_slm-113 topologies
+# canonical testbed CI_sonic_BMC_1 topologies
 ptf-slm-113 ansible_host=10.220.189.254 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
 10.220.189.254 ansible_host=10.220.189.254 ansible_ssh_user="{{ lookup('env','PTF_USER') }}" ansible_ssh_pass="{{ lookup('env','PTF_PASSWORD') }}"
 
