@@ -351,6 +351,7 @@ def test_long_press_reset_factory(engines: EnginesT, register_cleanup, topology_
 
 
 @pytest.mark.timeout(5 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_feature_default_config(engines: EnginesT, register_cleanup, DEFAULT_CONFIG=AaaConsts.ENABLED):
     """
     Validate the default configuration of the feature allowing reset of local passwords.

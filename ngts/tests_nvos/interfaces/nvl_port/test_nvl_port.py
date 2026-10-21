@@ -563,6 +563,7 @@ def test_link_health_attention_and_toggle_stress(test_name, devices, random_api)
 
 
 @pytest.mark.interfaces
+@pytest.mark.simx
 def test_link_health_fae_clear_range(test_name, devices, random_api):
     """HLD 0.17/0.18: FAE clear restores healthy, including ranged ids.
 

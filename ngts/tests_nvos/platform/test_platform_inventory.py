@@ -148,12 +148,14 @@ def test_show_platform_inventory(engines, devices, test_api):
 
 @pytest.mark.platform
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_show_platform_inventory_fan(engines, devices, test_api):
     InventoryFanTest.test_show_item(engines, devices, test_api)
 
 
 @pytest.mark.platform
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_show_platform_inventory_psu(engines, devices, test_api):
     InventoryPsuTest.test_show_item(engines, devices, test_api)
 
@@ -167,5 +169,6 @@ def test_show_platform_inventory_switch(engines, devices, test_api):
 
 @pytest.mark.platform
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_show_platform_inventory_bmc(engines, devices, test_api):
     InventoryBmcTest.test_show_item(engines, devices, test_api)

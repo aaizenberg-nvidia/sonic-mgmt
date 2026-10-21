@@ -51,6 +51,7 @@ logger = logging.getLogger()
 @pytest.mark.dut_reboot
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
 @pytest.mark.general
+@pytest.mark.simx
 def test_save_reboot(engines, devices):
     """
         Test flow:

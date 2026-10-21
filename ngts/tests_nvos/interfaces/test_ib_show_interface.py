@@ -35,6 +35,7 @@ logger = logging.getLogger()
 @pytest.mark.nvos_ci
 @pytest.mark.ib
 @pytest.mark.air
+@pytest.mark.simx
 def test_ib_show_interface(engines, devices, random_api):
     """
     Run show interface command and verify the required fields are exist
@@ -77,6 +78,7 @@ def test_ib_show_interface(engines, devices, random_api):
 
 @pytest.mark.ib_interfaces
 @pytest.mark.parametrize('test_api', [ApiType.OPENAPI])
+@pytest.mark.simx
 def test_ib_show_interface_all_state_up(engines, devices, start_sm, test_api):
     """
     Run show interface command and verify the required fields are exist
@@ -191,6 +193,7 @@ def test_ib_show_interface_all_state_down(engines, devices, has_loopbox, setup_n
 @pytest.mark.ib_interfaces
 @pytest.mark.nvos_ci
 @pytest.mark.ib
+@pytest.mark.simx
 def test_ib_show_interface_name_link(engines, devices, random_api):
     """
     Run show interface command and verify the required fields exist
@@ -221,6 +224,7 @@ def test_ib_show_interface_name_link(engines, devices, random_api):
 
 @pytest.mark.ib_interfaces
 @pytest.mark.air
+@pytest.mark.simx
 def test_ib_show_interface_name_stats(engines, devices, random_api):
     """
     Run show interface command and verify the required fields exist
@@ -249,6 +253,7 @@ def test_ib_show_interface_name_stats(engines, devices, random_api):
 @pytest.mark.ib_interfaces
 @pytest.mark.ib
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
+@pytest.mark.simx
 def test_show_interface_filter(engines, test_api):
     """
     Run show interface command with filter flag and verify the required fields are exist
@@ -324,6 +329,7 @@ def test_show_interface_filter(engines, test_api):
 
 @pytest.mark.ib_interfaces
 @pytest.mark.ib
+@pytest.mark.simx
 def test_validate_discard_counters_fields(engines, random_api):
     """
     Run show interface command and verify the required fields are exist
@@ -375,6 +381,7 @@ def test_validate_discard_counters_fields(engines, random_api):
 
 @pytest.mark.ib_interfaces
 @pytest.mark.ib
+@pytest.mark.simx
 def test_validate_total_counters_in_out_drops(engines, random_api):
     """
     Validate that total in and out drops counters are a sum of two other counters
@@ -417,6 +424,7 @@ def test_validate_total_counters_in_out_drops(engines, random_api):
 
 @pytest.mark.ib_interfaces
 @pytest.mark.ib
+@pytest.mark.simx
 def test_validate_total_in_out_counters_show_db_gnmi(engines, random_api):
     """
     Validate total in drop and out drop counters are same across show, Sonic DB and GNMI
@@ -802,6 +810,7 @@ def verify_ib_interface_counters_cli_structure_ib(devices):
 @pytest.mark.ib_interfaces
 @pytest.mark.nvos_ci
 @pytest.mark.ib
+@pytest.mark.simx
 def test_show_non_ib_interface_missing_counters(engines, devices, random_api):
     """
     Test to verify that non-IB interfaces (ib0, eth0, eth1) do not have ib/nvl/link sub-options under counters

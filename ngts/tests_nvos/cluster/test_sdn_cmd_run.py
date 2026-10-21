@@ -77,6 +77,7 @@ def test_sdn_cmd_rejection(engines, devices, has_loopbox, random_api):
 @pytest.mark.dut_reboot
 @pytest.mark.nmx
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_sdn_get_cmd(
     engines, devices, has_loopbox, setup_name, standalone_system, random_api,
 ):

@@ -23,6 +23,7 @@ logger = logging.getLogger()
 @pytest.mark.nmx
 @pytest.mark.parametrize('test_api', [random.choice(ApiType.ALL_TYPES)])
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_cluster_sdn_factory_reset_nmx_down(engines, devices, test_api, has_loopbox):
 
     TestToolkit.tested_api = test_api

@@ -28,6 +28,7 @@ def rotate_logs():
 @pytest.mark.tech_support
 @pytest.mark.cumulus
 @pytest.mark.timeout(5 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_techsupport_show_and_since(engines, test_name, random_api, devices, serial_log_analyzers):
     """
     Combined test for show format validation, folder name validation, and since functionality.
@@ -142,6 +143,7 @@ def test_techsupport_show_and_since(engines, test_name, random_api, devices, ser
 @pytest.mark.tech_support
 @pytest.mark.cumulus
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_techsupport_file_operations(engines, test_name, random_api, devices, serial_log_analyzers):
     """
     Combined test for multiple file operations: generate multiple files, upload, and delete.

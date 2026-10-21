@@ -134,6 +134,7 @@ def test_system_reset_bit(engines, devices, topology_obj, test_name):
 @pytest.mark.check_disk_usage
 @pytest.mark.system
 @pytest.mark.nvos_build
+@pytest.mark.simx
 def test_reboot_command(engines, devices, test_name, topology_obj):
     """
     Test flow:
@@ -213,6 +214,7 @@ def test_reboot_command_force(engines, devices, test_name, random_api, topology_
 
 @pytest.mark.system
 @pytest.mark.dut_reboot
+@pytest.mark.simx
 def test_reboot_command_bad_flow(engines, devices):
     """
     Test flow:
@@ -385,6 +387,7 @@ def _reboot_system_by_mode(engines, devices, test_name, topology_obj, mode):
 
 
 @pytest.mark.platform
+@pytest.mark.simx
 def test_lspci_width(engines, devices):
     """
     The purpose of this function is to check if 2 parameters (LnkSta, LnkCap) are valid.
@@ -460,6 +463,7 @@ def get_x_number(arr, x_number):
 
 
 @pytest.mark.system
+@pytest.mark.simx
 def test_show_system_reboot_history_filter(engines, random_api):
     """
     Verify `nv show system reboot history --filter <field>=<value>` (NVUE)

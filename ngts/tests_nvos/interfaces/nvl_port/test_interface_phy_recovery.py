@@ -159,6 +159,7 @@ def test_phy_recovery_counters(engines, devices, random_api):
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(15 * MINUTE)
+@pytest.mark.simx
 def test_phy_recovery_attributes(devices, random_api):
     """
     @summary:
@@ -285,6 +286,7 @@ def test_phy_recovery_attributes(devices, random_api):
 
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
+@pytest.mark.simx
 def test_phy_recovery_bad_flow(devices, random_api):
     """
     @summary:
@@ -350,6 +352,7 @@ def test_phy_recovery_bad_flow(devices, random_api):
 
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
+@pytest.mark.simx
 def test_set_fae_phy_recovery_trunk_ports(devices, random_api):
     """
     @summary:
@@ -385,6 +388,7 @@ def test_set_fae_phy_recovery_trunk_ports(devices, random_api):
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(25 * MINUTE)
+@pytest.mark.simx
 def test_set_fae_phy_recovery_access_ports(devices, random_api, standalone_system, has_loopbox, setup_name, is_simx):
     """
     @summary:
@@ -649,6 +653,7 @@ def _get_random_attribute_and_value(devices, attributes_dict, mutable_attributes
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(45 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nvl7_phy_recovery_attributes(devices, random_api):
     """
     @summary (NVL7 CPO only):
@@ -665,6 +670,7 @@ def test_nvl7_phy_recovery_attributes(devices, random_api):
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nvl7_phy_recovery_trunk_bulk(devices, random_api):
     """
     @summary (NVL7 CPO only):
@@ -685,6 +691,7 @@ def test_nvl7_phy_recovery_trunk_bulk(devices, random_api):
 @pytest.mark.interfaces
 @pytest.mark.multiplanar
 @pytest.mark.timeout(25 * MINUTE)
+@pytest.mark.simx
 def test_nvl7_phy_recovery_counters_debug(engines, devices, random_api):
     """
     @summary (NVL7 CPO only):

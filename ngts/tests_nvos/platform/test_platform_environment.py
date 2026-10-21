@@ -586,6 +586,7 @@ def simulate_fan_direction(engines, devices, fan_name, direction):
 
 @pytest.mark.platform
 @pytest.mark.disable_loganalyzer
+@pytest.mark.simx
 def test_platform_environment_fan_shared_led(engines, devices):
     """
     Only for systems with shared fan LED. Tests the LED turns red when any fan has an error. Flow:

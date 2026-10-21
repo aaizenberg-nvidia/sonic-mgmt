@@ -42,6 +42,7 @@ def nmxc_log_stream_remote_url(player, stream_protocol, url, port):
 
 @pytest.mark.parametrize('stream_protocol', ClusterConsts.NMXC_LOG_STREAM_PROTOCOLS)
 @pytest.mark.timeout(7 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nmxc_log_stream_set(engines, random_api, stream_protocol):
     player = engines.sonic_mgmt
     dut_ip = engines.dut.run_cmd("hostname  -I | awk '{print $1}'")
@@ -129,6 +130,7 @@ def test_nmxc_log_stream_show(random_api):
 
 @pytest.mark.nmx
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nmxc_log_stream_set_unsupported_app(engines, random_api):
     player = engines.sonic_mgmt
     stream_protocol = ClusterConsts.PROTOCOL_RSYSLOG
@@ -140,6 +142,7 @@ def test_nmxc_log_stream_set_unsupported_app(engines, random_api):
 
 @pytest.mark.nmx
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nmxc_log_stream_set_incorrect_app(engines, random_api):
     player = engines.sonic_mgmt
     stream_protocol = ClusterConsts.PROTOCOL_RSYSLOG
@@ -151,6 +154,7 @@ def test_nmxc_log_stream_set_incorrect_app(engines, random_api):
 
 @pytest.mark.nmx
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nmxc_log_stream_set_incorrect_protocol(engines, random_api):
     player = engines.sonic_mgmt
     stream_protocol = "dummy_protocol"
@@ -163,6 +167,7 @@ def test_nmxc_log_stream_set_incorrect_protocol(engines, random_api):
 
 @pytest.mark.nmx
 @pytest.mark.timeout(2 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_nmxc_log_stream_set_incorrect_url(engines, random_api):
     player = engines.sonic_mgmt
     stream_protocol = ClusterConsts.PROTOCOL_RSYSLOG

@@ -691,6 +691,7 @@ def image_uninstall_test(release_name, original_version, devices, uninstall_forc
 @pytest.mark.system
 @pytest.mark.image
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_system_image_install_reject_with_smallcase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'n'
@@ -707,6 +708,7 @@ def test_system_image_install_reject_with_smallcase_n(original_version, devices)
 @pytest.mark.system
 @pytest.mark.image
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_system_image_install_reject_with_uppercase_n(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with 'N'
@@ -723,6 +725,7 @@ def test_system_image_install_reject_with_uppercase_n(original_version, devices)
 @pytest.mark.system
 @pytest.mark.image
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_system_image_install_reject_with_random_char(original_version, devices):
     """
     Check the image install cmd by rejecting the prompt with random character
@@ -792,6 +795,7 @@ def system_image_install_reject_with_prompt(system, prompt_response, original_ve
 @pytest.mark.image
 @pytest.mark.system
 @pytest.mark.cumulus
+@pytest.mark.simx
 def test_fetch_image_via_https(test_api, target_version):
     """
     Install system image test
@@ -831,6 +835,7 @@ def test_fetch_image_via_https(test_api, target_version):
 @pytest.mark.checklist
 @pytest.mark.image
 @pytest.mark.system
+@pytest.mark.simx
 def test_fetch_image_with_weird_password(random_api, engines):
     """
     Install system image test

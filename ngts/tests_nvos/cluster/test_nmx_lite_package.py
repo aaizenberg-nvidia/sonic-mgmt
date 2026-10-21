@@ -82,6 +82,7 @@ def start_cluster_and_sdn_fm_config(engines, setup_name):
 @pytest.mark.skip_clear_config
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_config):
 
     TestToolkit.tested_api = test_api
@@ -122,6 +123,7 @@ def test_peer_port_show(engines, devices, test_api, start_cluster_and_sdn_fm_con
 @pytest.mark.gpu_tel
 @pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_hostname_change(engines, test_api, setup_name, start_cluster_and_sdn_fm_config):
     TestToolkit.tested_api = test_api
 
@@ -168,6 +170,7 @@ def test_peer_port_hostname_change(engines, test_api, setup_name, start_cluster_
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_fae_show(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -178,6 +181,7 @@ def test_peer_port_fae_show(engines, test_api):
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_state_fae_set(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -197,6 +201,7 @@ def test_peer_port_state_fae_set(engines, test_api):
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_state_fae_set_unset_stress(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -222,6 +227,7 @@ def test_peer_port_state_fae_set_unset_stress(engines, test_api):
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_nmx_t_lite_start_stop(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -251,6 +257,7 @@ def test_nmx_t_lite_start_stop(engines, test_api):
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_state_services(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -309,6 +316,7 @@ def test_peer_port_state_services(engines, test_api):
 
 @pytest.mark.gpu_tel
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_gpu_telemetry_log_level_set(engines, test_api):
 
     TestToolkit.tested_api = test_api
@@ -340,6 +348,7 @@ def test_gpu_telemetry_log_level_set(engines, test_api):
 @pytest.mark.gpu_tel
 @pytest.mark.skip_clear_config
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.simx
 def test_peer_port_disconnect(engines, test_api, start_cluster_and_sdn_fm_config):
 
     TestToolkit.tested_api = test_api
@@ -383,6 +392,7 @@ def test_peer_port_disconnect(engines, test_api, start_cluster_and_sdn_fm_config
 
 
 @pytest.mark.gpu_tel
+@pytest.mark.simx
 def test_link_health_switch_state_vs_peer_status(engines, devices, test_name):
     """Correlate switch-side down/attention behavior with the associated peer port.
 

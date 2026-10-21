@@ -34,6 +34,7 @@ SSD_DUMP_OUTPUT_PATTERN = (
 @pytest.mark.general
 @pytest.mark.tech_support
 @pytest.mark.disable_loganalyzer
+@pytest.mark.simx
 def test_techsupport_with_dockers_down(engines, dockers_list=['gnmi-server']):
     """
     Test flow:
@@ -62,6 +63,7 @@ def test_techsupport_with_dockers_down(engines, dockers_list=['gnmi-server']):
 @pytest.mark.skynet
 @disabled_access_ports
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
+@pytest.mark.simx
 def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_router, has_loopbox, standalone_system, setup_name):
     """
     Run nv show system tech-support files command and verify the required fields are exist
@@ -320,6 +322,7 @@ def test_techsupport_expected_files(engines, devices, test_name, skynet, ib_rout
 
 @pytest.mark.general
 @pytest.mark.tech_support
+@pytest.mark.simx
 def test_techsupport_bmc_badflow(engines, test_name):
     """
     This test verifies the behavior of the system when generating tech-support data and handling BMC failures.

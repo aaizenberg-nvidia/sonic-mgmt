@@ -70,6 +70,7 @@ def test_cluster_app_log_level(engines, devices, random_api, has_loopbox, standa
 @pytest.mark.nmx
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
 @pytest.mark.parametrize('test_api', [ApiType.NVUE])
+@pytest.mark.simx
 def test_cluster_app_log_level_under_stress(engines, devices, test_api, test_name, has_loopbox, standalone_system, setup_name):
     TestToolkit.tested_api = test_api
     output_format = OutputFormat.json
