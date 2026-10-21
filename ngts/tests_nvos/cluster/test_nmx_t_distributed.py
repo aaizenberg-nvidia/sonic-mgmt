@@ -26,6 +26,7 @@ logger = logging.getLogger()
 
 @pytest.mark.nmx
 @pytest.mark.nvl_ci
+@pytest.mark.air
 def test_nmx_t_distributed_basic_configuration(dut_engines, random_api, single_switch):
     """
     @summary:
@@ -82,6 +83,7 @@ def test_nmx_t_distributed_basic_configuration(dut_engines, random_api, single_s
 
 
 @pytest.mark.nmx
+@pytest.mark.air
 def test_nmx_t_restart_agent(dut_engines, random_api, single_switch, devices):
     """
     @summary:
@@ -158,6 +160,7 @@ def test_nmx_t_restart_agent(dut_engines, random_api, single_switch, devices):
 
 @pytest.mark.nmx
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
+@pytest.mark.air
 def test_nmx_t_distributed_functionality(dut_engines, devices, random_api, single_switch):
     """
     @summary:
@@ -217,6 +220,7 @@ def test_nmx_t_distributed_functionality(dut_engines, devices, random_api, singl
 
 @pytest.mark.nmx
 @pytest.mark.timeout(5 * MINUTE, func_only=True)
+@pytest.mark.air
 def test_nmx_t_distributed_bad_flow(devices, dut_engines, single_switch):
     """
     @summary:
@@ -287,6 +291,7 @@ def test_nmx_t_distributed_bad_flow(devices, dut_engines, single_switch):
 @pytest.mark.dut_reboot
 @pytest.mark.nmx
 @pytest.mark.timeout(15 * MINUTE, func_only=True)
+@pytest.mark.air
 def test_nmx_t_distributed_reboot(dut_engines, devices, random_api, single_switch):
     """
     @summary:

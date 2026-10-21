@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CASEDEF>
+    <global>
+        <Test>
+            <group> NVOS </group>
+            <name> Multi-switch AIR / SimX </name>
+            <info> Tests marked air and (nmx or nv_bridge): multi-DUT cluster and NV Bridge flows </info>
+        </Test>
+        <Case>
+            <tags> Multi-switch AIR / SimX </tags>
+            <wrapper> [[run_time:db_tests_path]]/sonic-mgmt/sonic-tool/mars/scripts/canonical_mars_pytest_runner.py </wrapper>
+            <tout> 10800 </tout>
+            <tags>ALL</tags>
+        </Case>
+    </global>
+
+    <case>
+        <name> Cluster NMX </name>
+        <info></info>
+        <tout> 10800 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/cluster --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"air and (nmx or nv_bridge)\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --ansible_inventory_file=[[conf:extra_info.ansible_inventory_file:False]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge </name>
+        <info></info>
+        <tout> 14400 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/system --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"air and (nmx or nv_bridge)\" --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --ansible_inventory_file=[[conf:extra_info.ansible_inventory_file:False]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 1800   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+    <case>
+        <name> NV Bridge Encryption </name>
+        <info></info>
+        <tout> 14400 </tout>
+        <cmd>
+            <params>
+                <static_args> --setup_name [[conf:extra_info.setup_name]] --test_script /root/mars/workspace/sonic-mgmt/ngts/tests_nvos/general/security/nv_bridge --raw_options "\'--rootdir=/root/mars/workspace/sonic-mgmt/ngts -c /root/mars/workspace/sonic-mgmt/ngts/pytest.ini -v -m \"air and (nmx or nv_bridge)\" --release_name=[[conf:extra_info.release_name]] --log-level=INFO --default_pass_env_var=[[conf:extra_info.default_pass_env_var]] --ansible_inventory_file=[[conf:extra_info.ansible_inventory_file:False]] --clean-alluredir --alluredir=/tmp/allure-results --showlocals  [[conf:extra_info.additional_options]]  --timeout 900   \'"</static_args>
+            </params>
+        </cmd>
+    </case>
+
+</CASEDEF>

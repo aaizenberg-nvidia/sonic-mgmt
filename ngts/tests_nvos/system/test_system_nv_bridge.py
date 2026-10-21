@@ -34,6 +34,7 @@ NV_BRIDGE_CLIENT_ENV = (
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_default_fields_values(engines, devices, nv_command, random_api):
     """
     Test flow:
@@ -96,6 +97,7 @@ def test_system_nv_bridge_default_fields_values(engines, devices, nv_command, ra
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, random_api, single_switch):
     """
     Test flow:
@@ -155,6 +157,7 @@ def test_system_nv_bridge_functional(engines, devices, nv_command, dut_engines, 
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_negative(engines, devices, nv_command, random_api):
     """
     Test flow:
@@ -203,6 +206,7 @@ def test_system_nv_bridge_negative(engines, devices, nv_command, random_api):
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_simulate_issue(engines, devices, nv_command, dut_engines, random_api, single_switch):
     """
     Test flow:
@@ -279,6 +283,7 @@ def test_system_nv_bridge_simulate_issue(engines, devices, nv_command, dut_engin
 @pytest.mark.parametrize('test_api', ApiType.ALL_TYPES)
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_state_file(engines, nv_command, test_api):
     """
     Test flow:
@@ -327,6 +332,7 @@ def test_system_nv_bridge_state_file(engines, nv_command, test_api):
 @disabled_access_ports
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_system_nv_bridge_primary_secondary(engines, nv_command, random_api, topology_obj, has_loopbox, standalone_system, devices, setup_name, is_simx):
     """
     Test to cover bug nvbugs/5949850

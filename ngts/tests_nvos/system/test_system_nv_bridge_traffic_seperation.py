@@ -4,6 +4,7 @@ import tempfile
 import time
 from functools import partial
 
+import pytest
 from scapy.all import rdpcap
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
@@ -100,6 +101,8 @@ def _restore_traffic_separation_state(eth0_port: Port.Port, system: System.Syste
         ).verify_result()
 
 
+@pytest.mark.nv_bridge
+@pytest.mark.air
 def test_system_nv_bridge_traffic_seperation(
     engines: EnginesT,
     topology_obj: TopologyT,
@@ -107,6 +110,9 @@ def test_system_nv_bridge_traffic_seperation(
     serial_engine: PexpectSerialEngine,
     register_cleanup: CleanUpT,
 ):
+    if len(dut_engines) < 2:
+        pytest.skip("This test needs at least 2 switches")
+
     system: System.System = System.System()
     eth0_port: Port.Port = Port.Port("eth0")
     dut_setup_specific_attributes: dict[str, str] = topology_obj.players['dut']['attributes']\

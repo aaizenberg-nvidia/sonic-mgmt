@@ -363,6 +363,7 @@ def _run_iteration(
 @pytest.mark.nmx
 @pytest.mark.cluster_dscp
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
+@pytest.mark.air
 def test_dscp_marking_complete_flow(engines, devices, dut_engines, random_api):
     """
     Comprehensive DSCP marking validation for IPv4 and IPv6.
@@ -423,6 +424,7 @@ def test_dscp_marking_complete_flow(engines, devices, dut_engines, random_api):
 @pytest.mark.cluster_dscp
 @pytest.mark.timeout(5 * MINUTE, func_only=True)
 @pytest.mark.parametrize("invalid_value,description", INVALID_DSCP_TEST_VALUES)
+@pytest.mark.air
 def test_dscp_marking_invalid_value(engines, devices, random_api, invalid_value, description):
     """Validate that an invalid DSCP value is rejected and config remains unchanged."""
     TestToolkit.tested_api = random_api

@@ -72,6 +72,7 @@ logger = logging.getLogger(__name__)
 @pytest.mark.security
 @pytest.mark.nv_bridge
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_system_encryption_show(engines, devices, test_api):
     """
     Test Objective: Verify system internal encryption default field and values
@@ -90,6 +91,7 @@ def test_bridge_system_encryption_show(engines, devices, test_api):
 @pytest.mark.nmx
 @pytest.mark.usefixtures("disable_cluster")
 @pytest.mark.parametrize("app_name", [ClusterApps.NMX_CONTROLLER])
+@pytest.mark.air
 def test_bridge_cluster_encryption_show(engines, devices, random_api, app_name):
     """
     Test Objective: Verify cluster internal encryption default field and values
@@ -118,6 +120,7 @@ def test_bridge_cluster_encryption_show(engines, devices, random_api, app_name):
 @pytest.mark.nmx
 @pytest.mark.usefixtures("restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_system_encryption_set(
     engines,
     devices,
@@ -193,6 +196,7 @@ def test_bridge_system_encryption_set(
 @pytest.mark.security
 @pytest.mark.nmx
 @pytest.mark.usefixtures("enable_cluster")
+@pytest.mark.air
 def test_bridge_cluster_encryption_set(
     engines,
     devices,
@@ -301,6 +305,7 @@ def _verify_bridge_connection_up(cluster: Cluster, engine) -> None:
     "restore_cluster_app_internal_config",
     "restore_system_internal_config",
 )
+@pytest.mark.air
 def test_bridge_cluster_internal_mtls_reboot_connectivity(
     engines,
     random_api,
@@ -347,6 +352,7 @@ def test_bridge_cluster_internal_mtls_reboot_connectivity(
     "restore_cluster_app_internal_config",
     "restore_system_internal_config",
 )
+@pytest.mark.air
 def test_bridge_cluster_internal_mtls_reboot_cross_functionality(
     engines,
     devices,
@@ -478,6 +484,7 @@ def test_bridge_cluster_internal_mtls_reboot_cross_functionality(
     "restore_cluster_app_internal_config",
     "restore_system_internal_config",
 )
+@pytest.mark.air
 def test_bridge_cluster_rotation(
     engines,
     devices,
@@ -657,6 +664,7 @@ def test_bridge_cluster_rotation(
 @pytest.mark.security
 @pytest.mark.nmx
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
+@pytest.mark.air
 def test_bridge_main_flow(
     engines,
     devices,
@@ -750,6 +758,7 @@ def test_bridge_main_flow(
 @pytest.mark.security
 @pytest.mark.nmx
 @pytest.mark.usefixtures("enable_cluster")
+@pytest.mark.air
 def test_bridge_tls_handshake_verification(
     engines,
     devices,
@@ -846,6 +855,7 @@ def test_bridge_tls_handshake_verification(
 @pytest.mark.security
 @pytest.mark.nmx
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
+@pytest.mark.air
 def test_bridge_cluster_encryption_negative(
     engines,
     devices,
@@ -917,6 +927,7 @@ def test_bridge_cluster_encryption_negative(
 @pytest.mark.nmx
 @pytest.mark.usefixtures("restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_system_encryption_negative(
     engines,
     devices,
@@ -1028,6 +1039,7 @@ def _verify_tls_handshake_negative_scenarios(
 @pytest.mark.crl
 @pytest.mark.usefixtures("restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_system_internal_crl_show(
     engines,
     devices,
@@ -1092,6 +1104,7 @@ def test_bridge_system_internal_crl_show(
 @pytest.mark.crl
 @pytest.mark.usefixtures("enable_cluster")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_cluster_internal_crl_show(
     engines,
     devices,
@@ -1158,6 +1171,7 @@ def test_bridge_cluster_internal_crl_show(
 @pytest.mark.crl
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_crl_allow_connection_empty_crl(
     engines,
     devices,
@@ -1231,6 +1245,7 @@ def test_bridge_crl_allow_connection_empty_crl(
 @pytest.mark.crl
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_crl_revocation_negative(
     engines,
     devices,
@@ -1346,6 +1361,7 @@ def test_bridge_crl_revocation_negative(
 @pytest.mark.crl
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_crl_wrong_chain_block_update_negative(
     engines,
     devices,
@@ -1412,6 +1428,7 @@ def test_bridge_crl_wrong_chain_block_update_negative(
 @pytest.mark.crl
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
+@pytest.mark.air
 def test_bridge_restore_reset_cleanup_crl_positive(
     engines,
     devices,
@@ -1503,6 +1520,7 @@ def test_bridge_restore_reset_cleanup_crl_positive(
     ["same_spiffe_pair", "different_spiffe_pair"],
     indirect=True,
 )
+@pytest.mark.air
 def test_bridge_spiffe_positive_flow(
     engines,
     devices,
@@ -1636,6 +1654,7 @@ def test_bridge_spiffe_positive_flow(
     ["cert_only_spiffe", "alt_only_spiffe"],
     indirect=True,
 )
+@pytest.mark.air
 def test_bridge_spiffe_partial_uri_negative(
     engines,
     devices,
@@ -1727,6 +1746,7 @@ def test_bridge_spiffe_partial_uri_negative(
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 @pytest.mark.parametrize("generate_spiffe_bridge_certs", ["cluster_system_primary_mismatch"], indirect=True)
+@pytest.mark.air
 def test_bridge_spiffe_cluster_system_uri_mismatch_negative(
     engines,
     devices,
@@ -1805,6 +1825,7 @@ def test_bridge_spiffe_cluster_system_uri_mismatch_negative(
 @pytest.mark.usefixtures("enable_cluster", "restore_system_internal_config")
 @pytest.mark.parametrize("test_api", ApiType.ALL_TYPES)
 @pytest.mark.parametrize("generate_spiffe_bridge_certs", ["same_spiffe_pair"], indirect=True)
+@pytest.mark.air
 def test_bridge_upgrade_reboot_persistence_crl_spiffe(
     engines,
     devices,

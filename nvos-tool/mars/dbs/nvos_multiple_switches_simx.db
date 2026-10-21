@@ -53,12 +53,6 @@
 		</Case>
 	</global>
     <test>
-        <cases> sonic-mgmt/nvos-tool/mars/cases/cluster/nv_bridge.cases </cases>
-    </test>
-    <test>
-        <cases> sonic-mgmt/nvos-tool/mars/cases/cluster/nvos_nmx_t_distributed.cases</cases>
-    </test>
-    <test>
-        <cases> sonic-mgmt/nvos-tool/mars/cases/cluster/nvos_cluster_dscp_marking.cases</cases>
+        <cases> sonic-mgmt/nvos-tool/mars/cases/cluster/nvos_multiple_switches.cases </cases>
     </test>
 </DBDEF>

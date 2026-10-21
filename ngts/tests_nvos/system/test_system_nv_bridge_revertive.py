@@ -689,6 +689,7 @@ def require_dual_nvb_path(engines, nv_command, nv_bridge_cluster, setup_name, de
 @pytest.mark.nv_bridge
 @pytest.mark.system
 @pytest.mark.parametrize("ip_version", IP_VERSIONS)
+@pytest.mark.air
 def test_nvbridge_config_ingestion(
     engines,
     nv_command,
@@ -775,6 +776,7 @@ def test_nvbridge_config_ingestion(
 @pytest.mark.nv_bridge
 @pytest.mark.system
 @pytest.mark.parametrize("ip_version", IP_VERSIONS)
+@pytest.mark.air
 def test_nvbridge_automatic_switchover(
     engines,
     nv_command,
@@ -861,6 +863,7 @@ _REVERTIVE_POLICY_CASES = [
 @pytest.mark.parametrize(
     "mode, preferred_iface, other_iface, reverts", _REVERTIVE_POLICY_CASES
 )
+@pytest.mark.air
 def test_nvbridge_revertive_modes(
     engines,
     nv_command,
@@ -937,6 +940,7 @@ def test_nvbridge_revertive_modes(
 @pytest.mark.nv_bridge
 @pytest.mark.system
 @pytest.mark.parametrize("ip_version", IP_VERSIONS)
+@pytest.mark.air
 def test_nvbridge_revertive_mode_rtt_tiebreaker(
     engines,
     nv_command,
@@ -1012,6 +1016,7 @@ _MANUAL_REJECTION_CASES = [
 @pytest.mark.parametrize(
     "mode, target, target_iface, unhealthy_target", _MANUAL_REJECTION_CASES
 )
+@pytest.mark.air
 def test_nvbridge_manual_switchover_rejections(
     engines,
     nv_command,
@@ -1104,6 +1109,7 @@ def test_nvbridge_manual_switchover_rejections(
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_nvbridge_switchover_error_flows(
     engines,
     nv_command,
@@ -1153,6 +1159,7 @@ def test_nvbridge_switchover_error_flows(
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_nvbridge_config_rebuild_and_schema_compat(
     engines,
     nv_command,
@@ -1205,6 +1212,7 @@ def test_nvbridge_config_rebuild_and_schema_compat(
 @pytest.mark.system
 @pytest.mark.parametrize("test_api", [ApiType.NVUE])
 @pytest.mark.timeout(75 * MINUTE, func_only=True)
+@pytest.mark.air
 def test_nvbridge_upgrade_downgrade(
     request,
     test_api,
@@ -1315,6 +1323,7 @@ def test_nvbridge_upgrade_downgrade(
 
 @pytest.mark.nv_bridge
 @pytest.mark.system
+@pytest.mark.air
 def test_nvbridge_network_info_history_log(
     engines,
     skip_if_not_nv_bridge_platform,
