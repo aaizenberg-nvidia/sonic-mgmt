@@ -12,7 +12,8 @@ from tests.common import broadcom_data
 
 # Tables known to be overriden in run-time config, which will appear different
 # if the golden config is overridden empty.
-GOLDEN_OVERRRIDDEN_TABLES = ["FEATURE", "PORT"]
+GOLDEN_OVERRRIDDEN_TABLES = ["FEATURE", "PORT", "BGP_DEVICE_GLOBAL", "DNS_NAMESERVER",
+                             "MACSEC_PROFILE", "MUX_CABLE"]
 
 GOLDEN_CONFIG = "/etc/sonic/golden_config_db.json"
 GOLDEN_CONFIG_BACKUP = "/etc/sonic/golden_config_db.json_before_override"
@@ -72,7 +73,7 @@ def setup_env(duthosts, golden_config_exists_on_dut, tbinfo, enum_rand_one_per_h
         backup_config(duthost, GOLDEN_CONFIG, GOLDEN_CONFIG_BACKUP)
 
     # Reload test env with minigraph
-    config_reload(duthost, config_source="minigraph", safe_reload=True, wait_for_bgp=True,
+    config_reload(duthost, config_source="minigraph", safe_reload=True, wait_for_bgp=True, override_config=True,
                   safe_reload_ignored_dockers=SMARTSWITCH_SAFE_RELOAD_IGNORED_DOCKERS)
     running_config = get_running_config(duthost)
 
@@ -94,14 +95,14 @@ def setup_env(duthosts, golden_config_exists_on_dut, tbinfo, enum_rand_one_per_h
     config_reload(duthost, safe_reload=True, wait_for_bgp=True)
 
 
-def load_minigraph_with_golden_empty_input(duthost, safe_reload_ignored_dockers):
+def load_minigraph_with_golden_empty_input(duthost, wait_for_bgp, safe_reload_ignored_dockers):
     """Test Golden Config with empty input
     """
     initial_config = get_running_config(duthost)
 
     empty_input = {}
-    reload_minigraph_with_golden_config(
-        duthost, empty_input, safe_reload_ignored_dockers=safe_reload_ignored_dockers)
+    reload_minigraph_with_golden_config(duthost, empty_input, wait_for_bgp=wait_for_bgp,
+                                        safe_reload_ignored_dockers=safe_reload_ignored_dockers)
 
     current_config = get_running_config(duthost)
     problem_tables = []
@@ -119,7 +120,7 @@ def load_minigraph_with_golden_empty_input(duthost, safe_reload_ignored_dockers)
     pytest_assert(not problem_tables, "empty input compare fail: {}".format(problem_tables))
 
 
-def load_minigraph_with_golden_partial_config(duthost, safe_reload_ignored_dockers):
+def load_minigraph_with_golden_partial_config(duthost, wait_for_bgp, safe_reload_ignored_dockers):
     """Test Golden Config with partial config.
 
     Here we assume all config contain SYSLOG_SERVER table
@@ -130,8 +131,8 @@ def load_minigraph_with_golden_partial_config(duthost, safe_reload_ignored_docke
             "10.0.0.200": {}
         }
     }
-    reload_minigraph_with_golden_config(
-        duthost, partial_config, safe_reload_ignored_dockers=safe_reload_ignored_dockers)
+    reload_minigraph_with_golden_config(duthost, partial_config, wait_for_bgp=wait_for_bgp,
+                                        safe_reload_ignored_dockers=safe_reload_ignored_dockers)
 
     current_config = get_running_config(duthost)
     pytest_assert(
@@ -164,7 +165,7 @@ def load_minigraph_with_golden_full_config(duthost, full_config, safe_reload_ign
             )
 
 
-def load_minigraph_with_golden_empty_table_removal(duthost, safe_reload_ignored_dockers):
+def load_minigraph_with_golden_empty_table_removal(duthost, wait_for_bgp, safe_reload_ignored_dockers):
     """Test Golden Config with empty table removal.
 
     Here we assume all config contain SYSLOG_SERVER table
@@ -173,8 +174,8 @@ def load_minigraph_with_golden_empty_table_removal(duthost, safe_reload_ignored_
         "SYSLOG_SERVER": {
         }
     }
-    reload_minigraph_with_golden_config(
-        duthost, empty_table_removal, safe_reload_ignored_dockers=safe_reload_ignored_dockers)
+    reload_minigraph_with_golden_config(duthost, empty_table_removal, wait_for_bgp=wait_for_bgp,
+                                        safe_reload_ignored_dockers=safe_reload_ignored_dockers)
 
     current_config = get_running_config(duthost)
     pytest_assert(
@@ -200,8 +201,11 @@ def test_load_minigraph_with_golden_config(duthosts, setup_env,
     else:
         safe_reload_ignored_dockers = []
 
-    load_minigraph_with_golden_empty_input(duthost, safe_reload_ignored_dockers)
-    load_minigraph_with_golden_partial_config(duthost, safe_reload_ignored_dockers)
+    # CONFED BGP config will be lost during this test causing bgp sessions to not come up
+    wait_for_bgp = not duthost.get_bgp_confed_asn()
+
+    load_minigraph_with_golden_empty_input(duthost, wait_for_bgp, safe_reload_ignored_dockers)
+    load_minigraph_with_golden_partial_config(duthost, wait_for_bgp, safe_reload_ignored_dockers)
     full_config = setup_env
     load_minigraph_with_golden_full_config(duthost, full_config, safe_reload_ignored_dockers)
-    load_minigraph_with_golden_empty_table_removal(duthost, safe_reload_ignored_dockers)
+    load_minigraph_with_golden_empty_table_removal(duthost, wait_for_bgp, safe_reload_ignored_dockers)
