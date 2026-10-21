@@ -1974,6 +1974,12 @@ tests/nightly/lag/test_lag.py::test_core_functionality_with_reboot:
     conditions:
     - "https://redmine.mellanox.com/issues/5315965"
 
+tests/nightly/logging/test_log_analyzer_errors_during_deploy_sonic.py::test_check_errors_in_log_during_deploy_sonic_image:
+  skip:
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5355498 on Air SN6600_LD setups"
+    conditions:
+    - "https://redmine.mellanox.com/issues/5355498 and 'air' in testbed and 'sn6600_ld' in platform"
+
 platform_tests/test_reboot.py::test_warm_reboot:
   skip:
     reason: "skipped due to RM issue: https://redmine.mellanox.com/issues/5154543 on sn6 platform"
