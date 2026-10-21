@@ -3711,8 +3711,7 @@ class RosalindSimx(SimxDevice, RosalindSwitch):
             "x86_64-nvidia_n6100_ld-r0")
         self.show_platform_output.update({
             "system-type": "N6100_LD",
-            "asic-model": self.asic_type,
-            PlatformConsts.ASIC_REVISION: PlatformConsts.FW_ASIC_REVISION_VALUE,
+            "asic-model": self.asic_type
         })
 
     def _init_temperature(self):
