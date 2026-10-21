@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DBDEF>
+    <global>
+        <!-- parameters passed to setup steps commands-->
+        <default_params_type> basic_setup_step_params </default_params_type>
+        <DB>
+            <info> CI BMC </info>
+            <owner> SONiC </owner>
+            <group> SONiC </group>
+
+            <!-- OPTIONAL TAGS -->
+            <tags> CI, BMC </tags>
+
+            <!-- pre db commands - executed once before DB run -->
+            <pre>
+            </pre>
+
+            <!-- post db commands - executed once after DB run -->
+            <post>
+            </post>
+        </DB>
+        <Test>
+            <!--Must reset any dynamic ignore tags created by other tests-->
+            <pre>
+                <type> reg_exec_func </type>
+                <name> reset dynamic ignore tags </name>
+                <mars_cmd_func> reset_dynamic_tags </mars_cmd_func>
+                <tout> 60 </tout>
+                <params>
+                    <tags_type> ignore_tags </tags_type>
+                </params>
+            </pre>
+            <post>
+            </post>
+        </Test>
+        <Case>
+        </Case>
+    </global>
+
+    <test>
+        <cases> sonic-mgmt/sonic-tool/mars/cases/community/bmc/ci_bmc.cases </cases>
+    </test>
+
+</DBDEF>
