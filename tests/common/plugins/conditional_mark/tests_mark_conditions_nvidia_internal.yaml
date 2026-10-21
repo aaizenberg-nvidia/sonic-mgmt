@@ -27,11 +27,12 @@ scripts/sonic_deploy/test_deploy_and_upgrade.py::test_more_then_2_fan_status_wro
 
 scripts/test_verify_fanout_version.py:
   skip:
-    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5042675 for SN6600_LD platform or due to RM issue: https://redmine.mellanox.com/issues/5312071 on Air setups"
+    reason: "Testcase skipped due to RM issue: https://redmine.mellanox.com/issues/5042675 for SN6600_LD platform or due to RM issue: https://redmine.mellanox.com/issues/5312071 on Air setups or on master_rc_chameleon6 images"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/5042675 and 'sn6600_ld' in platform"
     - "https://redmine.mellanox.com/issues/5312071 and 'air' in testbed"
+    - "'master_rc_chameleon6' in build_version"
 
 tests/nightly/cpld/test_cpld.py:
   skip:
