@@ -148,10 +148,13 @@ class IbInterfaceTool:
 
     @staticmethod
     def is_mloop_configured(engine, ports: list[str], mloop_mode: MloopConsts.Mode) -> bool:
-        """All ``ports`` have fae mloop ``mloop_mode`` in the applied config (one show of all fae interfaces)."""
-        applied = Fae(port_name='').interface.parse_show(dut_engine=engine, rev=ConfState.APPLIED)
-        return all(applied.get(port, {}).get(IbInterfaceConsts.LINK, {}).get(MloopConsts.MLOOP) == mloop_mode
-                   for port in ports)
+        """All ``ports`` have fae mloop ``mloop_mode`` in the applied config (one range show of their link)."""
+        # 'acp7-7' is not a valid name, and a single port shows its link fields without the port key
+        port_name = ports[0] if len(ports) == 1 else summarize_switch_ports(ports)
+        applied = Fae(port_name=port_name).interface.link.parse_show(dut_engine=engine, rev=ConfState.APPLIED)
+        if len(ports) == 1:
+            applied = {port_name: applied}
+        return all(applied.get(port, {}).get(MloopConsts.MLOOP) == mloop_mode for port in ports)
 
     @staticmethod
     def configure_nvl_simx_loopback(engines, devices,
@@ -192,8 +195,7 @@ class IbInterfaceTool:
             port_ranges = [summarize_switch_ports(ports) for ports in port_groups]
             logger.info("MLOOP port ranges: %s", port_ranges)
 
-            if IbInterfaceTool.is_mloop_configured(engines.dut, [port for ports in port_groups for port in ports],
-                                                   mloop_mode):
+            if all(IbInterfaceTool.is_mloop_configured(engines.dut, ports, mloop_mode) for ports in port_groups):
                 logger.info("MLOOP is already configured as %s on %s, skipping configuration", mloop_mode, port_ranges)
                 return True
 
