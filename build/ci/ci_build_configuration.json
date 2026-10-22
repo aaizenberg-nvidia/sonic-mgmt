@@ -862,6 +862,17 @@
           "out_of_mail": true
         },
         {
+          "name": "Add triage link",
+          "module": "${nfs_dir}/build/ci/add_triage_link.groovy",
+          "category": "Post Build",
+          "node": "SONIC_LITE",
+          "parameters": {},
+          "skip": false,
+          "on_failure": "ignore",
+          "out_of_mail": true,
+          "finally": true
+        },
+        {
           "name": "Clean env",
           "module": "com.mellanox.jenkins.generic_modules.RunCmd",
           "category": "Clean env",
