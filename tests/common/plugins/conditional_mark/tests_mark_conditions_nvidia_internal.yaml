@@ -1558,11 +1558,12 @@ smartswitch/platform_tests/test_reload_dpu.py::test_cold_reboot_dpus[gnoi:
 
 process_monitoring/test_critical_process_monitoring.py:
   skip:
-    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/3464488 and standalone dpu platform or RM 5302452 on sn6600_ld platform"
+    reason: "Testcase ignored due to RM issue: https://redmine.mellanox.com/issues/3464488 and standalone dpu platform or RM 5302452 on sn6600_ld/sn6810_ld platform"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/3464488 and 'nvda_bf-9009' in platform"
     - "https://redmine.mellanox.com/issues/5302452 and 'sn6600_ld' in platform"
+    - "https://redmine.mellanox.com/issues/5302452 and 'sn6810_ld' in platform"
 
 process_monitoring/test_critical_process_monitoring.py::test_monitoring_critical_processes:
   xfail:
