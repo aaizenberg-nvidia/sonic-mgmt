@@ -36,14 +36,12 @@ def test_gnmi_rate_limit_under_threshold(engines, devices):
     dut = engines.dut
     username = devices.dut.default_username
     password = devices.dut.default_password
-    gnmic_engine = gnmi_helpers.get_gnmic_engine(engines)
     client = GnmiClient(
         dut.ip,
         GnmiConsts.GNMI_DEFAULT_PORT,
         username,
         password,
         cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-        engine=gnmic_engine,
     )
     # Throttle to ~30 req/min (under 60 limit): sleep interval seconds between requests
     rpm_target = gnmi_consts.GNMI_RATE_LIMIT_REQ_PER_MIN // 2
@@ -96,7 +94,6 @@ def test_gnmi_rate_limit_under_threshold(engines, devices):
             username,
             password,
             cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-            engine=gnmic_engine,
         )
         s, f, rl = 0, 0, 0
         until = time.time() + gnmi_consts.RAMP_DURATION_SEC
@@ -187,7 +184,6 @@ def test_gnmi_rate_limit_over_threshold(engines, devices):
     dut = engines.dut
     username = devices.dut.default_username
     password = devices.dut.default_password
-    gnmic_engine = gnmi_helpers.get_gnmic_engine(engines)
     timeout_sec = gnmi_consts.PER_REQUEST_TIMEOUT_OVER_THRESHOLD_SEC
 
     with allure.step(f"Flood Capabilities {gnmi_consts.OVERLOAD_FLOOD_SEC}s ({gnmi_consts.NUM_CLIENTS_OVER_THRESHOLD} clients)"):
@@ -198,7 +194,6 @@ def test_gnmi_rate_limit_over_threshold(engines, devices):
             duration_sec=gnmi_consts.OVERLOAD_FLOOD_SEC,
             num_clients=gnmi_consts.NUM_CLIENTS_OVER_THRESHOLD,
             cmd_timeout_sec=timeout_sec,
-            engine=gnmic_engine,
         )
 
     total_success = sum(r[0] for r in results if r is not None)
@@ -208,8 +203,8 @@ def test_gnmi_rate_limit_over_threshold(engines, devices):
     total_requests = total_success + total_fail
     sample_error = first_error.get("err", "")
 
-    # achieved_rpm is derived from elapsed_sec (the player-side wait window); it is biased slightly
-    # high because staggered remote loops run a touch longer. Fine for the skip gate below.
+    # achieved_rpm is derived from elapsed_sec (the wait window); it is biased slightly
+    # high because staggered loops run a touch longer. Fine for the skip gate below.
     achieved_rpm = total_requests * (60.0 / elapsed_sec) if elapsed_sec > 0 else 0.0
     min_rpm_required = gnmi_consts.GNMI_RATE_LIMIT_REQ_PER_MIN * gnmi_consts.MIN_RPM_FRACTION_TO_REQUIRE_RATE_LIMIT
 
@@ -249,7 +244,6 @@ def test_gnmi_rate_limit_over_threshold(engines, devices):
             username,
             password,
             cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-            engine=gnmic_engine,
         )
         gnmi_helpers.capabilities_until_success_after_restart(
             check_client, "Post unary overload reachability"
@@ -275,15 +269,11 @@ def test_gnmi_rate_limit_recovers_after_over_threshold(engines, devices):
     dut = engines.dut
     username = devices.dut.default_username
     password = devices.dut.default_password
-    gnmic_engine = gnmi_helpers.get_gnmic_engine(engines)
     timeout_sec = gnmi_consts.PER_REQUEST_TIMEOUT_OVER_THRESHOLD_SEC
 
-    # Let the DUT/engine recover from earlier tests so the closed-loop flood reaches its standalone
+    # Let the DUT recover from earlier tests so the closed-loop flood reaches its standalone
     # request rate; on a warm server the rate stays just above the limit and never trips.
     with allure.step(f"Settle {gnmi_consts.PRE_OVERLOAD_SETTLE_SEC}s before overload (recover from prior tests)"):
-        if gnmic_engine is not None:
-            # Best-effort: clear any stray gnmic clients left on the engine by earlier tests.
-            gnmic_engine.run_cmd("pkill -f gnmic", validate=False)
         time.sleep(gnmi_consts.PRE_OVERLOAD_SETTLE_SEC)
 
     # Use the same flood parameters as test_gnmi_rate_limit_over_threshold so phase 1 trips the
@@ -297,7 +287,6 @@ def test_gnmi_rate_limit_recovers_after_over_threshold(engines, devices):
             duration_sec=gnmi_consts.OVERLOAD_FLOOD_SEC,
             num_clients=gnmi_consts.NUM_CLIENTS_OVER_THRESHOLD,
             cmd_timeout_sec=timeout_sec,
-            engine=gnmic_engine,
         )
 
     total_success = sum(r[0] for r in results if r is not None)
@@ -305,7 +294,7 @@ def test_gnmi_rate_limit_recovers_after_over_threshold(engines, devices):
     total_rl = sum(r[2] for r in results if r is not None)
     total_ov = sum(r[3] for r in results if r is not None)
     total_req = total_success + total_fail
-    # Derived from p1_elapsed (the player-side wait window); biased slightly high (staggered loops).
+    # Derived from p1_elapsed (the wait window); biased slightly high (staggered loops).
     achieved_rpm = total_req * (60.0 / p1_elapsed) if p1_elapsed > 0 else 0.0
     sample_error = first_error.get("err", "")
 
@@ -335,7 +324,6 @@ def test_gnmi_rate_limit_recovers_after_over_threshold(engines, devices):
         username,
         password,
         cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-        engine=gnmic_engine,
     )
     rpm_low = gnmi_consts.GNMI_RATE_LIMIT_REQ_PER_MIN // 2
     interval = 60.0 / rpm_low
@@ -416,7 +404,6 @@ def test_gnmi_rate_limit_restart_gnmi_under_load(engines, devices):
     dut = engines.dut
     username = devices.dut.default_username
     password = devices.dut.default_password
-    gnmic_engine = gnmi_helpers.get_gnmic_engine(engines)
     timeout_sec = gnmi_consts.PER_REQUEST_TIMEOUT_OVER_THRESHOLD_SEC
     stop_attackers = threading.Event()
     pause_attackers = threading.Event()
@@ -430,7 +417,6 @@ def test_gnmi_rate_limit_restart_gnmi_under_load(engines, devices):
             username,
             password,
             cmd_time=timeout_sec,
-            engine=gnmic_engine,
         )
         while not stop_attackers.is_set():
             while pause_attackers.is_set() and not stop_attackers.is_set():
@@ -497,7 +483,6 @@ def test_gnmi_rate_limit_restart_gnmi_under_load(engines, devices):
                     username,
                     password,
                     cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-                    engine=gnmic_engine,
                 )
                 pause_attackers.set()
                 try:
@@ -535,7 +520,6 @@ def test_gnmi_rate_limit_restart_gnmi_under_load(engines, devices):
                     username,
                     password,
                     cmd_time=gnmi_consts.PER_REQUEST_TIMEOUT_SEC,
-                    engine=gnmic_engine,
                 )
                 pause_attackers.set()
                 with allure.step(

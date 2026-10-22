@@ -34,7 +34,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Sequence, Union
 
 import pytest
 from devts.infra.tools.connection_tools.linux_ssh_engine import LinuxSshEngine
@@ -265,20 +265,11 @@ GNMI_LEAKAGE_COMPONENT_STATE_SUBPATH = "state"
 GNMI_LEAKAGE_OPER_STATUS_SUBPATH = "state/oper-status"
 GNMI_OPER_STATUS_ACTIVE = "ACTIVE"
 GNMI_OPER_STATUS_INACTIVE = "INACTIVE"
-# Collected when gnmic is missing on every candidate host and the pinned auto-install did
-# not recover it either — setup issue, not DUT/gNMI-server failure.
+# Collected when gnmic is missing on the pytest host and the pinned auto-install did not
+# recover it either — setup issue, not DUT/gNMI-server failure.
 GNMI_SETUP_ERR_GNMIC_MISSING = (
-    "gNMI SETUP (test player): gnmic binary not found on the pytest host or on the "
-    "sonic-mgmt player, and the pinned auto-install failed on both — install gnmic "
-    "manually on one of them; this is not a DUT / switch gNMI failure"
-)
-# ON_CHANGE cannot use a remote player even when one carries gnmic — see
-# open_gnmi_on_change_subscription for why the stream has to be local.
-GNMI_ON_CHANGE_ERR_LOCAL_GNMIC_REQUIRED = (
-    "gNMI ON_CHANGE SETUP: gnmic must be installed on the pytest host specifically — the "
-    "subscription stream is read mid-flight, which a remote player cannot provide; a "
-    "sonic-mgmt-only gnmic covers the other gNMI surfaces but not ON_CHANGE. This is not "
-    "a DUT / switch gNMI failure"
+    "gNMI SETUP (test player): gnmic binary not found on the pytest host and the pinned "
+    "auto-install failed — install gnmic manually; this is not a DUT / switch gNMI failure"
 )
 # Short probe: 'which gnmic' either answers at once or the host is not usable as a player.
 GNMI_PLAYER_PROBE_TIMEOUT = 10
@@ -2856,36 +2847,15 @@ def cleanup_cl_support_archive(engine: LinuxSshEngine, archive_path: str) -> Non
 # gNMI helpers
 # =============================================================================
 
-def gnmic_available_on(engine=None) -> bool:
-    """True if ``gnmic`` is on PATH on that host. ``engine=None`` means the pytest host.
-
-    Probes through ``GnmiClient.cmd_runner`` rather than a bare subprocess so the check
-    lands on the same host the client would later use (``CmdRunner`` locally,
-    ``EngineCmdRunner`` remotely).
-    """
-    probe = GnmiClient("", "", "", "", cmd_time=GNMI_PLAYER_PROBE_TIMEOUT, engine=engine)
+def gnmic_available() -> bool:
+    """True if ``gnmic`` is on PATH on the pytest host."""
+    probe = GnmiClient("", "", "", "", cmd_time=GNMI_PLAYER_PROBE_TIMEOUT)
     out, err, _ = probe.cmd_runner.run_cmd_in_process("which gnmic")
     return bool(out.strip()) and "not found" not in out and "not found" not in err
 
 
-def _candidate_gnmi_player_hosts(engines) -> List[Tuple[str, object]]:
-    """Hosts that may carry gnmic, as ``(description, engine_or_None)``, local first.
-
-    Local first deliberately. ON_CHANGE can only run on the pytest host (see
-    :func:`open_gnmi_on_change_subscription`), so whenever gnmic is local every gNMI
-    surface stays on one host; a remote player is a fallback for topologies that put the
-    tooling on sonic-mgmt, not a preference.
-    """
-    candidates: List[Tuple[str, object]] = [("pytest host", None)]
-    for attr in ("sonic_mgmt", "server", "oob_mgmt_server"):
-        engine = getattr(engines, attr, None)
-        if engine is not None:
-            candidates.append((f"engines.{attr} ({engine.ip})", engine))
-    return candidates
-
-
-def _install_gnmic_on(engine, description) -> bool:
-    """Best-effort install of gnmic on that host. True once the binary answers.
+def _install_gnmic() -> bool:
+    """Best-effort install of gnmic on the pytest host. True once the binary answers.
 
     Delegates to ``GnmiClient.verify_gnmic_installation`` rather than carrying an install
     command here: that is the installer the rest of NGTS already depends on through
@@ -2893,80 +2863,29 @@ def _install_gnmic_on(engine, description) -> bool:
     matters when the player is a container. Only gnmic is installed; the full
     ``verify_tools_installed`` path would also fetch grpcurl, which this suite never calls.
 
-    Best-effort on purpose: a player with no outbound network leaves the caller free to
-    try the next candidate instead of turning a tooling gap into a suite error here.
+    Best-effort on purpose: a player with no outbound network is reported as a setup gap
+    by the caller instead of turning into a suite error here. Regression runs the suite
+    inside the sonic-mgmt container, which does not ship gnmic.
     """
-    logger.info("gnmic missing on %s; attempting install", description)
+    logger.info("gnmic missing on the pytest host; attempting install")
     try:
-        installer = GnmiClient("", "", "", "", cmd_time=GNMIC_INSTALL_TIMEOUT, engine=engine)
+        installer = GnmiClient("", "", "", "", cmd_time=GNMIC_INSTALL_TIMEOUT)
         installer.verify_gnmic_installation()
-    except Exception as exc:  # noqa: BLE001 - install is best-effort, next candidate follows
-        logger.warning("gnmic install on %s did not succeed: %r", description, exc)
+    except Exception as exc:  # noqa: BLE001 - install is best-effort, the caller reports the gap
+        logger.warning("gnmic install on the pytest host did not succeed: %r", exc)
         return False
-    return gnmic_available_on(engine)
-
-
-def resolve_gnmi_player_engine(engines) -> Optional[Tuple[object, str]]:
-    """Pick the host that will run gnmic: ``(engine_or_None, description)``, or None.
-
-    ``engine_or_None`` is None for the pytest host, which is exactly what ``GnmiClient``
-    wants in order to keep its default local runner. None instead of a tuple means no
-    candidate host has gnmic at all.
-
-    Mirrors :func:`resolve_otel_collector_engine`: run the tool wherever the testbed
-    actually installed it instead of assuming one host. CL BSP topologies attach only
-    DUT (+ BMC) and resolve to the pytest host; setups that keep tooling on sonic-mgmt
-    resolve there.
-
-    A local player is preferred over a remote one that already has the binary, strongly
-    enough to install for it: ``open_gnmi_on_change_subscription`` reads a live stdout
-    pipe, which only works locally, so settling for a remote player silently costs the
-    ON_CHANGE surface. Installing is also why this does not simply give up when nothing
-    has gnmic — regression runs the suite inside the sonic-mgmt container, which does
-    not ship it, and a missing binary would read as a DUT fault rather than a setup gap.
-    """
-    candidates = _candidate_gnmi_player_hosts(engines)
-    local_description, local_engine = candidates[0]
-    remote_candidates = candidates[1:]
-
-    if gnmic_available_on(local_engine):
-        logger.info("gnmic player host: %s", local_description)
-        return local_engine, local_description
-    if _install_gnmic_on(local_engine, local_description):
-        logger.info("gnmic player host: %s (auto-installed)", local_description)
-        return local_engine, local_description
-
-    probed = [local_description]
-    for description, engine in remote_candidates:
-        probed.append(description)
-        if gnmic_available_on(engine):
-            logger.info("gnmic player host: %s (remote — ON_CHANGE unavailable)", description)
-            return engine, description
-
-    # Last resort. Only sonic-mgmt is an install target among the remotes; the management
-    # hosts are not somewhere test tooling belongs.
-    for description, engine in remote_candidates:
-        if description.startswith("engines.sonic_mgmt") and _install_gnmic_on(engine, description):
-            logger.info("gnmic player host: %s (remote, auto-installed — ON_CHANGE unavailable)", description)
-            return engine, description
-
-    logger.warning("gnmic unavailable on all candidates after install attempts: %s", ", ".join(probed))
-    return None
+    return gnmic_available()
 
 
 def create_leakage_gnmi_client(engines) -> Optional[GnmiClient]:
     """Return a GnmiClient aimed at the DUT gNMI server, or None if gnmic is unavailable.
 
-    gnmic runs on the *test player* — the pytest host, or the sonic-mgmt machine when that
-    is where the testbed installed it — never on the DUT. Either way it opens a network
-    connection to ``engines.dut.ip:GNMI_PORT``.
+    gnmic runs on the pytest host, never on the DUT, and opens a network connection to
+    ``engines.dut.ip:GNMI_PORT``.
     """
-    resolved = resolve_gnmi_player_engine(engines)
-    if resolved is None:
+    if not gnmic_available() and not _install_gnmic():
         logger.warning("%s", GNMI_SETUP_ERR_GNMIC_MISSING)
         return None
-    engine, description = resolved
-    logger.info("Leakage gNMI client runs gnmic on %s", description)
     return GnmiClient(
         server_host=engines.dut.ip,
         server_port=GNMI_PORT,
@@ -2974,7 +2893,6 @@ def create_leakage_gnmi_client(engines) -> Optional[GnmiClient]:
         password=engines.dut.password,
         cmd_time=30,
         verify_tools_installed=False,
-        engine=engine,
     )
 
 
@@ -3450,14 +3368,11 @@ def open_gnmi_on_change_subscription(
     :func:`wait_for_gnmi_on_change_initial_status` before injecting so the
     protocol-required current-value sync is observed (not a fixed sleep).
 
-    Pytest-host only, unlike the rest of the gNMI surfaces: the stream is read while
-    gnmic is still running (:func:`_drain_gnmi_on_change_stdout` selects on the pipe) and
-    ``EngineCmdRunner`` surrenders a remote process's output only at wait/kill. Checked
-    here rather than left to fail later, because a remote-only gnmic would otherwise
-    surface as an unexplained initial-sync timeout.
+    gnmic is checked here rather than left to fail later, because a missing binary would
+    otherwise surface as an unexplained initial-sync timeout.
     """
-    if not gnmic_available_on(None):
-        raise AssertionError(GNMI_ON_CHANGE_ERR_LOCAL_GNMIC_REQUIRED)
+    if not gnmic_available():
+        raise AssertionError(GNMI_SETUP_ERR_GNMIC_MISSING)
     builder = (
         GnmicCmdBuilder(host=engines.dut.ip, port=GNMI_PORT)
         .skip_verify()

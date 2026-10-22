@@ -9,7 +9,7 @@ import shlex
 from typing import Tuple
 
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.nvos_tools.infra.CmdRunner import CmdRunner, EngineCmdRunner
+from ngts.nvos_tools.infra.CmdRunner import CmdRunner
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.tests_nvos.system.gnoi.constants import (
     GNOI_DEFAULT_PORT,
@@ -21,7 +21,7 @@ from ngts.tests_nvos.system.gnoi.constants import (
 class GnoiClient:
     def __init__(self, server_host, server_port=GNOI_DEFAULT_PORT, username='', password='',
                  cmd_time: int = GNOIC_CMD_TIMEOUT_SEC, cacert='', verify_tools_installed: bool = False,
-                 print_outputs: bool = True, engine=None):
+                 print_outputs: bool = True):
         assert cmd_time >= 0, f'unsupported cmd time: {cmd_time}. must be >= 0'
 
         self.server_host = server_host
@@ -31,14 +31,11 @@ class GnoiClient:
         self.cacert = cacert
         self.cmd_time = cmd_time
 
-        if engine is None:
-            # Spooled rather than piped: a multi-GB transfer logs a progress line per chunk, which
-            # overruns the 64KB pipe buffer. A backgrounded op then blocks writing to it and the
-            # transfer stalls with no way to tell that apart from the switch hanging.
-            self.cmd_runner = CmdRunner('GnoiClient', self.cmd_time, print_outputs,
-                                        spool_output=True)
-        else:
-            self.cmd_runner = EngineCmdRunner(engine, 'GnoiClient', self.cmd_time, print_outputs)
+        # Spooled rather than piped: a multi-GB transfer logs a progress line per chunk, which
+        # overruns the 64KB pipe buffer. A backgrounded op then blocks writing to it and the
+        # transfer stalls with no way to tell that apart from the switch hanging.
+        self.cmd_runner = CmdRunner('GnoiClient', self.cmd_time, print_outputs,
+                                    spool_output=True)
 
         if verify_tools_installed:
             with allure.step('verify gnoic installed on player'):

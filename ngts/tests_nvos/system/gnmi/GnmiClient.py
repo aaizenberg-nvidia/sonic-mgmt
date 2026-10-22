@@ -5,7 +5,7 @@ import time
 from typing import Tuple
 
 import ngts.tools.test_utils.allure_utils as allure
-from ngts.nvos_tools.infra.CmdRunner import CmdRunner, EngineCmdRunner
+from ngts.nvos_tools.infra.CmdRunner import CmdRunner
 from ngts.nvos_tools.infra.IpTool import IpTool
 from ngts.tests_nvos.system.gnmi.constants import GnmiMode, GnmiStreamMode
 
@@ -43,8 +43,8 @@ def compose_subscribe_stream_flags(stream_mode: str = None, sample_interval=None
 
 
 class GnmiClient:
-    def __init__(self, server_host, server_port, username, password, cmd_time: int = 5, cacert='',
-                 verify_tools_installed: bool = False, print_outputs: bool = True, engine=None,
+    def __init__(self, server_host, server_port, username, password, cmd_time: int = 5,
+                 cacert='', verify_tools_installed: bool = False, print_outputs: bool = True,
                  spool_output: bool = False):
         """
         Set ``spool_output`` for long-lived subscriptions whose output is only read once the
@@ -59,20 +59,8 @@ class GnmiClient:
         self.password = password
         self.cacert = cacert
         self.cmd_time = cmd_time
-        # Kept so callers that rebuild a client from this one inherit the host gnmic runs on,
-        # not just the target and credentials.
-        self.engine = engine
-
-        if engine is None:
-            self.cmd_runner = CmdRunner('GnmiClient', self.cmd_time, print_outputs,
-                                        spool_output=spool_output)
-        else:
-            # Run gnmic on the given engine (e.g. the sonic-mgmt host) instead of the local test
-            # player. EngineCmdRunner mirrors CmdRunner (separate stdout/stderr, per-command
-            # timeout, keep-alive sessions), so error markers on stderr and streaming subscribes
-            # behave the same as when running locally.
-            self.cmd_runner = EngineCmdRunner(engine, 'GnmiClient', self.cmd_time, print_outputs)
-
+        self.cmd_runner = CmdRunner('GnmiClient', self.cmd_time, print_outputs,
+                                    spool_output=spool_output)
         if verify_tools_installed:
             with allure.step('verify gnmic installed on player'):
                 self.verify_gnmic_installation()
@@ -171,8 +159,10 @@ class GnmiClient:
 
     def gnmic_subscribe_interface(self, mode: str, interface_name: str, username: str = '', password: str = '',
                                   skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
-                                  cmd_time=None, wait_till_done: bool = False, interface_path: str = None) -> Tuple[str, str]:
-        out, err, duration_sec, _ = self._run_gnmic_subscribe_interface(mode, interface_name, username, password, skip_cert_verify,
+                                  cmd_time=None, wait_till_done: bool = False, interface_path: str = None) -> Tuple[
+            str, str]:
+        out, err, duration_sec, _ = self._run_gnmic_subscribe_interface(mode, interface_name, username, password,
+                                                                        skip_cert_verify,
                                                                         cacert,
                                                                         debug_mode, cmd_time, False, wait_till_done,
                                                                         interface_path)
@@ -183,7 +173,8 @@ class GnmiClient:
                                                          skip_cert_verify: bool = False, cacert='',
                                                          debug_mode: bool = True) -> subprocess.Popen:
 
-        _, _, _, process = self._run_gnmic_subscribe_interface(mode, interface_name, username, password, skip_cert_verify,
+        _, _, _, process = self._run_gnmic_subscribe_interface(mode, interface_name, username, password,
+                                                               skip_cert_verify,
                                                                cacert,
                                                                debug_mode, None, True)
         return process
@@ -193,7 +184,8 @@ class GnmiClient:
                                                                skip_cert_verify: bool = False, cacert='',
                                                                debug_mode: bool = True) -> subprocess.Popen:
 
-        _, _, _, process = self._run_gnmic_subscribe_interface(mode, interface_name, username, password, skip_cert_verify,
+        _, _, _, process = self._run_gnmic_subscribe_interface(mode, interface_name, username, password,
+                                                               skip_cert_verify,
                                                                cacert, debug_mode, None, True,
                                                                False, 'infiniband/state/speed')
         return process
@@ -202,8 +194,10 @@ class GnmiClient:
                                       skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
                                       cmd_time=None, keep_session_alive: bool = True,
                                       wait_till_done: bool = False) -> Tuple[str, str, subprocess.Popen]:
-        out, err, duration_sec, sub_proc = self._run_gnmic_subscribe_system_events(mode, username, password, skip_cert_verify, cacert,
-                                                                                   debug_mode, cmd_time, keep_session_alive,
+        out, err, duration_sec, sub_proc = self._run_gnmic_subscribe_system_events(mode, username, password,
+                                                                                   skip_cert_verify, cacert,
+                                                                                   debug_mode, cmd_time,
+                                                                                   keep_session_alive,
                                                                                    wait_till_done)
         return out, err, sub_proc
 
@@ -211,14 +205,17 @@ class GnmiClient:
                                      skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
                                      cmd_time=None, keep_session_alive: bool = True,
                                      wait_till_done: bool = False) -> Tuple[str, str, subprocess.Popen]:
-        out, err, duration_sec, sub_proc = self._run_gnmic_subscribe_system_event(event_id, username, password, skip_cert_verify, cacert,
-                                                                                  debug_mode, cmd_time, keep_session_alive, wait_till_done)
+        out, err, duration_sec, sub_proc = self._run_gnmic_subscribe_system_event(event_id, username, password,
+                                                                                  skip_cert_verify, cacert,
+                                                                                  debug_mode, cmd_time,
+                                                                                  keep_session_alive, wait_till_done)
         return out, err, sub_proc
 
     def gnmic_capabilities(self, username: str = '', password: str = '', skip_cert_verify: bool = False, cacert='',
                            debug_mode: bool = True, cmd_time=None, wait_till_done: bool = False) -> Tuple[str, str]:
         capabilities_op = "capabilities"
-        out, err, duration_sec, _ = self._run_gnmic_op(capabilities_op, skip_cert_verify, cacert, debug_mode, cmd_time, username,
+        out, err, duration_sec, _ = self._run_gnmic_op(capabilities_op, skip_cert_verify, cacert, debug_mode, cmd_time,
+                                                       username,
                                                        password, wait_till_done=wait_till_done)
         return out, err
 
@@ -238,18 +235,22 @@ class GnmiClient:
                                        interface_path: str = None) -> \
             Tuple[str, str, float, subprocess.Popen]:
         path = 'state/description' if interface_path is None else interface_path
-        out, err, duration, proc = self.gnmic_subscribe(f'interfaces/interface[name={interface_name}]', path, mode, True,
-                                                        username, password, skip_cert_verify, cacert, debug_mode, cmd_time,
+        out, err, duration, proc = self.gnmic_subscribe(f'interfaces/interface[name={interface_name}]', path, mode,
+                                                        True,
+                                                        username, password, skip_cert_verify, cacert, debug_mode,
+                                                        cmd_time,
                                                         keep_session_alive, wait_till_done)
         return out, err, duration, proc
 
     def gnmic_subscribe_ib_router(self, mode: str, username: str = '', password: str = '',
                                   skip_cert_verify: bool = False, cacert='', debug_mode: bool = True,
-                                  cmd_time=None, keep_session_alive: bool = False, wait_till_done: bool = False, full_path: str = None
+                                  cmd_time=None, keep_session_alive: bool = False, wait_till_done: bool = False,
+                                  full_path: str = None
                                   ) -> Tuple[str, str]:
         path = full_path if full_path else ''
         out, err, duration, proc = self.gnmic_subscribe(f'ib-router', path, mode, True,
-                                                        username, password, skip_cert_verify, cacert, debug_mode, cmd_time,
+                                                        username, password, skip_cert_verify, cacert, debug_mode,
+                                                        cmd_time,
                                                         keep_session_alive, wait_till_done)
         return out, err
 
@@ -258,7 +259,8 @@ class GnmiClient:
                                            cmd_time=None, keep_session_alive: bool = False,
                                            wait_till_done: bool = False) -> \
             Tuple[str, str, float, subprocess.Popen]:
-        out, err, duration, proc = self.gnmic_subscribe('system-events', '', mode, False, username, password, skip_cert_verify, cacert,
+        out, err, duration, proc = self.gnmic_subscribe('system-events', '', mode, False, username, password,
+                                                        skip_cert_verify, cacert,
                                                         debug_mode, cmd_time, keep_session_alive, wait_till_done)
         return out, err, duration, proc
 
@@ -267,7 +269,8 @@ class GnmiClient:
                                           cmd_time=None, keep_session_alive: bool = False,
                                           wait_till_done: bool = False) -> \
             Tuple[str, str, float, subprocess.Popen]:
-        out, err, duration, proc = self.gnmic_subscribe(f'system-events/system-event[event-id={event_id}]', '', 'once', False, username, password, skip_cert_verify, cacert,
+        out, err, duration, proc = self.gnmic_subscribe(f'system-events/system-event[event-id={event_id}]', '', 'once',
+                                                        False, username, password, skip_cert_verify, cacert,
                                                         debug_mode, cmd_time, keep_session_alive, wait_till_done)
         return out, err, duration, proc
 
@@ -293,7 +296,7 @@ class GnmiClient:
 
         # Quote the leaf values (host/user/password) so spaces or special shell characters cannot
         # break the command or be reinterpreted by the shell, including when this string is in a
-        # remote bash -c loop. gnmi_op is intentionally left unquoted: it is a composed fragment that
+        # bash -c loop. gnmi_op is intentionally left unquoted: it is a composed fragment that
         # already carries its own quoting (e.g. --prefix '...'), so quoting it as one token would
         # corrupt it.
         return (f"gnmic -a {shlex.quote(self.server_host)} --port {self.server_port} {cert_flag} "
@@ -355,7 +358,8 @@ class GnmicCmdBuilder:
         # Quote the host so an IPv6 literal or any special character cannot break the command; the
         # credential/cert options are quoted as they are added (see user_creds/ca/cert).
         host = shlex.quote(self.host) if self.host else self.host
-        return GnmicCmdBuilder.CMD_TEMPLATE.format(host=host, port=self.port, opts=self.options, op=self.operation).strip()
+        return GnmicCmdBuilder.CMD_TEMPLATE.format(host=host, port=self.port, opts=self.options,
+                                                   op=self.operation).strip()
 
     def address(self, address: str) -> 'GnmicCmdBuilder':
         self.host = address
@@ -381,7 +385,8 @@ class GnmicCmdBuilder:
         self.options += f' --tls-key {shlex.quote(key_path)} --tls-cert {shlex.quote(public_path)}'
         return self
 
-    def subscribe(self, prefix: str = '', path: str = '', mode: str = '', target: str = DEFAULT_TARGET) -> 'GnmicCmdBuilder':
+    def subscribe(self, prefix: str = '', path: str = '', mode: str = '',
+                  target: str = DEFAULT_TARGET) -> 'GnmicCmdBuilder':
         self.operation = f"subscribe --target {target} --prefix \'{prefix}\' --path \'{path}\'"
         if mode:
             self.operation += f' --mode {mode}'
@@ -399,7 +404,8 @@ class GnmicCmdBuilder:
         self.operation += " --format flat"
         return self
 
-    def subscribe_interface_description(self, interface_name: str, mode: str = '', target: str = DEFAULT_TARGET) -> 'GnmicCmdBuilder':
+    def subscribe_interface_description(self, interface_name: str, mode: str = '',
+                                        target: str = DEFAULT_TARGET) -> 'GnmicCmdBuilder':
         return self.subscribe(f'interfaces/interface[name={interface_name}]/state', 'description', mode, target)
 
     def subscribe_system_events(self, mode: str = '', target: str = DEFAULT_TARGET) -> 'GnmicCmdBuilder':

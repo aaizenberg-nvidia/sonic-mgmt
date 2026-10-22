@@ -31,7 +31,6 @@ from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 from ngts.tests_nvos.system.gnmi.helpers import (
     _extract_json_objects_from_gnmic_output,
     build_leaf_value_timeline,
-    get_gnmic_engine,
     is_gnmi_failure,
     parse_gnmi_status,
 )
@@ -138,7 +137,7 @@ def telemetry_xpaths(component: BaseComponent, fields: list[str] | None = None, 
 def _gnmic_client(engines: EnginesT, devices: DevicesT) -> GnmiClient:
     return GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, devices.dut.default_username,
                       devices.dut.default_password, cmd_time=GNMI_WATCH_CMD_TIME_SEC, print_outputs=False,
-                      spool_output=True, engine=get_gnmic_engine(engines))
+                      spool_output=True)
 
 
 def gnmi_snapshot(engines: EnginesT, devices: DevicesT, paths: list[str]) -> dict[str, object]:

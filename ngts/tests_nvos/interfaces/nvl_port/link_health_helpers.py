@@ -925,91 +925,21 @@ def is_gnmi_server_enabled(dut_engine) -> bool:
     return str(state).lower() == GnmiConsts.GNMI_STATE_ENABLED
 
 
-def _gnmic_runner_engine():
-    """Return the engine that should run ``gnmic`` (sonic-mgmt player), if available."""
-    from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
+def try_build_gnmi_client(dut_ip, username, password):
+    """Build a GnmiClient on the local pytest host, auto-installing gnmic if it is missing.
 
-    engines = TestToolkit.engines
-    if engines is not None and hasattr(engines, 'sonic_mgmt'):
-        return engines.sonic_mgmt
-    return None
-
-
-# Official openconfig installer (drops the binary into /usr/local/bin). Pin to the
-# same gnmic version GnmiClient installs so player tooling stays consistent.
-GNMIC_INSTALL_CMD = (
-    'sudo bash -c "$(curl -sL https://get-gnmic.openconfig.net)" -- -v 0.38.2'
-)
-
-
-def _gnmic_version_ok(client) -> bool:
-    """True when ``gnmic version`` runs on the client's engine (binary present)."""
-    try:
-        out, err, _ = client.cmd_runner.run_cmd_in_process('gnmic version')
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f'gnmic version check failed: {exc!r}')
-        return False
-    combined = f'{out}\n{err}'.lower()
-    return 'not found' not in combined and 'version' in combined
-
-
-def _install_gnmic_on_engine(engine, where) -> bool:
-    """Best-effort install of gnmic on the sonic-mgmt player. Returns success."""
-    if engine is None:
-        return False
-    with allure.step(f'gnmic not found on {where}; attempting auto-install'):
-        logger.info(f'Installing gnmic on {where} via openconfig installer')
-        try:
-            engine.run_cmd(GNMIC_INSTALL_CMD, validate=False)
-        except Exception as exc:  # noqa: BLE001 - install is best-effort
-            logger.warning(f'gnmic auto-install on {where} raised: {exc!r}')
-            return False
-    return True
-
-
-def try_build_gnmi_client(dut_ip, username, password, engine=None):
-    """Build a GnmiClient, auto-installing gnmic on the player if it is missing.
-
-    ``gnmic`` runs on ``engines.sonic_mgmt`` when available (same pattern as
-    ``ngts/tests_nvos/system/gnmi/helpers.py``), otherwise on the local pytest
-    host. Do not pass the DUT engine: the switch has gnmic installed but does
-    not expose the xmlrpc command runner the framework expects.
-
-    If gnmic is not on the player, this first tries to install it (the player
-    already has internet for pip). Only when the binary is still unusable after
-    the install attempt does it return None, so a genuine tooling/connectivity
-    gap degrades to CLI-only verification instead of failing the whole test.
+    Only when gnmic is still unusable after the install attempt does it return None, so a
+    genuine tooling/connectivity gap degrades to CLI-only verification instead of failing
+    the whole test.
     """
     from ngts.tests_nvos.system.gnmi.GnmiClient import GnmiClient
 
-    if engine is None:
-        engine = _gnmic_runner_engine()
-    if engine is not None:
-        where = f'sonic-mgmt ({getattr(engine, "ip", engine)})'
-    else:
-        where = 'local pytest host'
     try:
-        client = GnmiClient(
-            dut_ip,
-            GnmiConsts.GNMI_DEFAULT_PORT,
-            username,
-            password,
-            verify_tools_installed=False,
-            engine=engine,
-        )
-        if _gnmic_version_ok(client):
-            return client
-        # gnmic missing -> try to provision it on the player, then re-check.
-        if _install_gnmic_on_engine(engine, where) and _gnmic_version_ok(client):
-            logger.info(f'gnmic installed successfully on {where}')
-            return client
-        logger.warning(
-            f'gnmic unavailable on {where} and auto-install did not succeed; '
-            'skipping gNMI link-health checks'
-        )
-        return None
+        client = GnmiClient(dut_ip, GnmiConsts.GNMI_DEFAULT_PORT, username, password)
+        client.verify_gnmic_installation()
+        return client
     except Exception as exc:  # noqa: BLE001 - tooling gap must never fail the CLI test
-        logger.warning(f'Could not initialize gNMI client on {where}, skipping gNMI checks: {exc!r}')
+        logger.warning(f'gnmic unavailable on the local pytest host, skipping gNMI checks: {exc!r}')
         return None
 
 

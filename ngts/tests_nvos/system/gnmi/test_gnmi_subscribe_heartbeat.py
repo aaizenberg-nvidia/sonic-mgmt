@@ -40,7 +40,7 @@ from ngts.tests_nvos.system.gnmi.constants import (
     NANOSEC_PER_SEC, RAW_STREAM_EXCERPT_CHARS, GnmiPaths, GnmiStreamMode)
 from ngts.tests_nvos.system.gnmi.helpers import (
     StreamSubscription, SubscriberResult, analyze_leaf_continuity,
-    attach_plain_summary, build_leaf_timeline, get_gnmic_engine, gnmi_once_notifications,
+    attach_plain_summary, build_leaf_timeline, gnmi_once_notifications,
     gnmi_path_is_exposed, gnmi_service_refused_reason, heartbeat_window_sec, is_gnmi_unavailable,
     is_path_not_modelled, max_heartbeat_deliveries, parse_duration_sec, run_stream_subscribers,
     timeline_end_ns, verify_heartbeat_drove_delivery, verify_leaf_heartbeat_continuity,
@@ -58,14 +58,12 @@ def heartbeat_client(engines, devices) -> GnmiClient:
     """
     gNMI client shared by this module, skipping the whole module if the server is unreachable.
 
-    gnmic runs on the sonic-mgmt engine when the topology defines one, falling back to the local
-    test player otherwise. Built with ``verify_tools_installed=False`` (gnmi guideline 1); gnmic is
-    expected to be present on whichever of the two runs it.
+    Built with ``verify_tools_installed=False`` (gnmi guideline 1); gnmic is expected to be present
+    on the test player.
     """
     client = GnmiClient(engines.dut.ip, GnmiConsts.GNMI_DEFAULT_PORT,
                         devices.dut.default_username, devices.dut.default_password,
-                        cmd_time=HEARTBEAT_CLIENT_CMD_TIME_SEC, verify_tools_installed=False,
-                        engine=get_gnmic_engine(engines))
+                        cmd_time=HEARTBEAT_CLIENT_CMD_TIME_SEC, verify_tools_installed=False)
     _, err = client.gnmic_capabilities(skip_cert_verify=True)
     if is_gnmi_unavailable(err):
         pytest.skip(f"gNMI server is unavailable on {engines.dut.ip}: {err.strip()}")
@@ -266,7 +264,6 @@ def _collect(heartbeat_client, subscriptions, window_sec, **kwargs) -> list:
         username=heartbeat_client.username,
         password=heartbeat_client.password,
         target_port=heartbeat_client.server_port,
-        engine=heartbeat_client.engine,
         **kwargs,
     )
     for subscription, result in zip(subscriptions, results):

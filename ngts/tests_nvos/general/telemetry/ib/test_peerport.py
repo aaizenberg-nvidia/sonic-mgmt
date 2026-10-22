@@ -21,7 +21,6 @@ from ngts.tests_nvos.system.gnmi.constants import (
 )
 from ngts.tests_nvos.system.gnmi.helpers import (
     StreamSubscription,
-    get_gnmic_engine,
     heartbeat_window_sec,
     run_stream_subscribers,
     verify_heartbeat_drove_delivery,
@@ -2265,7 +2264,6 @@ def test_peer_port_gnmi_counters_heartbeat_under_suppress_redundant(
             window_sec=window_sec,
             username=gnmi_client.username,
             password=gnmi_client.password,
-            engine=get_gnmic_engine(engines),
         )
         verify_subscribers_streamed(results)
 
@@ -2359,7 +2357,6 @@ def test_peer_port_heartbeat_survives_peer_port_disable(
                 password=gnmi_client.password,
                 mid_window_action=_disable_peer_port,
                 action_at_sec=HEARTBEAT_PERTURBATION_AT_SEC,
-                engine=get_gnmic_engine(engines),
             )
         finally:
             with allure.step("Re-enable peer-port"):

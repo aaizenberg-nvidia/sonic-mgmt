@@ -363,7 +363,7 @@ class SubscriberResult(NamedTuple):
 
 def run_stream_subscribers(target_ip, subscriptions, window_sec, username, password,
                            target_port=GnmiConsts.GNMI_DEFAULT_PORT, mid_window_action=None,
-                           action_at_sec=None, engine=None):
+                           action_at_sec=None):
     """
     Open one concurrent gnmic STREAM subscription per entry in `subscriptions`, stream for
     `window_sec` seconds, and return a list of SubscriberResult aligned with `subscriptions`.
@@ -371,8 +371,7 @@ def run_stream_subscribers(target_ip, subscriptions, window_sec, username, passw
     Every subscription is started before any waiting, so they are all alive simultaneously for the
     whole window. `mid_window_action` is a callable invoked `action_at_sec` into the window, which
     is how perturbation tests inject a change (link down, feature toggle, ...) while heartbeats are
-    being observed. `engine` is the host gnmic runs on - pass `get_gnmic_engine(engines)` to
-    generate the subscriptions from the sonic-mgmt host rather than the local test player.
+    being observed.
 
     Failures are reported through each result rather than asserted here, so a caller can tell an
     agent-policy refusal (interval too low) apart from everything else and decide what each one
@@ -384,20 +383,17 @@ def run_stream_subscribers(target_ip, subscriptions, window_sec, username, passw
     assert action_at_sec is None or mid_window_action is not None, \
         'action_at_sec was given without a mid_window_action to run'
 
-    # Drive gnmic through GnmiClient instead of hand-rolled gnmic strings, on `engine` when one is
-    # given and on the local test player otherwise. One client is built once and reused for every
-    # subscription (gnmi guideline 1: verify_tools_installed=False). spool_output only bites on the
-    # local runner, whose output is read once the sessions close: a long window over many paths
-    # would otherwise fill the pipe buffer and block gnmic mid-stream. The engine runner spools
-    # nothing because the remote process server holds the output.
+    # Drive gnmic through GnmiClient instead of hand-rolled gnmic strings. One client is built once
+    # and reused for every subscription (gnmi guideline 1: verify_tools_installed=False). The output
+    # is read once the sessions close, so spool_output keeps a long window over many paths from
+    # filling the pipe buffer and blocking gnmic mid-stream.
     #
     # log_to_stderr is essential rather than cosmetic here: gnmic retries a rejected subscription
     # on its --retry timer and, with its logger off, writes nothing at all to either stream. A
     # refusal (bad path, expired account) would then be indistinguishable from a server that
     # accepted the subscription and stopped sending - i.e. it would read as a heartbeat failure.
     client = GnmiClient(target_ip, target_port, username, password, cmd_time=window_sec,
-                        verify_tools_installed=False, print_outputs=False, spool_output=True,
-                        engine=engine)
+                        verify_tools_installed=False, print_outputs=False, spool_output=True)
 
     sessions = []
     with allure.step(f"start {len(subscriptions)} concurrent STREAM subscription(s)"):
@@ -545,7 +541,7 @@ def run_concurrent_multi_path_stream_subscribers(
         devices, target_ip, prefix, paths, num_subscribers,
         window_sec=STREAM_SUBSCRIBE_WINDOW_SEC, target_port=GnmiConsts.GNMI_DEFAULT_PORT,
         username='', password='', sample_interval=None, heartbeat_interval=None,
-        suppress_redundant: bool = False, engine=None, fail_on_rejected: bool = True):
+        suppress_redundant: bool = False, fail_on_rejected: bool = True):
     """
     Open `num_subscribers` concurrent gnmic STREAM subscriptions on the same multi-path
     set and stream for `window_sec` seconds.
@@ -558,8 +554,7 @@ def run_concurrent_multi_path_stream_subscribers(
     When `sample_interval` is set (e.g. '1s'), each subscriber streams in SAMPLE mode and
     receives a fresh result-set every interval, so a `window_sec` window yields multiple
     result-sets per subscriber instead of a single snapshot. `suppress_redundant` and
-    `heartbeat_interval` add the suppress/heartbeat semantics on top. `engine` selects the host
-    gnmic runs on, as in run_stream_subscribers.
+    `heartbeat_interval` add the suppress/heartbeat semantics on top.
     """
     assert num_subscribers >= 1, f"num_subscribers must be >= 1; got {num_subscribers}"
 
@@ -574,7 +569,6 @@ def run_concurrent_multi_path_stream_subscribers(
         username=username or devices.dut.default_username,
         password=password or devices.dut.default_password,
         target_port=target_port,
-        engine=engine,
     )
     rejected = verify_subscribers_streamed(results, fail_on_rejected=fail_on_rejected)
     return [result.notifications for result in results], rejected
@@ -1437,22 +1431,13 @@ def get_scp_player(engines) -> LinuxSshEngine:
     # return LinuxSshEngine(ip='10.237.38.139', username='root', password='12345')
 
 
-def verify_gnmi_client_tools_installed(engines=None, verify_player=True):
+def verify_gnmi_client_tools_installed(verify_player=True):
     if verify_player:
         player = GnmiClient('', '', '', '', 10)
         with allure.step('verify gnmic installation on test player'):
             player.verify_gnmic_installation()
         with allure.step('verify grpcurl  installation on test player'):
             player.verify_grpcurl_installation()
-
-    engines = engines or TestToolkit.engines
-    if engines is not None and hasattr(engines, 'sonic_mgmt'):
-        sonic_mgmt = engines.sonic_mgmt
-        sonic_mgmt_client = GnmiClient('', '', '', '', 10, engine=sonic_mgmt)
-        with allure.step(f'verify gnmic installation on sonic-mgmt engine {sonic_mgmt.ip}'):
-            sonic_mgmt_client.verify_gnmic_installation()
-        with allure.step(f'verify grpcurl installation on sonic-mgmt engine {sonic_mgmt.ip}'):
-            sonic_mgmt_client.verify_grpcurl_installation()
 
 
 def setup_gnmi_cert_checker(engines=None):
@@ -1572,17 +1557,6 @@ def parse_gnmi_output(gnmi_out):
         logger.info("Got an exception while trying to parse GNMI output")
         logger.info(e)
         raise e
-
-
-def get_gnmic_engine(engines):
-    """
-    Engine on which gnmic should run for the rate-limit / load tests.
-
-    Returns the sonic-mgmt engine when the topology defines it, so gnmic requests are generated
-    from the sonic-mgmt host instead of the local test player. Falls back to None (local player)
-    when no sonic-mgmt engine is available, so tests still run in topologies without one.
-    """
-    return getattr(engines, 'sonic_mgmt', None)
 
 
 def is_gnmi_unavailable(err: str) -> bool:
@@ -1713,9 +1687,8 @@ def capabilities_until_success_after_restart(client, step_label: str):
 def build_capabilities_flood_loop_cmd(gnmic_cmd, duration_sec, per_request_timeout_sec):
     """
     Build a POSIX-sh one-liner that runs ``gnmic_cmd`` in a tight loop until ``duration_sec``
-    elapses, classifies each response, and prints aggregate counts. This pushes the request loop
-    onto the engine (run as a single background process), matching how devts background validations
-    generate load remotely instead of driving each request synchronously from the player.
+    elapses, classifies each response, and prints aggregate counts. The request loop runs as a single
+    background process instead of driving each request synchronously from Python.
 
     Output (on stdout) ends with two parseable lines::
 
@@ -1725,7 +1698,7 @@ def build_capabilities_flood_loop_cmd(gnmic_cmd, duration_sec, per_request_timeo
     A trap emits the counts even if the process is stopped (SIGINT/SIGTERM) before the deadline,
     so collection via either wait_process or stop_and_wait_process recovers the totals.
     """
-    # All error markers come from the shared GnmicErr constants, so the remote classification stays
+    # All error markers come from the shared GnmicErr constants, so the loop's classification stays
     # in sync with is_gnmi_failure / is_gnmi_rate_limit_error / is_gnmi_overload_error. The markers
     # are passed to grep -E, so they must remain ERE-safe (no special regex characters); they
     # currently are - add new markers with that constraint in mind.
@@ -1777,31 +1750,27 @@ def run_parallel_capabilities_flood(
     duration_sec,
     num_clients,
     cmd_timeout_sec,
-    engine=None,
 ):
     """
     Run ``num_clients`` Capabilities-flood loops concurrently for ``duration_sec``.
 
     Follows the devts background-validation model: each client is a single background process that
-    loops gnmic on the target host (the sonic-mgmt ``engine`` when given, else the local player).
-    Processes are started non-blocking (staggered), left to run for ``duration_sec``, then collected
-    and parsed for per-client counts. Running the loop on the engine itself gives true concurrency
-    on a single engine without per-request round-trips from the player.
+    loops gnmic on the local player. Processes are started non-blocking (staggered), left to run for
+    ``duration_sec``, then collected and parsed for per-client counts.
 
     Returns ``(results, elapsed_sec, first_error)`` where ``results[i]`` is
     ``(success, fail, rate_limit_fail, overload_fail)`` and ``first_error`` may contain key ``"err"``.
     """
     # A separate GnmiClient per process gives each its own runner/connection. The gnmic command is
     # composed once from the first client (same composition a single GnmiClient call uses) and then
-    # wrapped in the remote loop, so no throwaway client/connection is created just to build it.
-    target_desc = f"engine {engine.ip}" if engine is not None else "local player"
+    # wrapped in the loop, so no throwaway client/connection is created just to build it.
     clients, procs = [], []
     loop_cmd = None
-    with allure.step(f"Start {num_clients} background capabilities-flood loops on {target_desc}"):
+    with allure.step(f"Start {num_clients} background capabilities-flood loops"):
         for _ in range(num_clients):
             client = GnmiClient(
                 dut.ip, GnmiConsts.GNMI_DEFAULT_PORT, username, password,
-                cmd_time=cmd_timeout_sec, engine=engine,
+                cmd_time=cmd_timeout_sec,
             )
             if loop_cmd is None:
                 gnmic_cmd = client.compose_gnmic_cmd("capabilities", skip_cert_verify=True)
@@ -1814,7 +1783,7 @@ def run_parallel_capabilities_flood(
     start_time = time.time()
     with allure.step(f"Let flood run for {duration_sec}s"):
         time.sleep(duration_sec)
-    # NOTE: elapsed_sec is the player-side wait window, not the exact remote loop runtime; staggered
+    # NOTE: elapsed_sec is the wait window, not the exact loop runtime; staggered
     # starts mean loops run marginally longer, so any RPM derived from it is biased slightly high.
     elapsed_sec = time.time() - start_time
 

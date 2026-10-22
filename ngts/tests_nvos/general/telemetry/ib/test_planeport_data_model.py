@@ -59,7 +59,6 @@ from ngts.tests_nvos.system.gnmi.constants import (
 from ngts.tests_nvos.system.gnmi.helpers import (
     StreamSubscription,
     count_result_sets,
-    get_gnmic_engine,
     heartbeat_window_sec,
     run_concurrent_multi_path_stream_subscribers,
     run_stream_subscribers,
@@ -680,7 +679,6 @@ def test_gnmi_subscribe_many_planeport_paths(
             username=gnmi_client.username,
             password=gnmi_client.password,
             sample_interval=STREAM_SUBSCRIBE_SAMPLE_INTERVAL,
-            engine=get_gnmic_engine(engines),
         )
 
     # Every subscriber session must have returned a result set
@@ -815,7 +813,6 @@ def test_gnmi_planeport_counters_heartbeat_under_suppress_redundant(
             window_sec=window_sec,
             username=gnmi_client.username,
             password=gnmi_client.password,
-            engine=get_gnmic_engine(engines),
         )
         verify_subscribers_streamed(results)
 
