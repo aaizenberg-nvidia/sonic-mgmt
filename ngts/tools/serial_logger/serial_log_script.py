@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import traceback
 from datetime import datetime
 from typing import List, Dict
 
+from devts.infra.tools.connection_tools.utils import extend_rcon_with_ssh_options, is_ssh_rcon
 from devts.infra.tools.general_constants.constants import NogaConstants
 
 # this code is necessary for the imports below to work
@@ -152,13 +154,21 @@ def get_serial_metadata(log_dir: str, target_ip: str) -> Dict:
     return data
 
 
+def get_unattended_serial_command(serial_command: str) -> str:
+    """Shell command for an extended rcon (extend_rcon_with_ssh_options) without a local tty or a person typing a
+    password; telnet stays as is."""
+    if not is_ssh_rcon(serial_command):
+        return serial_command
+    # each -t toggles: NOGA's -t after -tt would drop the forced remote pty that screen-based consoles need
+    ssh_command = shlex.join(['ssh', '-tt', *[arg for arg in shlex.split(serial_command)[1:] if arg != '-t']])
+    # ponytail: VM_PASSWORD via sshpass is temporary until NOGA points at the lab's passwordless console user
+    return f'TERM={SerialLoggerConst.SERIAL_TERM} SSHPASS="$VM_PASSWORD" sshpass -e {ssh_command}'
+
+
 def get_serial_logger_command(target_ip: str, hostname: str) -> str:
     """Builds the shell command that establishes serial connection and formats its output."""
-    serial_command = get_serial_connection_command(target_ip)
-    # remove authentication to serial console
-    ssh_opt = ' -tt -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no'
-    serial_command = serial_command.replace('ssh', 'ssh' + ssh_opt).strip()
-
+    serial_rcon = extend_rcon_with_ssh_options(get_serial_connection_command(target_ip))
+    serial_command = get_unattended_serial_command(serial_rcon)
     formatter_command = ' '.join(['sudo', sys.executable, serial_log_formatter.__file__, "-b", hostname])
     # example: sudo /venv/bin/python serial_log_formatter.py -b 10.7.144.154
     # the console server drops sessions idle for ~3h, so reconnect instead of losing the rest of the session log

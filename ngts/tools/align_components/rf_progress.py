@@ -37,6 +37,9 @@ class ODataMessageBase(ODataAbstract):
     def __eq__(self, other):
         return self.o_id == other.o_id and self.message == other.message
 
+    def __hash__(self):
+        return hash((self.o_id, self.message))
+
     def await_activate(self):
         return self._await_to_activate
 
@@ -57,7 +60,7 @@ class ODataMessage(ODataMessageBase):
 
     def __init__(self, **kwargs):
         self.severity = kwargs["MessageSeverity"]
-        super(ODataMessage, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class ODataMessageRegistry(ODataMessageBase):
@@ -76,7 +79,7 @@ class ODataMessageRegistry(ODataMessageBase):
     """
 
     def __init__(self, **kwargs):
-        super(ODataMessageRegistry, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class Task:

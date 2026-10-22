@@ -5,6 +5,7 @@ import re
 import pexpect
 
 from devts.infra.tools.connection_tools.pexpect_serial_engine import PexpectSerialEngine
+from ngts.nvos_constants.constants_nvos import BiosConsts
 from ngts.nvos_tools.infra.OnieTool import OnieTool
 from ngts.tools.test_utils import allure_utils as allure
 
@@ -14,7 +15,6 @@ logger = logging.getLogger()
 class PxeTool:
     # ---- Pre-boot & PXE Entry ----
     PBA = 'PBA'                              # prompt indicating drive lock or pre-boot authentication
-    PXE_START_REGEX = 'American Megatrends'  # banner text indicating PXE environment is available
     SUCCESSFUL_DOWNLOAD = 'NBP file downloaded successfully'  # network bootstrap program fetched
 
     # ---- Key Sequences & Navigation ----
@@ -61,7 +61,7 @@ class PxeTool:
 
             time.sleep(cls.KEY_STROKE_SLEEP)
             logger.info("Waiting for PXE start banner...")
-            serial_engine.run_cmd('', [cls.PXE_START_REGEX], timeout=240, send_without_enter=True)
+            serial_engine.run_cmd('', [BiosConsts.BIOS_START_REGEX], timeout=240, send_without_enter=True)
 
             time.sleep(cls.KEY_STROKE_SLEEP)
             logger.info("Sending ESC+8 to enter PXE menu...")

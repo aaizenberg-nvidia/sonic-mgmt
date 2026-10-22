@@ -1,15 +1,13 @@
-import os
 import logging
 import random
 import time
 
-from ngts.tools.align_components.Constants import NogaConstants
 from ngts.nvos_constants.constants_nvos import NvosConst
-from ngts.tools.align_components.align_fw_components import get_switch_info, create_json_dict
-from ngts.tools.test_utils import allure_utils as allure
+from ngts.nvos_tools.infra.DutUtilsTool import run_ssh_command
 from ngts.tests_nvos.cluster.ansible_playbooks_tool import AnsiblePlaybooksTool
 from ngts.tests_nvos.cluster.cluster_consts import AnsiblePlaybooksConsts as Ansible
-from ngts.nvos_tools.infra.DutUtilsTool import run_ssh_command
+from ngts.tools.align_components.align_fw_components import create_json_dict, get_provisioning, get_switch_info
+from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
 
@@ -26,10 +24,7 @@ def test_align_cluster_recipe(setup_name, fw_versions_json_file, ansible_invento
         switch_info = get_switch_info(setup_name)
         json_dict = create_json_dict(fw_versions_json_file)
 
-        # Determine provisioning type from BIOS (for logging)
-        bios_version = switch_info[NogaConstants.ATTRIBUTES][NogaConstants.HARDWARE_COMPONENTS][
-            NogaConstants.BIOS_VERSION]
-        provisioning_type = 'prod' if bios_version == 'OPN' else 'dev'
+        provisioning_type = get_provisioning(switch_info)  # for logging
 
         logger.info(f"Switch provisioning type: {provisioning_type}")
         logger.info(f"Inventory file: {ansible_inventory_file}")
@@ -167,7 +162,7 @@ fi
                         # LOG THE COMMAND (with credentials redacted for security)
                         safe_command = download_package.replace(auth_b64, "***REDACTED***")
                         logger.info(f"Download command to execute:\n{safe_command}")
-                        logger.info(f"Using base64 auth (redacted)")
+                        logger.info("Using base64 auth (redacted)")
 
                         download_successful = False
                         for attempt in range(1, 4):
@@ -176,7 +171,7 @@ fi
 
                             # FIX: Check for None output before string operations
                             if output is None:
-                                logger.error(f"SSH command failed - no output received")
+                                logger.error("SSH command failed - no output received")
                                 continue
 
                             if "Download successful" in output:

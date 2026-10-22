@@ -74,7 +74,7 @@ def test_bmc_install(engines, devices, topology_obj, test_api, platform_componen
             OperationTime.verify_operation_time(res_obj.duration, 'install bmc', devices).verify_result()
         BmcTool.verify_platform_component_version(platform_component_with_clear, version_name)
         # BmcTool.compare_bmc_version_issu_module(engines, version_name)  !TBD uncomment after merge 1800 to master
-        if isinstance(device, RosalindSurrogateSwitch):
+        if isinstance(device, RosalindSurrogateSwitch) and PlatformConsts.EROT_BMC_PATH_NAME in device.constants.erots:
             with allure.step("Assert AutomaticBackgroundCopyEnabled for erot-bmc is false on Rosalind"):
                 assert not BmcTool.is_automatic_background_copy_enabled(engines.dut, PlatformConsts.EROT_BMC_PATH_NAME), \
                     f"AutomaticBackgroundCopyEnabled is true for {PlatformConsts.EROT_BMC_PATH_NAME} on Rosalind system - expected false"

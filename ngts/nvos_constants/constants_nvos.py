@@ -128,6 +128,7 @@ class TestConsts:
 class NvosConst:
     IB_SWITCH_TYPE = "IB"
     NVL_SWITCH_TYPE = "NVL"
+    BMC_HOST_INTERFACE = "usb0"
     JULIET_SWITCH = "JULIET"
     CROCODILE_SWITCH = "CROCODILE"
     BLACK_MAMBA_SWITCH = "BLACK_MAMBA"
@@ -138,7 +139,7 @@ class NvosConst:
     QTM2 = "Quantum2"
     QTM3 = "Quantum3"
     QTM4 = "Quantum4"
-    NVL5 = 'NVLink-5 switch'
+    NVL5 = 'NVLink-5 Switch'
     NVL6 = 'NVLink-6 Switch'
     NVL7 = 'NVLink-7 Switch'
     NVL_ACCESS_PORTS_LIST = 'nvl_access_ports_list'
@@ -1295,7 +1296,7 @@ class PlatformConsts:
     PS_REDUNDANCY_POLICY_TYPE = [PS_REDUNDANCY_NO, PS_REDUNDANCY_PS, PS_REDUNDANCY_GRID]
     PS_REDUNDANCY_POLICY_TYPE_DEF = PS_REDUNDANCY_GRID
     PS_REBOOT_PSU_SKIP_STR = "SSKIP="
-    VOLTAGE_FILES_PATTERN = 'PMIC|PSU|PDB|HSC|HSCC|FAN'
+    VOLTAGE_FILES_PATTERN = 'PMIC|PSU|PDB|HSC|HSCC|FAN|PWR_CONV'
     REMOVED = 'Removed'
     INSERTED = 'Inserted'
     TRANSCEIVER_CABLE_TYPE = 'cable-type'
@@ -2752,7 +2753,7 @@ class DiskConsts:
 
 
 class BiosConsts:
-    BIOS_START_REGEX = "American Megatrends"
+    BIOS_START_REGEX = r"American Megatrends|Copyright \(C\) \d{4} AMI"  # newer AMI BIOS banner lacks "American Megatrends"
     BIOS_PASSWORD_PROMPT = "Enter Password"
     CTRL_B = "\x02"
     ENTER = "\015"

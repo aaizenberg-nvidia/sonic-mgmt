@@ -52,7 +52,9 @@ def test_platform_firmware_bmc_component(engines, devices, random_api):
             _check_version_in_regular_fae_output(bmc_component_version, firmware_output, fae_firmware_output, component)
 
     with allure.step("Grep version per BMC component and verify it in regular and fae command"):
-        path = PlatformConsts.BMC_FIRMWARE_INVENTORY_LINK + '/' + PlatformConsts.BMC_FIRMWARE_BMC_LINK
+        bmc_ids = (PlatformConsts.BMC_FIRMWARE_BMC_LINK, PlatformConsts.BMC_FIRMWARE_BMC_LINK.removeprefix('MGX_'))
+        bmc_id = next(component for component in bmc_firmware_inventory if component in bmc_ids)
+        path = PlatformConsts.BMC_FIRMWARE_INVENTORY_LINK + '/' + bmc_id
         component_output = client.run_redfish_command(rest_op='GET', path=path)
         bmc_component_version = re.search(PlatformConsts.BMC_COMPONENT_VERSION_PATTERN, component_output)
         firmware_component_output = OutputParsingTool.parse_json_str_to_dictionary(platform.firmware.show('BMC')) \

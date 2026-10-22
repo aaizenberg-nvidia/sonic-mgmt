@@ -7,6 +7,8 @@ import fcntl
 import logging
 import os
 import random
+import shlex
+import signal
 import smtplib
 import time
 import json
@@ -29,6 +31,7 @@ from ngts.helpers.object_filters import filter_objects
 from ngts.nvos_tools.infra.BmcTool import BmcTool
 from ngts.tools.infra import reset_ansible_ssh_control_masters
 from ngts.tools.mars_test_cases_results.Connect_to_MSSQL import ConnectMSSQL
+from ngts.tools.serial_logger.serial_log_script import get_unattended_serial_command
 from ngts.cli_wrappers.linux.linux_general_clis import LinuxGeneralCli
 from ngts.cli_wrappers.nvue.nvue_base_clis import NvueBaseCli
 from ngts.cli_wrappers.nvue.cumulus.cumulus_general_cli import CumulusGeneralCli
@@ -415,20 +418,18 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
             serial_log_file_path = '/tmp/serial.log'
             serial_connection_cmd = SerialConsoleTool.get_serial_console_connection_command(topology_obj)
             logging.info('connect to serial console and save output into a file')
-            cmd = f'script -c "{serial_connection_cmd}" {serial_log_file_path}'
-            child = pexpect.spawn(cmd)
+            serial_command = shlex.quote(get_unattended_serial_command(serial_connection_cmd))
+            # -f: teardown ends script by a signal, so the log must already be on disk
+            child = pexpect.spawn(f'script -f -c {serial_command} {serial_log_file_path}')
 
     yield
 
     if should_track_serial_console:
         with allure.step('end serial console session'):
-            for _ in range(3):
-                child.sendcontrol('z')
-                time.sleep(0.5)
-            for _ in range(3):
-                child.sendcontrol('d')
-                time.sleep(0.5)
-            # child.expect(pexpect.EOF)
+            # SIGTERM ends script without typing: hot keys, and the EOF script forwards when close() shuts its
+            # stdin, can reach the (shared) DUT shell and log it out
+            child.kill(signal.SIGTERM)
+            time.sleep(1)
             child.close()
         if request.node.rep_call.failed:
             try:
