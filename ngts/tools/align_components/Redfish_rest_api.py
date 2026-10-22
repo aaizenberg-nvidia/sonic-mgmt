@@ -2,11 +2,11 @@ import json
 import urllib.parse
 
 import requests
-
+import urllib3
 from ip_utils import bracket_for_url
 
 # Suppress the warning for insecure requests
-requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class RedFishHTTPStatusCode:

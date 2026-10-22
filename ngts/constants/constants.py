@@ -1814,6 +1814,7 @@ class SerialLoggerConst:
     LOG_DIR = os.path.join(os.path.sep, ".autodirect", "sw_regression", "system", "NVOS", "MARS", "results",
                            "{setup_name}", "{session_id}", "serial_logs")
     ALL_PERM = 0o777
+    SERIAL_TERM = 'vt100'  # screen-based console hosts refuse TERM=dumb
     DATETIME_FORMAT = BugHandlerConst.TIMESTAMP_FORMATS[0]
     START_SERIAL_LOGGING = "Start Session Logging"
     MANUFACTURE_STAGE = "Manufacture"

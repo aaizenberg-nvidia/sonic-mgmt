@@ -4195,15 +4195,42 @@ class PortiaSurrogateNex(PortiaSwitch):
     """Four-ASIC Portia NEX surrogate tray (N7210_LD): two SWB floors of 2 ASICs, no fans."""
 
     ACP_PORTS_PER_ASIC = 72
+    SWB_FLOORS = 2
+    PMICS_PER_ASIC = 3
+    COMEX_PMICS = 2
+    SMA_AMOUNT = 3
 
     def _init_constants(self):
         super()._init_constants()
         self.fw_versions_json_file_path = "/auto/sw_system_project/NVOS_INFRA/verification_files/platform_components/portia-surrogate-nex.json"
         self.health_monitor_config_file_path = HealthConsts.HEALTH_MONITOR_CONFIG_FILE_PATH.format(
             "x86_64-nvidia_n7210_ld-r0")
+        self.asic_type = NvosConst.NVL5
+        self.mst_dev_name = tuple(f'/dev/mst/mt54004_pciconf{i}' for i in range(self.asic_amount))
         self.show_platform_output.update({
             PlatformConsts.SYSTEM_TYPE: "N7210_LD",
+            "asic-model": self.asic_type,
         })
+        self.cpld_amount = 3
+        self._extend_firmware_by_cpld_amount()
+        self.memory_size: list[float] = [14.9]
+        self.supported_disk_list: list[SSDConsts.SSDType] = [SSDConsts.MD681GEEBC82]
+        # N7210_LD access ports advertise 400G only (NVBug 6933997, not a bug)
+        self.supported_nvl_speeds = ['400G']
+        self.access_port_speed = '400G'
+        self.expected_operation_durations[InternalNvosConsts.ACP_PORT_GOES_UP] = \
+            InternalNvosConsts.NVL5_ACP_LINK_UP_TIMEOUT_LTX_DISABLED
+        # no FAE core-clock profiles on QTM3 (same as Juliet)
+        del self.fae_supported_core_clocks
+
+    def _init_interfaces_ib_lanes(self):
+        super()._init_interfaces_ib_lanes()
+        self.supported_lanes = '2X'
+
+    def _init_interface_lists(self):
+        super()._init_interface_lists()
+        # only FNM port 1 is wired (fnm_ring 0,1 / 2,3); fae still lists the unwired p2 ports
+        self.nvl_internal_fnm_ports = [port for port in self.nvl_internal_fnm_ports if port.endswith('p1')]
 
     def _init_platform_lists(self):
         super()._init_platform_lists()
@@ -4212,6 +4239,48 @@ class PortiaSurrogateNex(PortiaSwitch):
             "hardware-version": None,
             "model": ExpectedString(regex="920-9K51W-02L7-SR0"),
         })
+
+    def _init_temperature(self):
+        super()._init_temperature()
+        asic_pmic_amount = self.asic_amount * self.PMICS_PER_ASIC
+        floors = range(1, self.SWB_FLOORS + 1)
+        self.temperature_sensors = (
+            [f"ASIC{asic_num}" for asic_num in range(1, self.asic_amount + 1)] +
+            ["CPU-Pack-Temp", "Drive-Temp"] +
+            [f"HSC-{floor}-Temp" for floor in floors] +
+            [f"PDB-Conv-{floor}-Temp" for floor in floors] +
+            [f"PMIC-{pmic_num}-Temp" for pmic_num in range(1, asic_pmic_amount + self.COMEX_PMICS + 1)] +
+            ["SODIMM-1-Temp", "SODIMM-2-Temp"]
+        )
+        self.voltage_sensors = []
+        for vdd_pmic in range(1, asic_pmic_amount + 1, self.PMICS_PER_ASIC):
+            pl0_pmic, pl1_pmic = vdd_pmic + 1, vdd_pmic + 2
+            self.voltage_sensors += [
+                f"PMIC-{vdd_pmic}-PVIN1-VDD-ASIC-In-1",
+                f"PMIC-{vdd_pmic}-ASIC-VDD-Out-1",
+                f"PMIC-{pl0_pmic}-PVIN1-HVDD-DVDD-ASIC-In-1",
+                f"PMIC-{pl0_pmic}-ASIC-HVDD-PL0-Out-1",
+                f"PMIC-{pl0_pmic}-ASIC-DVDD-PL0-Out-2",
+                f"PMIC-{pl1_pmic}-PVIN1-HVDD-DVDD-ASIC-In-1",
+                f"PMIC-{pl1_pmic}-ASIC-HVDD-PL1-Out-1",
+                f"PMIC-{pl1_pmic}-ASIC-DVDD-PL1-Out-2",
+            ]
+        for floor in floors:
+            self.voltage_sensors += [
+                f"HSC-{floor}-VinDC-In-1",
+                f"HSC-{floor}-Vout-Out-1",
+                f"PWR-CONV-{floor}-VinDC-HV-BUCK1-HV-BUCK2-In-1",
+                f"PWR-CONV-{floor}-HV-BUCK1-Out-1",
+                f"PWR-CONV-{floor}-HV-BUCK2-Out-2",
+            ]
+        self.voltage_sensors += [
+            "CPU-PMIC-VDDCR-In-1",
+            "CPU-PMIC-VDDCR-CPU-Out-1",
+            "CPU-PMIC-VDDCR-SOC-Out-2",
+            "DDR-PMIC-VDD-MEM-In-1",
+            "DDR-PMIC-VDD-MEMIO-Out-1",
+            "DDR-PMIC-VDD-MEM-Out-2",
+        ]
 
 
 class PortiaSurrogateNpo(PortiaNpoSwitch):
