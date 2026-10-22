@@ -33,7 +33,9 @@ def show_interface_and_validate(engines, devices, ports_list, command=''):
     actual_ports = set(output_dictionary)
     expected_ports = set(ports_list)
     missing_ports = sorted(expected_ports - actual_ports)
-    unexpected_ports = sorted(actual_ports - expected_ports)
+    # NVUE still lists the host-BMC link; product plans to hide it (NVBug 6887596). Drop once hidden.
+    tolerated_ports = {NvosConst.BMC_HOST_INTERFACE} if devices.dut.has_bmc else set()
+    unexpected_ports = sorted(actual_ports - expected_ports - tolerated_ports)
 
     assert not missing_ports and not unexpected_ports, (
         f"Interface list mismatch: missing={missing_ports}, unexpected={unexpected_ports}"
