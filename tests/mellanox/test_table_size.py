@@ -18,11 +18,28 @@ from tests.common.reboot import reboot, REBOOT_TYPE_COLD
 pytestmark = [pytest.mark.disable_loganalyzer]
 
 
+def _get_issu_value(dut, issu_enabled=False):
+    """
+    SAI XML <issu-enabled> value:
+    0 if ISSU is off; ISSUv2 (2) on SPC6+; ISSUv1 (1) on SPC1/2/3/4/5.
+    """
+    if not issu_enabled:
+        return "0"
+    chip_type = get_chip_type(dut)
+    match = re.search(r"spectrum(\d+)", chip_type or "")
+    if not match:
+        pytest.fail("Unsupported chip type for ISSU XML value: {}".format(chip_type))
+    spc = int(match.group(1))
+    return "2" if spc >= 6 else "1"
+
+
 def set_issu(dut, issu_enabled=False):
     """
     @summary: Just set issu on DUT to specified status. Do not reboot.
     """
-    logging.info("Set issu to %s on dut" % ("enabled" if issu_enabled else "disabled"))
+    value = _get_issu_value(dut, issu_enabled)
+    logging.info("Set issu to %s on dut (issu-enabled=%s)" % (
+        "enabled" if issu_enabled else "disabled", value))
     dut_platform = dut.facts["platform"]
     dut_hwsku = dut.facts["hwsku"]
 
@@ -31,8 +48,7 @@ def set_issu(dut, issu_enabled=False):
     sai_xml_filename = dut.shell(cmd)["stdout"].strip()
     sai_xml_path = "/usr/share/sonic/device/{}/{}/{}".format(dut_platform, dut_hwsku, sai_xml_filename)
 
-    value = "1" if issu_enabled else "0"
-    dut.command("sed -i 's/<issu-enabled> *[0-9]* *<\/issu-enabled>/<issu-enabled>%s<\/issu-enabled>/g' %s" %
+    dut.command("sed -i 's/<issu-enabled> *[0-9]* *<\\/issu-enabled>/<issu-enabled>%s<\\/issu-enabled>/g' %s" %
                 (value, sai_xml_path))
 
 
@@ -176,6 +192,7 @@ def configure_table_size_issu_and_check(table_size, dut, localhost, request, iss
     dut.command("crm config polling interval 5")
 
     logging.info("Add finalizer to ensure that CRM config interval is always restored")
+
     def restore_crm_interval():
         logging.info("Set CRM polling interval back to 300s")
         dut.command("crm config polling interval 300")

@@ -567,7 +567,7 @@ SWITCH_MODELS = {
                 "start": 1,
                 "number": 2
             },
-            "pmic":{
+            "pmic": {
                 "start": 1,
                 "number": 22
             }
@@ -1172,59 +1172,59 @@ SWITCH_MODELS = {
         }
     },
     "x86_64-nvidia_sn4280_simx-r0": {
-            "chip_type": "spectrum3",
-            "reboot": {
-                "cold_reboot": True,
-                "fast_reboot": False,
-                "warm_reboot": True
+        "chip_type": "spectrum3",
+        "reboot": {
+            "cold_reboot": True,
+            "fast_reboot": False,
+            "warm_reboot": True
+        },
+        "fans": {
+            "number": 6,
+            "hot_swappable": True
+        },
+        "psus": {
+            "number": 2,
+            "hot_swappable": True,
+            "capabilities": PSU_CAPABILITIES[1]
+        },
+        "cpu_pack": {
+            "number": 0
+        },
+        "cpu_cores": {
+            "number": 0
+        },
+        "ports": {
+            "number": 32
+        },
+        "thermals": {
+            "cpu_core": {
+                "start": 0,
+                "number": 0
             },
-            "fans": {
-                "number": 6,
-                "hot_swappable": True
+            "module": {
+                "start": 1,
+                "number": 32
             },
-            "psus": {
-                "number": 2,
-                "hot_swappable": True,
-                "capabilities": PSU_CAPABILITIES[1]
+            "psu": {
+                "start": 1,
+                "number": 2
             },
             "cpu_pack": {
                 "number": 0
             },
-            "cpu_cores": {
-                "number": 0
+            "asic_ambient": {
+                "number": 1
             },
-            "ports": {
-                "number": 32
+            "port_ambient": {
+                "number": 1
             },
-            "thermals": {
-                "cpu_core": {
-                    "start": 0,
-                    "number": 0
-                },
-                "module": {
-                    "start": 1,
-                    "number": 32
-                },
-                "psu": {
-                    "start": 1,
-                    "number": 2
-                },
-                "cpu_pack": {
-                    "number": 0
-                },
-                "asic_ambient": {
-                    "number": 1
-                },
-                "port_ambient": {
-                    "number": 1
-                },
-                "fan_ambient": {
-                    "number": 1
-                },
-                "comex_ambient": {
-                    "number": 1
-                }
+            "fan_ambient": {
+                "number": 1
+            },
+            "comex_ambient": {
+                "number": 1
             }
+        }
     },
     "x86_64-mlnx_msn4700-r0": {
         "chip_type": "spectrum3",
@@ -1331,59 +1331,59 @@ SWITCH_MODELS = {
         }
     },
     "x86_64-mlnx_msn4700_simx-r0": {
-            "chip_type": "spectrum3",
-            "reboot": {
-                "cold_reboot": True,
-                "fast_reboot": False,
-                "warm_reboot": True
+        "chip_type": "spectrum3",
+        "reboot": {
+            "cold_reboot": True,
+            "fast_reboot": False,
+            "warm_reboot": True
+        },
+        "fans": {
+            "number": 6,
+            "hot_swappable": True
+        },
+        "psus": {
+            "number": 2,
+            "hot_swappable": True,
+            "capabilities": PSU_CAPABILITIES[1]
+        },
+        "cpu_pack": {
+            "number": 0
+        },
+        "cpu_cores": {
+            "number": 0
+        },
+        "ports": {
+            "number": 32
+        },
+        "thermals": {
+            "cpu_core": {
+                "start": 0,
+                "number": 0
             },
-            "fans": {
-                "number": 6,
-                "hot_swappable": True
+            "module": {
+                "start": 1,
+                "number": 32
             },
-            "psus": {
-                "number": 2,
-                "hot_swappable": True,
-                "capabilities": PSU_CAPABILITIES[1]
+            "psu": {
+                "start": 1,
+                "number": 2
             },
             "cpu_pack": {
                 "number": 0
             },
-            "cpu_cores": {
-                "number": 0
+            "asic_ambient": {
+                "number": 1
             },
-            "ports": {
-                "number": 32
+            "port_ambient": {
+                "number": 1
             },
-            "thermals": {
-                "cpu_core": {
-                    "start": 0,
-                    "number": 0
-                },
-                "module": {
-                    "start": 1,
-                    "number": 32
-                },
-                "psu": {
-                    "start": 1,
-                    "number": 2
-                },
-                "cpu_pack": {
-                    "number": 0
-                },
-                "asic_ambient": {
-                    "number": 1
-                },
-                "port_ambient": {
-                    "number": 1
-                },
-                "fan_ambient": {
-                    "number": 1
-                },
-                "comex_ambient": {
-                    "number": 1
-                }
+            "fan_ambient": {
+                "number": 1
+            },
+            "comex_ambient": {
+                "number": 1
             }
+        }
     },
     "x86_64-mlnx_msn4600c-r0": {
         "chip_type": "spectrum3",
@@ -1678,7 +1678,7 @@ SWITCH_MODELS = {
                 "start": 1,
                 "number": 2
             }
-         }
+        }
     },
     "x86_64-nvidia_sn6810_ld-r0": {
         "chip_type": "spectrum6",
@@ -1769,9 +1769,11 @@ def get_chip_type(dut):
     platform_data = get_platform_data(dut)
     return platform_data.get("chip_type")
 
+
 def is_ld_system(duthost):
     logger.info(f"Checking if {duthost.facts['platform']} is LD system")
     return 'ld' in duthost.facts["chassis"]["name"].lower()
+
 
 @read_only_cache()
 def get_hardware_version(duthost, platform):
@@ -1817,7 +1819,8 @@ def is_issu_enabled(duthost):
     sai_xml_filename = duthost.shell(cmd_get_sai_xml_filename)["stdout"].strip()
     sai_xml_path = f"/usr/share/sonic/device/{dut_platform}/{dut_hwsku}/{sai_xml_filename}"
 
-    pattern = r"<issu-enabled>*1*<\/issu-enabled>"
+    # ISSUv1 is 1, ISSUv2 is 2; both mean ISSU is enabled (0 is off)
+    pattern = r"<issu-enabled> *[12] *<\/issu-enabled>"
     output = duthost.shell(f'egrep "{pattern}" {sai_xml_path} | wc -l')['stdout'].strip()
     logger.info(f"ISSU is enabled: {output == '1'}")
 
