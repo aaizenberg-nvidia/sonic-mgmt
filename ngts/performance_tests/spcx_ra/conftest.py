@@ -226,6 +226,28 @@ def _disable_unused_spc6_nvue_tc_latency(request, players, chip_type):
     PerfConsts.SAMPLES_PARAMS[PerfConsts.COLLECT_TC_LATENCY_ENV_VAR] = collect_tc_latency
 
 
+def get_tg_mloop_loops(conf_args, traffic_profile):
+    """Return the packets one TG mloop loop holds, for each traffic the class may inject.
+
+    The TG templates are applied once per class, but the rebalancer test switches to the
+    ai_mix stream list within the class, so an ai_mix session needs both loops.
+
+    Args:
+        conf_args: Template arguments with ``packet_size`` and ``left/right_num_packets``.
+        traffic_profile: Value of ``--spcx-ra-traffic-profile``.
+
+    Returns:
+        A list of loops, each a list of ``(num_packets, packet_size)`` per TG port.
+    """
+    loops = [[(max(conf_args["left_num_packets"], conf_args["right_num_packets"]),
+               conf_args["packet_size"])]]
+    if traffic_profile == TRAFFIC_PROFILE_AI_MIX:
+        loops.append([(SPCXRAConsts.AI_MIX_DATA_PACKET_COUNT, PerfConsts.PACKET_SIZE_4K)] +
+                     [(SPCXRAConsts.AI_MIX_CONTROL_PACKET_COUNT, spec.packet_size)
+                      for spec in AI_MIX_CONTROL_STREAM_SPECS.values()])
+    return loops
+
+
 @pytest.fixture(scope='class')
 def basic_setup_configuration(request, players, chip_type,
                               _skip_if_chip_or_os_unsupported):
@@ -262,6 +284,8 @@ def basic_setup_configuration(request, players, chip_type,
     absolute_breakout = isinstance(players[PerfConsts.DUT_ALIAS]['cli'], NvueCli)
     conf_args = config.to_template_args(
         chip_type, is_ipv6, absolute_breakout=absolute_breakout)
+    conf_args["tg_mloop_loops"] = get_tg_mloop_loops(
+        conf_args, request.config.getoption("--spcx-ra-traffic-profile"))
     baseline_available = False
     primary_error = None
     try:

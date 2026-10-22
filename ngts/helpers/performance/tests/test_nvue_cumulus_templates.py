@@ -42,7 +42,7 @@ def _calculate_address(address, operation, step, operand):
     return str(ipaddress.ip_address(value + delta if operation == "add" else value - delta))
 
 
-def _render_template(scenario, alias, chip_type, split, pre_split):
+def _render_template(scenario, alias, chip_type, split, pre_split, extra_parameters=None):
     left_parents = [f"swp{index}" for index in range(1, 33)]
     right_parents = [f"swp{index}" for index in range(33, 65)]
     if pre_split:
@@ -97,6 +97,7 @@ def _render_template(scenario, alias, chip_type, split, pre_split):
         "link_phy_autoneg": None,
         "link_phy_speed": "200G" if split == 8 else None,
         "chip_type": chip_type,
+        **(extra_parameters or {}),
     }
     return yaml.safe_load(template.render(parameter_dict=parameters))
 
@@ -192,3 +193,19 @@ def test_spc5_wjh_behavior_is_unchanged(scenario, alias):
         assert wjh["state"] == "enabled"
     else:
         assert wjh is None
+
+
+@pytest.mark.parametrize("alias", ["left-tg", "right-tg"])
+def test_spcx_ra_tg_renders_mloop_multicast_reserve_only_when_given(alias):
+    """Verify the TG multicast reserve-and-cap block follows ``tg_mloop_mc_reserve``.
+
+    The block reserves the given bytes per port with no shared multicast buffer, and is
+    omitted entirely when the renderer passes no reserve (DUT, unknown chip, other callers).
+    """
+    data = _render_template("spcx_ra", alias, "SPC4", 2, pre_split=False,
+                            extra_parameters={"tg_mloop_mc_reserve": 50688})
+    buffer_config = data[1]["set"]["qos"]["advance-buffer-config"]["default-global"]
+    assert buffer_config["egress-lossy-buffer"]["multicast-port"] == {"reserved": 50688, "shared-bytes": 0}
+
+    data = _render_template("spcx_ra", alias, "SPC4", 2, pre_split=False)
+    assert "advance-buffer-config" not in data[1]["set"]["qos"]

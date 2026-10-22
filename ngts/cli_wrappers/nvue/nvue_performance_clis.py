@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import pprint
 import tempfile
@@ -15,7 +16,7 @@ from devts.infra.tools.exceptions.test_issue import TestIssue
 from devts.infra.tools.exceptions.real_issue import RealIssue
 from ngts.constants.constants import BugHandlerConst, ResultUploaderConst
 from ngts.constants.performance_constants import (MongoDbConsts, PerfConsts, Cl_Consts, ValidationConsts,
-                                                  SPCXRAConsts)
+                                                  SPCXRAConsts, MRCConsts)
 from ngts.cli_wrappers.common.performance_clis_common import PerformanceCommon
 from ngts.helpers.performance.nvue_port_count import (get_nvue_data_physical_ports_count,
                                                       get_nvue_expected_nexthops)
@@ -1273,6 +1274,33 @@ class NvuePerformanceCli(PerformanceCommon):
         return get_nvue_data_physical_ports_count(
             asic_model, physical_ports, len(Cl_Consts.BONUS_PORTS[asic_model]))
 
+    def _get_tg_mloop_mc_reserve(self, conf_args, asic):
+        """Return the multicast buffer, in bytes, to reserve on every port of this TG.
+
+        Sized for ``SPCXRAConsts.TG_MLOOP_MC_RESERVE_LOOPS`` copies of the largest loop in
+        ``conf_args["tg_mloop_loops"]``, with each packet rounded up to whole buffer cells of
+        this TG's own ASIC.
+
+        Args:
+            conf_args: Template arguments; ``tg_mloop_loops`` lists ``(num_packets, packet_size)``
+                per loop.
+            asic: This device's ASIC model, for example ``Spectrum-4``.
+
+        Returns:
+            The reserve in bytes, or None on the DUT, when the caller describes no loop, or when
+            the ASIC's buffer cell size is unknown.
+        """
+        loops = conf_args.get("tg_mloop_loops")
+        if self.dut_alias not in PerfConsts.PERF_SETUP_TG_ALIASES or not loops:
+            return None
+        cell = MRCConsts.BUFFER_CELL_SIZE_BY_CHIP_TYPE.get(asic.replace("Spectrum-", "SPC"))
+        if cell is None:
+            logging.warning(f"No buffer cell size for {asic}; {self.dut_alias} keeps the NVUE multicast defaults")
+            return None
+        loop_bytes = max(sum(count * math.ceil(size / cell) * cell for count, size in loop)
+                         for loop in loops)
+        return SPCXRAConsts.TG_MLOOP_MC_RESERVE_LOOPS * loop_bytes
+
     def get_configuration_file(self, scenario, conf_args, template_suite=PerfConsts.DEFAULT_PERF_TEMPLATES_DIR):
         self.wait_for_lldp_neighbors()
         func_dict = {"get_right_left_ports_dict": self.get_right_left_ports_dict,
@@ -1323,6 +1351,9 @@ class NvuePerformanceCli(PerformanceCommon):
             # None on chips with no published value, which makes dut.yaml.jinja omit
             # "port-buffer" and leave the sizing to NVUE.
             "pfc_port_buffer": SPCXRAConsts.PFC_PORT_BUFFER_BY_CHIP.get(chip_type),
+            # None on the DUT and whenever the reserve cannot be sized, which makes the TG
+            # templates omit the multicast reserve and keep the NVUE defaults.
+            "tg_mloop_mc_reserve": self._get_tg_mloop_mc_reserve(conf_args, asic),
         }
         outputText = jinja_template.render(parameter_dict=parameter_dict)
         try:

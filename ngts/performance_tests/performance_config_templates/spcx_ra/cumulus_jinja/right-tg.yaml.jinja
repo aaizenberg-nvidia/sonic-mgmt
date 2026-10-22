@@ -189,6 +189,20 @@
       mapping:
         default-global:
           trust: l3
+      {% if parameter_dict.get('tg_mloop_mc_reserve') %}
+      {# The mloop floods every lap of its circling packets to the looped port and to the paired
+         DUT-facing port. While the DUT pauses the TG, the DUT-facing copies queue up and fill the
+         global multicast quota for priority 3; the next lap of a circling packet is then refused
+         and that loop stays below line rate for the rest of the test. A per-port multicast
+         reserve sized for the loop, with no shared buffer on top, keeps the looped ports' copies
+         admitted and caps what a paused port can hold. #}
+      advance-buffer-config:
+        default-global:
+          egress-lossy-buffer:
+            multicast-port:
+              reserved: {{ parameter_dict.tg_mloop_mc_reserve }}
+              shared-bytes: 0
+      {% endif %}
     system:
       aaa:
         user:

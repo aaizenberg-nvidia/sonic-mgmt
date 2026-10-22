@@ -440,8 +440,8 @@ class _SpcXRATestBase:
         data_packet_size = PerfConsts.PACKET_SIZE_4K
         # Ad-hoc packet-mix experiment: fewer RoCE data (4K) packets per cycle, more of
         # each control packet (RoCE ACK / RTT probe / RTT probe response / CNP) per cycle.
-        data_packet_count = 19
-        control_packet_count = 11
+        data_packet_count = SPCXRAConsts.AI_MIX_DATA_PACKET_COUNT
+        control_packet_count = SPCXRAConsts.AI_MIX_CONTROL_PACKET_COUNT
         if is_min_packet_size:
             speed_label = f"{int(self.CONFIG.for_chip(self.chip_type).port_speed_bps) // 1_000_000}G"
             min_packet_size = SPCXRAConsts.MIN_PACKET_SIZE_BY_CHIP_TYPE.get(

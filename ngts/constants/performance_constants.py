@@ -771,6 +771,9 @@ class SPCXRAConsts:
     PACKET_NUM_800G_x1 = {"SPC4": 20, "SPC5": 20, "SPC6": 30}
     PACKET_NUM_800G_x2 = PACKET_NUM_800G_x1
     PACKET_NUM_800G_x1_WITH_INCREMENTAL_DIPS = {"SPC4": 72, "SPC5": 72, "SPC6": 108}
+    # Packets per port and send cycle in the ai_mix profile: RoCE data (4K) and each control stream.
+    AI_MIX_DATA_PACKET_COUNT = 19
+    AI_MIX_CONTROL_PACKET_COUNT = 11
 
     # Per-chip, per-speed minimum spine data packet size (bytes), used when the
     # --min_packet_size pytest flag is enabled. A chip/speed combination missing
@@ -797,6 +800,12 @@ class SPCXRAConsts:
     # values the architecture team is confirming for those generations. A chip left out of this map
     # renders without "port-buffer" at all and takes whatever NVUE derives instead.
     PFC_PORT_BUFFER_BY_CHIP = {"SPC6": 363000, "SPC5": 20200, "SPC4": 20200}
+
+    # Loops' worth of multicast buffer the TG templates reserve on every TG port, with no shared
+    # multicast buffer on top. The reserve keeps an mloop's circling packets admitted while the DUT
+    # pauses the TG: the paused DUT-facing ports can then hold only their own reserve, so they no
+    # longer fill the global per-priority multicast quota that the looped ports also draw from.
+    TG_MLOOP_MC_RESERVE_LOOPS = 2
 
     # Ceiling on the packets resident in the loop at once, (ports x packets-per-port). Only a
     # backstop: the schedule is sized from chip_dict's calibrated per-port count, which is what
