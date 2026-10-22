@@ -5,7 +5,7 @@
 
     <players> {{hypervisor.ip}} </players>
     <steps>
-        <default> steps/ngts_regression.steps </default>
+        <default> steps/nightly_regression_canonical.steps </default>
     </steps>
 
     <topology_file> topo/{{tm.setup_name}}/topology.xml </topology_file>

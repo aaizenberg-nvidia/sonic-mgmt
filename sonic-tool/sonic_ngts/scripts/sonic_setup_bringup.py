@@ -153,7 +153,7 @@ def import_aliases_to_noga(noga_json_file_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=600  # 5 minute timeout
+            timeout=2000  # about 33 minute timeout
         )
 
         if result.returncode != 0:
