@@ -2,7 +2,6 @@ import logging
 
 import pytest
 
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from devts.infra.tools.validations.traffic_validations.port_check.port_checker import check_port_status_till_alive
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.infra.ValidationTool import ValidationTool
@@ -54,18 +53,17 @@ def test_system_power_button(engines, devices, topology_obj):
         with allure.step('Recover system with remote reboot'):
             recover_dut_with_remote_reboot(topology_obj, engines, 90)
 
-        if not is_redmine_issue_active([4003176][0]):
-            with allure.step("Verify NVUE and gNMI reboot telemetry after reboot"):
-                verify_reboot_telemetry_after_reboot(
-                    snapshot_before=telemetry_before,
-                    system=system,
-                    gnmi_client=gnmi_client,
-                    expected_category=RebootReasonCategory.USER_INITIATED,
-                    expected_details=expected_reason,
-                    expected_user=expected_user,
-                )
+        with allure.step("Verify NVUE and gNMI reboot telemetry after reboot"):
+            verify_reboot_telemetry_after_reboot(
+                snapshot_before=telemetry_before,
+                system=system,
+                gnmi_client=gnmi_client,
+                expected_category=RebootReasonCategory.USER_INITIATED,
+                expected_details=expected_reason,
+                expected_user=expected_user,
+            )
 
-            ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
+        ValidationTool.validate_reboot_reason_and_user(system, expected_reason, expected_user)
 
 
 def _simulate_power_button_press(engines):

@@ -19,7 +19,6 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_constants.constants_nvos import ApiType, NvosConst, PlatformConsts
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.ResultObj import ResultObj
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.general.security.conftest import create_ssh_login_engine
 from ngts.tests_nvos.general.telemetry.ib.helpers import get_plane_port_oid
@@ -296,7 +295,7 @@ def test_show_interface_filter(engines, test_api):
     with allure.step('Compare between filtered output dictionary to expected dictionary'
                      '(at least one should be found)'):
         res_obj = ValidationTool.compare_nested_dictionary_content(output_dict_filtered, filtered_expected)
-        if is_redmine_issue_active([4235573])[0] and test_api == ApiType.OPENAPI:
+        if test_api == ApiType.OPENAPI:
             res_obj.ignore_result()
         else:
             res_obj.verify_result()
@@ -311,7 +310,7 @@ def test_show_interface_filter(engines, test_api):
 
     with allure.step('Compare between filtered output dictionary to the full dictionary'):
         res_obj = ValidationTool.compare_nested_dictionary_content(output_dict_filtered, output_dict)
-        if is_redmine_issue_active([4235573])[0] and test_api == ApiType.OPENAPI:
+        if test_api == ApiType.OPENAPI:
             res_obj.ignore_result()
         else:
             res_obj.verify_result()

@@ -14,7 +14,6 @@ from jinja2 import Environment, FileSystemLoader
 from ngts.constants.constants import BugHandlerConst
 from ngts.constants.performance_constants import PerfConsts
 import pandas as pd
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 
 class NvueTrimmingCli(TrimmingCommon):
@@ -182,12 +181,11 @@ class NvueTrimmingCli(TrimmingCommon):
 
     def validate_trimming_counters_values(self, interface, total_drop_packets, trimmed_packets, violations_list):
         if trimmed_packets != total_drop_packets and total_drop_packets > 0:
-            if not is_redmine_issue_active([4762193])[0]:
-                delta = total_drop_packets - trimmed_packets
-                violations_list.append(
-                    f"Some packets are not dropped and trimmed on {interface} "
-                    f"(tx-drop={total_drop_packets}, trim-queue-tx-frames={trimmed_packets}, delta={delta})"
-                )
+            delta = total_drop_packets - trimmed_packets
+            violations_list.append(
+                f"Some packets are not dropped and trimmed on {interface} "
+                f"(tx-drop={total_drop_packets}, trim-queue-tx-frames={trimmed_packets}, delta={delta})"
+            )
 
     def attach_queue_packet_percentages_df(self, queue_packet_percentages, pairing_df=None):
         queue_packet_percentages_df = pd.DataFrame(queue_packet_percentages)

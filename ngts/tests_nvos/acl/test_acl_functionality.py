@@ -13,7 +13,6 @@ import time
 import re
 
 from devts.infra.tools.connection_tools.proxy_ssh_engine import ProxySshEngine
-from devts.infra.tools.redmine import redmine_api
 
 from ngts.nvos_constants.constants_nvos import ApiType, AclConsts, IpConsts
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
@@ -561,52 +560,51 @@ def test_override_default_rule(engines: EnginesT, topology_obj: TopologyT, apply
             default_rule_to_add_field_output = acl_obj.rule.parse_show(default_rule_to_add_field)
             default_rule_to_override_field_output = acl_obj.rule.parse_show(default_rule_to_override_field)
 
-        if not redmine_api.is_redmine_issue_active([4138944])[0]:
-            with ((allure.step("override default rules - add new field"))):
-                config_rule(engines.dut, acl_obj, default_rule_to_add_field, {AclConsts.SOURCE_IP: src_ip})
-                with allure.step("validate with show command"):
-                    rule_output = acl_obj.rule.parse_show(default_rule_to_add_field)
-                    assert AclConsts.SOURCE_IP in rule_output[AclConsts.MATCH][AclConsts.IP].keys(), \
-                        f"{AclConsts.SOURCE_IP} not found in the output"
-                    assert rule_output[AclConsts.MATCH][AclConsts.IP][AclConsts.SOURCE_IP] == src_ip, \
-                        (f"{AclConsts.SOURCE_IP} = {rule_output[AclConsts.MATCH][AclConsts.IP][AclConsts.SOURCE_IP]}, "
-                         f"expected - {src_ip}")
+        with ((allure.step("override default rules - add new field"))):
+            config_rule(engines.dut, acl_obj, default_rule_to_add_field, {AclConsts.SOURCE_IP: src_ip})
+            with allure.step("validate with show command"):
+                rule_output = acl_obj.rule.parse_show(default_rule_to_add_field)
+                assert AclConsts.SOURCE_IP in rule_output[AclConsts.MATCH][AclConsts.IP].keys(), \
+                    f"{AclConsts.SOURCE_IP} not found in the output"
+                assert rule_output[AclConsts.MATCH][AclConsts.IP][AclConsts.SOURCE_IP] == src_ip, \
+                    (f"{AclConsts.SOURCE_IP} = {rule_output[AclConsts.MATCH][AclConsts.IP][AclConsts.SOURCE_IP]}, "
+                     f"expected - {src_ip}")
 
-                with allure.step("Validate ACL counters"):
-                    # Check if default ACL is attached to interface
-                    try:
-                        rule_packets_before = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_add_field)
-                        # Use ping instead of scapy for ICMP traffic
-                        ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
-                        rule_packets_after = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_add_field)
-                        assert rule_packets_after[default_rule_to_add_field] == rule_packets_before[default_rule_to_add_field], \
-                            f'the rule should not catch this packet because we override it with src ip that not exist in this setup'
-                    except Exception as e:
-                        # Default ACL not attached, skip validation
-                        logger.info(f"Default ACL {default_chosen_acl} not attached to interface {mgmt_port.name}, skipping validation: {e}")
-                        # Use ping instead of scapy for ICMP traffic
-                        ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
+            with allure.step("Validate ACL counters"):
+                # Check if default ACL is attached to interface
+                try:
+                    rule_packets_before = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_add_field)
+                    # Use ping instead of scapy for ICMP traffic
+                    ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
+                    rule_packets_after = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_add_field)
+                    assert rule_packets_after[default_rule_to_add_field] == rule_packets_before[default_rule_to_add_field], \
+                        f'the rule should not catch this packet because we override it with src ip that not exist in this setup'
+                except Exception as e:
+                    # Default ACL not attached, skip validation
+                    logger.info(f"Default ACL {default_chosen_acl} not attached to interface {mgmt_port.name}, skipping validation: {e}")
+                    # Use ping instead of scapy for ICMP traffic
+                    ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
 
-            with allure.step("override default rules - change existing field"):
-                config_rule(engines.dut, acl_obj, default_rule_to_override_field, {AclConsts.UDP_DEST_PORT: '52'})
-                with allure.step("validate with show command"):
-                    rule_output = acl_obj.rule.parse_show(default_rule_to_override_field)
-                    assert '52' in rule_output[AclConsts.MATCH][AclConsts.IP]['udp']['dest-port'].keys()
+        with allure.step("override default rules - change existing field"):
+            config_rule(engines.dut, acl_obj, default_rule_to_override_field, {AclConsts.UDP_DEST_PORT: '52'})
+            with allure.step("validate with show command"):
+                rule_output = acl_obj.rule.parse_show(default_rule_to_override_field)
+                assert '52' in rule_output[AclConsts.MATCH][AclConsts.IP]['udp']['dest-port'].keys()
 
-                with allure.step("Validate ACL counters"):
-                    # Check if default ACL is attached to interface
-                    try:
-                        rule_packets_1_before = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_override_field)
-                        # Use ping instead of scapy for ICMP traffic
-                        ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
-                        rule_packets_1_after = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_override_field)
-                        assert int(rule_packets_1_after[default_rule_to_override_field]) > int(rule_packets_1_before[default_rule_to_override_field]), \
-                            f'the rule should catch this packet because we override it'
-                    except Exception as e:
-                        # Default ACL not attached, skip validation
-                        logger.info(f"Default ACL {default_chosen_acl} not attached to interface {mgmt_port.name}, skipping validation: {e}")
-                        # Use ping instead of scapy for ICMP traffic
-                        ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
+            with allure.step("Validate ACL counters"):
+                # Check if default ACL is attached to interface
+                try:
+                    rule_packets_1_before = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_override_field)
+                    # Use ping instead of scapy for ICMP traffic
+                    ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
+                    rule_packets_1_after = get_rule_packets(mgmt_port, default_chosen_acl, default_rule_to_override_field)
+                    assert int(rule_packets_1_after[default_rule_to_override_field]) > int(rule_packets_1_before[default_rule_to_override_field]), \
+                        f'the rule should catch this packet because we override it'
+                except Exception as e:
+                    # Default ACL not attached, skip validation
+                    logger.info(f"Default ACL {default_chosen_acl} not attached to interface {mgmt_port.name}, skipping validation: {e}")
+                    # Use ping instead of scapy for ICMP traffic
+                    ping_from_switch(engines.dut, engines.sonic_mgmt.ip, mgmt_port.name, count=2)
 
     finally:
         with allure.step("unset default acl - should fail as default ACLs cannot be removed"):

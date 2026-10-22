@@ -17,7 +17,6 @@ from ngts.nvos_tools.infra.ValidationTool import ValidationTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.nvos_tools.system.System import System
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.tools.test_utils import allure_utils as allure
 
 logger = logging.getLogger()
@@ -273,10 +272,9 @@ def test_rbac_class_config_conflict(engines, test_api):
     system_path = "/system"
     aaa_path = "/system/aaa"
 
-    if not is_redmine_issue_active([4221937]):
-        with allure.step("Configure conflicting permissions (child has more permissions than parent) in the same class - should fail"):
-            system.aaa.class_rbac.set_new_class(more_than_parent_class_name, RbacConsts.ALLOW, system_path, permission=RbacConsts.READ_ONLY)
-            system.aaa.class_rbac.class_id[more_than_parent_class_name].command_path.command_path_id[aaa_path].set(op_param_name=RbacConsts.PERMISSION, op_param_value=RbacConsts.READ_WRITE, apply=True).verify_result(False)
+    with allure.step("Configure conflicting permissions (child has more permissions than parent) in the same class - should fail"):
+        system.aaa.class_rbac.set_new_class(more_than_parent_class_name, RbacConsts.ALLOW, system_path, permission=RbacConsts.READ_ONLY)
+        system.aaa.class_rbac.class_id[more_than_parent_class_name].command_path.command_path_id[aaa_path].set(op_param_name=RbacConsts.PERMISSION, op_param_value=RbacConsts.READ_WRITE, apply=True).verify_result(False)
 
     with allure.step("Configure conflicting classes and role"):
         system.aaa.class_rbac.set_new_class(deny_class_name, RbacConsts.DENY, interface_path, permission=RbacConsts.ALL)

@@ -4,7 +4,6 @@ import pytest
 
 from retry import retry
 
-from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.tools.test_utils import allure_utils as allure
 import random
@@ -166,18 +165,17 @@ def test_system_snmp_negative(engines, players, topology_obj):
     with allure.step("Negative testing for refresh interval"):
         system.snmp_server.set('auto-refresh-interval', 'a1').verify_result(False)
 
-    if not is_redmine_issue_active([4177946])[0]:
-        with allure.step("Verify snmp not working with already used port"):
-            logging.info("Rotate logs")
-            system.log.rotate_logs()
-            system.snmp_server.set('listening-address', 'all port 123').verify_result()
-            NvueGeneralCli.apply_config(engines.dut, option='--assume-no', validate_apply_message="'snmpd' is not running")
+    with allure.step("Verify snmp not working with already used port"):
+        logging.info("Rotate logs")
+        system.log.rotate_logs()
+        system.snmp_server.set('listening-address', 'all port 123').verify_result()
+        NvueGeneralCli.apply_config(engines.dut, option='--assume-no', validate_apply_message="'snmpd' is not running")
 
-            with allure.step('Verify snmp not running with booked port for ntp'):
-                system_snmp_output = OutputParsingTool.parse_json_str_to_dictionary(system.snmp_server.show()) \
-                    .get_returned_value()
-                ValidationTool.validate_fields_values_in_output([SystemConsts.SNMP_STATE], [SystemConsts.SNMP_DEFAULT_STATE],
-                                                                system_snmp_output).verify_result()
+        with allure.step('Verify snmp not running with booked port for ntp'):
+            system_snmp_output = OutputParsingTool.parse_json_str_to_dictionary(system.snmp_server.show()) \
+                .get_returned_value()
+            ValidationTool.validate_fields_values_in_output([SystemConsts.SNMP_STATE], [SystemConsts.SNMP_DEFAULT_STATE],
+                                                            system_snmp_output).verify_result()
 
     with allure.step("Configure snmp listening address all"):
         system.snmp_server.unset('listening-address').verify_result()
