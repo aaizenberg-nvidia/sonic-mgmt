@@ -14,6 +14,7 @@ from devts.infra.tools.validations.traffic_validations.ping.ping_runner import P
 from ngts.tests.nightly.ecmp_calculator.constants import V4_CONFIG, V6_CONFIG, DEST_ROUTE_V4, DEST_ROUTE_V6
 from retry.api import retry_call
 from ngts.tests.nightly.ecmp_calculator.ecmp_calculator_helper import copy_packet_json_to_syncd, ECMP_CALCULATOR_PATH
+from ngts.constants.constants import PLATFORM_800G_SUPPORT_LIST
 
 logger = logging.getLogger()
 
@@ -272,25 +273,27 @@ def pre_configure_for_sub_interface(request, engines, topology_obj, interfaces, 
 
 
 @pytest.fixture(scope='module', autouse=False)
-def adapt_speed_for_lag(request, engines, topology_obj, interfaces, cli_objects):
+def adapt_speed_for_lag(request, engines, topology_obj, interfaces, cli_objects, platform_params):
     """
     Pytest fixture which is doing configuration for lag
     :param engines: engines object fixture
     :param topology_obj: topology object fixture
     :param interfaces: interfaces object fixture
     :param cli_objects: cli_objects object fixture
+    :param platform_params: platform_params object fixture
     """
     # VLAN config which will be used in test
     cli_obj = topology_obj.players['dut']['cli']
     dut_original_interfaces_speeds = cli_obj.interface.get_interfaces_speed(
         [interfaces.dut_ha_2, interfaces.dut_hb_1, interfaces.dut_hb_2])
+    new_speed = '800G' if platform_params.filtered_platform in PLATFORM_800G_SUPPORT_LIST else '10G'
     interfaces_config_dict = {
-        'dut': [{'iface': interfaces.dut_ha_2, 'speed': '10G',
-                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_ha_2, '10G')},
-                {'iface': interfaces.dut_hb_1, 'speed': '10G',
-                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_1, '10G')},
-                {'iface': interfaces.dut_hb_2, 'speed': '10G',
-                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_2, '10G')}
+        'dut': [{'iface': interfaces.dut_ha_2, 'speed': new_speed,
+                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_ha_2, new_speed)},
+                {'iface': interfaces.dut_hb_1, 'speed': new_speed,
+                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_1, new_speed)},
+                {'iface': interfaces.dut_hb_2, 'speed': new_speed,
+                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_2, new_speed)}
                 ]
     }
     InterfaceConfigTemplate.configuration(topology_obj, interfaces_config_dict, request)

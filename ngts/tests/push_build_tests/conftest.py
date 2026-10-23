@@ -31,6 +31,7 @@ from ngts.helpers.rocev2_acl_counter_helper import copy_apply_rocev2_acl_config,
     is_support_rocev2_acl_counter_feature
 from ngts.helpers.sonic_branch_helper import get_sonic_branch
 from ngts.constants.constants import AppExtensionInstallationConstants
+from ngts.constants.constants import PLATFORM_800G_SUPPORT_LIST
 from ngts.common.checkers import is_feature_ready
 from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
@@ -169,11 +170,12 @@ def push_gate_configuration(topology_obj, cli_objects, engines, interfaces, plat
                                                                                      interfaces.dut_hb_2])
 
     # Interfaces config which will be used in test
+    new_speed = '800G' if platform_params.filtered_platform in PLATFORM_800G_SUPPORT_LIST else '10G'
     interfaces_config_dict = {
-        'dut': [{'iface': interfaces.dut_ha_1, 'speed': '10G',
-                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_ha_1, '10G')},
-                {'iface': interfaces.dut_hb_2, 'speed': '10G',
-                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_2, '10G')}
+        'dut': [{'iface': interfaces.dut_ha_1, 'speed': new_speed,
+                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_ha_1, new_speed)},
+                {'iface': interfaces.dut_hb_2, 'speed': new_speed,
+                 'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_hb_2, new_speed)}
                 ]
     }
 

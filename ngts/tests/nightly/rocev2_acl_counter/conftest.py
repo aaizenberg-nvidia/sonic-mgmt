@@ -15,13 +15,13 @@ from ngts.helpers.rocev2_acl_counter_helper import copy_apply_rocev2_acl_config,
     BTH_OPCODE_NAK_TYPE_AMP, is_support_rocev2_acl_counter_feature
 from retry.api import retry_call
 from jinja2 import Template
+from ngts.constants.constants import PLATFORM_200G_SUPPORT_LIST, PLATFORM_800G_SUPPORT_LIST
 
 ROCEV2_ACL_COUNTER_PATH = os.path.dirname(os.path.abspath(__file__))
 ROCEV2_ACL_COUNTER_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template")
 
 logger = logging.getLogger()
 DUT_PORTCHANNEL_NAME = "PortChannel1"
-HIGH_SPEED_LAG_PLATFORMS = ["sn6600", "sn6600_ld", "sn6810_ld"]
 
 
 def generate_arp(players, interface, sender, dst_ip):
@@ -108,7 +108,12 @@ def adapt_speed_for_lag(engines, topology_obj, interfaces, cli_objects, platform
     cli_obj = topology_obj.players['dut']['cli']
     dut_original_interfaces_speeds = cli_obj.interface.get_interfaces_speed(
         [interfaces.dut_ha_2, interfaces.dut_hb_1, interfaces.dut_hb_2])
-    new_speed = "10G" if platform_params.filtered_platform not in HIGH_SPEED_LAG_PLATFORMS else "200G"
+    if platform_params.filtered_platform in PLATFORM_800G_SUPPORT_LIST:
+        new_speed = "800G"
+    elif platform_params.filtered_platform in PLATFORM_200G_SUPPORT_LIST:
+        new_speed = "200G"
+    else:
+        new_speed = "10G"
     interfaces_config_dict = {
         'dut': [{'iface': interfaces.dut_ha_2, 'speed': new_speed,
                  'original_speed': dut_original_interfaces_speeds.get(interfaces.dut_ha_2, new_speed)}
@@ -153,7 +158,7 @@ def pre_configure(request, engines, topology_obj, interfaces, cli_objects, playe
     LagLacpConfigTemplate.configuration(topology_obj, lag_lacp_config_dict)
     IpConfigTemplate.configuration(topology_obj, ip_config_dict)
     cmd = f"sudo config mirror_session span add port0 {interfaces.dut_hb_2} {interfaces.dut_ha_1},{DUT_PORTCHANNEL_NAME}"
-    if platform_params.filtered_platform in HIGH_SPEED_LAG_PLATFORMS:
+    if platform_params.filtered_platform in PLATFORM_200G_SUPPORT_LIST:
         cmd += " rx"
     engines.dut.run_cmd(cmd)
 

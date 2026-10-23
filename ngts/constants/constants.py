@@ -7,6 +7,8 @@ from devts.infra.tools.redmine.redmine_api import is_redmine_issue_active
 
 REGRESSION_TYPE_ENV_VAR = "REGRESSION_TYPE"
 CLI_TYPE_CACHE_PATH = "/tmp/CLI_TYPE"
+PLATFORM_200G_SUPPORT_LIST = ["sn6600", "sn6600_ld"]
+PLATFORM_800G_SUPPORT_LIST = ["sn6810_ld"]
 
 
 class RegressionType(StrEnum):
