@@ -169,11 +169,12 @@ tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_fw_stuck_du
 
 tests/nightly/show_techsupport/test_techsupport.py::test_health_event_fw_dump_before_sdk_dump:
   skip:
-    reason: "Ignored on simx. The leaks reported by ASAN during test are not real leaks, test should not run on ASAN image."
+    reason: "Ignored on simx. The leaks reported by ASAN during test are not real leaks, test should not run on ASAN image. Also skipped on sn6810_ld due to RM issue: https://redmine.mellanox.com/issues/5113093"
     conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
     - "'ASAN' in build_version"
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
 
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_mellanox_sdk_dump[PLL_LOCK_EVENT-syncd]:
   skip:
@@ -219,9 +220,11 @@ tests/nightly/show_techsupport/test_health_event.py::test_health_event_suppressi
 
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_dump_retention:
   skip:
-    reason: "Health event dump feature is not supported on SIMX platforms"
+    reason: "Health event dump feature is not supported on SIMX platform and ignored due to RM issue: https://redmine.mellanox.com/issues/5113093"
+    conditions_logical_operator: or
     conditions:
     - "'simx' in platform"
+    - "https://redmine.mellanox.com/issues/5113093 and 'sn6810_ld' in platform"
 
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_validate_api_sniffer_dumps:
   skip:
