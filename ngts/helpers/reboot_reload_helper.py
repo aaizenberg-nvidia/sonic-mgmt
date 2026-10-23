@@ -25,6 +25,13 @@ class SupportedRebootReloadTypes:
             if is_redmine_issue_active([5154543])[0]:
                 del self.warm_reboot
                 logger.info('Redmine #5154543 is active, removing warm reboot from the list of supported reboot types')
+        if platform and 'sn6810_ld' in platform:
+            if is_redmine_issue_active([4799042])[0]:
+                del self.fast_reboot
+                logger.info('Redmine #4799042 is active, removing fast-reboot from the list of supported reboot types')
+            if is_redmine_issue_active([5343702])[0]:
+                del self.warm_reboot
+                logger.info('Redmine #5343702 is active, removing warm reboot from the list of supported reboot types')
 
 
 def get_supported_reboot_reload_types_list(platform=None):
