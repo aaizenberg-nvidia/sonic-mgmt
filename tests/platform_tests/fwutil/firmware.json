@@ -546,13 +546,13 @@
 				],
 				"BMC": [
 					{
-						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0070.1904/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0070.1904.fwpkg",
-						"version": "88.0070.1904",
+						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0070.1906/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0070.1906.fwpkg",
+						"version": "88.0070.1906",
 						"reboot": ["power off"]
 					},
 					{
-						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0060.2408/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0060.2408.fwpkg",
-						"version": "88.0060.2408",
+						"firmware": "http://nbu-nfs.mellanox.com//auto/sw_system_release/low_level/openbmc/88.0070.1904/SPC6_AST2600_BMC/dev/non_otp/erot_sign_prod/sw_bmc_arm_spc6_ast2600_bmc_88.0070.1904.fwpkg",
+						"version": "88.0070.1904",
 						"reboot": ["power off"]
 					}
 				]
