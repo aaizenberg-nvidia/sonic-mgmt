@@ -217,6 +217,12 @@ tests/nightly/show_techsupport/test_health_event.py::test_health_event_suppressi
     conditions:
     - "https://redmine.mellanox.com/issues/4967073"
 
+tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_dump_retention:
+  skip:
+    reason: "Health event dump feature is not supported on SIMX platforms"
+    conditions:
+    - "'simx' in platform"
+
 tests/nightly/show_techsupport/test_techsupport.py::test_techsupport_validate_api_sniffer_dumps:
   skip:
     reason: "API Sniffer Feature is not supported on SIMX platforms"
