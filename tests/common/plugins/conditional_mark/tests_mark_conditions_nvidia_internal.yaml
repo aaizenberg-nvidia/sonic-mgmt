@@ -2170,6 +2170,12 @@ upgrade_path/test_multi_hop_upgrade_path.py::test_multi_hop_warm_upgrade_sad_pat
     conditions:
     - "https://redmine.mellanox.com/issues/5154543 and 'sn6' in platform"
 
+srv6/test_srv6_warmboot.py:
+  skip:
+    reason: "SRv6 over warm reboot not supported on sn6810_ld - RM https://redmine.nvidia.com/issues/5343702"
+    conditions:
+    - "https://redmine.nvidia.com/issues/5343702 and 'sn6810_ld' in platform"
+
 upgrade_path/test_upgrade_path.py::test_warm_upgrade_sad_path:
   skip:
     reason: "Warm-reboot not supported on sn6 - RM https://redmine.mellanox.com/issues/5154543"
