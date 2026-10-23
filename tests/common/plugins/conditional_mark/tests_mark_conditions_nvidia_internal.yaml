@@ -116,11 +116,12 @@ tests/nightly/copp/test_copp.py::test_copp_policer[LLDP]:
 
 tests/nightly/sflow/test_sflow.py:
   skip:
-    reason: "Test is not supported on simx or due to RM issue: https://redmine.mellanox.com/issues/5041113 on sn6600_ld platform"
+    reason: "Test is not supported on simx or due to RM issue: https://redmine.mellanox.com/issues/5041113 on sn6600_ld platform. Also skipped on sn6810_ld since sflow is removed from image build and its tests are reduced (hsflowd unmaintained)"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/2271111 and 'simx' in platform"
     - "https://redmine.mellanox.com/issues/5041113 and 'sn6600_ld' in platform"
+    - "'sn6810_ld' in platform"
   xfail:
     reason: "known issue https://redmine.mellanox.com/issues/4830085"
     conditions:
@@ -388,11 +389,12 @@ tests/push_build_tests:
 
 tests/push_build_tests/L3/sflow/test_sflow.py:
   skip:
-    reason: "sflow still isn't supported on Simx or due to RM issue: https://redmine.mellanox.com/issues/5041113 on sn6600_ld platform"
+    reason: "sflow still isn't supported on Simx or due to RM issue: https://redmine.mellanox.com/issues/5041113 on sn6600_ld platform. Also skipped on sn6810_ld since sflow is removed from image build and its tests are reduced (hsflowd unmaintained)"
     conditions_logical_operator: or
     conditions:
     - "https://redmine.mellanox.com/issues/2271111 and 'simx' in platform"
     - "https://redmine.mellanox.com/issues/5041113 and 'sn6600_ld' in platform"
+    - "'sn6810_ld' in platform"
 
 tests/push_build_tests/system/test_reboot_reload.py::test_push_gate_reboot_policer:
   xfail:
