@@ -508,8 +508,8 @@ def analyze_module(
                 method_ratios = [
                     typed_ratio_for_function(m)
                     for m in node.body
-                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and not m.name.startswith("_")
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+                    not m.name.startswith("_")
                 ]
                 tr = sum(method_ratios) / len(method_ratios) if method_ratios else 0.0
                 kind = "class"
@@ -768,9 +768,9 @@ def print_dashboard(
         # Impacted test list (bounded).
         if task.impacted_tests:
             preview = task.impacted_tests[:8]
-            print(f"    Impacted tests ({len(task.impacted_tests)}): "
-                  + ", ".join(p.replace('tests/', '') for p in preview)
-                  + (f" ... (+{len(task.impacted_tests) - 8})" if len(task.impacted_tests) > 8 else ""))
+            print(f"    Impacted tests ({len(task.impacted_tests)}): " +
+                  ", ".join(p.replace('tests/', '') for p in preview) +
+                  (f" ... (+{len(task.impacted_tests) - 8})" if len(task.impacted_tests) > 8 else ""))
     print()
 
     print("=" * 100)

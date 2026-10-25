@@ -8,6 +8,11 @@ from typing import Dict
 from ngts.nvos_tools.infra import ExceptionTool
 from ngts.nvos_tools.infra.FilesTool import EngineFile, TempFileOnEngine, FilesTool
 from ngts.nvos_tools.platform.Platform import Platform
+
+from ngts.tests_nvos.helpers.alarms.helpers import get_fan_drawers, validate_docker_is_up
+from ngts.tests_nvos.helpers.alarms.system_alarm_helpers import get_all_alarms_once, validate_all_alarms, validate_all_alarms_once
+from ngts.tests_nvos.helpers.alarms.system_alarms_gnmi_helpers import (DutTimeRef, get_dut_time_ref,
+                                                                       gnmi_client_for_alarms, validate_gnmi_alarms)
 from ngts.tools.test_utils import allure_utils as allure
 from retry.api import retry_call
 import pytest
@@ -29,6 +34,9 @@ from ngts.nvos_tools.infra.DatabaseTool import DatabaseTool
 from ngts.nvos_tools.infra.DutUtilsTool import DutUtilsTool
 from ngts.nvos_constants.constants_nvos import DatabaseConst
 from ngts.tests_nvos.platform.test_platform_environment_leakage import rewrite_files
+from ngts.tests_nvos.helpers.alarms.system_alarm_nvue_helpers import validate_nvue_alarms, validate_nvue_alarm
+from ngts.tests_nvos.helpers.alarms.system_alarms_otel_helpers import validate_otel_alarms
+from ngts.nvos_constants.constants_nvos import AlarmsConsts
 
 
 cumulus_owner = "yleibovichwe"
@@ -76,6 +84,44 @@ _STATE_DB_TEMPERATURE_PREFIX = "TEMPERATURE_INFO|"
 _STATE_DB_ASIC_HEALTH_STATE = "ASIC_HEALTH|STATE"
 _ASIC_HEALTH_FATAL_FIELD = "fatal_state"
 _FATAL_PROMPT = "[System_Fatal_State]"
+
+_TRANSCEIVER_DOM_THRESHOLD = "TRANSCEIVER_DOM_THRESHOLD"
+_TRANSCEIVER_TEMP_HIGH_ALARM = "temphighalarm"
+_TRANSCEIVER_TEMP_LOW_ALARM = "templowalarm"
+
+
+def _transceiver_dom_threshold_key(transceiver_name):
+    """STATE_DB key of a transceiver's DOM thresholds, which STATE_DB keys by the transceiver's first port."""
+    return f"{_TRANSCEIVER_DOM_THRESHOLD}|{transceiver_name}"
+
+
+def _inject_transceiver_temperature_threshold_high(engines, transceiver_name, temp_value):
+    """Set the transceiver's STATE_DB temphighalarm to temp_value and return the previous value."""
+    table_key = _transceiver_dom_threshold_key(transceiver_name)
+    previous = DatabaseTool.sonic_db_cli_hget(
+        engines.dut, "", DatabaseConst.STATE_DB_NAME, table_key, _TRANSCEIVER_TEMP_HIGH_ALARM)
+    DatabaseTool.sonic_db_cli_hset(
+        engines.dut, "", DatabaseConst.STATE_DB_NAME, table_key, _TRANSCEIVER_TEMP_HIGH_ALARM, temp_value)
+    return previous
+
+
+def _inject_transceiver_temperature_threshold_low(engines, transceiver_name, temp_value):
+    """Set the transceiver's STATE_DB templowalarm to temp_value and return the previous value."""
+    table_key = _transceiver_dom_threshold_key(transceiver_name)
+    previous = DatabaseTool.sonic_db_cli_hget(
+        engines.dut, "", DatabaseConst.STATE_DB_NAME, table_key, _TRANSCEIVER_TEMP_LOW_ALARM)
+    DatabaseTool.sonic_db_cli_hset(
+        engines.dut, "", f'-- {DatabaseConst.STATE_DB_NAME}', table_key, _TRANSCEIVER_TEMP_LOW_ALARM, temp_value)
+    return previous
+
+
+def _get_transceiver_name(platform: Platform) -> str | None:
+    """Return the first transceiver that reports a temperature and a non-empty rx-power on at least one channel."""
+    transceivers = platform.transceiver.show_detailed_dict()
+    transceivers_with_temperature = {name: data for name, data in transceivers.items() if 'temperature' in data}
+    port_name = next((name for name, data in transceivers_with_temperature.items()
+                      if any(channel.get('rx-power') for channel in data.get('channel', {}).values())), None)
+    return port_name + "p1" if port_name else None
 
 
 def _inject_asic_temperature(engines, instance_id, temp_value):
@@ -501,17 +547,22 @@ def test_system_health_component_counters(engines, devices):
 
 @pytest.mark.system
 @pytest.mark.health
-def test_asic_health_unhealthy_triggers_and_recovery(engines):
+def test_asic_health_unhealthy_triggers_and_recovery(engines, otel_alarms_collector, tmp_path, random_api):
     """
-    Single test combining all 5 ASIC health scenarios in one series of events (STATE_DB + thermalctld stopped):
-    1. New unhealthy detection: ASIC1 down -> validate UNHEALTHY and unhealthy-count increased.
+    Single test combining all 5 ASIC health scenarios in one series of events (STATE_DB + thermalctld stopped).
+    Every alarm check is done on NVUE, gNMI and OTEL:
+    1. New unhealthy detection: ASIC1 down -> validate UNHEALTHY, unhealthy-count increased
+       and a temperature-high alarm is raised for ASIC1.
     2. No duplicate trigger: wait another health cycle -> ASIC1 still down, count unchanged.
-    3. Second instance unhealthy: ASIC2 down -> both ASIC1 and ASIC2 UNHEALTHY.
-    4. Partial recovery: bring ASIC1 up -> ASIC1 HEALTHY, ASIC2 still UNHEALTHY.
-    5. Full recovery: bring ASIC2 up -> both HEALTHY.
+    3. Second instance unhealthy: ASIC2 down -> both ASIC1 and ASIC2 UNHEALTHY with a
+       temperature-high alarm on each.
+    4. Partial recovery: bring ASIC1 up -> ASIC1 HEALTHY and its alarm cleared,
+       ASIC2 still UNHEALTHY and its alarm still present.
+    5. Full recovery: bring ASIC2 up -> both HEALTHY and no temperature-high alarm on either.
     """
     TestToolkit.update_engines(engines)
     system = System()
+    gnmiclient = gnmi_client_for_alarms(engines)
     health_out = OutputParsingTool.parse_json_str_to_dictionary(system.health.component.show()).get_returned_value()
     if HealthConsts.Component.ASIC not in health_out:
         pytest.skip("ASIC component not in health output")
@@ -531,6 +582,7 @@ def test_asic_health_unhealthy_triggers_and_recovery(engines):
             _assert_asic_instance(system, "ASIC1", HealthConsts.Component.STATE, HealthConsts.Component.UNHEALTHY,
                                   tries=3, delay=_HEALTH_POLL_WAIT_SEC)
             _assert_asic_instance(system, "ASIC1", HealthConsts.Component.UNHEALTHY_COUNT, str(expected_after_first))
+            validate_all_alarms_once(system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path, alarm_origin_name="ASIC1", alarm_types=AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
 
         with allure.step("2. No duplicate trigger: wait another health cycle and verify ASIC1 count unchanged"):
             _wait_health_cycle()
@@ -539,20 +591,28 @@ def test_asic_health_unhealthy_triggers_and_recovery(engines):
         with allure.step("3. Second instance unhealthy: set ASIC2 to unhealthy, validate both UNHEALTHY"):
             _inject_asic_temperature(engines, "ASIC2", _ASIC_TEMP_UNHEALTHY)
             _wait_health_cycle()
+            system_output, gnmi_output, otel_output = get_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path)
             for inst in ("ASIC1", "ASIC2"):
                 _assert_asic_instance(system, inst, HealthConsts.Component.STATE, HealthConsts.Component.UNHEALTHY)
+                validate_all_alarms(alarm_origin_name=inst, alarm_types=AlarmsConsts.TEMPERATURE_HIGH, expected_present=True, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
 
         with allure.step("4. Partial recovery: bring ASIC1 up, validate ASIC1 HEALTHY and ASIC2 still UNHEALTHY"):
             _inject_asic_temperature(engines, "ASIC1", _ASIC_TEMP_HEALTHY)
             _wait_health_cycle()
+            system_output, gnmi_output, otel_output = get_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path)
             _assert_asic_instance(system, "ASIC1", HealthConsts.Component.STATE, HealthConsts.Component.HEALTHY)
             _assert_asic_instance(system, "ASIC2", HealthConsts.Component.STATE, HealthConsts.Component.UNHEALTHY)
+            validate_all_alarms(alarm_origin_name="ASIC1", alarm_types=AlarmsConsts.TEMPERATURE_HIGH, expected_present=False, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
+            validate_all_alarms(alarm_origin_name="ASIC2", alarm_types=AlarmsConsts.TEMPERATURE_HIGH, expected_present=True, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
 
         with allure.step("5. Full recovery: bring ASIC2 up, validate both HEALTHY"):
             _inject_asic_temperature(engines, "ASIC2", _ASIC_TEMP_HEALTHY)
             _wait_health_cycle()
+            system_output, gnmi_output, otel_output = get_all_alarms_once(system, gnmiclient, otel_alarms_collector, tmp_path)
             for inst in ("ASIC1", "ASIC2"):
                 _assert_asic_instance(system, inst, HealthConsts.Component.STATE, HealthConsts.Component.HEALTHY)
+                validate_all_alarms(alarm_origin_name=inst, alarm_types=AlarmsConsts.TEMPERATURE_HIGH, expected_present=False, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
+
     finally:
         with allure.step("Start thermalctld after ASIC simulation"):
             engines.dut.run_cmd("docker exec pmon supervisorctl start thermalctld")
@@ -565,12 +625,13 @@ def test_asic_health_unhealthy_triggers_and_recovery(engines):
 @pytest.mark.system
 @pytest.mark.health
 @pytest.mark.disable_loganalyzer
-def test_asic_health_fatal_state_marks_all_unhealthy(engines):
+def test_asic_health_fatal_state_marks_all_unhealthy(engines, otel_alarms_collector, tmp_path, random_api):
     """
     When ASIC_HEALTH fatal_state is set to true in STATE_DB, all ASIC instances are marked unhealthy (new image logic).
     Steps: set ASIC_HEALTH|STATE fatal_state 'true' -> wait health cycle -> all ASICs UNHEALTHY ->
-
-           set fatal_state 'false' -> wait -> all ASICs HEALTHY -> clear counters.
+           fatal-state alarm is raised on the ASIC and on the system (NVUE, gNMI and OTEL) ->
+           set fatal_state 'false' -> wait -> all ASICs HEALTHY -> fatal-state alarms are cleared
+           on the ASIC and on the system (NVUE, gNMI and OTEL) -> clear counters.
 
     The recovery write (fatal_state=false) is issued as fire-and-forget because
     once fatal_state is asserted the SSH prompt changes to
@@ -583,6 +644,7 @@ def test_asic_health_fatal_state_marks_all_unhealthy(engines):
     TestToolkit.update_engines(engines)
     system = System()
     health_out = OutputParsingTool.parse_json_str_to_dictionary(system.health.component.show()).get_returned_value()
+    gnmiclient = gnmi_client_for_alarms(engines)
     if HealthConsts.Component.ASIC not in health_out:
         pytest.skip("ASIC component not in health output")
     asic_instances = health_out[HealthConsts.Component.ASIC][HealthConsts.Component.INSTANCE]
@@ -606,6 +668,11 @@ def test_asic_health_fatal_state_marks_all_unhealthy(engines):
                 _assert_asic_instance(system, inst, HealthConsts.Component.STATE, HealthConsts.Component.UNHEALTHY,
                                       tries=3, delay=_HEALTH_POLL_WAIT_SEC)
 
+        with allure.step("Validate FATAL_STATE alarms for ASIC and System are present while fatal_state is true"):
+            with allure.step("Get system alarms"):
+                system_output, gnmi_output, otel_output = get_all_alarms_once(system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+            validate_all_alarms(alarm_origin_name=AlarmsConsts.ASIC, alarm_types=AlarmsConsts.FATAL_STATE, expected_present=True, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
+            validate_all_alarms(alarm_origin_name=AlarmsConsts.SYSTEM, alarm_types=AlarmsConsts.FATAL_STATE, expected_present=True, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
         with allure.step("Set ASIC_HEALTH fatal_state to false (recovery)"):
             _set_asic_health_fatal_state(engines, "false", fire_and_forget=True)
         _wait_health_cycle()
@@ -614,6 +681,11 @@ def test_asic_health_fatal_state_marks_all_unhealthy(engines):
             for inst in instance_ids:
                 _assert_asic_instance(system, inst, HealthConsts.Component.STATE, HealthConsts.Component.HEALTHY,
                                       tries=3, delay=_HEALTH_POLL_WAIT_SEC)
+        with allure.step("Validate FATAL_STATE alarms for ASIC and System are cleared after fatal_state is false"):
+            with allure.step("Get system alarms"):
+                system_output, gnmi_output, otel_output = get_all_alarms_once(system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+            validate_all_alarms(alarm_origin_name=AlarmsConsts.ASIC, alarm_types=AlarmsConsts.FATAL_STATE, expected_present=False, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
+            validate_all_alarms(alarm_origin_name=AlarmsConsts.SYSTEM, alarm_types=AlarmsConsts.FATAL_STATE, expected_present=False, system_output=system_output, gnmi_output=gnmi_output, otel_output=otel_output, gnmiclient=gnmiclient)
         if initially_healthy_components:
             with allure.step(f"Validate initially healthy components recovered: {initially_healthy_components}"):
                 for comp in initially_healthy_components:
@@ -637,13 +709,15 @@ def test_asic_health_fatal_state_marks_all_unhealthy(engines):
 
 @pytest.mark.system
 @pytest.mark.health
-def test_software_component_unhealthy_count_lldp_stop(engines):
+def test_software_component_unhealthy_count_lldp_stop(engines, otel_alarms_collector, tmp_path, random_api):
     """
     Validate software component unhealthy state and count when LLDP is stopped:
     disable LLDP auto-restart (otherwise the daemon restarts the container and software
     can stay HEALTHY while unhealthy-count still increments) -> stop lldp -> sleep 5s ->
-    software UNHEALTHY and count increment by 1 -> start lldp -> re-enable auto-restart ->
-    state HEALTHY -> clear counters -> count 0.
+    software UNHEALTHY and count increment by 1 -> process-not-running alarm for lldp is raised
+    after the stop time (NVUE, gNMI and OTEL) -> start lldp -> state HEALTHY ->
+    process-not-running and container-not-running alarms for lldp are cleared (NVUE, gNMI and OTEL) ->
+    clear counters -> count 0 -> re-enable auto-restart.
     """
     TestToolkit.update_engines(engines)
     system = System()
@@ -656,6 +730,8 @@ def test_software_component_unhealthy_count_lldp_stop(engines):
     initial_count = int(software_instances["ALL"][HealthConsts.Component.UNHEALTHY_COUNT])
     sw, inst = HealthConsts.Component.Software, "ALL"
     docker_to_stop = "lldp"
+    gnmiclient = gnmi_client_for_alarms(engines)
+    lldp_alarms = [AlarmsConsts.PROCESS_NOT_RUNNING, AlarmsConsts.CONTAINER_NOT_RUNNING]
 
     try:
         with allure.step("Stop {} docker auto restart".format(docker_to_stop)):
@@ -665,17 +741,30 @@ def test_software_component_unhealthy_count_lldp_stop(engines):
                                            value=NvosConst.DOCKER_STATUS_DISABLED)
 
         with allure.step("Stop LLDP container"):
+            time_before_stop = get_dut_time_ref(system)
             engines.dut.run_cmd("docker stop {}".format(docker_to_stop))
         time.sleep(5)
         with allure.step("Validate software UNHEALTHY and unhealthy-count incremented by 1"):
             _assert_component_instance(system, sw, inst, HealthConsts.Component.STATE, HealthConsts.Component.UNHEALTHY)
             _assert_component_instance(system, sw, inst, HealthConsts.Component.UNHEALTHY_COUNT, str(initial_count + 1))
+            with allure.independent_step(f"Validate alarms for {docker_to_stop} when stopped, the alarms should be present"):
+                validate_nvue_alarms(system, docker_to_stop, lldp_alarms, expected_present=True,
+                                     raised_after=time_before_stop.local)
+                validate_gnmi_alarms(gnmiclient, AlarmsConsts.SOFTWARE, lldp_alarms, expected_present=True, raised_after_ns=time_before_stop.epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     docker_to_stop,
+                                     lldp_alarms, expected_present=True)
 
         with allure.step("Start LLDP container"):
             engines.dut.run_cmd("docker start {}".format(docker_to_stop))
         with allure.step("Validate software state HEALTHY"):
             _assert_component_instance(system, sw, inst, HealthConsts.Component.STATE, HealthConsts.Component.HEALTHY, tries=10)
-
+            with allure.independent_step(f"Validate alarms for {docker_to_stop} when started, the alarms should disappear"):
+                validate_nvue_alarms(system, docker_to_stop, lldp_alarms, expected_present=False)
+                validate_gnmi_alarms(gnmiclient, AlarmsConsts.SOFTWARE, lldp_alarms, expected_present=False)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     docker_to_stop,
+                                     lldp_alarms, expected_present=False)
         with allure.step("Clear system health component unhealthy counters"):
             system.health.component.action(ActionConsts.CLEAR)
             time.sleep(5)
@@ -954,16 +1043,221 @@ def test_simulate_fan_speed_fault(devices, engines, loganalyzer, reset_health_se
 @pytest.mark.disable_loganalyzer
 @pytest.mark.system
 @pytest.mark.health
-def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_health_service):
+def test_system_alarms_fan_missing(engines, devices, loganalyzer, reset_health_service, otel_alarms_collector,
+                                   tmp_path, random_api):
+    """
+    Validate that a missing fan drawer raises the DEVICE_MISSING alarm for each of its fans
+    (NVUE, gNMI and OTEL), and that the alarms clear once the drawer is back.
+        Test flow:
+            1. Choose a random fan drawer
+            2. Simulate a fan missing fault on the drawer
+            3. Validate the "<fan> is missing" event and the DEVICE_MISSING alarm for each fan in the drawer
+            4. Fix the fault
+            5. Validate the "Cleared: <fan> is missing" event and that the DEVICE_MISSING alarms are removed
+    """
+    system = System()
+    thermal_directory = devices.dut.fan_direction_dir
+    if not devices.dut.fan_list:
+        pytest.skip("System has no fans. Skipping")
+    fan_show = OutputParsingTool.parse_json_str_to_dictionary(Platform().environment.fan.show()).verify_result()
+    fan_drawers = get_fan_drawers(fan_show)
+    if not fan_drawers:
+        pytest.skip("System has no FAN<N> drawer entries to simulate a missing fan on. Skipping")
+    gnmiclient = gnmi_client_for_alarms(engines)
+    drawer_id = random.choice(sorted(fan_drawers))
+    drawer_fans = sorted(fan_drawers[drawer_id])
+    event = " is missing"
+
+    marker = _get_latest_event_id(system)
+    missing_fan_symlink = None
+    try:
+        with allure.step(f"Simulate fan missing fault on drawer {drawer_id} {drawer_fans}"):
+            missing_fan_symlink = HWSimulator.simulate_fan_missing_fault(engines.dut, thermal_directory, drawer_id)
+        for fan in drawer_fans:
+            with allure.step(f"Validate the '{fan}{event}' event and the DEVICE_MISSING alarm"):
+                _wait_for_event(system, marker, [fan + event])
+                validate_all_alarms(fan, AlarmsConsts.DEVICE_MISSING, expected_present=True, system=system,
+                                    gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector,
+                                    tmp_path=tmp_path)
+        marker = _get_latest_event_id(system)
+    finally:
+        if missing_fan_symlink is not None:
+            HWSimulator.simulate_fix_fan_missing_fault(engines.dut, thermal_directory, drawer_id, missing_fan_symlink)
+
+    with allure.step(f"Validate the cleared event and that the DEVICE_MISSING alarms of {drawer_fans} are removed"):
+        _wait_for_event(system, marker, ["Cleared: " + drawer_fans[0] + event])
+        for fan in drawer_fans:
+            validate_all_alarms(fan, AlarmsConsts.DEVICE_MISSING, expected_present=False, system=system,
+                                gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.system
+@pytest.mark.health
+def test_system_alarms_cpu_hw_fault(engines, devices, loganalyzer, reset_health_service, otel_alarms_collector,
+                                    tmp_path, random_api):
+    """
+    Validate that an unreadable CPU temperature sensor raises the HW_FAULT alarm for CPU
+    (NVUE, gNMI and OTEL), and that it clears once the sensor is restored.
+        Test flow:
+            1. Validate system health is OK
+            2. Simulate a CPU HW fault
+            3. Validate the "Sensor temperature is not available" event and the HW_FAULT alarm for CPU
+            4. Fix the fault
+            5. Validate the cleared event and that the HW_FAULT alarm is removed
+    """
+    system = System()
+    thermal_directory = devices.dut.fan_direction_dir
+    _raise_and_clear(
+        system, gnmi_client_for_alarms(engines), otel_alarms_collector, tmp_path,
+        inject=lambda: HWSimulator.simulate_cpu_hw_fault(engines.dut, thermal_directory),
+        restore=lambda symlink: HWSimulator.simulate_fix_cpu_hw_fault(engines.dut, thermal_directory, symlink),
+        event="Sensor temperature is not available",
+        alarm_origin_name=AlarmsConsts.CPU, alarm_type=AlarmsConsts.HW_FAULT)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.system
+@pytest.mark.health
+def test_system_alarms_cpu_high_temperature(engines, devices, loganalyzer, reset_health_service,
+                                            otel_alarms_collector, tmp_path, random_api):
+    """
+    Validate that a CPU pack temperature above its max raises the TEMPERATURE_HIGH alarm for CPU
+    (NVUE, gNMI and OTEL), and that it clears once the temperature is restored.
+        Test flow:
+            1. Validate system health is OK
+            2. Simulate a CPU pack high temperature fault
+            3. Validate the "CPU Pack Temp temperature is too hot" event and the TEMPERATURE_HIGH alarm for CPU
+            4. Fix the fault
+            5. Validate the cleared event and that the TEMPERATURE_HIGH alarm is removed
+    """
+    system = System()
+    thermal_directory = devices.dut.fan_direction_dir
+    _raise_and_clear(
+        system, gnmi_client_for_alarms(engines), otel_alarms_collector, tmp_path,
+        inject=lambda: HWSimulator.simulate_cpu_pack_high_temp_fault(engines.dut, thermal_directory),
+        restore=lambda symlink: HWSimulator.simulate_fix_cpu_pack_high_temp_fault(engines.dut, thermal_directory,
+                                                                                  symlink),
+        event="CPU Pack Temp temperature is too hot",
+        alarm_origin_name=AlarmsConsts.CPU, alarm_type=AlarmsConsts.TEMPERATURE_HIGH)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.system
+@pytest.mark.health
+def test_system_alarms_psu_redundancy_violated(engines, devices, loganalyzer, reset_health_service,
+                                               otel_alarms_collector, tmp_path, random_api):
+    """
+    Validate that losing power on every PSU under the no-redundancy policy raises the REDUNDANCY_VIOLATED
+    alarm for PSU (NVUE, gNMI and OTEL), and that it clears once power and the original policy are restored.
+        Test flow:
+            1. Validate system health is OK and save the current ps-redundancy policy
+            2. Set the ps-redundancy policy to no-redundancy
+            3. Simulate a power failure on every PSU
+            4. Validate the "Power redundancy policy no-redundancy requires at least 2 working power supplies..."
+               event and the REDUNDANCY_VIOLATED alarm for PSU
+            5. Restore the PSUs' power and the original policy
+            6. Validate the cleared event and that the REDUNDANCY_VIOLATED alarm is removed
+    """
+    system = System()
+    platform = Platform()
+    gnmiclient = gnmi_client_for_alarms(engines)
+    power_directory = PlatformConsts.POWER_FILES_PATH
+    psu_show = OutputParsingTool.parse_json_str_to_dictionary(platform.environment.psu.show()).verify_result()
+    psu_ids = [match.group(1) for match in (re.search(r"PSU(\d+)", key) for key in psu_show) if match]
+    if not psu_ids:
+        pytest.skip("Platform has no PSUs")
+    policy = PlatformConsts.PS_REDUNDANCY_POLICY
+    event = ("Power redundancy policy no-redundancy requires at least 2 working power supplies, "
+             "currently system has only 0")
+
+    system.validate_health_status(HealthConsts.OK)
+    original_policy = platform.ps_redundancy.parse_show()[policy]
+    marker = _get_latest_event_id(system)
+    power_failure_symlinks = {}
+    try:
+        with allure.step(f"Set ps-redundancy to {PlatformConsts.PS_REDUNDANCY_NO} and fail the power of {psu_ids}"):
+            platform.ps_redundancy.set(op_param_name=policy, op_param_value=PlatformConsts.PS_REDUNDANCY_NO,
+                                       apply=True).verify_result()
+            for psu_id in psu_ids:
+                power_failure_symlinks[psu_id] = HWSimulator.simulate_psu_power_failure_fault(
+                    engines.dut, power_directory, psu_id)
+        with allure.step("Validate the redundancy event and the REDUNDANCY_VIOLATED alarm"):
+            _wait_for_event(system, marker, [event])
+            validate_all_alarms(AlarmsConsts.PSU, AlarmsConsts.REDUNDANCY_VIOLATED, expected_present=True,
+                                system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector,
+                                tmp_path=tmp_path)
+    finally:
+        marker = _get_latest_event_id(system)
+        for psu_id, symlink in power_failure_symlinks.items():
+            HWSimulator.simulate_fix_psu_power_failure_fault(engines.dut, power_directory, psu_id, symlink)
+        platform.ps_redundancy.set(op_param_name=policy, op_param_value=original_policy, apply=True).verify_result()
+
+    with allure.step("Validate the cleared event and that the REDUNDANCY_VIOLATED alarm is removed"):
+        _wait_for_event(system, marker, ["Cleared: " + event])
+        validate_all_alarms(AlarmsConsts.PSU, AlarmsConsts.REDUNDANCY_VIOLATED, expected_present=False,
+                            system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector,
+                            tmp_path=tmp_path)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.system
+@pytest.mark.health
+def test_system_alarms_transceiver_temperature(engines, loganalyzer, reset_health_service, otel_alarms_collector,
+                                               tmp_path, random_api):
+    """
+    Validate that a transceiver temperature beyond its critical thresholds raises the TEMPERATURE_HIGH and
+    TEMPERATURE_LOW alarms for the transceiver (NVUE, gNMI and OTEL), and that each clears once the
+    threshold is restored. The thresholds, not the temperature, are moved in STATE_DB.
+        Test flow:
+            1. Choose a transceiver that reports a temperature and rx-power
+            2. Validate system health is OK and set the high-alarm threshold to 1
+            3. Validate the "Transceiver's temperature is higher than critical threshold" event and the
+               TEMPERATURE_HIGH alarm
+            4. Restore the high-alarm threshold, validate the cleared event and that the alarm is removed
+            5. Validate system health is OK and set the low-alarm threshold to 100
+            6. Validate the "Transceiver's temperature is lower than critical threshold" event and the
+               TEMPERATURE_LOW alarm
+            7. Restore the low-alarm threshold, validate the cleared event and that the alarm is removed
+    """
+    system = System()
+    transceiver = _get_transceiver_name(Platform())
+    if not transceiver:
+        pytest.skip("No transceiver reports a temperature and rx-power")
+    gnmiclient = gnmi_client_for_alarms(engines)
+
+    _raise_and_clear(
+        system, gnmiclient, otel_alarms_collector, tmp_path,
+        inject=lambda: _inject_transceiver_temperature_threshold_high(engines, transceiver, 1),
+        restore=lambda original: _inject_transceiver_temperature_threshold_high(engines, transceiver, original),
+        event="Transceiver's temperature is higher than critical threshold",
+        alarm_origin_name=transceiver, alarm_type=AlarmsConsts.TEMPERATURE_HIGH,
+        check=validate_single_system_event_loop)
+    _raise_and_clear(
+        system, gnmiclient, otel_alarms_collector, tmp_path,
+        inject=lambda: _inject_transceiver_temperature_threshold_low(engines, transceiver, 100),
+        restore=lambda original: _inject_transceiver_temperature_threshold_low(engines, transceiver, original),
+        event="Transceiver's temperature is lower than critical threshold",
+        alarm_origin_name=transceiver, alarm_type=AlarmsConsts.TEMPERATURE_LOW,
+        check=validate_single_system_event_loop)
+
+
+@pytest.mark.disable_loganalyzer
+@pytest.mark.system
+@pytest.mark.health
+def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_health_service, otel_alarms_collector, tmp_path, random_api):
     """
     Validate health monitoring when having a fan speed fault.
         Test flow:
             1. Get the last system event ID to be used as marker
             2. Choose two fans to be used for testing
             3. Simulate fan speed fault for the chosen fans
-            4. Validate fan speed fault system events for these fans
-            5. Simulate fan speed fault fix for the chosen fans
-            6. Validate fan speed fault system clear events for these fans
+            4. Validate fan speed fault system events for these fans, and that fan-speed-out-of-range
+               and hw-fault alarms are raised for each fan after the fault time (NVUE, gNMI and OTEL)
+            5. Simulate fan speed fault fix for the chosen fans one by one, and validate after each fix
+               that the alarms of the fans not yet fixed are still present
+            6. Validate fan speed fault system clear events for these fans, and that their
+               fan-speed-out-of-range and hw-fault alarms are cleared (NVUE, gNMI and OTEL)
     """
     if len(devices.dut.fan_list) == 0:
         pytest.skip("System has no fans. Skipping")
@@ -980,6 +1274,7 @@ def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_hea
     fan_info = dict()
     fan_fault_events = [FansConsts.FAN_SPEED_OUT_OF_RANGE, "is " + FansConsts.FAN_NOT_WORKING]
     fan_speed_fixed = False
+    gnmiclient = gnmi_client_for_alarms(engines)
 
     if loganalyzer:
         for key, value in loganalyzer.items():
@@ -989,27 +1284,57 @@ def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_hea
                                            f"\\.*Insufficient number of working fans warning\\.*"])
 
     try:
-        with allure.step("Get the latest event"):
-            last_event = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT)).get_returned_value()
-            latest_event_id = list(last_event)[0]
+        latest_event_id = _get_latest_event_id(system)
 
         with allure.step("Simulate fan speed fault for chosen fans:{}".format(fan_ids)):
+            time_before_fault = get_dut_time_ref(system)
             for fan_id in fan_ids:
                 fan_display_name = get_fan_display_name(fan_id)
                 symlink_target = HWSimulator.simulate_fan_speed_fault(engines.dut, thermal_directory, fan_id, 1)
                 fan_info[fan_id] = [fan_display_name, symlink_target]
                 time.sleep(2)
         with allure.step("Validate system event for fan speed fault for chosen fans:{}".format(fan_ids)):
+            events_seen = False
+            system_output, gnmi_output, otel_output = None, None, None
             for fan_id in fan_ids:
                 prefix = fan_info[fan_id][0] + " "
                 events_to_search = [prefix + fan_fault_event for fan_fault_event in fan_fault_events]
                 retry_call(validate_system_event, [system, latest_event_id, events_to_search],
                            exceptions=AssertionError, tries=24, delay=5)
 
+                if not events_seen:
+                    system_output, gnmi_output, otel_output = get_all_alarms_once(system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+                    events_seen = True
+
+                with allure.independent_step(f"Validate alarms for {prefix}"):
+                    validate_nvue_alarms(system, prefix, [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT],
+                                         expected_present=True, raised_after=time_before_fault.local, system_alarms=system_output)
+                    validate_gnmi_alarms(gnmiclient, prefix, [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT],
+                                         expected_present=True, raised_after_ns=time_before_fault.epoch_ns, gnmi_alarms=gnmi_output)
+                    validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                         prefix,
+                                         [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT], expected_present=True,
+                                         snapshot=otel_output)
+
         with allure.step("Simulate fix fan speed fault for chosen fans:{}".format(fan_ids)):
-            for fan_id in fan_ids:
+            for index, fan_id in enumerate(fan_ids):
                 HWSimulator.simulate_fix_fan_speed_fault(engines.dut, thermal_directory, fan_id, fan_info[fan_id][1])
+                system_output, gnmi_output, otel_output = get_all_alarms_once(system=system, gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+
+                for unfixed_fan_id in fan_ids[index + 1:]:
+                    prefix = fan_info[unfixed_fan_id][0]
+                    with allure.independent_step(f"Validate alarms for {prefix}"):
+                        validate_nvue_alarms(system, prefix, [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT],
+                                             expected_present=True, raised_after=time_before_fault.local, system_alarms=system_output)
+                        validate_gnmi_alarms(gnmiclient, prefix, [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT],
+                                             expected_present=True, raised_after_ns=time_before_fault.epoch_ns, gnmi_alarms=gnmi_output)
+                        validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                             prefix,
+                                             [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT], expected_present=True, snapshot=otel_output)
+
             fan_speed_fixed = True
+
+        system_output, gnmi_output, otel_output = None, None, None
 
         with allure.step("Validate system clear event for speed fault for chosen fans:{}".format(fan_ids)):
             for fan_id in fan_ids:
@@ -1017,6 +1342,14 @@ def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_hea
                 clear_events_to_search = [prefix + fan_fault_event for fan_fault_event in fan_fault_events]
                 retry_call(validate_system_event, [system, latest_event_id, clear_events_to_search],
                            exceptions=AssertionError, tries=24, delay=5)
+                with allure.independent_step(f"Validate alarms for {fan_info[fan_id][0]} don't show"):
+                    validate_nvue_alarms(system, fan_info[fan_id][0], [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT], expected_present=False)
+                    validate_gnmi_alarms(gnmiclient, fan_info[fan_id][0], [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT],
+                                         expected_present=False)
+                    validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                         fan_info[fan_id][0],
+                                         [AlarmsConsts.FAN_SPEED_OUT_OF_RANGE, AlarmsConsts.HW_FAULT], expected_present=False)
+
     finally:
         time.sleep(2)
         if not fan_speed_fixed:
@@ -1033,21 +1366,30 @@ def test_simulate_multi_fan_speed_fault(engines, devices, loganalyzer, reset_hea
 @pytest.mark.disable_loganalyzer
 @pytest.mark.system
 @pytest.mark.health
-def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_service):
+def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_service, otel_alarms_collector, tmp_path, random_api):
     """
-    Validate health monitoring when having a fan speed fault.
+    Validate health monitoring and system alarms when having multiple PSU faults.
+    Every alarm check is done on NVUE, gNMI and OTEL; raised alarms are also checked
+    to be raised after the fault was simulated.
         Test flow:
             1. Get the last system event ID to be used as marker
             2. Choose one PSU to be used for testing
             3. Simulate PSU temperature out of range fault for the chosen PSU
-            4. Validate PSU temperature fault system event for this PSU
+            4. Validate PSU temperature fault system event and temperature-high alarm for this PSU
             5. Simulate PSU absent for the chosen PSU
-            6. Validate PSU absent fault system event for this PSU
+            6. Validate PSU absent fault system event and device-missing alarm for this PSU
             7. Get the last system event ID to be used as new marker
-            8. Simulate PSU present for the chosen fans
-            9. Validate PSU temperature fault system event again for this PSU
+            8. Simulate PSU present for the chosen PSU
+            9. Validate PSU temperature fault system event again for this PSU, the device-missing
+               alarm is cleared and the temperature-high alarm is still present
             10. Simulate PSU temperature in range for the chosen PSU
-            11. Validate Cleared:PSU temperature fault system event for this PSU
+            11. Validate Cleared:PSU temperature fault system event and the temperature-high alarm is cleared
+            12. Simulate PSU no power fault for the chosen PSU
+            13. Validate PSU out of power system event and no-power alarm for this PSU
+            14. Fix the PSU no power fault
+            15. Simulate PSU power failure fault for the chosen PSU
+            16. Validate PSU not providing power system event and power-failure alarm for this PSU
+            17. Fix the PSU power failure fault
     """
     if len(devices.dut.psu_list) == 0:
         pytest.skip("System has no psus. Skipping")
@@ -1064,27 +1406,33 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
                 psu_id_list.append(psu_id.group(1))
     assert len(psu_id_list) > 0, "No active PSUs shown"
     # Choose random PSU from list of present PSUs
+
     psu_id = random.choice(psu_id_list)
 
     logger.info("Chosen PSU : {}".format(psu_id))
     psu_display_name = "PSU{}".format(psu_id)
     psu_info = dict()
-    psu_fault_events = ["temperature is too hot", "is missing - Unpopulated PSU slot"]
+    psu_fault_events = ["temperature is too hot", "is missing - Unpopulated PSU slot", "is out of power", "Power supply is not providing power"]
     temp_fault = False
     temp_fixed = False
     psu_status_fault = False
     psu_status_fixed = False
+    psu_no_power_fixed = False
+    psu_power_failure_fixed = False
+    psu_no_power_fault = False
+    psu_power_failure_fault = False
+    gnmiclient = gnmi_client_for_alarms(engines)
+    alarm_change_times: list[DutTimeRef] = []
 
     if loganalyzer:
         for key, value in loganalyzer.items():
             value.ignore_regex.extend([f"\\.*PSU absence warning: PSU {psu_id} is not present.\\.*"])
 
     try:
-        with allure.step("Get the latest event"):
-            last_event = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT)).get_returned_value()
-            latest_event_id = list(last_event)[0]
+        latest_event_id = _get_latest_event_id(system)
 
         with allure.step("Simulate PSU temperature fault for chosen PSU:{}".format(psu_id)):
+            alarm_change_times.append(get_dut_time_ref(system))
             temp_symlink = HWSimulator.simulate_psu_temp_fault(engines.dut, thermal_directory, psu_id)
             psu_info[psu_id] = [psu_display_name, temp_symlink]
             temp_fault = True
@@ -1094,8 +1442,16 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
             event_to_search = psu_info[psu_id][0] + " " + psu_fault_events[0]
             retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
                        exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.TEMPERATURE_HIGH, expected_present=True,
+                                     raised_after=alarm_change_times[-1].local)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.TEMPERATURE_HIGH], expected_present=True, raised_after_ns=alarm_change_times[-1].epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_info[psu_id][0],
+                                     AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
 
         with allure.step("Simulate PSU absent fault for chosen PSU:{}".format(psu_id)):
+            alarm_change_times.append(get_dut_time_ref(system))
             psu_status_symlink = HWSimulator.simulate_psu_fault(engines.dut, thermal_directory, psu_id)
             psu_status_fault = True
             time.sleep(2)
@@ -1104,10 +1460,15 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
             event_to_search = psu_info[psu_id][0] + " " + psu_fault_events[1]
             retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
                        exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.DEVICE_MISSING, expected_present=True,
+                                     raised_after=alarm_change_times[-1].local)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.DEVICE_MISSING], expected_present=True, raised_after_ns=alarm_change_times[-1].epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_info[psu_id][0],
+                                     AlarmsConsts.DEVICE_MISSING, expected_present=True)
 
-        with allure.step("Get the latest event to be used as new marker"):
-            last_event = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT)).get_returned_value()
-            latest_event_id = list(last_event)[0]
+        latest_event_id = _get_latest_event_id(system)
 
         with allure.step("Simulate fix PSU absent for chosen PSU:{}".format(psu_id)):
             HWSimulator.simulate_fix_psu_fault(engines.dut, thermal_directory, psu_id, psu_status_symlink)
@@ -1117,6 +1478,17 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
             event_to_search = psu_info[psu_id][0] + " " + psu_fault_events[0]
             retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
                        exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.DEVICE_MISSING, expected_present=False)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.DEVICE_MISSING], expected_present=False)
+                # The temperature fault outlives the absence, so the alarm may be the one raised
+                # with it or re-raised on insertion - either way not older than the fault itself.
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.TEMPERATURE_HIGH, expected_present=True,
+                                     raised_after=alarm_change_times[0].local)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.TEMPERATURE_HIGH], expected_present=True, raised_after_ns=alarm_change_times[0].epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_info[psu_id][0],
+                                     AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
 
         with allure.step("Simulate PSU temperature fault fix for chosen PSU:{}".format(psu_id)):
             HWSimulator.simulate_fix_psu_temp_fault(engines.dut, thermal_directory, psu_id, psu_info[psu_id][1])
@@ -1127,8 +1499,66 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
             event_to_search = "Cleared: " + psu_info[psu_id][0] + " " + psu_fault_events[0]
             retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
                        exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.TEMPERATURE_HIGH, expected_present=False)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.TEMPERATURE_HIGH], expected_present=False)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_info[psu_id][0],
+                                     AlarmsConsts.TEMPERATURE_HIGH, expected_present=False)
+
+        latest_event_id = _get_latest_event_id(system)
+
+        with allure.step("Simulate PSU No Power fault for chosen PSU:{}".format(psu_id)):
+            alarm_change_times.append(get_dut_time_ref(system))
+            psu_no_power_symlink = HWSimulator.simulate_psu_no_power_fault(engines.dut, thermal_directory, psu_id)
+            psu_no_power_fault = True
+            time.sleep(2)
+
+        with allure.step("Validate system event for PSU missing status for chosen PSU:{}".format(psu_id)):
+            event_to_search = psu_info[psu_id][0] + " " + psu_fault_events[2]
+            retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
+                       exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.NO_POWER, expected_present=True,
+                                     raised_after=alarm_change_times[-1].local)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.NO_POWER], expected_present=True, raised_after_ns=alarm_change_times[-1].epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_info[psu_id][0],
+                                     AlarmsConsts.NO_POWER, expected_present=True)
+
+        with allure.step("Simulate PSU No Power fault fix for chosen PSU:{}".format(psu_id)):
+            power_directory = PlatformConsts.POWER_FILES_PATH
+            HWSimulator.simulate_fix_psu_no_power_fault(engines.dut, thermal_directory, psu_id, psu_no_power_symlink)
+            time.sleep(2)
+            psu_no_power_fixed = True
+
+        latest_event_id = _get_latest_event_id(system)
+
+        with allure.step("Simulate PSU Power Failure fault for chosen PSU:{}".format(psu_id)):
+            alarm_change_times.append(get_dut_time_ref(system))
+            psu_power_failure_symlink = HWSimulator.simulate_psu_power_failure_fault(engines.dut, power_directory, psu_id)
+            psu_power_failure_fault = True
+            time.sleep(2)
+
+        with allure.step("Validate system event for PSU Power Failure for chosen PSU:{}".format(psu_id)):
+            event_to_search = psu_fault_events[3]
+            retry_call(validate_system_event, [system, latest_event_id, [event_to_search]],
+                       exceptions=AssertionError, tries=12, delay=5)
+            with allure.step(f"Validate alarms for {psu_info[psu_id][0]}"):
+                validate_nvue_alarms(system, psu_info[psu_id][0], AlarmsConsts.POWER_FAILURE, expected_present=True,
+                                     raised_after=alarm_change_times[-1].local)
+                validate_gnmi_alarms(gnmiclient, psu_info[psu_id][0], [AlarmsConsts.POWER_FAILURE], expected_present=True, raised_after_ns=alarm_change_times[-1].epoch_ns)
+                validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                     psu_display_name,
+                                     AlarmsConsts.POWER_FAILURE, expected_present=True)
+
+        with allure.step("Simulate PSU No Power fault fix for chosen PSU:{}".format(psu_id)):
+            HWSimulator.simulate_fix_psu_power_failure_fault(engines.dut, power_directory, psu_id, psu_power_failure_symlink)
+            time.sleep(2)
+            psu_power_failure_fixed = True
 
     finally:
+
         time.sleep(1)
         if temp_fault and not temp_fixed:
             with allure.step("Fix the PSU temperature fault for PSU:{}".format(psu_id)):
@@ -1137,6 +1567,14 @@ def test_simulate_psu_multi_faults(engines, devices, loganalyzer, reset_health_s
         if psu_status_fault and not psu_status_fixed:
             with allure.step("Fix PSU absent fault for chosen PSU:{}".format(psu_id)):
                 HWSimulator.simulate_fix_psu_fault(engines.dut, thermal_directory, psu_id, psu_status_symlink)
+
+        if psu_no_power_fault and not psu_no_power_fixed:
+            with allure.step("Fix PSU No Power fault for chosen PSU:{}".format(psu_id)):
+                HWSimulator.simulate_fix_psu_no_power_fault(engines.dut, thermal_directory, psu_id, psu_no_power_symlink)
+
+        if psu_power_failure_fault and not psu_power_failure_fixed:
+            with allure.step("Fix PSU Power Failure fault for chosen PSU:{}".format(psu_id)):
+                HWSimulator.simulate_fix_psu_power_failure_fault(engines.dut, power_directory, psu_id, psu_power_failure_symlink)
 
     with allure.step("Clear system health component unhealthy counters"):
         system.health.component.action(ActionConsts.CLEAR)
@@ -1213,9 +1651,7 @@ def test_simulate_health_problem_with_docker_stop(devices, engines, reset_health
                                            param=NvosConst.DOCKER_AUTO_RESTART,
                                            value=NvosConst.DOCKER_STATUS_DISABLED)
 
-        with allure.step("Get the latest event"):
-            last_event = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT)).get_returned_value()
-            latest_event_id = list(last_event)[0]
+        latest_event_id = _get_latest_event_id(system)
 
         with allure.step("stop {} docker".format(docker_to_stop)):
             time.sleep(3)
@@ -1330,9 +1766,50 @@ def validate_system_event(system, latest_event_id, events_to_search):
     assert bool(set(events_to_search) & set(newer_events)), "None of events:{} found in events".format(events_to_search)
 
 
-@retry(Exception, tries=5, delay=2)
-def validate_docker_is_up(engine, docker):
-    assert docker in engine.run_cmd("docker ps")
+def validate_single_system_event_loop(system, latest_event_id, events_to_search):
+    """Like `validate_system_event`, but an event matches when its text contains one of `events_to_search`."""
+    events = Tools.OutputParsingTool.parse_json_str_to_dictionary(system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT, '')).get_returned_value()
+    newer_events = [events[event]['text'] for event in list(events) if int(event) > int(latest_event_id)]
+    assert any(event_to_search in text for event_to_search in events_to_search for text in newer_events), \
+        "None of events:{} found in events".format(events_to_search)
+
+
+def _get_latest_event_id(system) -> str:
+    with allure.step("Get the latest event ID"):
+        last_event = OutputParsingTool.parse_json_str_to_dictionary(
+            system.events.show_events_last_recent_entries(SystemConsts.SYSTEM_LAST_EVENT)).get_returned_value()
+        return list(last_event)[0]
+
+
+def _wait_for_event(system, since_event_id, events, check=validate_system_event):
+    retry_call(check, [system, since_event_id, events], exceptions=AssertionError, tries=24, delay=5)
+
+
+def _raise_and_clear(system, gnmiclient, otel_alarms_collector, tmp_path, inject, restore, event,
+                     alarm_origin_name, alarm_type, check=validate_system_event):
+    """Inject a fault, validate its event and alarm, restore it, then validate the clear event and alarm.
+
+    `inject()` returns the token that `restore(token)` needs to undo the fault. The clear is validated only
+    after the raise passed, so a raise failure is reported as itself.
+    """
+    system.validate_health_status(HealthConsts.OK)
+    marker = _get_latest_event_id(system)
+    token = None
+    try:
+        with allure.step(f"Inject the fault and validate '{event}' and the {alarm_type} alarm of {alarm_origin_name}"):
+            token = inject()
+            _wait_for_event(system, marker, [event], check)
+            validate_all_alarms(alarm_origin_name, alarm_type, expected_present=True, system=system,
+                                gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
+        marker = _get_latest_event_id(system)
+    finally:
+        if token is not None:
+            with allure.step("Restore the fault"):
+                restore(token)
+    with allure.step(f"Validate the cleared event and that the {alarm_type} alarm of {alarm_origin_name} is removed"):
+        _wait_for_event(system, marker, ["Cleared: " + event], check)
+        validate_all_alarms(alarm_origin_name, alarm_type, expected_present=False, system=system,
+                            gnmiclient=gnmiclient, otel_alarms_collector=otel_alarms_collector, tmp_path=tmp_path)
 
 
 def validate_min_psus_for_redundancy(devices, platform):

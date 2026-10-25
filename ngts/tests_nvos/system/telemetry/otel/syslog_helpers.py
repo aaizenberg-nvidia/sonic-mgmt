@@ -33,7 +33,7 @@ from ngts.nvos_tools.infra.ResultObj import IssueType, ResultObj
 from ngts.nvos_tools.system.System import System
 from ngts.tests_nvos.system.telemetry.otel.constants import OtelCollectorConst
 from ngts.tests_nvos.system.telemetry.otel.helpers import (
-    _read_otel_collector_documents,
+    read_otel_collector_documents,
     component_show_text,
 )
 from ngts.tests_nvos.system.telemetry.otel.otel_collector import OtelCollector
@@ -915,7 +915,7 @@ def fetch_log_records(collector: OtelCollector, *, label: str = "logs") -> List[
         file_name="syslog-otel-{}.json".format(label),
         timeout_sec=poll_timeout,
     )
-    return log_records_from_docs(_read_otel_collector_documents(local_json))
+    return log_records_from_docs(read_otel_collector_documents(local_json))
 
 
 def find_record_by_body(records: List[Dict[str, Any]], marker: str) -> Optional[Dict[str, Any]]:

@@ -566,9 +566,9 @@ class TestPlanManager(object):
                     2. If current test plan status finished but unsuccessful, need to check if current step status
                        executed successfully, if not, return false to pipeline.
                     """
-                    current_step_unsuccessful = (step_status == "FAILED"
-                                                 or (current_tp_status in TEST_PLAN_STATUS_UNSUCCESSFUL_FINISHED
-                                                     and step_status in TEST_PLAN_STEP_STATUS_UNFINISHED))
+                    current_step_unsuccessful = (step_status == "FAILED" or
+                                                 (current_tp_status in TEST_PLAN_STATUS_UNSUCCESSFUL_FINISHED and
+                                                     step_status in TEST_PLAN_STEP_STATUS_UNFINISHED))
 
                     if current_step_unsuccessful:
 

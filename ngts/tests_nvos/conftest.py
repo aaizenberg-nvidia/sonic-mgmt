@@ -87,6 +87,9 @@ EXPECTED_KERNEL_PATTERNS = [
 
 pytest_plugins = [
     "ngts.common.plugins.valgrind.plugin",
+    # `otel_alarms_collector`, needed by the platform and system suites alike,
+    # so it is registered here rather than in either subtree's conftest.
+    "ngts.tests_nvos.helpers.alarms.otel_alarms_fixtures",
     'ngts.common.plugins.nvos_run_policy',
 ]
 
@@ -438,7 +441,7 @@ def track_serial_console(request, topology_obj, engines, devices, is_air):
                         serial_log_content = file.read()
                 with allure.step('attach content to allure'):
                     allure.attach('Serial Console log during test', serial_log_content)
-            except Exception:
+            except Exception as e:
                 err = f'failed to attach serial output from {serial_log_file_path} : {ExceptionTool.format_traceback()}'
                 logging.warning(err)
                 allure.attach('Attachment Failure', err)

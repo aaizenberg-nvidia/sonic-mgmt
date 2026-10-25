@@ -334,6 +334,60 @@ class TelemetryLogs(BaseComponent):
 
 
 # =========================================================================
+# alarms / export  (system-alarms-over-OTLP)
+# =========================================================================
+
+class TelemetryAlarmsSuppressZeroes(BaseComponent):
+    """`telemetry/alarms/export/suppress-zeroes`.
+
+    Settable leaves: `state` (enabled|disabled) and `delay-intervals` — how many
+    samples a cleared alarm is still exported as a zero before its series is
+    suppressed altogether.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/suppress-zeroes')
+
+
+class TelemetryAlarmsExport(BaseComponent):
+    """`telemetry/alarms/export`.
+
+    Settable leaves: `state` (enabled|disabled) — the system-alarms-over-OTLP
+    master knob (`nv set system telemetry alarms export state …`) — and
+    `sample-interval`. Child: `suppress-zeroes`.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/export')
+        self.suppress_zeroes = TelemetryAlarmsSuppressZeroes(self)
+
+
+class _TelemetryAlarmsClass(BaseComponent):
+    """`telemetry/alarms/class` parent with one child per known alarms class, keyed
+    by class name in `self.categories`.
+
+    Each child is settable: `state` (enabled|disabled) and `sample-interval`, the
+    class's own override of `alarms export sample-interval`.
+    """
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/class')
+        self.categories = {
+            alarm_class: BaseComponent(self, path='/' + alarm_class)
+            for alarm_class in TelemetryConsts.ALARMS_CLASSES
+        }
+
+
+class TelemetryAlarms(BaseComponent):
+    """`telemetry/alarms`. Children: `export`, `class`."""
+
+    def __init__(self, parent_obj):
+        BaseComponent.__init__(self, parent=parent_obj, path='/alarms')
+        self.export = TelemetryAlarmsExport(self)
+        self.cls = _TelemetryAlarmsClass(self)
+
+
+# =========================================================================
 # label / <label-id>
 # =========================================================================
 
@@ -401,6 +455,7 @@ class Telemetry(BaseComponent):
         BaseComponent.__init__(self, parent=parent_obj, path='/telemetry')
         self.export = TelemetryExport(self)
         self.logs = TelemetryLogs(self)
+        self.alarms = TelemetryAlarms(self)
         self.label = TelemetryLabels(self)
         self.interface_stats = InterfaceStats(self)
         self.peer_port_stats = PeerPortStats(self)

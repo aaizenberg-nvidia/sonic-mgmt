@@ -72,10 +72,10 @@ def test_success_resets_consecutive_poll_failures(manager, monkeypatch):
     """Verify successful polling resets the consecutive failure budget."""
     timeout = requests.ReadTimeout("status request timed out")
     responses = (
-        [timeout] * (test_plan.MAX_POLL_RETRY_TIMES - 1)
-        + [_executing_response()]
-        + [timeout] * (test_plan.MAX_POLL_RETRY_TIMES - 1)
-        + [_finished_response()]
+        [timeout] * (test_plan.MAX_POLL_RETRY_TIMES - 1) +
+        [_executing_response()] +
+        [timeout] * (test_plan.MAX_POLL_RETRY_TIMES - 1) +
+        [_finished_response()]
     )
     get = Mock(side_effect=responses)
     monkeypatch.setattr(test_plan.requests, "get", get)
@@ -136,6 +136,6 @@ def test_unauthorized_response_refreshes_token(manager, monkeypatch):
 
     assert manager.get_token.call_count == 2
     assert (
-        get.call_args_list[1].kwargs["headers"]["Authorization"]
-        == "Bearer refreshed-token"
+        get.call_args_list[1].kwargs["headers"]["Authorization"] ==
+        "Bearer refreshed-token"
     )

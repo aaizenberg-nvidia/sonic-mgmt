@@ -8,19 +8,23 @@ from retry import retry
 
 from ngts.nvos_tools.infra.Simulator import HWSimulator
 from ngts.nvos_tools.system.System import System
+from ngts.tests_nvos.helpers.alarms.system_alarms_gnmi_helpers import gnmi_client_for_alarms, validate_gnmi_alarms
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.nvos_tools.platform.Platform import Platform
 from ngts.nvos_tools.infra.Tools import Tools
 from ngts.tests_nvos.constants import MINUTE
+from ngts.tests_nvos.helpers.alarms.system_alarm_nvue_helpers import validate_nvue_alarms
+from ngts.tests_nvos.helpers.alarms.system_alarms_otel_helpers import validate_otel_alarms
 from ngts.tests_nvos.platform.helpers import (
     filter_eligible_sensors,
     validate_health,
     validate_health_issues,
     validate_sensor_state,
 )
-from ngts.nvos_constants.constants_nvos import HealthConsts, PlatformConsts
+from ngts.nvos_constants.constants_nvos import HealthConsts, PlatformConsts, AlarmsConsts
 
 logger = logging.getLogger(__name__)
+
 
 TEMPERATURE_BASE_PATH = PlatformConsts.TEMPERATURE_FILES_PATH
 THERMAL_PWM_PATH = '/var/run/hw-management/thermal/pwm1'
@@ -255,33 +259,36 @@ def _validate_fan_pwm_matches_expected(engine, baseline_pwm, sensor_name, sysfs_
 @pytest.mark.platform
 @pytest.mark.disable_loganalyzer
 @pytest.mark.timeout(10 * MINUTE, func_only=True)
-def test_simulate_temperature_fault_high(engines, devices):
+def test_simulate_temperature_fault_high(engines, devices, otel_alarms_collector, tmp_path, random_api):
     """
     @summary: Inject a high temperature value into a sensor and verify the
-              system detects the fault, raises a health issue, and (when the
-              platform has fans) ramps up fan PWM. Restores the sensor and
-              verifies recovery.
+              system detects the fault, raises a health issue and a temperature-high
+              alarm, and (when the platform has fans) ramps up fan PWM. Restores the
+              sensor and verifies recovery.
 
     Steps:
     1. Validate system health is OK
     2. Pick a random temperature sensor with a max threshold
     3. Inject value = max * 1.05 (just above max threshold)
-    4. Validate sensor state is 'failed', health is 'Not OK', sensor is in
-       health issues
+    4. Validate sensor state is 'bad', health is 'Not OK', sensor is in
+       health issues, and a temperature-high alarm is raised (NVUE, gNMI and
+       OTEL) for the sensor, or for the generic temperature sensor origin on PMIC sensors
     5. If devices.dut.fan_list is non-empty, validate fan PWM reaches the value
        the DUT's own thermal-control config (tc_config.json) predicts for the
        injected temperature, but only for sensors the TC actually drives the fans
        from; a pwm1 well below the predicted target is a candidate cooling bug
     6. Restore original symlink
     7. Validate sensor state is 'ok', health is 'OK', sensor not in health
-       issues
+       issues, and the temperature-high alarm is cleared (NVUE, gNMI and OTEL)
     """
     system = System()
     temperature_show = Platform().environment.temperature.show
+    gnmiclient = gnmi_client_for_alarms(engines)
 
     with allure.step("Pick sensor and validate initial health"):
         sensor_name, sensor_data, sensor_input_path = _pick_sensor(engines.dut, devices)
         validate_health(system, HealthConsts.OK)
+        alarm_origin = AlarmsConsts.TEMPERATURE_SENSOR if 'PMIC' in sensor_name else sensor_name
 
     injected_temp_c = float(sensor_data['max']) * TEMPERATURE_MARGIN_FACTOR
     fault_value = int(injected_temp_c * DEGREES_TO_MILLIDEGREES)
@@ -297,6 +304,11 @@ def test_simulate_temperature_fault_high(engines, devices):
             validate_sensor_state(temperature_show, sensor_name, 'bad')
             validate_health(system, HealthConsts.NOT_OK)
             validate_health_issues(system, sensor_name, expected_present=True)
+            validate_gnmi_alarms(gnmiclient, alarm_origin, AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
+            validate_nvue_alarms(system, alarm_origin, AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
+            validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                                 alarm_origin,
+                                 AlarmsConsts.TEMPERATURE_HIGH, expected_present=True)
             if has_fans:
                 _validate_fan_pwm_matches_expected(
                     engines.dut, baseline_pwm, sensor_name, sysfs_base,
@@ -310,6 +322,11 @@ def test_simulate_temperature_fault_high(engines, devices):
         validate_sensor_state(temperature_show, sensor_name, 'ok')
         validate_health(system, HealthConsts.OK)
         validate_health_issues(system, sensor_name, expected_present=False)
+        validate_nvue_alarms(system, alarm_origin, AlarmsConsts.TEMPERATURE_HIGH, expected_present=False)
+        validate_gnmi_alarms(gnmiclient, alarm_origin, AlarmsConsts.TEMPERATURE_HIGH, expected_present=False)
+        validate_otel_alarms(otel_alarms_collector, str(tmp_path),
+                             alarm_origin,
+                             AlarmsConsts.TEMPERATURE_HIGH, expected_present=False)
         if has_fans:
             logger.info(f"Fan PWM after recovery: pwm1={_read_pwm(engines.dut)}, "
                         f"fan_rpm=[{_read_fan_speeds(engines.dut)}]")

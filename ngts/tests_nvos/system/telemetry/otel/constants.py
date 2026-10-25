@@ -388,6 +388,14 @@ class OtelCollectorConst:
     IB_ROUTER_STATS_SAMPLE_INTERVAL_SEC = 10
     PLATFORM_STATS_SAMPLE_INTERVAL_SEC = 60
 
+    # `alarms export sample-interval` the alarm suites configure, far below the
+    # 30s product default (``TelemetryConsts.Defaults.ALARMS_SAMPLE_INTERVAL``):
+    # an alarm test validates presence and absence around a single injected
+    # fault, so the interval is what its collection windows cost. Subject to the
+    # node's own CLI grammar, which is unverified for this node - see
+    # ``enable_otel_alarms_export``.
+    ALARMS_SAMPLE_INTERVAL_SEC = 5
+
     # Peer-port feature enable: nmx-t-ib (re)start + IB discovery, then this many
     # feature polling cycles for the first PEER_COUNTERS rows to land in COUNTERS_DB.
     PEER_PORT_ENABLE_GRACE_SEC = 30

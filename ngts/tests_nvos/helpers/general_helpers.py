@@ -44,6 +44,14 @@ def generate_rand_str(str_len, possible_chars=string.ascii_letters) -> str:
     return ''.join(random.choices(possible_chars, k=str_len))
 
 
+def normalize_sensor_name(name: str) -> str:
+    """Lowercase and strip non-alphanumeric characters. Used to match CLI
+    sensor names (hyphenated, e.g. 'PMIC-3-ASIC1-DVDD-PL1-Out-2') against
+    health-issue keys (space-separated), alarm resources ('PSU1') and sysfs
+    directory names (plus-separated)."""
+    return re.sub(r'[^a-z0-9]', '', name.lower())
+
+
 def verify_result_obj_failure(result_obj: ResultObj, expected_err=None):
     result_obj.verify_result(False)
     if expected_err:
