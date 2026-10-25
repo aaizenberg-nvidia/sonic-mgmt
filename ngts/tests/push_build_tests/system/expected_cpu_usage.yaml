@@ -55,6 +55,7 @@ master:
     syncd: 5
   MSN2700: # Simx Panther
     <<: *platform_defaults
+    total: 50
     sx_sdk: 30
     syncd: 5
     redis-server: 8
