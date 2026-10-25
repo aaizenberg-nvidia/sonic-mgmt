@@ -453,6 +453,13 @@ class _SpcXRATestBase:
         alongside the same per-speed data load. ``--min_packet_size`` is not
         supported together with the ``ai_mix`` profile; that combination fails.
 
+        On Cumulus the first counters sample is discarded, because it is a
+        read-and-clear of everything since traffic began and so carries the ramp-up
+        burst, where a single PFC frame on the lossless priority is enough to fail the
+        strict zero-counters check. Every later sample still has to come back clean, and
+        bandwidth, fairness, occupancy and power are validated on all samples including
+        the first.
+
         Args:
             request: pytest ``FixtureRequest`` (provides the test name).
             is_min_packet_size: Value of the ``--min_packet_size`` pytest flag. When
@@ -494,10 +501,13 @@ class _SpcXRATestBase:
                     control_packet_count=control_packet_count)
 
         self._run_spine_traffic(data_packet_size)
+        # The first counters sample is a read-and-clear covering everything since traffic began,
+        # so the whole ramp-up burst lands in it and shows up as PFC asserted on the lossless
+        # priority. Dropped on Cumulus for every chip in chip_dict, as the rest of the class
+        # already does unconditionally; DVS keeps reading it.
         self._validate(
             test_name, data_packet_size,
-            skip_first_counters_iteration=(self.chip_type in ("SPC5", "SPC6") and
-                                           isinstance(self.cli_object, NvueCli)))
+            skip_first_counters_iteration=isinstance(self.cli_object, NvueCli))
 
     @pytest.mark.skip(reason="Temporarily disabled")
     @allure.description('AR enabled + IBM enabled. Verify port utilization at minimum line rate.')
