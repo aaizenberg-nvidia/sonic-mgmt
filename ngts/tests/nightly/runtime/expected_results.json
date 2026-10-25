@@ -206,7 +206,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.532",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "178.781"
+        "show_techsupport": "286.457"
     },
     "SN5640": {
         "add_vlan": "0.436",
@@ -225,7 +225,7 @@
         "show_pl_syseeprom": "0.592",
         "show_pl_temperature": "0.698",
         "show_sys_health_summary": "4.0962",
-        "show_techsupport": "178.781"
+        "show_techsupport": "286.457"
     },
     "SN5810_LD": {
         "add_vlan": "0.654",
@@ -244,7 +244,7 @@
         "show_pl_syseeprom": "0.888",
         "show_pl_temperature": "0.798",
         "show_sys_health_summary": "6.144",
-        "show_techsupport": "178.781"
+        "show_techsupport": "286.457"
     },
     "SN6810_LD": {
         "add_vlan": "0.654",
