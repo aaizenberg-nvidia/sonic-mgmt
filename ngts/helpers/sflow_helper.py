@@ -63,9 +63,11 @@ def verify_sflow_configuration(cli_obj, status, **kwargs):
                 assert (e1 or e2), f"col {col} is not properly Configured"
 
 
+@retry(Exception, tries=6, delay=5)
 def verify_sflow_interface_configuration(cli_obj, interface_name, status, sample_rate):
     """
     This method is used to verify sflow interface status
+    The sflow container applies the config asynchronously, so the show output is retried for up to 30 seconds
     :param cli_obj: cli_obj fixture
     :param interface_name: interface_name fixture
     :param status: interface status

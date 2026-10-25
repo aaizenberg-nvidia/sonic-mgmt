@@ -17,6 +17,7 @@ allure.logger = logger
 POLLING_INTERVAL_LIST = [SflowConsts.POLLING_INTERVAL_1, SflowConsts.POLLING_INTERVAL_0, SflowConsts.POLLING_INTERVAL_2]
 SAMPLE_RATE_LIST = [SflowConsts.SAMPLE_RATE_2, SflowConsts.SAMPLE_RATE_3]
 COLLECTOR_WARNING_CONTENT = "Only 2 collectors can be configured, please delete one"
+HSFLOWD_SYNC_TIMEOUT = 60
 
 
 @pytest.fixture(scope='module', autouse=False)
@@ -180,7 +181,7 @@ def test_sflow_agent_id(engines, cli_objects):
             verify_sflow_configuration(cli_obj, status=SflowConsts.SFLOW_UP, agent_id=SflowConsts.AGENT_ID_DEFAULT)
         with allure.step('Validate that agent value in sflow sample is previously configured agent IP'):
             random_collector = random.choice(SflowConsts.COLLECTOR_LIST)
-            assert wait_until(10, 1, 0, _hsflowd_synced_after_agent_delete, engines), \
+            assert wait_until(HSFLOWD_SYNC_TIMEOUT, 1, 0, _hsflowd_synced_after_agent_delete, engines), \
                 "hsflowd is not synced after agent deleted"
             selected_agent_ip = get_agent_id_from_hsflowd(engines)
             verify_sflow_sample_agent_id(engines, random_collector, selected_agent_ip)
