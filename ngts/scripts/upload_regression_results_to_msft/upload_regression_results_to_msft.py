@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import logging
+import hashlib
 import os
 import re
 import datetime
@@ -187,6 +188,7 @@ class ReleaseResultsUploader:
         self.sessions_testbed_properties = dict()
         self.modified_xml_path = dict()
         self.exported_hwsku_topologies = dict()
+        self.export_batches = dict()
         file_dir_path = os.path.dirname(os.path.realpath(__file__))
         self.build_mail_table = os.path.join(file_dir_path, "build_mail_table.txt")
         if os.path.exists(self.build_mail_table):
@@ -1055,10 +1057,21 @@ class ReleaseResultsUploader:
             self.exported_hwsku_topologies[hwsku] = topology
             xml_path = df.loc[i, "xml_path"]
             if xml_path not in copied_xmls:
-                folder_name = f"{hwsku}_{topology}"
+                testbed_properties = self.get_junit_testbed_properties(xml_path)
+                testbed = str(testbed_properties["testbed"])
+                os_version = str(testbed_properties["os_version"])
+                batch_identity = (str(hwsku), str(topology), testbed, os_version)
+                metadata_hash = hashlib.sha256(
+                    "\0".join(batch_identity).encode("utf-8")
+                ).hexdigest()[:12]
+                folder_name = f"{hwsku}_{topology}_{metadata_hash}"
                 hwsku_topo_folder = os.path.join(self.result_folder, folder_name)
                 if not os.path.exists(hwsku_topo_folder):
                     os.mkdir(hwsku_topo_folder)
+                self.export_batches[hwsku_topo_folder] = {
+                    "testbed": testbed,
+                    "version": os_version,
+                }
                 filename = os.path.basename(xml_path)
                 new_file_name = f"test_{session}_{filename}"
                 if new_file_name.endswith('.updated'):
@@ -1083,11 +1096,10 @@ class ReleaseResultsUploader:
     def export_results(self):
         uploader_script_path = os.path.join(MarsConstants.SONIC_MGMT_DIR,
                                             ResultUploaderConst.UPLOADER_SCRIPT_RELATIVE_PATH)
-        report_id_dirs = [x[0] for x in os.walk(self.result_folder)]
-        report_id_dirs.remove(self.result_folder)
-        for report_id_dir in report_id_dirs:
+        for report_id_dir, metadata in sorted(self.export_batches.items()):
             export_results_command = f'python3 {uploader_script_path} -c "test_result" ' \
-                f'--version {shlex.quote(self.sonic_version)} ' \
+                f'--version {shlex.quote(metadata["version"])} ' \
+                f'--testbed {shlex.quote(metadata["testbed"])} ' \
                 f'{shlex.quote(report_id_dir)} {ResultUploaderConst.DATABASE_NAME}'
             logger.info(f"CMD: {export_results_command}")
             if self.sonic_mgmt_ip:
