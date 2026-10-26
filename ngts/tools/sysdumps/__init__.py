@@ -218,9 +218,11 @@ def generate_and_copy_dump(item, dumps_folder, topology_obj, duration):
         for alias in PlayersAliases.multi_duts_list:
             if topology_obj.players.get(alias):
                 dut_aliases.append(alias)
-        for alias in dut_aliases:
-            dut_engine = topology_obj.players[alias]['engine']
-            generate_dump_method[switch_type](topology_obj, dut_engine, dumps_folder, duration, item, alias)
+        with ThreadPoolExecutor(max_workers=len(dut_aliases)) as executor:
+            list(executor.map(
+                lambda alias: generate_and_copy_nvos_dump(topology_obj, topology_obj.players[alias]['engine'],
+                                                          dumps_folder, duration, item, alias),
+                dut_aliases))
     else:
         dut_engine = topology_obj.players['dut']['engine']
         generate_dump_method[switch_type](topology_obj, dut_engine, dumps_folder, duration, item)
