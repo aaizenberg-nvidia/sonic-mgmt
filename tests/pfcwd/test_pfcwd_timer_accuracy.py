@@ -7,7 +7,7 @@ import json
 from tests.common.fixtures.conn_graph_facts import enum_fanout_graph_facts      # noqa: F401
 from tests.common.helpers.assertions import pytest_assert
 from tests.common.helpers.pfc_storm import PFCStorm
-from tests.common.helpers.pfcwd_helper import start_wd_on_ports, start_background_traffic     # noqa: F401
+from tests.common.helpers.pfcwd_helper import start_wd_on_ports  # noqa: F401
 from tests.common.helpers.pfcwd_helper import calculate_pfcwd_default_timers
 
 from tests.common.plugins.loganalyzer import DisableLogrotateCronContext
@@ -27,13 +27,6 @@ PFC_RX_WAIT_SEC = 15
 PFC_RX_READ_SEC = PFC_RX_WAIT_SEC + 2
 
 logger = logging.getLogger(__name__)
-
-
-@pytest.fixture(scope="class")
-def pfc_queue_idx(pfcwd_timer_setup_restore):
-    # This is used by the common code, this needs to be defined
-    # before using start_background_traffic() fixture.
-    yield pfcwd_timer_setup_restore['storm_handle'].pfc_queue_idx
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +195,7 @@ def save_test_results_to_file(test_func_name, test_data):
         logger.error("Failed to save test results to file. Error: %s", err)
 
 
-@pytest.mark.usefixtures('pfcwd_timer_setup_restore', 'start_background_traffic')
+@pytest.mark.usefixtures('pfcwd_timer_setup_restore')
 class TestPfcwdAllTimer(object):
     """ PFCwd timer test class """
     def run_test(self, setup_info):
