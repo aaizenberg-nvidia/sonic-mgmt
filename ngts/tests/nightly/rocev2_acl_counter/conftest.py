@@ -158,7 +158,7 @@ def pre_configure(request, engines, topology_obj, interfaces, cli_objects, playe
     LagLacpConfigTemplate.configuration(topology_obj, lag_lacp_config_dict)
     IpConfigTemplate.configuration(topology_obj, ip_config_dict)
     cmd = f"sudo config mirror_session span add port0 {interfaces.dut_hb_2} {interfaces.dut_ha_1},{DUT_PORTCHANNEL_NAME}"
-    if platform_params.filtered_platform in PLATFORM_200G_SUPPORT_LIST:
+    if platform_params.filtered_platform in PLATFORM_200G_SUPPORT_LIST + PLATFORM_800G_SUPPORT_LIST:
         cmd += " rx"
     engines.dut.run_cmd(cmd)
 
