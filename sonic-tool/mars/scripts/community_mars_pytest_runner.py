@@ -209,6 +209,10 @@ class RunPytest(TermHandlerMixin, StandaloneWrapper):
         if self.dut_name in panther_a0_dut_list and \
                 ("test_advanced_reboot.py" in self.test_scripts or "test_upgrade_path.py" in self.test_scripts):
             self.raw_options += ' --ceos_neighbor_lacp_multiplier=5'
+        weak_server_tests = ["test_drop_counters.py", "test_srv6_dataplane.py"]
+        if self.setup_name and self.setup_name.startswith("air-") and '--weak_server' not in self.raw_options and \
+                any(test in self.test_scripts for test in weak_server_tests):
+            self.raw_options += ' --weak_server'
         if old_allure_server in self.raw_options:
             self.raw_options = self.raw_options.replace(old_allure_server, "allure.nvidia.com")
         else:
