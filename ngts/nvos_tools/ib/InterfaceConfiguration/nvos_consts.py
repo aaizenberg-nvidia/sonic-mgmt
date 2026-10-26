@@ -249,6 +249,13 @@ class MloopConsts:
         DISABLED = "disabled"
 
 
+class SimxCableConsts:
+    """Chipsim virtual cables, run inside the simx container on the hypervisor."""
+
+    CABLE_CONNECT = "/opt/chipsim/tools/cs_cable_connect.py manual"
+    CABLE_TYPE = "backplane_copper"
+
+
 class PhyRecoveryConsts:
     STEP_1 = "step-1"
     STEP_2 = "step-2"

@@ -849,10 +849,11 @@ def test_nvl7_phy_recovery_pruning(devices):
 @pytest.mark.simx
 @pytest.mark.multiplanar
 @pytest.mark.timeout(30 * MINUTE, func_only=True)
-@pytest.mark.usefixtures('random_api', 'nvl7_acp_phy_recovery')
-def test_nvl7_access_phy_recovery_config(engines, devices, setup_name):
+@pytest.mark.usefixtures('random_api')
+def test_nvl7_access_phy_recovery_config(engines, devices, setup_name, nvl7_acp_phy_recovery):
     """
-    @summary: Validate configuration of the NVL7 access-port step-1 recovery leaves.
+    @summary: Validate configuration of the NVL7 access-port step-1 recovery leaves on one end of an acp pair
+        (on simx the two ports are cabled to each other).
         1. Applied defaults are 0; with the link up the operational leaves are within schema range and are
            recorded as the firmware defaults.
         2. Set iterations-preset3 and verify the applied value, that admin state is restored and that
@@ -872,7 +873,9 @@ def test_nvl7_access_phy_recovery_config(engines, devices, setup_name):
     consts = PhyRecoveryConsts
     engine = engines.dut
     acp_names = devices.dut.nvl_access_ports_list
-    sampled = random.sample(acp_names, 3)
+    port_a, port_b = nvl7_acp_phy_recovery
+    # The unchanged port must not be port_b: a flap of port_a takes its peer down too
+    sampled = [port_a, random.choice([name for name in acp_names if name not in (port_a, port_b)]), port_b]
     changed_name = sampled[0]
     port = Fae(port_name=changed_name)
     all_ports = Fae(port_name=summarize_switch_ports(acp_names))
@@ -1041,10 +1044,10 @@ def _assert_flap_only_on_changed_port(engine, marker, changed_name, unchanged_na
 @pytest.mark.simx
 @pytest.mark.multiplanar
 @pytest.mark.timeout(20 * MINUTE, func_only=True)
-@pytest.mark.usefixtures('nvl7_acp_phy_recovery')
-def test_nvl7_access_phy_recovery_bad_flow(engines, devices, random_api):
+def test_nvl7_access_phy_recovery_bad_flow(engines, devices, random_api, nvl7_acp_phy_recovery):
     """
-    @summary: Validate rejection of bad NVL7 access-port step-1 recovery values.
+    @summary: Validate rejection of bad NVL7 access-port step-1 recovery values on one end of an acp pair
+        (on simx the two ports are cabled to each other).
         1. Over-max, -1 and non-integer values are rejected at set time on each of the six leaves;
            nothing is staged.
         2. Record the baseline: health status, SAI/SDK dump files, swss/syncd start times and orchagent PIDs,
@@ -1059,7 +1062,7 @@ def test_nvl7_access_phy_recovery_bad_flow(engines, devices, random_api):
     consts = PhyRecoveryConsts
     engine = engines.dut
     system = System()
-    port_name = random.choice(devices.dut.nvl_access_ports_list)
+    port_name = nvl7_acp_phy_recovery[0]
     port = Fae(port_name=port_name)
     caps = devices.dut.phy_recovery_step1_caps
     rejected = [(leaf, cap + 1) for leaf, cap in caps.items()]

@@ -5,7 +5,7 @@ import time  # TODO: Remove when XDR workaround is removed
 from typing import Tuple
 from ngts.ngts_types.devices_T import DevicesT
 from ngts.ngts_types.engines_T import EnginesT
-from ngts.nvos_constants.constants_nvos import MultiPlanarConsts
+from ngts.nvos_constants.constants_nvos import ApiType, MultiPlanarConsts
 from ngts.nvos_tools.infra.MultiPlanarTool import MultiPlanarTool
 from ngts.nvos_tools.system.System import System
 from ngts.nvos_tools.Devices.IbDevice import RosalindSimx, RosalindStackedSimx, RosalindSwitch  # TODO: Remove RosalindSwitch import when XDR WA is removed
@@ -13,7 +13,9 @@ from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import MloopConsts, N
 from ngts.nvos_tools.ib.InterfaceConfiguration.Port import Port
 from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.IbInterfaceTool import IbInterfaceTool
+from ngts.nvos_tools.infra.InterfaceConfigurationTool import InterfaceConfigurationTool
 from ngts.nvos_tools.infra.NvCommand import NvCommand
+from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
 from ngts.tools.test_utils import allure_utils as allure
 from ngts.tests_nvos.constants import MINUTE
 from ngts.tests_nvos.helpers.redmine_helpers import is_bug_active
@@ -140,22 +142,35 @@ def nvl_simx_setup(engines, devices, mloop_mode):
 @pytest.fixture
 def nvl7_acp_phy_recovery(request, devices, is_simx, has_loopbox, standalone_system):
     """
-    Skip off NVL7 or without connected access ports. If the test failed before its own unset, unset
-    phy-recovery on all access ports and wait for them up.
+    Skip off NVL7 or without connected access ports. Yield the tested acp pair: on simx, local port 1 of
+    ASIC 0 and ASIC 1 cabled to each other in chipsim, so the link has a real peer instead of an mloop
+    self-loop (the next test's nvl_simx_setup puts mloop back on them); otherwise two random acp ports.
+    If the test failed before its own unset, unset phy-recovery on all access ports and wait for them up.
     """
     if not is_nvl7(devices):
         pytest.skip("NVL7 only test")
     skip_if_no_access_links(has_loopbox, standalone_system, is_simx)
-    yield
-    rep_call = getattr(request.node, 'rep_call', None)
-    if rep_call is None or not rep_call.failed:
-        return
     acp_names = devices.dut.nvl_access_ports_list
-    all_ports = Fae(port_name=summarize_switch_ports(acp_names))
-    with allure.step(f"Cleanup - unset phy-recovery on {all_ports.port.name}"):
-        all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
-        reset_gpus_if_needed(request.getfixturevalue('setup_name'))
-        wait_for_ports_state(devices, acp_names, 'acp')
+    pair = random.sample(acp_names, 2)
+    topology_obj = request.getfixturevalue('topology_obj')
+    try:
+        if is_simx:
+            pair = [acp_names[0], acp_names[len(acp_names) // devices.dut.asic_amount]]
+            InterfaceConfigurationTool.simx_cable_connect(topology_obj, *pair)
+            wait_for_ports_state(devices, pair, 'acp')
+        yield pair
+        rep_call = getattr(request.node, 'rep_call', None)
+        if rep_call is None or not rep_call.failed:
+            return
+        all_ports = Fae(port_name=summarize_switch_ports(acp_names))
+        # A port range is NVUE-only: over OpenAPI this unset wipes the whole fae config, mloop included
+        with TestToolkit.force_api(ApiType.NVUE), allure.step(f"Cleanup - unset phy-recovery on {all_ports.port.name}"):
+            all_ports.port.interface.link.phy_recovery.unset(apply=True, ask_for_confirmation=True).verify_result()
+            reset_gpus_if_needed(request.getfixturevalue('setup_name'))
+            wait_for_ports_state(devices, acp_names, 'acp')
+    finally:
+        if is_simx:
+            InterfaceConfigurationTool.simx_cable_disconnect(topology_obj, pair[0])
 
 
 # TODO: XDR Workaround Fixture - Currently DISABLED

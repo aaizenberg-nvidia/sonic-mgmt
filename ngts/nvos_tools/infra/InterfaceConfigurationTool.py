@@ -2,10 +2,12 @@ import logging
 import allure
 import time
 
-from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts
+from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import IbInterfaceConsts, MloopConsts, SimxCableConsts
+from ngts.nvos_tools.infra.Fae import Fae
 from ngts.nvos_tools.infra.OutputParsingTool import OutputParsingTool
 from ngts.nvos_tools.infra.NvosTestToolkit import TestToolkit
-from ngts.nvos_constants.constants_nvos import NvosConst
+from ngts.nvos_tools.simx.stop_and_remove_nvos_simx_docker import get_topo_info
+from ngts.nvos_constants.constants_nvos import ApiType, NvosConst
 from ngts.nvos_tools.ib.InterfaceConfiguration.nvos_consts import NvosConsts
 
 logger = logging.getLogger()
@@ -49,6 +51,49 @@ class InterfaceConfigurationTool:
             return NvosConst.NVL_SWITCH_TYPE
         else:
             raise Exception("Unable to determine system type - neither interface_list nor nvl_ports_list found")
+
+    @staticmethod
+    def simx_cable_connect(topology_obj, port_a, port_b):
+        """
+        Cable two NVL ports to each other inside the chipsim container of a simx DUT.
+        The link can take up to 375 s to come up.
+
+        mloop is disabled and then unset on both ports first: with mloop set, even to disabled, or unset straight
+        from logical, the port keeps its loopback and never links up.
+        """
+        with TestToolkit.force_api(ApiType.NVUE):
+            for port in (port_a, port_b):
+                Fae(port_name=port).port.interface.link.mloop.set(MloopConsts.Mode.DISABLED, apply=port == port_b,
+                                                                  ask_for_confirmation=True).verify_result()
+            for port in (port_a, port_b):
+                Fae(port_name=port).port.interface.link.mloop.unset(apply=port == port_b,
+                                                                    ask_for_confirmation=True).verify_result()
+            ends = ':'.join(InterfaceConfigurationTool._simx_cable_end(port) for port in (port_a, port_b))
+        InterfaceConfigurationTool._simx_cable_run(
+            topology_obj, f"connect {ends} --cable_type {SimxCableConsts.CABLE_TYPE}")
+
+    @staticmethod
+    def simx_cable_disconnect(topology_obj, port):
+        """Remove the chipsim cable from a simx port; both ends of the cable drop."""
+        InterfaceConfigurationTool._simx_cable_run(
+            topology_obj, f"disconnect {InterfaceConfigurationTool._simx_cable_end(port)}")
+
+    @staticmethod
+    def _simx_cable_end(port):
+        """cs_cable_connect end of a port: container, chipsim port of its ASIC, local port."""
+        with TestToolkit.force_api(ApiType.NVUE):
+            fae_out = OutputParsingTool.parse_show_interface_output_to_dictionary(
+                Fae(port_name=port).port.interface.show()).get_returned_value()
+        return (f"$HOSTNAME,${{VCRS_PORT_{fae_out[IbInterfaceConsts.ASIC]}:-$VCRS_PORT}},"
+                f"[{fae_out[IbInterfaceConsts.LOCAL_PORT]}]")
+
+    @staticmethod
+    def _simx_cable_run(topology_obj, action):
+        dut_name, server_engine = get_topo_info(topology_obj)
+        with allure.step(f"Chipsim cable {action}"):
+            output = server_engine.run_cmd(f"sudo docker exec $(sudo docker ps -qf name={dut_name}_) "
+                                           f"bash -c '{SimxCableConsts.CABLE_CONNECT} {action}'")
+            assert 'ERROR' not in output, f"Chipsim cable {action} failed: {output}"
 
     @staticmethod
     def get_speed_param_name(system_type):
